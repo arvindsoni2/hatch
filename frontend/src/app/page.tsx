@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { fetchStats, fetchJobs, fetchPendingEmails, fetchEmailStats, fetchGhostStats } from "@/lib/api";
+import { redirect } from "next/navigation";
+import { fetchStats, fetchJobs, fetchPendingEmails, fetchEmailStats, fetchGhostStats, fetchProfileStatus } from "@/lib/api";
 import { StatsBar } from "@/components/StatsBar";
 import { JobTable } from "@/components/JobTable";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,11 @@ async function getDashboardData() {
 }
 
 export default async function DashboardPage() {
+  const profileStatus = await fetchProfileStatus().catch(() => null);
+  if (profileStatus?.onboarding_required) {
+    redirect("/onboarding");
+  }
+
   const { stats, recentJobs, pendingEmails, ghostStats, error } = await getDashboardData();
 
   if (error) {

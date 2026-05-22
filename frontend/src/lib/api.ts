@@ -1349,3 +1349,19 @@ export async function matchStories(question: string, tags?: string[]): Promise<S
     body: JSON.stringify({ question, tags }),
   });
 }
+
+// ──────────────────────── Profile ────────────────────────
+
+export interface ProfileStatus {
+  exists: boolean;
+  complete: boolean;
+  onboarding_required: boolean;
+  candidate_name?: string;
+  llm_provider?: string;
+  target_roles?: string[];
+  errors?: string[];
+}
+
+export async function fetchProfileStatus(): Promise<ProfileStatus> {
+  return apiFetch<ProfileStatus>("/api/v2/profile/status", { cache: "no-store" });
+}
