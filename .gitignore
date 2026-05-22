@@ -53,7 +53,22 @@ next-env.d.ts
 *.db-journal
 *.sqlite
 *.sqlite3
-data/
+
+# ──────────────────────── User data (never commit) ───────────────────────────
+# profile.yaml and master_cv.json contain personal information.
+data/profile.yaml
+data/master_cv.json
+data/jobpilot.db
+data/jobpilot.db-wal
+data/jobpilot.db-shm
+data/langgraph_checkpoints.db
+data/langgraph_checkpoints.db-wal
+data/langgraph_checkpoints.db-shm
+data/chroma/
+data/logs/
+# Allow the example template and .gitkeep placeholder
+!data/profile.yaml.example
+!data/.gitkeep
 
 # ──────────────────────── Docker ────────────────────────
 .dockerignore

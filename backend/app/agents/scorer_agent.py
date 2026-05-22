@@ -1,73 +1,64 @@
-"""Scorer Sub-Agent — LLM-based job fit scoring against the master profile."""
+"""Scorer Sub-Agent — LLM-based job fit scoring driven by profile.yaml.
+
+All scoring weights, target roles, compensation range, skills, and location
+preferences are read from the user's profile.yaml at runtime via profile_loader.
+The LLM used is determined by profile.yaml llm config via llm_factory.
+"""
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import load_master_profile
-from ..models.agent_event import AgentEvent
 from ..models.job_score import JobScore
 from ..models.job import JobPosting
-from ..services.claude_client import ClaudeClient
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
+from .tools.llm_factory import get_triage_model, get_primary_model
+from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.scorer")
 
-_SYSTEM_PROMPT = """\
-You are a job fit scorer. Given a candidate profile and a job description,
-score the match on four dimensions (0.0–1.0 each):
+_BATCH_SIZE = 10
 
-1. skill_match: How well do the candidate's skills match the requirements?
-2. experience_match: Does the seniority and domain experience align?
-3. rate_match: Is the offered rate within the candidate's range?
-4. location_match: Does the location/remote policy work for the candidate?
 
-Overall score = weighted average:
-  skill_match * 0.35 + experience_match * 0.30 +
-  rate_match * 0.20 + location_match * 0.15
+class _TriageResult(BaseModel):
+    relevant: bool
+    reason: str = ""
 
-Respond with JSON only:
-{
-  "skill_match": 0.85,
-  "experience_match": 0.90,
-  "rate_match": 0.70,
-  "location_match": 1.0,
-  "overall_score": 0.84,
-  "reasoning": "Brief explanation of scoring decision."
-}
-"""
 
-_BATCH_SIZE = 10  # Max jobs scored per Claude API call
+class _ScoreResult(BaseModel):
+    skill_match: float
+    experience_match: float
+    rate_match: float
+    location_match: float
+    overall_score: float
+    reasoning: str
 
 
 class ScorerAgent(BaseAgent):
-    """Scores pending job_discovered events against the master profile.
+    """Scores pending job_discovered events against the user's profile.
 
-    LLM usage: One Claude call per job (batched up to BATCH_SIZE per run).
+    Two-tier LLM usage (both models configured in profile.yaml):
+    - triage_model: fast pre-filter to skip irrelevant listings cheaply
+    - primary_model: detailed 4-dimension scoring for relevant jobs
     """
 
     name = "scorer"
 
-    def __init__(self, claude: ClaudeClient | None = None) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._claude = claude or ClaudeClient()
-        self._profile = load_master_profile()
         self._bus = EventBus.instance()
 
     # ── Main entry point ──────────────────────────────────────────────
 
     async def run(self, db: AsyncSession, **kwargs: Any) -> dict[str, Any]:
-        """Score pending job_discovered events.
-
-        Picks up to BATCH_SIZE unprocessed job_discovered events and scores each.
-        """
+        """Score pending job_discovered events (up to BATCH_SIZE per run)."""
         await self.update_state(db, "running", {"task": "scoring pending jobs"})
 
         pending = await self._bus.poll(
@@ -77,135 +68,143 @@ class ScorerAgent(BaseAgent):
         if not pending:
             self._log.info("No pending job_discovered events.")
             await self.update_state(db, "idle")
-            return {"scored": 0, "errors": 0}
+            return {"scored": 0, "skipped": 0, "errors": 0}
 
-        scored = 0
-        errors = 0
+        profile = load_profile()
+        triage_llm = get_triage_model().with_structured_output(_TriageResult)
+        primary_llm = get_primary_model().with_structured_output(_ScoreResult)
+
+        scored = skipped = errors = 0
 
         for event in pending:
             await self._bus.mark_processing(event["id"], db)
             try:
-                await self._score_job(event, db)
+                result = await self._score_job(event, db, profile, triage_llm, primary_llm)
                 await self._bus.mark_completed(event["id"], db)
-                scored += 1
+                if result == "skipped":
+                    skipped += 1
+                else:
+                    scored += 1
             except Exception as exc:
                 self._log.exception("Scoring error for event %s: %s", event["id"], exc)
                 await self._bus.mark_failed(event["id"], str(exc), db)
                 errors += 1
 
         await self.update_state(db, "idle")
-        self._log.info("Scoring run: %d scored, %d errors.", scored, errors)
-        return {"scored": scored, "errors": errors}
+        self._log.info(
+            "Scoring run: %d scored, %d skipped, %d errors.", scored, skipped, errors
+        )
+        return {"scored": scored, "skipped": skipped, "errors": errors}
 
     # ── Per-job scoring ───────────────────────────────────────────────
 
     async def _score_job(
-        self, event: dict[str, Any], db: AsyncSession
-    ) -> None:
+        self,
+        event: dict[str, Any],
+        db: AsyncSession,
+        profile: Any,
+        triage_llm: Any,
+        primary_llm: Any,
+    ) -> str:
         payload = event["payload"]
         job_id = payload["job_id"]
 
-        # Fetch full job description from DB
         result = await db.execute(select(JobPosting).where(JobPosting.id == job_id))
         job = result.scalar_one_or_none()
         if job is None:
             raise ValueError(f"Job {job_id} not found in DB")
 
-        user_prompt = self._build_user_prompt(job)
-        raw = await self._claude.complete_json(system=_SYSTEM_PROMPT, user=user_prompt)
+        # Triage pre-filter (cheap model — rejects obvious non-matches)
+        triage_prompt = self._build_triage_prompt(job, profile)
+        triage: _TriageResult = await triage_llm.ainvoke(triage_prompt)
+        if not triage.relevant:
+            self._log.info("Job %s pre-filtered: %s", job_id, triage.reason)
+            return "skipped"
 
-        score_data = self._parse_score(raw)
+        # Detailed scoring (primary model — weights from profile.yaml)
+        scoring_prompt = self._build_scoring_prompt(job, profile)
+        score: _ScoreResult = await primary_llm.ainvoke(scoring_prompt)
 
-        # Upsert job_scores
-        existing = await db.execute(
-            select(JobScore).where(JobScore.job_id == job_id)
-        )
+        # Persist score
+        existing = await db.execute(select(JobScore).where(JobScore.job_id == job_id))
         row = existing.scalar_one_or_none()
+        score_data = score.model_dump()
         if row is None:
-            row = JobScore(
-                id=str(uuid.uuid4()),
-                job_id=job_id,
-                **score_data,
-            )
-            db.add(row)
+            db.add(JobScore(id=str(uuid.uuid4()), job_id=job_id, **score_data))
         else:
             for k, v in score_data.items():
                 setattr(row, k, v)
             row.scored_at = datetime.utcnow()
 
-        # Mark job as auto_scored
         await db.execute(
-            update(JobPosting)
-            .where(JobPosting.id == job_id)
-            .values(auto_scored=True)
+            update(JobPosting).where(JobPosting.id == job_id).values(auto_scored=True)
         )
         await db.commit()
 
-        # Emit job_scored event
         await self.emit_event(
             "job_scored",
             {
                 "job_id": job_id,
-                "score": score_data["overall_score"],
-                "skill_match": score_data.get("skill_match"),
-                "experience_match": score_data.get("experience_match"),
-                "rate_match": score_data.get("rate_match"),
-                "location_match": score_data.get("location_match"),
-                "reasoning": score_data.get("reasoning"),
+                "score": score.overall_score,
+                "skill_match": score.skill_match,
+                "experience_match": score.experience_match,
+                "rate_match": score.rate_match,
+                "location_match": score.location_match,
+                "reasoning": score.reasoning,
             },
             db,
         )
-        self._log.info(
-            "Job %s scored: %.2f (%s)",
-            job_id, score_data["overall_score"], score_data.get("reasoning", "")[:80]
+        self._log.info("Job %s scored %.2f — %s", job_id, score.overall_score, score.reasoning[:80])
+        return "scored"
+
+    # ── Prompt builders — all data sourced from profile.yaml ─────────
+
+    def _build_triage_prompt(self, job: JobPosting, profile: Any) -> str:
+        roles = ", ".join(profile.search.target_roles)
+        locations = ", ".join(
+            f"{loc.city}, {loc.country}" for loc in profile.search.locations
+        )
+        return (
+            f"You are a job relevance filter for a {profile.candidate.title} "
+            f"with {profile.candidate.years_experience} years experience.\n\n"
+            f"Target roles: {roles}\n"
+            f"Target locations: {locations}\n\n"
+            f"Job title: {job.title}\n"
+            f"Company: {job.company or 'unknown'}\n"
+            f"Location: {job.location or 'unknown'}\n"
+            f"Description (first 500 chars): {(job.description or '')[:500]}\n\n"
+            "Is this job relevant? Reject: junior roles, unrelated domains, locations "
+            "clearly outside target. Pass: anything plausibly matching the profile."
         )
 
-    # ── Helpers ───────────────────────────────────────────────────────
-
-    def _build_user_prompt(self, job: JobPosting) -> str:
-        profile = self._profile
-        candidate = profile.get("candidate", {})
-        rate = profile.get("rate", {})
-        skills = profile.get("skills", {})
-        domains = profile.get("domains", {})
-        proof_points = profile.get("proof_points", [])
-
-        primary_skills = ", ".join(skills.get("primary", []))
-        secondary_skills = ", ".join(skills.get("secondary", []))
-        preferred_domains = ", ".join(domains.get("preferred", []))
-        proofs = "; ".join(p["summary"] for p in proof_points)
-
-        return f"""
-## Candidate Profile
-Name: {candidate.get('name')}
-Title: {candidate.get('title')}
-Years Experience: {candidate.get('years_experience')}
-Location: {candidate.get('location')}
-Remote Preference: {candidate.get('remote_preference')}
-Primary Skills: {primary_skills}
-Secondary Skills: {secondary_skills}
-Preferred Domains: {preferred_domains}
-Rate Range: £{rate.get('min_daily')}–£{rate.get('max_daily')}/day ({rate.get('ir35_status')} IR35)
-Key Achievements: {proofs}
-
-## Job Posting
-Title: {job.title}
-Company: {job.company or 'Not specified'}
-Location: {job.location or 'Not specified'}
-Rate: {job.rate_text or 'Not specified'} (min: {job.rate_min}, max: {job.rate_max})
-IR35 Status: {job.ir35_status or 'Not specified'}
-Description:
-{(job.description or '')[:3000]}
-""".strip()
-
-    @staticmethod
-    def _parse_score(raw: dict[str, Any]) -> dict[str, Any]:
-        """Validate and extract score fields from Claude response."""
-        return {
-            "overall_score": float(raw.get("overall_score", 0.0)),
-            "skill_match": float(raw.get("skill_match", 0.0)) if raw.get("skill_match") is not None else None,
-            "experience_match": float(raw.get("experience_match", 0.0)) if raw.get("experience_match") is not None else None,
-            "rate_match": float(raw.get("rate_match", 0.0)) if raw.get("rate_match") is not None else None,
-            "location_match": float(raw.get("location_match", 0.0)) if raw.get("location_match") is not None else None,
-            "reasoning": str(raw.get("reasoning", ""))[:2000],
-        }
+    def _build_scoring_prompt(self, job: JobPosting, profile: Any) -> str:
+        weights = profile.scoring.weights
+        comp = profile.compensation
+        primary_skills = ", ".join(profile.skills.primary)
+        secondary_skills = ", ".join(profile.skills.secondary)
+        preferred_domains = ", ".join(profile.domains.preferred)
+        proof_summaries = "; ".join(p.summary for p in profile.proof_points)
+        locations = "; ".join(
+            f"{loc.city} ({loc.remote_preference})" for loc in profile.search.locations
+        )
+        return (
+            f"Score this job for a candidate with the following profile:\n\n"
+            f"Title: {profile.candidate.title}, {profile.candidate.years_experience} years experience\n"
+            f"Primary skills: {primary_skills}\n"
+            f"Secondary skills: {secondary_skills}\n"
+            f"Preferred domains: {preferred_domains}\n"
+            f"Key achievements: {proof_summaries}\n"
+            f"Target locations: {locations}\n"
+            f"Rate range: {comp.currency} {comp.min_rate}–{comp.max_rate} ({comp.rate_type})\n"
+            f"IR35 preference: {comp.ir35_preference}\n\n"
+            f"Job:\nTitle: {job.title}\nCompany: {job.company or 'N/A'}\n"
+            f"Location: {job.location or 'N/A'}\nRate: {job.rate_text or 'N/A'}\n"
+            f"IR35: {job.ir35_status or 'N/A'}\n"
+            f"Description:\n{(job.description or '')[:3000]}\n\n"
+            f"Score on four dimensions (0.0–1.0):\n"
+            f"- skill_match (weight {weights.skill_match}): how well skills match?\n"
+            f"- experience_match (weight {weights.experience_match}): seniority/domain alignment?\n"
+            f"- rate_match (weight {weights.rate_match}): rate within candidate range?\n"
+            f"- location_match (weight {weights.location_match}): location/remote policy match?\n"
+            f"overall_score = weighted sum using the weights above."
+        )

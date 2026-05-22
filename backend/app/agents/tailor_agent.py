@@ -10,28 +10,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.application import Application
 from ..models.job import JobPosting
-from ..services.claude_client import ClaudeClient
 from ..services.tailor_service import TailorService
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
+from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.tailor")
-
-# Only tailor jobs that score above this threshold
-SCORE_THRESHOLD = 0.75
 
 
 class TailorAgent(BaseAgent):
     """Processes job_shortlisted events — generates CV + cover letter.
 
     LLM usage: Heavy (delegates to existing TailorService).
+    Score threshold and batch size are read from profile.yaml at runtime.
     """
 
     name = "tailor"
 
-    def __init__(self, claude: ClaudeClient | None = None) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._claude = claude or ClaudeClient()
         self._tailor = TailorService()
         self._bus = EventBus.instance()
 
@@ -75,7 +72,8 @@ class TailorAgent(BaseAgent):
         job_id = payload["job_id"]
         score = payload.get("score", 0.0)
 
-        if score < SCORE_THRESHOLD:
+        profile = load_profile()
+        if score < profile.scoring.shortlist_threshold:
             self._log.info("Job %s score %.2f below threshold — skipping.", job_id, score)
             return
 

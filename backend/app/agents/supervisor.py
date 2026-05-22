@@ -14,18 +14,17 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings as app_settings
 from ..models.application import Application
 from ..models.job_score import JobScore
 from .coach_agent import CoachAgent
 from .scorer_agent import ScorerAgent
 from .tailor_agent import TailorAgent
 from .tools.event_bus import EventBus
+from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.supervisor")
 
-# ── Score threshold for shortlisting ─────────────────────────────────────────
-SCORE_THRESHOLD = 0.75
+_DEFAULT_SCORE_THRESHOLD = 0.75  # fallback if profile.yaml not yet created
 
 
 class SupervisorAgent:
@@ -118,7 +117,12 @@ class SupervisorAgent:
         job_id = payload["job_id"]
         score = float(payload.get("score", 0.0))
 
-        if score >= SCORE_THRESHOLD:
+        try:
+            threshold = load_profile().scoring.shortlist_threshold
+        except Exception:
+            threshold = _DEFAULT_SCORE_THRESHOLD
+
+        if score >= threshold:
             logger.info("Job %s scored %.2f — shortlisting.", job_id, score)
             await self._bus.emit(
                 "job_shortlisted",
@@ -130,7 +134,7 @@ class SupervisorAgent:
             # Trigger tailor immediately
             await self._tailor.run(db)
         else:
-            logger.info("Job %s scored %.2f — parking (below %.2f).", job_id, score, SCORE_THRESHOLD)
+            logger.info("Job %s scored %.2f — parking (below %.2f).", job_id, score, threshold)
             await self._park_job(job_id, score, db)
             await self._bus.mark_completed(event["id"], db)
 
@@ -226,7 +230,11 @@ class SupervisorAgent:
                         return "score_job"
                     case "job_scored":
                         score = event.get("payload", {}).get("score", 0.0)
-                        return "tailor_job" if float(score) >= SCORE_THRESHOLD else "park_job"
+                        try:
+                            threshold = load_profile().scoring.shortlist_threshold
+                        except Exception:
+                            threshold = _DEFAULT_SCORE_THRESHOLD
+                        return "tailor_job" if float(score) >= threshold else "park_job"
                     case "cv_tailored":
                         return "request_approval"
                     case "application_approved":

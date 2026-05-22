@@ -2,246 +2,293 @@
 
 <div align="center">
 
-# JobPilot
+# JobPilot v2
 
-**Self-hosted, AI-powered job search operations for the UK contract market.**
+**Open-source, self-hosted, autonomous multi-agent job search automation.**
 
-Scout listings across 7 UK job boards · Track applications on a Kanban pipeline · Auto-tailor CVs and cover letters with Claude · Prep for interviews with AI coaching · Run entirely on your own machine.
+Discover → Score → Tailor → Track → Coach — fully automated, human-in-the-loop at the decisions that matter.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![CI](https://github.com/arvindsoni2/jobpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/arvindsoni2/jobpilot/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Next.js 14](https://img.shields.io/badge/next.js-14-black.svg)](https://nextjs.org/)
-[![Claude](https://img.shields.io/badge/Claude-Sonnet_4-orange.svg)](https://www.anthropic.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-0.2-green.svg)](https://github.com/langchain-ai/langgraph)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://docs.docker.com/compose/)
 
-[Quick Start](#quick-start) · [Architecture](#architecture) · [Modules](#modules) · [How JobPilot differs from career-ops](#how-jobpilot-differs-from-career-ops) · [FAQ](#faq)
+[Quick Start](#quick-start) · [Architecture](#architecture) · [Configuration](#configuration) · [Agents](#agents) · [FAQ](#faq)
 
 </div>
 
 ---
 
-## Why JobPilot
+## What is JobPilot v2?
 
-Job hunting at 20+ years of experience is a full-time operations problem. You have dozens of active applications across multiple boards, each with its own tracker, some with tailored CVs, some waiting on follow-ups, some where the role has quietly disappeared from the site. Spreadsheets rot. Browser tabs multiply. Recruiter chains fragment across LinkedIn, email, and WhatsApp.
+JobPilot v2 is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
 
-JobPilot is the system I wanted — a self-hosted operations platform that scouts, tracks, tailors, and coaches through a single web UI, running locally with Docker Compose. Your data stays on your machine. The only external call is to the Claude API, with your key, billed to you.
+```text
+06:00  Scout agent runs (scheduled every 4h)
+       → 12 new jobs discovered across 4 boards
+       → Scorer agent processes batch (triage model filters, primary model scores)
+       → 3 jobs score ≥ 0.75 → auto-shortlisted
+       → Tailor agent generates tailored CV + cover letter for each
+       → 3 items land in your approval queue
 
-It's built for a specific kind of user — **UK-based Solutions Architects, Delivery Leads, Product Owners, and senior engineers navigating the post-IR35 contract market** — but the core patterns (scrape → classify → track → tailor → coach) generalise cleanly.
+08:30  You open the dashboard
+       → Review: score breakdown, tailored CV preview, cover letter preview
+       → Approve 2, reject 1 (wrong IR35 status)
+       → Approved applications move to "Ready to Apply"
 
-## Quick Start
-
-```bash
-git clone https://github.com/arvindsoni2/jobpilot.git
-cd jobpilot
-cp .env.example .env         # Add your ANTHROPIC_API_KEY
-make doctor                  # Validates prerequisites
-make docker-up               # Starts backend (:8000) and frontend (:3000)
+14:00  You mark "Interview scheduled" on Kanban
+       → Coach agent auto-triggers: company research, 12 questions, model answers
+       → "Prep ready" notification — 45 minutes of prep, ready to review
 ```
 
-Open [http://localhost:3000](http://localhost:3000). First scrape runs automatically; classification follows. Within 15 minutes you'll have hundreds of scored, deduplicated listings in your pipeline.
+**Reducing 15-20 hours/week of manual job search to < 1 hour of review.**
 
-See [docs/SETUP.md](./docs/SETUP.md) for the detailed walkthrough.
+---
 
-## Modules
+## Key Features
 
-JobPilot is built as four independent modules plus cross-cutting smart features. Each module is usable on its own.
+| Feature | Description |
+|---------|-------------|
+| **Profile-driven** | All user config in `profile.yaml` — roles, location, skills, weights, LLM provider. No code changes per user. |
+| **Pluggable AI** | Anthropic, OpenAI, Google, Ollama (free/local), Azure, AWS Bedrock — switch via `profile.yaml` |
+| **Two-tier scoring** | Cheap triage model pre-filters; strong primary model scores on 4 dimensions with configurable weights |
+| **Human-in-the-loop** | Mandatory approval checkpoint before any application leaves the system — never auto-submits |
+| **Autonomous pipeline** | APScheduler cron → event bus → LangGraph StateGraph routes events to correct agents |
+| **Interview coaching** | Company research, 12 categorised questions, STAR model answers mapped to your proof points |
+| **Self-hosted** | Docker Compose on any laptop. SQLite + ChromaDB — no external services required |
 
-| Module | What it does |
-|---|---|
-| **Scout** | Async scrapers for 7 UK job boards (ContractorUK, JobServe, Reed, CWJobs, ITJobsWatch, LinkedIn, Adzuna). Fuzzy dedup across sources. APScheduler runs quick (3h) and full (8h) cycles. AI batch classifier scores every job 0–100 on skill overlap, seniority fit, sector relevance, rate alignment, and location match. |
-| **Tracker** | Kanban pipeline for applications with a strict state machine (discovered → shortlisted → applied → interview → offered → accepted). Interview rounds, recruiter contacts, follow-ups, and activity log per application. Analytics dashboard with funnel metrics, response rates, and weekly trends. |
-| **Tailor** | Three-stage Claude pipeline: JD analysis → CV rewrite → cover letter generation. ATS scoring across keyword match, phrase match, section relevance, and format compliance. Full document versioning with diff view. Outputs .docx via a custom template engine. |
-| **Coach** | Company research, question generation across 6 weighted categories (technical, behavioural, situational, domain, culture, commercial), real-time STT with filler-word detection, STAR-rubric evaluation, optional video analysis via TensorFlow.js. New in v2.1: [**Interview Story Bank**](#interview-story-bank) — your 5–10 master STAR stories, auto-extracted from practice sessions and retrieved during live mock interviews. |
-
-### Smart features (cross-module)
-
-- **Ghost Job Detector** — Pure algorithmic 0–100 score per posting across six weighted signals (repost frequency, posting age, vague description, agency spam, missing rate/company, no-response history). Four verdicts: likely_real, uncertain, suspicious, likely_ghost. Suspected ghosts are hidden from default listings.
-- **Follow-up Email Automation** — Claude-drafted post-application, thank-you, and re-engagement emails with human review required. Rate-limited, domain-throttled, spam-safe.
-- **Daily Digest** — One email, 07:00 local, summarising new high-match jobs, overdue follow-ups, upcoming interviews, and pipeline stats.
+---
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph User["Your machine"]
-        UI["Next.js 14 UI<br/>Kanban · Tailor · Coach"]
-        API["FastAPI Backend<br/>async throughout"]
-        DB[("SQLite<br/>single file")]
-        SCHED["APScheduler<br/>cron triggers"]
-        STT["Web Speech API<br/>real-time transcription"]
-    end
-
-    subgraph External["External"]
-        CLAUDE["Claude Sonnet 4<br/>(your API key)"]
-        BOARDS["7 UK job boards"]
-        SMTP["Your SMTP server<br/>for digest + follow-ups"]
-    end
-
-    UI <--> API
-    API <--> DB
-    SCHED --> API
-    API -.uses.-> CLAUDE
-    SCHED -.scrapes.-> BOARDS
-    API -.sends.-> SMTP
-    UI <--> STT
-
-    classDef user fill:#e1f5ff,stroke:#0369a1,color:#0c4a6e
-    classDef ext fill:#fef3c7,stroke:#b45309,color:#78350f
-    class UI,API,DB,SCHED,STT user
-    class CLAUDE,BOARDS,SMTP ext
+```text
+┌──────────────────────────────────────────────────────┐
+│                   Docker Compose                     │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │          FastAPI Backend (Python 3.12)           │ │
+│  │                                                 │ │
+│  │  Supervisor (LangGraph StateGraph)              │ │
+│  │  poll_events → route → [scout|scorer|tailor|coach] │
+│  │                                                 │ │
+│  │  Event Bus (asyncio.Queue + SQLite persistence) │ │
+│  │  APScheduler (Scout cron — configurable)        │ │
+│  │  LLM Factory (LangChain init_chat_model())      │ │
+│  │  Profile Loader (profile.yaml → Pydantic)       │ │
+│  └─────────────────────────────────────────────────┘ │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │       Next.js 14 Frontend (TypeScript)          │ │
+│  │  Dashboard · Approvals · Kanban · Interview Prep │ │
+│  └─────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────┘
 ```
 
-### Design principles
+**v2 adds on top of v1:**
 
-- **Async everywhere.** Scrapers, Claude calls, and DB access all use async/await. One event loop, no thread pool juggling.
-- **Repository pattern.** All DB access goes through repository classes. Services contain business logic. Routes are thin wrappers. Easy to mock, easy to test.
-- **Factory pattern for scrapers.** Each board = one class inheriting `BaseScraper`. Adding a new board is 1 file + 1 test fixture + 1 registration.
-- **Fail gracefully.** Scrapers log errors and continue; the scheduler never crashes. The classifier is idempotent; retriable on any failure.
-- **SQLite on purpose.** Zero-config, portable, backed up by copying a file. For single-user self-hosted tools, Postgres is premature optimisation.
+| Component | Status | Description |
+|-----------|--------|-------------|
+| `schemas/profile.py` | **New** | Pydantic schema for `profile.yaml` validation |
+| `services/profile_service.py` | **New** | Read / write / validate profile.yaml |
+| `agents/tools/profile_loader.py` | **New** | Runtime profile loader with mtime-based caching |
+| `agents/tools/llm_factory.py` | **New** | LangChain `init_chat_model()` factory — provider-agnostic |
+| `agents/scorer_agent.py` | **Updated** | Two-tier scoring; weights from profile.yaml; no Anthropic SDK import |
+| `agents/tailor_agent.py` | **Updated** | Score threshold from profile.yaml |
+| `agents/supervisor.py` | **Updated** | Shortlist threshold from profile.yaml |
+| `routers/profile.py` | **New** | Profile CRUD + validation API |
+| `app/onboarding/page.tsx` | **New** | 6-step first-run setup wizard |
+| `app/settings/profile/page.tsx` | **New** | Profile settings UI |
+| `examples/` | **New** | 3 example profiles (UK contractor, US SWE, EU PM) |
 
-### Tech stack
+---
 
-**Backend:** Python 3.12 · FastAPI · SQLAlchemy 2.0 (async) · Alembic · Pydantic v2 · Playwright · BeautifulSoup4 · httpx · APScheduler · aiosmtplib · sentence-transformers
+## Quick Start
 
-**Frontend:** Next.js 14 (App Router) · TypeScript (strict) · Tailwind CSS · shadcn/ui · TensorFlow.js (face-mesh for video coaching)
+### Prerequisites
 
-**AI:** Claude Sonnet 4 via the `anthropic` Python SDK with structured JSON mode
+- Docker & Docker Compose
+- An API key for your chosen LLM provider (or Ollama for local/free)
 
-**Deployment:** Docker Compose, local only
-
-## How JobPilot differs from career-ops
-
-If you're evaluating job search tooling, you'll inevitably find [**santifer/career-ops**](https://github.com/santifer/career-ops) — a well-built, well-loved AI job search system (35k+ stars at time of writing). It's excellent. It's also solving a different shape of the problem.
-
-I looked at career-ops before writing JobPilot v2, and deliberately chose a different architectural bet. Neither is universally better — pick the one that matches how you work.
-
-| Dimension | **JobPilot** | **career-ops** |
-|---|---|---|
-| **Runtime** | FastAPI web app + Next.js UI | Claude Code CLI + markdown skill modes |
-| **Data store** | SQLite + SQLAlchemy ORM | Markdown + YAML + TSV files |
-| **UI** | Browser (Kanban, dashboards, forms) | Terminal (Go Bubble Tea TUI) |
-| **Setup** | `docker compose up` → web UI | `git clone && npm install && claude` |
-| **Interview prep** | Live mock with STT + video + Story Bank | Static STAR+R templates per session |
-| **Market focus** | UK contract / outside IR35 / Reed + CWJobs + ContractorUK | US-centric: Anthropic, OpenAI, Ashby, Greenhouse |
-| **Rate tracking** | Daily/hourly rates, IR35 status, agency tagging | Salary only |
-| **Works best when** | You want a real web app with persistent state and a Kanban view | You already live in Claude Code and prefer files over databases |
-
-**Ideas I learned from career-ops and ported (with acknowledgement):**
-- Interview Story Bank concept — implemented as a first-class database-backed feature with auto-extraction and semantic matching
-- Weighted multi-dimensional job scoring — implemented as explicit `MatchScorer` with transparent breakdown
-- Archetype detection before evaluation — implemented across 9 role types matching UK job titles
-- "The system doesn't know you yet" onboarding framing — stolen wholesale because it's honest and correct
-
-If you're US-based, CLI-native, and targeting AI labs, use career-ops — it's purpose-built for that flow. If you're UK-based, want a web UI with a Kanban pipeline, and care about IR35 status and ghost-job filtering, JobPilot will fit you better.
-
-## Interview Story Bank
-
-*(New in v2.1)*
-
-Behavioural interviews recycle the same 20 questions in different wording. Strong candidates don't answer 20 questions — they tell 5–10 well-rehearsed stories, reframed per question.
-
-The Story Bank captures those stories once and retrieves them in three ways:
-
-1. **Auto-extracted** from your Coach session answers when STAR structure ≥ 7/10 and impact ≥ 6/10
-2. **Manually curated** via the Story Bank UI — add stories you want to tell but haven't practised yet
-3. **Retrieved live** during mock interviews — pre-answer hint (off by default) and post-answer reflection showing which bank story would have fit best
-
-Matching is a two-stage pipeline: fast tag-overlap (Jaccard similarity), falling back to sentence-transformer embeddings. Embeddings run locally on CPU via `all-MiniLM-L6-v2` — no API calls at match time, zero marginal cost.
-
-See [docs/story-bank.md](./docs/story-bank.md) for the full design.
-
-## Repository Structure
-
-```
-jobpilot/
-├── backend/                  # Python 3.12 FastAPI
-│   ├── app/
-│   │   ├── models/           # SQLAlchemy ORM (async)
-│   │   ├── schemas/          # Pydantic v2 request/response
-│   │   ├── scrapers/         # One file per board, BaseScraper pattern
-│   │   ├── services/         # Business logic, Claude orchestration
-│   │   ├── repositories/     # DB access layer
-│   │   ├── routers/          # FastAPI endpoints
-│   │   ├── prompts/          # Jinja2 templates for Claude calls
-│   │   └── templates/        # CV/CL docx templates, email HTML
-│   ├── alembic/              # DB migrations
-│   └── tests/                # pytest, 130+ tests, 85% coverage
-├── frontend/                 # Next.js 14 App Router, TS strict
-│   └── src/
-│       ├── app/              # Pages (server components)
-│       ├── components/       # Client components, organised by module
-│       └── lib/              # API client, utilities
-├── docs/
-│   ├── SETUP.md
-│   ├── ARCHITECTURE.md
-│   ├── decisions/            # ADRs
-│   └── modules/              # Per-module deep-dives
-├── examples/                 # Fictional persona sample data
-├── docker-compose.yml
-├── Makefile                  # All common commands
-└── CLAUDE.md                 # Claude Code project config
-```
-
-## Commands
+### 1. Clone
 
 ```bash
-make dev              # Full stack with hot reload
-make doctor           # Validate prerequisites, API keys, disk, ports
-make scrape           # Run all scrapers once
-make scrape-one BOARD=contractoruk
-make classify         # AI classifier on pending jobs
-make test             # Full test suite
-make lint             # ruff + eslint
-make docker-up        # Production-like local stack
-make digest-preview   # Render tomorrow's digest email in browser
-make ghost-stats      # Ghost-job verdict breakdown
-make story-export     # Export your Story Bank to JSON
+git clone https://github.com/arvindsoni2/jobpilot-v2.git
+cd jobpilot-v2
 ```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+# Edit .env — set at least one LLM provider key:
+# ANTHROPIC_API_KEY=sk-ant-...   (default)
+# OPENAI_API_KEY=sk-...
+# GOOGLE_API_KEY=...
+```
+
+### 3. Start
+
+```bash
+make dev
+```
+
+On first launch, if `data/profile.yaml` is absent, the dashboard redirects to the **onboarding wizard** at `http://localhost:3000/onboarding`.
+
+The wizard walks you through:
+1. Identity (name, title, years experience)
+2. Target roles + location
+3. Compensation range
+4. Skills + domains
+5. LLM provider selection
+6. Review + launch
+
+### 4. Or configure manually
+
+```bash
+cp data/profile.yaml.example data/profile.yaml
+# Edit data/profile.yaml with your details
+```
+
+See `examples/` for complete worked examples:
+- `examples/profile_uk_contractor.yaml` — UK outside-IR35 Delivery Lead
+- `examples/profile_us_swe.yaml` — US Senior Software Engineer (OpenAI)
+- `examples/profile_eu_pm.yaml` — EU Freelance Product Manager (Google AI)
+
+---
+
+## Configuration
+
+All user-specific configuration lives in `data/profile.yaml`. The system reads this at runtime — changing it takes effect on the next agent run without restart.
+
+### LLM Providers
+
+| Provider | `provider` value | Example triage model | Example primary model | API key env |
+|----------|-----------------|---------------------|----------------------|-------------|
+| Anthropic | `anthropic` | `claude-haiku-4-5-20251001` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai` | `gpt-4o-mini` | `gpt-4o` | `OPENAI_API_KEY` |
+| Google | `google` | `gemini-2.0-flash` | `gemini-2.5-pro` | `GOOGLE_API_KEY` |
+| Ollama (free) | `ollama` | `gemma3:4b` | `qwen3:14b` | — (set `base_url`) |
+| Azure OpenAI | `azure` | deployment name | deployment name | `AZURE_OPENAI_API_KEY` |
+| AWS Bedrock | `aws_bedrock` | model ID | model ID | AWS credentials |
+
+```yaml
+# profile.yaml — switch to Ollama for zero API cost
+llm:
+  provider: "ollama"
+  triage_model: "gemma3:4b"
+  primary_model: "qwen3:14b"
+  base_url: "http://localhost:11434"
+  track_costs: false
+```
+
+---
+
+## Agents
+
+### Scout
+- **Trigger:** APScheduler cron (interval from `profile.yaml → preferences.scrape_interval_hours`)
+- **Does:** Scrapes configured job boards, deduplicates, emits `job_discovered` events
+- **LLM:** None — fully deterministic
+
+### Scorer
+- **Trigger:** `job_discovered` events
+- **Does:** Two-tier scoring — triage model pre-filters, primary model scores on 4 dimensions
+- **Weights:** Read from `profile.yaml → scoring.weights` at runtime
+- **LLM:** Triage model + primary model (both from `profile.yaml`)
+
+### Tailor
+- **Trigger:** `job_shortlisted` events (score ≥ threshold)
+- **Does:** Generates tailored CV + cover letter; ATS compatibility scoring
+- **Proof points:** Mapped from `profile.yaml → proof_points` to JD requirements by tag matching
+- **LLM:** Primary model (delegates to existing TailorService)
+
+### Coach
+- **Trigger:** `interview_scheduled` events (user action on Kanban)
+- **Does:** Company research, 12 categorised questions, STAR model answers
+- **User context:** Skills and proof points injected from `profile.yaml`
+- **LLM:** Primary model (delegates to existing CoachService)
+
+### Supervisor (LangGraph StateGraph)
+- Routes events to the correct agent
+- Enforces human-in-the-loop approval checkpoint (`interrupt()`)
+- Reads `shortlist_threshold` from `profile.yaml` at runtime
+- Safety valve: `max_iterations` prevents infinite loops
+
+---
+
+## Human-in-the-Loop
+
+JobPilot **never submits applications autonomously.** Two mandatory checkpoints:
+
+1. **Application approval** (`/approvals`) — review tailored CV, cover letter, score breakdown. Approve / reject / edit.
+2. **Interview prep review** (`/prep/[session_id]`) — review questions, model answers, STAR notes. Approve or regenerate.
+
+`AUTO_APPROVE=true` exists only for automated testing. Never set it in production.
+
+---
+
+## API Reference
+
+```
+GET    /api/v2/profile              # Current profile (raw)
+GET    /api/v2/profile/validated    # Profile validated against schema
+PUT    /api/v2/profile              # Update profile (validates before writing)
+POST   /api/v2/profile/validate     # Dry-run validation
+GET    /api/v2/profile/status       # Profile completeness check
+
+GET    /api/agents/status           # All agent statuses
+POST   /api/agents/{name}/trigger   # Manual trigger
+
+GET    /api/v2/approvals/pending    # Pending approval queue
+POST   /api/v2/approvals/{id}/approve
+POST   /api/v2/approvals/{id}/reject
+```
+
+---
+
+## Development
+
+```bash
+make dev          # Start full stack
+make test         # Run all tests
+make test-agents  # Agent tests only
+make migrate      # Run Alembic migrations
+make scrape       # Manually trigger Scout
+make score        # Manually trigger Scorer on pending jobs
+make status       # Show all agent statuses
+```
+
+---
+
+## Cost Estimate (Anthropic default)
+
+| Activity | Volume/month | Cost |
+|----------|-------------|------|
+| Triage pre-filter | 3,600 jobs | £0.36 |
+| Primary scoring | 540 jobs | £1.62 |
+| CV + CL generation | 50 applications | £1.15 |
+| Coach (research + Q&A) | 2 interviews | £0.09 |
+| **Total** | | **~£3.22** |
+
+Well within the default £15/month budget. Use Ollama for £0.
+
+---
 
 ## FAQ
 
-**Does JobPilot auto-submit applications?**
-No. The public JobPilot does not include auto-apply. The Terms of Service for every major UK job board prohibit automated form submission, and open-sourcing that capability is a line I won't cross. JobPilot ends at "your CV and cover letter are ready — here's the apply link."
+**Why LangGraph instead of CrewAI?**
+LangGraph's explicit state machine maps cleanly to the application lifecycle; `interrupt()` gives clean human-in-the-loop; `SqliteSaver` matches the existing SQLite stack. CrewAI is great for fast prototyping but lacks built-in checkpointing.
 
-**Is scraping legal?**
-Scraping public job listings for personal use sits in a grey zone that varies by jurisdiction and board ToS. JobPilot scrapers are conservative — randomised 2–8 second delays, rotating User-Agents, single-user request volumes. You are responsible for your use. See [LEGAL.md](./LEGAL.md).
+**Can I use a local model?**
+Yes — set `provider: ollama` in `profile.yaml` and point `base_url` at your Ollama instance. Quality varies; `qwen3:14b` or `llama3.1:8b` are reasonable choices for primary_model.
 
-**What does it cost to run?**
-Zero infrastructure cost — it runs on your laptop. Your only spend is Claude API usage. A typical week (200 jobs classified, 5 CVs tailored, 3 Coach sessions) costs roughly £1–3 at current Sonnet 4 prices. Bring your own key, set your own monthly limits in the Anthropic console.
+**Is my data safe?**
+All data stays local. The only external calls are to your configured LLM provider's API (with your key). profile.yaml and master_cv.json are gitignored — never committed.
 
-**Why not Postgres?**
-Because this is a single-user tool and Postgres is a distributed system. SQLite with WAL mode handles the JobPilot workload comfortably. Backup is `cp jobpilot.db jobpilot.db.backup`. If you want Postgres, the SQLAlchemy 2.0 async layer makes swapping engines a 10-line change — but you probably don't need to.
+**Can I add a new job board?**
+Yes — create a new scraper in `backend/app/scrapers/` following the `BaseScraper` pattern, register it in `SCRAPER_REGISTRY`, then add it to `job_boards` in your `profile.yaml`. No agent code changes needed.
 
-**Why Apache 2.0 and not MIT?**
-Apache 2.0 includes an explicit patent grant and a clearer contribution clause. Both are fine for this project; Apache reads as more enterprise-ready. The practical difference for you as a user is zero.
-
-**Can I use this if I'm not in the UK?**
-The Tracker, Tailor, Coach, Ghost Detector, and Follow-up email modules are market-agnostic — they'll work anywhere. The Scout module (scrapers) is UK-specific. Writing a US/EU scraper is one file inheriting `BaseScraper`; see [docs/adding-a-scraper.md](./docs/adding-a-scraper.md).
-
-**Is there a hosted version?**
-No. JobPilot is self-hosted on purpose. A hosted version would require storing your CV, applications, and interview recordings — which I'm not willing to do for a side project, and which you probably shouldn't want either.
-
-## Contributing
-
-This is primarily a personal tool that I've open-sourced. I welcome issues and PRs, but please read [CONTRIBUTING.md](./CONTRIBUTING.md) first — especially the scope section. JobPilot is not trying to become everything for everyone.
-
-Good contributions: bug fixes, new scrapers (especially non-UK), test coverage, documentation improvements, security disclosures (see [SECURITY.md](./SECURITY.md)).
-
-Out of scope: auto-apply, LinkedIn automation beyond RSS, anything that violates a job board's ToS, anything that requires a hosted component.
-
-## Acknowledgements
-
-- [**santifer/career-ops**](https://github.com/santifer/career-ops) — prior art in this space; the Story Bank and archetype detection concepts in JobPilot are inspired by Santiago's work.
-- [**Anthropic**](https://www.anthropic.com/) — Claude Sonnet 4 does the heavy lifting for JD analysis, CV tailoring, question generation, and answer evaluation.
-- **Claude Code** — I used Claude Code to implement large portions of JobPilot. The `CLAUDE.md` at the repo root is the handoff spec it reads.
+---
 
 ## License
 
-[Apache License 2.0](./LICENSE). See [NOTICE](./NOTICE) for attributions.
-
-## About the author
-
-I'm Arvind — Technical Delivery Lead with 20+ years across energy, financial services, and aviation (TCS, Natoora, Hexaware). PMP, PMI-ACP, PSM-1, PSPO-1, working through AWS. Based in Newcastle upon Tyne, UK. I built JobPilot for my own job hunt; it's now open because someone else might save themselves the spreadsheet sprawl.
-
-[Portfolio](https://arvind-portfolio-iota.vercel.app) · [GitHub](https://github.com/arvindsoni2) · [LinkedIn](https://linkedin.com/in/arvindsoni-pm)
+Apache 2.0 — see [LICENSE](./LICENSE).

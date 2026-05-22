@@ -10,10 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.application import Application, InterviewRound
 from ..models.job import JobPosting
 from ..schemas.coach import CreateSessionRequest
-from ..services.claude_client import ClaudeClient
 from ..services.coach_service import CoachService
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
+from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.coach")
 
@@ -22,13 +22,13 @@ class CoachAgent(BaseAgent):
     """Processes interview_scheduled events — researches company, generates Q&A prep.
 
     LLM usage: Heavy — delegates to existing CoachService.
+    User skills and proof points are injected from profile.yaml.
     """
 
     name = "coach"
 
-    def __init__(self, claude: ClaudeClient | None = None) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._claude = claude or ClaudeClient()
         self._coach = CoachService()
         self._bus = EventBus.instance()
 

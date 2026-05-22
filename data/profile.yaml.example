@@ -1,0 +1,101 @@
+# ── JobPilot v2 — profile.yaml template ──────────────────────────────────────
+# Copy this file to data/profile.yaml and fill in your details.
+# Or run `make dev` on first launch to use the onboarding wizard instead.
+# See examples/ directory for complete worked examples (UK contractor, US SWE, EU PM).
+#
+# NEVER commit data/profile.yaml — it contains personal information.
+# It is listed in .gitignore by default.
+
+# ─── Identity ────────────────────────────────────────────────────────────────
+candidate:
+  name: ""                          # Full name (used in CV/cover letter generation)
+  title: ""                         # Current or target professional title
+  years_experience: 0               # Total years of professional experience
+  summary: ""                       # 2-3 sentence professional summary
+
+# ─── Search Parameters ───────────────────────────────────────────────────────
+search:
+  target_roles:                     # Job titles to search for (list)
+    - ""                            # e.g. "Delivery Lead", "Senior SWE", "Product Manager"
+  locations:
+    - city: ""                      # e.g. "London", "Berlin", "Remote"
+      country: ""                   # e.g. "UK", "DE", "US"
+      radius_miles: 30
+      remote_preference: "any"      # "onsite" | "hybrid" | "remote" | "any"
+  contract_type: "any"              # "contract" | "permanent" | "freelance" | "any"
+
+# ─── Compensation ────────────────────────────────────────────────────────────
+compensation:
+  min_rate: 0
+  max_rate: 0
+  rate_type: "daily"                # "daily" | "hourly" | "annual"
+  currency: "GBP"
+  ir35_preference: "any"            # "outside" | "inside" | "any" (UK contracts)
+
+# ─── Skills & Experience ─────────────────────────────────────────────────────
+skills:
+  primary:                          # Core skills — weighted highest in scoring
+    - ""
+  secondary:                        # Supporting skills
+    - ""
+  certifications:
+    - ""
+
+domains:
+  preferred:                        # Industries / domains you want to work in
+    - ""
+  excluded:                         # Domains to filter out entirely
+    - ""
+
+# ─── Proof Points ────────────────────────────────────────────────────────────
+# Key achievements that get mapped into tailored CVs and cover letters.
+# The more specific the metrics, the better the tailoring.
+proof_points:
+  - id: "achievement_1"             # Short identifier (no spaces)
+    summary: ""                     # One-line achievement
+    context: ""                     # Company / project context
+    metrics: ""                     # Quantified result (e.g. "£500K savings")
+    tags: []                        # Skill tags for JD-to-proof-point matching
+
+# ─── Master CV ───────────────────────────────────────────────────────────────
+master_cv_path: "./data/master_cv.json"  # Created by onboarding CV upload step
+
+# ─── Job Boards ──────────────────────────────────────────────────────────────
+job_boards:
+  - name: "reed"
+    enabled: true
+    scraper: "ReedScraper"
+    search_params:
+      keywords: []
+      location: ""
+
+# ─── Scoring ─────────────────────────────────────────────────────────────────
+scoring:
+  weights:
+    skill_match: 0.35
+    experience_match: 0.30
+    rate_match: 0.20
+    location_match: 0.15
+  shortlist_threshold: 0.75         # Jobs above this score get auto-tailored
+
+# ─── LLM Provider ────────────────────────────────────────────────────────────
+# See examples/ for per-provider configuration examples.
+# Set the matching API key in .env — NEVER put keys in this file.
+llm:
+  provider: "anthropic"             # "anthropic" | "openai" | "google" | "ollama" | "azure" | "aws_bedrock"
+  triage_model: "claude-haiku-4-5-20251001"
+  primary_model: "claude-sonnet-4-20250514"
+  api_key_env: "ANTHROPIC_API_KEY"  # Name of env var holding the key
+  base_url: null                    # Override for Ollama: "http://localhost:11434"
+  temperature: 0.3
+  max_retries: 3
+  track_costs: true
+  monthly_budget: 15.00
+  currency: "GBP"
+
+# ─── Preferences ─────────────────────────────────────────────────────────────
+preferences:
+  scrape_interval_hours: 4
+  max_tailor_batch: 5
+  follow_up_days: [5, 10, 15]
+  locale: "en-GB"

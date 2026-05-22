@@ -1,0 +1,129 @@
+# ── JobPilot v2 Example Profile — EU Freelance Product Manager ───────────────
+# Product Manager / Head of Product, Berlin / Remote EU
+# Copy to data/profile.yaml and fill in your own details.
+
+candidate:
+  name: "Sam Müller"
+  title: "Senior Product Manager / Head of Product"
+  years_experience: 9
+  summary: >
+    Senior product manager with 9 years shipping B2B SaaS and marketplace
+    products across Germany and wider EU. Data-driven approach with deep
+    experience in 0→1 product development, growth loops, and working
+    with distributed engineering teams. Fluent in English and German.
+
+search:
+  target_roles:
+    - "Senior Product Manager"
+    - "Head of Product"
+    - "Principal Product Manager"
+    - "VP Product"
+    - "Product Director"
+  locations:
+    - city: "Berlin"
+      country: "Germany"
+      radius_miles: 30
+      remote_preference: "hybrid"
+    - city: "Amsterdam"
+      country: "Netherlands"
+      radius_miles: 20
+      remote_preference: "hybrid"
+    - city: "Remote"
+      country: "EU"
+      radius_miles: 0
+      remote_preference: "remote"
+  contract_type: "freelance"
+
+compensation:
+  min_rate: 800
+  max_rate: 1200
+  rate_type: "daily"
+  currency: "EUR"
+  ir35_preference: "any"
+
+skills:
+  primary:
+    - "Product strategy"
+    - "Roadmap planning"
+    - "User research & discovery"
+    - "Data analysis (SQL / Mixpanel)"
+    - "B2B SaaS"
+  secondary:
+    - "Growth product"
+    - "API product management"
+    - "OKR frameworks"
+    - "Figma / prototyping"
+    - "Python (scripting)"
+  certifications:
+    - "Pragmatic Marketing Certified (PMC VI)"
+    - "Google Analytics Individual Qualification"
+
+domains:
+  preferred:
+    - "B2B SaaS"
+    - "Marketplace / Platform"
+    - "FinTech"
+    - "Developer Tools"
+  excluded:
+    - "Defense"
+    - "Gambling"
+
+proof_points:
+  - id: "growth_loop"
+    summary: "Built viral growth loop that drove 3x signup growth in 6 months"
+    context: "Series A HR-tech startup — Berlin"
+    metrics: "Monthly signups from 2,000 to 6,500 in 6 months, CAC reduced 40%"
+    tags: ["growth", "B2B", "SaaS", "acquisition"]
+
+  - id: "platform_launch"
+    summary: "Launched marketplace API product adopted by 200+ enterprise customers"
+    context: "Scale-up e-commerce platform — Amsterdam"
+    metrics: "€4M ARR contributed in first year, 98% retention at 12 months"
+    tags: ["platform", "API", "B2B", "enterprise", "marketplace"]
+
+  - id: "data_driven_redesign"
+    summary: "Led onboarding redesign that cut time-to-value from 14 days to 3 days"
+    context: "B2B SaaS company — Remote"
+    metrics: "Activation rate improved from 34% to 67%, churn in month-1 fell 28%"
+    tags: ["onboarding", "activation", "UX", "SaaS", "data"]
+
+master_cv_path: "./data/master_cv.json"
+
+job_boards:
+  - name: "linkedin"
+    enabled: true
+    scraper: "LinkedInScraper"
+    search_params:
+      keywords: ["senior product manager", "head of product", "freelance PM"]
+      location: "Berlin"
+  - name: "indeed"
+    enabled: true
+    scraper: "IndeedScraper"
+    search_params:
+      keywords: ["product manager freelance", "head of product"]
+      location: "Berlin, Germany"
+
+scoring:
+  weights:
+    skill_match: 0.35
+    experience_match: 0.35
+    rate_match: 0.20
+    location_match: 0.10
+  shortlist_threshold: 0.73
+
+llm:
+  provider: "google"
+  triage_model: "gemini-2.0-flash"
+  primary_model: "gemini-2.5-pro"
+  api_key_env: "GOOGLE_API_KEY"
+  temperature: 0.3
+  max_retries: 3
+  track_costs: true
+  monthly_budget: 20.00
+  currency: "EUR"
+
+preferences:
+  scrape_interval_hours: 8
+  max_tailor_batch: 4
+  follow_up_days: [5, 12, 20]
+  locale: "de-DE"

@@ -14,6 +14,7 @@ from .database import AsyncSessionLocal, init_db
 from .repositories.application_repository import ApplicationRepository
 from .repositories.job_repository import JobRepository
 from .routers.agents import router as agents_router
+from .routers.profile import router as profile_router
 from .routers.analytics import router as analytics_router
 from .routers.applications import router as applications_router
 from .routers.auto_apply import router as auto_apply_router
@@ -117,9 +118,9 @@ def create_app() -> FastAPI:
         Configured FastAPI instance.
     """
     app = FastAPI(
-        title="JobPilot API",
-        description="AI-powered job application automation for UK contract roles.",
-        version="0.1.0",
+        title="JobPilot v2 API",
+        description="Autonomous multi-agent job search automation — profile-driven, human-in-the-loop.",
+        version="2.0.0",
         docs_url="/docs",
         redoc_url="/redoc",
         lifespan=lifespan,
@@ -150,6 +151,8 @@ def create_app() -> FastAPI:
     # Agentic pipeline routers
     app.include_router(agents_router)
     app.include_router(events_router)
+    # v2: profile-driven configuration
+    app.include_router(profile_router)
 
     return app
 

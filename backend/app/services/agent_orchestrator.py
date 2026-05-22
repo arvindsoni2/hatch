@@ -22,9 +22,12 @@ from ..agents.scorer_agent import ScorerAgent
 from ..agents.supervisor import SupervisorAgent
 from ..agents.tailor_agent import TailorAgent
 from ..agents.tools.event_bus import EventBus
+from ..agents.tools.profile_loader import load_profile
 from ..config import settings
 
 logger = logging.getLogger("jobpilot.orchestrator")
+
+_DEFAULT_SCRAPE_INTERVAL_HOURS = 4
 
 
 class AgentOrchestrator:
@@ -65,10 +68,15 @@ class AgentOrchestrator:
         self._started_at = time.monotonic()
         self._scheduler = AsyncIOScheduler()
 
-        # Scout cron — every SCRAPE_INTERVAL_HOURS
+        # Scout cron — interval from profile.yaml, fallback to env setting
+        try:
+            scrape_interval = load_profile().preferences.scrape_interval_hours
+        except Exception:
+            scrape_interval = settings.SCRAPE_INTERVAL_HOURS or _DEFAULT_SCRAPE_INTERVAL_HOURS
+
         self._scheduler.add_job(
             self._run_scout,
-            trigger=IntervalTrigger(hours=settings.SCRAPE_INTERVAL_HOURS),
+            trigger=IntervalTrigger(hours=scrape_interval),
             id="agent_scout",
             name="Scout Agent",
             max_instances=1,
@@ -77,7 +85,7 @@ class AgentOrchestrator:
         self._scheduler.start()
         logger.info(
             "Agent scheduler started (scout every %dh).",
-            settings.SCRAPE_INTERVAL_HOURS,
+            scrape_interval,
         )
 
         # Start supervisor polling loop as background asyncio task

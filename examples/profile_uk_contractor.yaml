@@ -1,0 +1,142 @@
+# ── JobPilot v2 Example Profile — UK Outside-IR35 Contractor ──────────────────
+# Delivery Lead / Solutions Architect, Newcastle UK
+# Copy to data/profile.yaml and fill in your own details.
+
+candidate:
+  name: "Alex Johnson"
+  title: "Senior Delivery Lead & Solutions Architect"
+  years_experience: 18
+  summary: >
+    Senior technology delivery professional with 18 years leading complex
+    digital transformation and cloud programmes across energy, public sector,
+    and financial services. Strong track record delivering £1M+ programmes
+    on time and budget. SC-eligible.
+
+search:
+  target_roles:
+    - "Delivery Lead"
+    - "Programme Manager"
+    - "Solutions Architect"
+    - "Technical Programme Manager"
+    - "Digital Delivery Manager"
+  locations:
+    - city: "Newcastle upon Tyne"
+      country: "UK"
+      radius_miles: 40
+      remote_preference: "hybrid"
+    - city: "Leeds"
+      country: "UK"
+      radius_miles: 30
+      remote_preference: "hybrid"
+    - city: "Remote"
+      country: "UK"
+      radius_miles: 0
+      remote_preference: "remote"
+  contract_type: "contract"
+
+compensation:
+  min_rate: 550
+  max_rate: 750
+  rate_type: "daily"
+  currency: "GBP"
+  ir35_preference: "outside"
+
+skills:
+  primary:
+    - "Agile delivery management"
+    - "Programme governance"
+    - "Stakeholder management"
+    - "Cloud architecture (AWS)"
+    - "Digital transformation"
+  secondary:
+    - "TOGAF / Enterprise Architecture"
+    - "SAFe / scaled Agile"
+    - "GenAI / LLM integration"
+    - "Python / FastAPI"
+    - "Data platform design"
+  certifications:
+    - "AWS Solutions Architect – Professional"
+    - "PRINCE2 Practitioner"
+    - "SAFe 5 Program Consultant"
+
+domains:
+  preferred:
+    - "Energy & Utilities"
+    - "Public Sector"
+    - "Financial Services"
+    - "Technology"
+  excluded:
+    - "Gambling"
+    - "Tobacco"
+
+proof_points:
+  - id: "mobile_workforce"
+    summary: "£500K annual savings via mobile workforce platform"
+    context: "Northern Powergrid — 18-month programme"
+    metrics: "£500K/year savings, 3,000+ field engineers onboarded"
+    tags: ["delivery", "mobile", "cost-saving", "utilities"]
+
+  - id: "cloud_migration"
+    summary: "Led AWS cloud migration for legacy billing platform"
+    context: "Major energy retailer — 12 months"
+    metrics: "35% infrastructure cost reduction, 99.9% uptime post-migration"
+    tags: ["cloud", "AWS", "migration", "infrastructure"]
+
+  - id: "digital_transformation"
+    summary: "Delivered £2.4M digital customer portal on time and under budget"
+    context: "Public sector — DWP"
+    metrics: "220K monthly active users, 94% satisfaction score"
+    tags: ["delivery", "public-sector", "digital", "customer-experience"]
+
+master_cv_path: "./data/master_cv.json"
+
+job_boards:
+  - name: "contractoruk"
+    enabled: true
+    scraper: "ContractorUKScraper"
+    search_params:
+      keywords: ["delivery lead", "solutions architect", "programme manager"]
+      location: "Newcastle"
+  - name: "jobserve"
+    enabled: true
+    scraper: "JobServeScraper"
+    search_params:
+      keywords: ["delivery lead", "solutions architect"]
+      location: "UK"
+  - name: "cwjobs"
+    enabled: true
+    scraper: "CWJobsScraper"
+    search_params:
+      keywords: ["delivery lead", "programme manager"]
+      location: "Newcastle"
+  - name: "reed"
+    enabled: true
+    scraper: "ReedScraper"
+    search_params:
+      keywords: ["solutions architect", "delivery lead"]
+      location: "Newcastle"
+
+scoring:
+  weights:
+    skill_match: 0.35
+    experience_match: 0.30
+    rate_match: 0.20
+    location_match: 0.15
+  shortlist_threshold: 0.75
+
+llm:
+  provider: "anthropic"
+  triage_model: "claude-haiku-4-5-20251001"
+  primary_model: "claude-sonnet-4-20250514"
+  api_key_env: "ANTHROPIC_API_KEY"
+  temperature: 0.3
+  max_retries: 3
+  track_costs: true
+  monthly_budget: 15.00
+  currency: "GBP"
+
+preferences:
+  scrape_interval_hours: 4
+  max_tailor_batch: 5
+  follow_up_days: [5, 10, 15]
+  locale: "en-GB"

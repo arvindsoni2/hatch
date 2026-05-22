@@ -1,0 +1,124 @@
+# ── JobPilot v2 Example Profile — US Senior Software Engineer ─────────────────
+# Senior SWE / Staff Engineer, San Francisco / Remote US
+# Copy to data/profile.yaml and fill in your own details.
+
+candidate:
+  name: "Jordan Lee"
+  title: "Senior Software Engineer / Staff Engineer"
+  years_experience: 10
+  summary: >
+    Senior software engineer with 10 years building distributed systems at
+    scale. Specialises in backend infrastructure, platform engineering, and
+    developer tooling. Proven track record shipping production services
+    handling 1B+ requests/day at FAANG and growth-stage companies.
+
+search:
+  target_roles:
+    - "Senior Software Engineer"
+    - "Staff Software Engineer"
+    - "Principal Engineer"
+    - "Platform Engineer"
+    - "Backend Engineer"
+  locations:
+    - city: "San Francisco"
+      country: "US"
+      radius_miles: 30
+      remote_preference: "hybrid"
+    - city: "Remote"
+      country: "US"
+      radius_miles: 0
+      remote_preference: "remote"
+  contract_type: "permanent"
+
+compensation:
+  min_rate: 200000
+  max_rate: 300000
+  rate_type: "annual"
+  currency: "USD"
+  ir35_preference: "any"
+
+skills:
+  primary:
+    - "Go"
+    - "Python"
+    - "Distributed systems"
+    - "Kubernetes / EKS"
+    - "AWS"
+  secondary:
+    - "PostgreSQL"
+    - "Kafka"
+    - "Terraform"
+    - "gRPC"
+    - "TypeScript / React"
+  certifications:
+    - "AWS Solutions Architect – Associate"
+    - "Certified Kubernetes Administrator (CKA)"
+
+domains:
+  preferred:
+    - "Developer Tools"
+    - "Infrastructure / Platform"
+    - "FinTech"
+    - "AI / ML Infrastructure"
+  excluded:
+    - "Defense"
+
+proof_points:
+  - id: "latency_reduction"
+    summary: "Reduced p99 API latency by 60% through query optimisation and caching"
+    context: "Mid-stage FinTech startup — 6 months"
+    metrics: "p99 from 450ms to 180ms, saved $80K/year in cloud spend"
+    tags: ["performance", "backend", "database", "caching"]
+
+  - id: "platform_migration"
+    summary: "Led migration of monolith to microservices serving 500K daily active users"
+    context: "Series B startup — 14 months"
+    metrics: "Zero-downtime migration, 3x deployment frequency post-migration"
+    tags: ["platform", "microservices", "migration", "kubernetes"]
+
+  - id: "oncall_reduction"
+    summary: "Reduced on-call incidents by 70% through observability overhaul"
+    context: "FAANG team — 8 months"
+    metrics: "Page volume from 120/month to 36/month, MTTR reduced from 45min to 8min"
+    tags: ["reliability", "observability", "SRE", "platform"]
+
+master_cv_path: "./data/master_cv.json"
+
+job_boards:
+  - name: "linkedin"
+    enabled: true
+    scraper: "LinkedInScraper"
+    search_params:
+      keywords: ["senior software engineer", "staff engineer", "platform engineer"]
+      location: "San Francisco Bay Area"
+  - name: "indeed"
+    enabled: true
+    scraper: "IndeedScraper"
+    search_params:
+      keywords: ["senior software engineer go python", "staff engineer"]
+      location: "San Francisco, CA"
+
+scoring:
+  weights:
+    skill_match: 0.40
+    experience_match: 0.30
+    rate_match: 0.20
+    location_match: 0.10
+  shortlist_threshold: 0.72
+
+llm:
+  provider: "openai"
+  triage_model: "gpt-4o-mini"
+  primary_model: "gpt-4o"
+  api_key_env: "OPENAI_API_KEY"
+  temperature: 0.3
+  max_retries: 3
+  track_costs: true
+  monthly_budget: 20.00
+  currency: "USD"
+
+preferences:
+  scrape_interval_hours: 6
+  max_tailor_batch: 3
+  follow_up_days: [7, 14, 21]
+  locale: "en-US"

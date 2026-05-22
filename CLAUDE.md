@@ -1,369 +1,138 @@
-# JobPilot — Claude Code Project Configuration
+# JobPilot v2 — Claude Code Configuration
 
 ## Project Context
-JobPilot is an AI-powered job application automation platform for outside-IR35 UK contract roles.
-This is a personal tool built for a single user (Solutions Architect with 20+ years experience).
-The platform has 4 modules being built incrementally: Scout → Tracker → Tailor → Coach.
 
-**Current Phase: v2 Enhancements — Broader Search + Auto-Apply + Smart Features**
+Open-source, self-hosted, autonomous multi-agent job search automation platform. Built as a LangGraph supervisor pattern on top of an existing FastAPI + Next.js 14 codebase. Four agents (Scout, Scorer, Tailor, Coach) orchestrated by a Supervisor StateGraph with human-in-the-loop checkpoints. Fully configurable via `profile.yaml` — no user data is hardcoded anywhere in the codebase.
 
-All 4 phases are complete (130 tests passing, Docker running). v2 adds:
-- Broader scraper search (all IT roles, 90-day lookback)
-- AI batch classifier with 0-100 match scoring
-- Auto-apply engine (Playwright, Prepare→Review→Submit)
-- Daily digest email
-- Recruiter contact finder
-- A/B testing analytics
+**Companion documents (read before building):**
+- `01_PRD_JobPilot_v2.md` — problem statement, goals, requirements
+- `02_Design_JobPilot_v2.md` — architecture, data model, agent specs, prompts
 
 ## Tech Stack
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0, Alembic
-- **Scraping:** Playwright (JS-rendered sites), BeautifulSoup4 (static sites), httpx (API calls)
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui
-- **Database:** SQLite (single file, portable, zero-config)
-- **AI:** Claude API (claude-sonnet-4-20250514) via anthropic Python SDK
-- **Scheduling:** APScheduler (in-process) with cron-like triggers
-- **Containerisation:** Docker Compose (local deployment only)
 
-## Architecture Principles
-- **Async everywhere** — all scraper and API code uses async/await
-- **Repository pattern** — database access through repository classes, never raw SQL in routes
-- **Service layer** — business logic in services/, routes are thin wrappers
-- **Factory pattern for scrapers** — each job board = 1 scraper class inheriting BaseScraper
-- **Pydantic v2** — all request/response models, strict validation
-- **Fail gracefully** — scrapers log errors and continue, never crash the scheduler
+- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic
+- **Agents:** LangGraph (StateGraph, SqliteSaver, interrupt)
+- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui
+- **Database:** SQLite (single file, WAL mode)
+- **Vector store:** ChromaDB (local, file-backed at `./data/chroma`)
+- **AI:** LangChain model abstraction via `init_chat_model()` — supports Anthropic, OpenAI, Google, Ollama, Azure, Bedrock. Default: Anthropic Claude. Provider configured in `profile.yaml`, loaded via `llm_factory.py`.
+- **Scraping:** Playwright (JS-rendered), BeautifulSoup4 (static), httpx (APIs)
+- **Scheduling:** APScheduler (in-process, cron triggers)
+- **Containerisation:** Docker Compose (local only)
+
+## Key Architecture Principles
+
+1. **Profile-driven, not hardcoded.** All user-specific data (roles, locations, skills, proof points, scoring weights, job boards) lives in `profile.yaml`. Agents read this at runtime via `profile_loader.py`. Never put user-specific values in code.
+2. **Wrap, don't rewrite.** All existing v1 services (scrapers, tailor, coach) are called as tools by agents. Do not modify files in `services/` unless fixing a bug.
+3. **Supervisor is the single entry point.** No agent runs independently — the Supervisor routes all events.
+4. **Human-in-the-loop is non-negotiable.** The `request_approval` node uses `interrupt()`. Never bypass this in production code. `AUTO_APPROVE` env var exists for testing only.
+5. **Events are persisted before dispatch.** The event bus writes to SQLite first, then enqueues. This ensures no event is lost on crash.
+6. **SQLite is source of truth.** ChromaDB is an advisory layer for scoring. If ChromaDB is lost, rebuild from SQLite.
+7. **Open-source friendly.** No secrets, no user data, no hardcoded paths in committed code. Example profiles ship in `examples/`. First-run onboarding wizard creates `profile.yaml`.
 
 ## File Conventions
-- Python: snake_case, type hints on all functions, Google-style docstrings on public methods
-- TypeScript: camelCase, strict mode enabled, no `any` type
-- Tests: pytest (backend), vitest (frontend), minimum 80% coverage on services/
-- Git: conventional commits — feat:, fix:, docs:, refactor:, test:, chore:
 
-## Project Structure
-```
-jobpilot/
-├── backend/
-│   ├── app/
-│   │   ├── main.py                    # FastAPI app with lifespan events
-│   │   ├── config.py                  # Pydantic Settings from .env
-│   │   ├── database.py                # SQLAlchemy async engine + sessionmaker
-│   │   ├── models/                    # SQLAlchemy ORM models
-│   │   │   ├── __init__.py
-│   │   │   ├── job.py                 # JobPosting model
-│   │   │   ├── application.py         # Application model (Phase 2)
-│   │   │   └── interview.py           # InterviewRound model (Phase 4)
-│   │   ├── schemas/                   # Pydantic request/response schemas
-│   │   │   ├── __init__.py
-│   │   │   └── job.py
-│   │   ├── scrapers/                  # One file per job board
-│   │   │   ├── __init__.py
-│   │   │   ├── base.py                # Abstract BaseScraper class
-│   │   │   ├── contractoruk.py
-│   │   │   ├── jobserve.py
-│   │   │   ├── reed.py
-│   │   │   ├── cwjobs.py
-│   │   │   ├── itjobswatch.py
-│   │   │   ├── linkedin.py
-│   │   │   ├── adzuna.py
-│   │   │   └── scheduler.py           # APScheduler configuration
-│   │   ├── services/
-│   │   │   ├── __init__.py
-│   │   │   ├── job_service.py         # Job CRUD + search logic
-│   │   │   └── dedup.py               # Fuzzy deduplication engine
-│   │   ├── repositories/
-│   │   │   ├── __init__.py
-│   │   │   └── job_repository.py      # Database access layer
-│   │   └── routers/
-│   │       ├── __init__.py
-│   │       └── jobs.py                # /api/jobs endpoints
-│   ├── alembic/                       # Database migrations
-│   ├── tests/
-│   │   ├── test_scrapers/
-│   │   ├── test_services/
-│   │   └── conftest.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── layout.tsx
-│   │   │   ├── page.tsx               # Dashboard home
-│   │   │   └── jobs/
-│   │   │       └── page.tsx           # Job listings with filters
-│   │   ├── components/
-│   │   │   ├── JobCard.tsx
-│   │   │   ├── JobTable.tsx
-│   │   │   ├── FilterPanel.tsx
-│   │   │   └── StatsBar.tsx
-│   │   └── lib/
-│   │       └── api.ts                 # API client
-│   ├── package.json
-│   ├── tailwind.config.ts
-│   ├── tsconfig.json
-│   └── Dockerfile
-├── docker-compose.yml
-├── Makefile
-├── .env.example
-├── .gitignore
-├── CLAUDE.md                          # This file
-└── README.md
-```
+- **Python:** snake_case, type hints on all functions, Google-style docstrings on public methods
+- **TypeScript:** camelCase, strict mode, no `any` type
+- **Tests:** pytest (backend), vitest (frontend)
+- **Git:** conventional commits — `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`
+- **New agent code goes in** `backend/app/agents/`
+- **New models go in** `backend/app/models/`
+- **New routes go in** `backend/app/routes/`
+- **New frontend pages go in** `frontend/app/`
 
-## Key Commands
-```bash
-make dev          # Start full stack (backend + frontend + hot reload)
-make scrape       # Run all scrapers manually once
-make scrape-one   # Run a single scraper: make scrape-one BOARD=contractoruk
-make test         # Run all tests
-make test-back    # Backend tests only
-make test-front   # Frontend tests only
-make migrate      # Run Alembic migrations
-make migrate-new  # Create new migration: make migrate-new MSG="add_skills_column"
-make docker-up    # Build and start Docker containers
-make docker-down  # Stop containers
-make lint         # Run ruff (Python) + eslint (TypeScript)
-make seed         # Seed database with sample data for development
-```
+## Important Patterns
 
-## Environment Variables (.env)
-```
-# Required
-DATABASE_URL=sqlite+aiosqlite:///./jobpilot.db
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Scraper Config
-SCRAPE_INTERVAL_HOURS=4
-SCRAPE_DELAY_MIN_SECONDS=2
-SCRAPE_DELAY_MAX_SECONDS=8
-PLAYWRIGHT_HEADLESS=true
-
-# Optional API Keys (for boards with APIs)
-REED_API_KEY=                    # Free at reed.co.uk/developers
-ADZUNA_APP_ID=                   # Free at developer.adzuna.com
-ADZUNA_APP_KEY=
-
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:8000
-
-# Notifications
-NOTIFICATION_EMAIL=              # For email alerts (Phase 2)
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASS=
-```
-
-## Scraper Guidelines
-- ALWAYS add random delays between requests (2-8 seconds)
-- ALWAYS rotate User-Agent strings from the UA pool in config.py
-- ALWAYS respect robots.txt — check before scraping a new domain
-- NEVER scrape more than 1 request per 3 seconds per domain
-- Use Playwright stealth plugin for JS-heavy sites (ContractorUK, JobServe, CWJobs)
-- Use httpx for REST APIs (Reed, Adzuna)
-- Use BeautifulSoup4 for static HTML (ITJobsWatch)
-- Log all scrape runs with timestamp, count, errors to scrape_log table
-- Each scraper MUST implement the BaseScraper abstract class
-
-## Database Rules
-- All timestamps stored as UTC
-- Use Alembic for ALL schema changes, never modify SQLite directly
-- Repository methods return Pydantic schemas, not ORM objects outside the repo layer
-- Soft-delete pattern: `is_active` flag, never hard delete job postings
-
-## Testing Rules
-- Mock all external HTTP calls in tests (use pytest-httpx or responses)
-- Mock Playwright browser in scraper tests
-- Use factory_boy for test data generation
-- Integration tests use a separate SQLite in-memory database
-- Every new scraper MUST have tests with sample HTML fixtures
-
-## Common Patterns
-
-### Adding a New Scraper
-1. Create `backend/app/scrapers/{board_name}.py`
-2. Inherit from `BaseScraper`
-3. Implement `scrape()` → returns `List[JobPostingCreate]`
-4. Register in `scheduler.py`
-5. Add HTML fixture in `tests/fixtures/{board_name}/`
-6. Write tests in `tests/test_scrapers/test_{board_name}.py`
-
-### API Endpoint Pattern
+### Agent pattern
 ```python
-@router.get("/jobs", response_model=PaginatedResponse[JobPostingRead])
-async def list_jobs(
-    skip: int = 0,
-    limit: int = 50,
-    ir35_status: Optional[str] = Query(None),
-    source: Optional[str] = Query(None),
-    search: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db)
-):
-    repo = JobRepository(db)
-    return await repo.list_with_filters(skip, limit, ir35_status, source, search)
+# Every agent inherits BaseAgent and follows this structure:
+class ScoutAgent(BaseAgent):
+    name = "scout"
+    
+    async def run(self, state: dict) -> dict:
+        """Single run. Called by supervisor node."""
+        # 1. Get inputs from state
+        # 2. Call existing services (DO NOT REWRITE)
+        # 3. Emit events via self.emit_event()
+        # 4. Return updated state
 ```
 
-## Error Handling
-- Scrapers: catch all exceptions per-listing, log and continue to next
-- API: return proper HTTP status codes with detail messages
-- Database: use SQLAlchemy's built-in retry for connection issues
-- Never expose stack traces to frontend in production
+### Event emission
+```python
+await self.event_bus.emit(
+    event_type="job_discovered",
+    source="scout",
+    payload={"job_id": job.id, "title": job.title, ...}
+)
+```
 
-## Current TODO (Scout Module)
-- [ ] Project scaffold with Docker Compose
-- [ ] SQLAlchemy models + Alembic initial migration
-- [ ] BaseScraper abstract class
-- [ ] ContractorUK scraper (Playwright)
-- [ ] JobServe scraper (Playwright)
-- [ ] Reed scraper (REST API)
-- [ ] CWJobs scraper (Playwright)
-- [ ] ITJobsWatch scraper (BeautifulSoup)
-- [ ] LinkedIn scraper (RSS/API)
-- [ ] Adzuna scraper (REST API)
-- [ ] Fuzzy dedup engine
-- [ ] APScheduler integration
-- [ ] FastAPI endpoints for job listing/search
-- [ ] Next.js job listing dashboard
-- [ ] Desktop notification on new matches
-- [ ] Docker production build
+### LangGraph interrupt
 
----
+```python
+from langgraph.types import interrupt
+human_decision = interrupt({"type": "approval", "data": application_data})
+# Graph pauses here. Resumes when /api/v2/approvals/{id}/approve is called.
+```
 
-## v2 Architecture Changes
+## Commands
 
-### Scraper Evolution
-- Scrapers now fetch ALL IT jobs (not just outside IR35 / contract)
-- 90-day lookback window; quick (3h, Reed+Adzuna only) and full (8h, all boards) triggers
-- New fields extracted: employment_type, working_pattern, rate_type
-- AI batch classifier enriches jobs with: seniority, match_score, red_flags
-
-### Auto-Apply Engine
-- Playwright-based form automation for Reed + CWJobs ONLY
-- 3-stage flow: Prepare → Review → Submit (individual review mandatory)
-- Rate limit: 10 applications per hour, 30s cooldown
-- CAPTCHA → falls back to manual with browser handoff
-- Safety rules: never submit without approval; always screenshot; always log
-
-### Match Scoring
-- Batch classifier: 30 jobs per Claude API call
-- Score 0-100: skill overlap, seniority, sector, rate, location
-- Scores cached in job_postings.match_score
-
-### Daily Digest
-- APScheduler CronTrigger at configured time (default 07:00 Europe/London)
-- HTML email: new high-match jobs, action items, interviews, pipeline stats
-- Sent via aiosmtplib; skips if nothing to report
-
-## v2 Key Commands
 ```bash
-make classify             # Run AI classifier on pending jobs
-make digest-preview       # Preview digest email in browser
-make digest-send          # Send digest now
+make dev          # Start full stack (FastAPI + Next.js + Docker)
+make test         # Run all tests
+make test-agents  # Run agent tests only
+make migrate      # Run Alembic migrations
+make scrape       # Manually trigger Scout agent
+make score        # Manually trigger Scorer on pending jobs
+make status       # Show all agent statuses
 ```
 
-## v2 New Files
-```
-backend/app/services/job_classifier.py
-backend/app/services/digest_service.py
-backend/app/services/recruiter_finder.py
-backend/app/services/auto_apply/  (engine + form_detector + form_filler + question_answerer + captcha_handler + platform_handlers/)
-backend/app/routers/auto_apply.py
-backend/app/routers/digest.py
-backend/app/repositories/auto_apply_repository.py
-backend/app/templates/candidate_profile.json  (personal data — gitignored)
-backend/app/templates/emails/daily_digest.html
-backend/app/prompts/job_classification.j2
-frontend/src/components/AdvancedFilterPanel.tsx
-frontend/src/components/AutoApplyReview.tsx
-frontend/src/components/MatchScoreBadge.tsx
-frontend/src/components/DigestPreview.tsx
-frontend/src/app/auto-apply/page.tsx
-frontend/src/app/settings/page.tsx
-```
+## Environment Variables
 
-
----
-
-## Tier 1 Features — Follow-Up Email Automation + Ghost Job Detector
-
-### Feature A: Follow-Up Email Automation
-
-Automatically generates personalised recruiter follow-up emails triggered by Phase 2
-follow-up reminders. Human review required before sending. Three email types:
-- `post_application` — 5 days after applying (≤120 words)
-- `post_interview_thankyou` — within 24h of interview completion (≤100 words)
-- `warm_reengagement` — 14+ days stalled in applied (≤80 words)
-
-**Key field rules:**
-- `application.agency_name` (not `agency`)
-- `job.skills` JSON list (not `skills_required`)
-- `job.posted_at` (not `posted_date`)
-
-**Email status lifecycle:** `draft` → `approved` → `sent` | `skipped` | `failed`
-
-**Rate limits (EmailSender):** max 5/day total, 10 min between same domain, no repeat in 7 days
-
-**New files:**
-```
-backend/app/models/follow_up_email.py       — FollowUpEmail ORM
-backend/app/schemas/email.py                — GeneratedEmail, FollowUpEmailRead, EmailSendRequest
-backend/app/services/email_generator.py    — EmailGenerator (uses ClaudeClient.complete_json)
-backend/app/services/email_sender.py       — EmailSender (aiosmtplib + mailto)
-backend/app/routers/emails.py              — /api/emails/* (9 endpoints)
-backend/app/templates/emails/follow_up_email_wrapper.html
-backend/app/templates/emails/follow_up_email_plain.j2
-frontend/src/components/EmailPreviewModal.tsx
-```
-
-**Scheduler jobs:**
-- `reminder_email_draft` — every 1h, drafts emails for overdue follow-ups
-- `thank_you_email_check` — every 2h, drafts thank-you for completed interviews
-
-**Make commands:**
 ```bash
-make email-pending                          # List draft emails awaiting review
-make email-generate APP_ID=xxx TYPE=post_application
+# Existing (provider-dependent — set the one matching profile.yaml llm.provider)
+ANTHROPIC_API_KEY=           # If using Anthropic
+OPENAI_API_KEY=              # If using OpenAI
+GOOGLE_API_KEY=              # If using Google
+# Ollama needs no key — just set llm.base_url in profile.yaml
+DATABASE_URL=sqlite:///data/jobpilot.db
+
+# New for v2
+SCRAPE_INTERVAL_HOURS=4      # Scout cron schedule
+SCORE_THRESHOLD=0.75          # Min score for auto-shortlisting
+MAX_TAILOR_BATCH=5            # Max jobs to tailor per run
+AUTO_APPROVE=false            # NEVER set to true in production
+AGENT_LOG_LEVEL=INFO          # DEBUG for development
+CHROMA_PERSIST_DIR=./data/chroma
+LANGGRAPH_CHECKPOINT_DB=sqlite:///data/langgraph_checkpoints.db
 ```
 
----
+## Do NOT
 
-### Feature B: Ghost Job Detector
+- Hardcode any user-specific data (names, skills, locations, rates) anywhere in the codebase — it all comes from `profile.yaml`
+- Import LLM provider SDKs directly (`anthropic`, `openai`, `google.generativeai`) — always use `llm_factory.py` which wraps LangChain's `init_chat_model()`
+- Use provider-specific prompt features (Anthropic XML tags, OpenAI function-calling format) — prompts must be provider-agnostic; use LangChain's `with_structured_output()` for structured responses
+- Modify existing services in `backend/app/services/` — agents wrap them, not replace them
+- Set `AUTO_APPROVE=true` in any committed config
+- Send any data to external APIs without human approval checkpoint
+- Use `CrewAI` — this project uses LangGraph exclusively
+- Add authentication — this is a single-user, self-hosted system
+- Use `WidthType.PERCENTAGE` in any docx generation (breaks in Google Docs)
+- Store secrets in any file under version control
+- Use synchronous DB calls — all SQLAlchemy operations use `async_session`
+- Commit `data/profile.yaml` or `data/master_cv.json` — these are user data, gitignored
 
-Pure algorithmic 0-100 ghost score on every job posting. No Claude API needed. Six
-weighted signals — score additive, capped at 100:
+## Do
 
-| Signal              | Weight | Trigger                                        |
-|---------------------|--------|------------------------------------------------|
-| repost_frequency    | +30    | times_seen >= 3                                |
-| age_stale           | +25    | posted 60+ days ago (12 pts for 45-59 days)    |
-| vague_description   | +20    | <200 words or <3 specificity markers           |
-| agency_spam         | +15    | same company, 10+ active similar roles/30 days |
-| missing_details     | +10    | no rate AND company name is 'confidential'     |
-| no_response_history | +10    | applied 21+ days ago, still in 'applied' status|
-
-**Verdicts:** `likely_real` (0-24) | `uncertain` (25-49) | `suspicious` (50-74) | `likely_ghost` (75+)
-
-**Default behaviour:** `list_with_filters(hide_ghosts=True)` excludes `likely_ghost` from normal listings.
-Pass `?hide_ghosts=false` to the jobs API to see ghost-flagged jobs.
-
-**New files:**
-```
-backend/app/models/agency_reputation.py    — AgencyReputation ORM
-backend/app/schemas/ghost.py               — GhostScore, GhostStats, GhostSignalDetail, GhostOverrideRequest
-backend/app/services/ghost_detector.py    — GhostDetector (analyse_job, analyse_batch, update_from_outcome)
-backend/app/routers/ghost.py              — /api/ghost/* (6 endpoints)
-frontend/src/components/GhostBadge.tsx    — Warning badge with hover tooltip + override button
-```
-
-**DB columns added to job_postings:**
-`ghost_score`, `ghost_verdict`, `ghost_signals` (JSON text), `ghost_analysed_at`,
-`first_seen_at`, `times_seen` (default 1), `last_seen_at`
-
-**Scheduler job:**
-- `ghost_detector_daily` — daily at 03:00 UTC
-
-**Make commands:**
-```bash
-make ghost-analyse                          # Trigger batch ghost analysis
-make ghost-stats                            # Show verdict breakdown
-```
-
-**Migration:** `44b9ca7b1743_add_ghost_scoring` — adds ghost columns + agency_reputations table
+- Use `llm_factory.py` for all LLM calls — `get_triage_model()` for pre-filtering, `get_primary_model()` for detailed work. Never instantiate provider clients directly.
+- Use LangChain `with_structured_output(PydanticModel)` for all structured LLM responses — this handles provider differences transparently
+- Read all user-specific parameters from `profile.yaml` via `profile_loader.py` — roles, locations, skills, weights, thresholds, proof points, board config, LLM provider
+- Validate `profile.yaml` against the Pydantic schema (`schemas/profile.py`) on load
+- Use `interrupt()` from `langgraph.types` for human-in-the-loop (not `interrupt_before` at compile time — we use the dynamic `interrupt()` function)
+- Persist events to DB before enqueueing them
+- Include the user's configured proof points (from `profile.yaml`) in every tailored CV
+- Use Haiku for pre-filtering, Sonnet for detailed scoring
+- Keep the Supervisor `max_iterations` safety valve
+- Add structured JSON logging for every agent action
+- Write tests for routing logic and approval flow
+- Ship example profiles in `examples/` for new users to reference
+- Ensure onboarding wizard creates a valid `profile.yaml` before agents can run
