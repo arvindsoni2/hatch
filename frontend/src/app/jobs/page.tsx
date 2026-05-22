@@ -3,31 +3,22 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   fetchJobs,
-  fetchFilterCounts,
+  fetchRawProfile,
   type Job,
   type ScrapeResult,
-  type FilterCounts,
 } from "@/lib/api";
-import { JobTable } from "@/components/JobTable";
+import { JobCard } from "@/components/JobCard";
 import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
-import {
-  AdvancedFilterPanel,
-  type AdvancedFilters,
-} from "@/components/AdvancedFilterPanel";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, Loader2, SlidersHorizontal } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, SlidersHorizontal, Eye } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
-interface JobsState {
-  jobs: Job[];
-  total: number;
-  loading: boolean;
-  error: string | null;
-}
-
 export default function JobsPage() {
-  // Legacy filter panel state (source + scrape trigger)
+  const [threshold, setThreshold] = useState(0.75);
+  const [thresholdLoaded, setThresholdLoaded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
   const [filters, setFilters] = useState<FilterValues>({
     search: "",
     ir35_status: "",
@@ -36,70 +27,53 @@ export default function JobsPage() {
     hide_ghosts: true,
   });
 
-  // V2 advanced filters
-  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>({});
-  const [filterCounts, setFilterCounts] = useState<FilterCounts | undefined>(undefined);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
   const [page, setPage] = useState(0);
-  const [state, setState] = useState<JobsState>({
-    jobs: [],
-    total: 0,
-    loading: true,
-    error: null,
-  });
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Fetch filter counts on mount
+  // Load threshold from profile once
   useEffect(() => {
-    fetchFilterCounts()
-      .then((counts) => setFilterCounts(counts))
-      .catch(() => {
-        // Non-critical — counts are just display hints
-      });
+    fetchRawProfile()
+      .then((p) => {
+        setThreshold(p.scoring?.shortlist_threshold ?? 0.75);
+      })
+      .catch(() => {})
+      .finally(() => setThresholdLoaded(true));
   }, []);
 
   const loadJobs = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
+    setLoading(true);
+    setError(null);
     try {
-      const apiFilters = {
-        search: advancedFilters.search || filters.search || undefined,
-        ir35_status: advancedFilters.ir35_status || filters.ir35_status || undefined,
-        source: filters.source || undefined,
-        min_rate: advancedFilters.min_rate ?? (filters.min_rate ? parseFloat(filters.min_rate) : undefined),
-        max_rate: advancedFilters.max_rate,
-        employment_type: advancedFilters.employment_type,
-        working_pattern: advancedFilters.working_pattern,
-        min_match_score: advancedFilters.min_match_score,
-        posted_after: advancedFilters.posted_after,
-        hide_ghosts: filters.hide_ghosts,
-      };
-
-      const response = await fetchJobs(apiFilters, page, PAGE_SIZE);
-      setState({
-        jobs: response.items,
-        total: response.total,
-        loading: false,
-        error: null,
-      });
+      const res = await fetchJobs(
+        {
+          search: filters.search || undefined,
+          ir35_status: filters.ir35_status || undefined,
+          source: filters.source || undefined,
+          min_rate: filters.min_rate ? parseFloat(filters.min_rate) : undefined,
+          hide_ghosts: filters.hide_ghosts,
+          min_match_score: showAll ? undefined : threshold,
+        },
+        page,
+        PAGE_SIZE,
+      );
+      setJobs(res.items);
+      setTotal(res.total);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to load jobs";
-      setState({ jobs: [], total: 0, loading: false, error: message });
+      setError(err instanceof Error ? err.message : "Failed to load jobs");
+    } finally {
+      setLoading(false);
     }
-  }, [filters, advancedFilters, page]);
+  }, [filters, page, threshold, showAll]);
 
   useEffect(() => {
-    void loadJobs();
-  }, [loadJobs]);
+    if (thresholdLoaded) void loadJobs();
+  }, [loadJobs, thresholdLoaded]);
 
-  // Reset to page 0 when filters change
   function handleFilterChange(newFilters: FilterValues) {
     setFilters(newFilters);
-    setPage(0);
-  }
-
-  function handleAdvancedFilterChange(newFilters: AdvancedFilters) {
-    setAdvancedFilters(newFilters);
     setPage(0);
   }
 
@@ -107,80 +81,101 @@ export default function JobsPage() {
     void loadJobs();
   }
 
-  // Determine if any jobs have match scores
-  const hasMatchScores = state.jobs.some((j) => j.match_score != null);
-
-  const totalPages = Math.ceil(state.total / PAGE_SIZE);
+  const totalPages = Math.ceil(total / PAGE_SIZE);
   const startItem = page * PAGE_SIZE + 1;
-  const endItem = Math.min((page + 1) * PAGE_SIZE, state.total);
+  const endItem = Math.min((page + 1) * PAGE_SIZE, total);
+  const thresholdPct = Math.round(threshold * 100);
 
   return (
     <div className="space-y-6">
-      {/* Page header */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Contract Jobs</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {state.total > 0
-              ? `${state.total.toLocaleString()} contract roles found`
-              : "Browse and filter UK IT contract roles"}
+            {!showAll
+              ? `Showing matches ≥ ${thresholdPct}% — ${total.toLocaleString()} jobs`
+              : `All ${total.toLocaleString()} jobs`}
           </p>
         </div>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => setShowAdvanced((v) => !v)}
+          onClick={() => { setShowAll((v) => !v); setPage(0); }}
           className="flex items-center gap-2"
         >
-          <SlidersHorizontal className="h-4 w-4" />
-          {showAdvanced ? "Hide filters" : "Advanced filters"}
+          <Eye className="h-4 w-4" />
+          {showAll ? `Show ≥${thresholdPct}% only` : "Show all jobs"}
         </Button>
       </div>
 
-      {/* Legacy filter panel (source selector + scrape trigger) */}
+      {/* Filter panel */}
       <FilterPanel
         filters={filters}
         onFilterChange={handleFilterChange}
         onScrapeComplete={handleScrapeComplete}
       />
 
-      {/* Advanced filter panel */}
-      {showAdvanced && (
-        <AdvancedFilterPanel
-          filters={advancedFilters}
-          filterCounts={filterCounts}
-          onChange={handleAdvancedFilterChange}
-          hasMatchScores={hasMatchScores}
-        />
+      {/* Score band legend */}
+      {!showAll && (
+        <div className="flex items-center gap-4 text-xs text-slate-500">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-green-400 inline-block" />
+            ≥{thresholdPct}% auto-shortlisted
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-300 inline-block" />
+            50–{thresholdPct - 1}% parked
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-slate-300 inline-block" />
+            &lt;50% hidden
+          </span>
+        </div>
       )}
 
       {/* Results */}
-      {state.loading ? (
+      {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-          <span className="ml-3 text-slate-500">Loading jobs...</span>
+          <span className="ml-3 text-slate-500">Loading jobs…</span>
         </div>
-      ) : state.error ? (
+      ) : error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center">
-          <p className="text-red-700">{state.error}</p>
-          <Button
-            onClick={() => void loadJobs()}
-            variant="outline"
-            size="sm"
-            className="mt-4"
-          >
+          <p className="text-red-700">{error}</p>
+          <Button onClick={() => void loadJobs()} variant="outline" size="sm" className="mt-4">
             Retry
           </Button>
         </div>
+      ) : jobs.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center">
+          {showAll ? (
+            <p className="text-slate-500">No jobs found. Try adjusting your filters or trigger a scrape.</p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-slate-700 font-medium">No high-match jobs right now.</p>
+              <p className="text-sm text-slate-500">
+                Your threshold is {thresholdPct}%. Try{" "}
+                <button onClick={() => setShowAll(true)} className="text-brand-600 underline">
+                  showing all jobs
+                </button>{" "}
+                or broaden your search in Settings.
+              </p>
+            </div>
+          )}
+        </div>
       ) : (
         <>
-          <JobTable jobs={state.jobs} />
+          <div className="space-y-2">
+            {jobs.map((job) => (
+              <JobCard key={job.id} job={job} threshold={threshold} />
+            ))}
+          </div>
 
-          {/* Pagination */}
-          {state.total > PAGE_SIZE && (
+          {total > PAGE_SIZE && (
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-500">
-                Showing {startItem}–{endItem} of {state.total.toLocaleString()} jobs
+                Showing {startItem}–{endItem} of {total.toLocaleString()} jobs
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -189,8 +184,7 @@ export default function JobsPage() {
                   onClick={() => setPage((p) => Math.max(0, p - 1))}
                   disabled={page === 0}
                 >
-                  <ChevronLeft className="h-4 w-4" />
-                  Previous
+                  <ChevronLeft className="h-4 w-4" /> Previous
                 </Button>
                 <span className="text-sm text-slate-600">
                   Page {page + 1} of {totalPages}
@@ -201,8 +195,7 @@ export default function JobsPage() {
                   onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                   disabled={page >= totalPages - 1}
                 >
-                  Next
-                  <ChevronRight className="h-4 w-4" />
+                  Next <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
             </div>

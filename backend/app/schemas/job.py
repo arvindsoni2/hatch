@@ -82,6 +82,11 @@ class JobPostingRead(BaseModel):
     ghost_verdict: str | None = None
     ghost_signals: list[list] | None = None
     ghost_analysed_at: datetime | None = None
+    # Per-dimension scores (joined from job_scores table)
+    skill_match: float | None = None
+    experience_match: float | None = None
+    rate_match: float | None = None
+    location_match: float | None = None
 
     @field_validator("ghost_signals", mode="before")
     @classmethod

@@ -1,34 +1,219 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { fetchStats, fetchJobs, fetchPendingEmails, fetchEmailStats, fetchGhostStats, fetchProfileStatus } from "@/lib/api";
-import { StatsBar } from "@/components/StatsBar";
-import { JobTable } from "@/components/JobTable";
+import {
+  fetchProfileStatus,
+  fetchRawProfile,
+  fetchAllAgentStatus,
+  fetchPipelineStats,
+  fetchPendingApprovals,
+  fetchJobs,
+  getUpcomingInterviews,
+  triggerAgent,
+  type AllAgentStatus,
+  type PipelineStats,
+  type PendingApproval,
+  type RawProfile,
+} from "@/lib/api";
+import { JobCard } from "@/components/JobCard";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, RefreshCw, Mail, Ghost } from "lucide-react";
+import { ArrowRight, CheckCircle2, AlertTriangle, XCircle, Zap, ClipboardCheck, Briefcase, Stars } from "lucide-react";
+import { formatDistanceToNow, addHours } from "date-fns";
 
-// Revalidate dashboard every 60 seconds
 export const revalidate = 60;
 
-async function getDashboardData() {
-  try {
-    const [stats, recentJobsResponse, pendingEmails, ghostStats] = await Promise.all([
-      fetchStats(),
-      fetchJobs({ hide_ghosts: false }, 0, 10),
-      fetchPendingEmails().catch(() => []),
-      fetchGhostStats().catch(() => null),
-    ]);
-    return { stats, recentJobs: recentJobsResponse.items, pendingEmails, ghostStats, error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return {
-      stats: null,
-      recentJobs: [],
-      pendingEmails: [],
-      ghostStats: null,
-      error: `Failed to connect to API: ${message}. Is the backend running on port 8000?`,
-    };
-  }
+// ── Agent status strip ────────────────────────────────────────────────────────
+
+function getSystemHealth(agentStatus: AllAgentStatus | null): "green" | "amber" | "red" {
+  if (!agentStatus) return "amber";
+  const statuses = agentStatus.agents.map((a) => a.status);
+  if (statuses.includes("error")) return "red";
+  if (statuses.includes("running")) return "green";
+  if (statuses.every((s) => s === "never_run")) return "amber";
+  return "green";
 }
+
+function AgentStatusStrip({
+  agentStatus,
+  scrapeIntervalHours,
+}: {
+  agentStatus: AllAgentStatus | null;
+  scrapeIntervalHours: number;
+}) {
+  const health = getSystemHealth(agentStatus);
+  const scout = agentStatus?.agents.find((a) => a.agent_name === "scout");
+  const lastRunAt = scout?.last_run_at ? new Date(scout.last_run_at) : null;
+  const nextRunAt = lastRunAt ? addHours(lastRunAt, scrapeIntervalHours) : null;
+  const hoursSinceLastRun = lastRunAt
+    ? (Date.now() - lastRunAt.getTime()) / (1000 * 60 * 60)
+    : null;
+  const isStale = hoursSinceLastRun != null && hoursSinceLastRun > scrapeIntervalHours * 2;
+
+  if (isStale) {
+    return (
+      <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+          <span>No scrapes in the last {Math.round(hoursSinceLastRun!)} hours.</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link href="/settings" className="text-xs font-medium underline underline-offset-2">
+            Check agent status
+          </Link>
+          <form action={async () => { "use server"; await triggerAgent("scout").catch(() => {}); }}>
+            <button type="submit" className="text-xs font-medium underline underline-offset-2">
+              Trigger scrape now
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  const dotColor =
+    health === "green" ? "bg-green-500" : health === "amber" ? "bg-amber-400" : "bg-red-500";
+  const statusText =
+    health === "green"
+      ? "All agents running"
+      : health === "amber"
+      ? "Agents idle"
+      : "Agent error — check settings";
+
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-500 shadow-sm">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
+      <span className="font-medium text-slate-700">{statusText}</span>
+      {lastRunAt && (
+        <>
+          <span className="text-slate-300">·</span>
+          <span>Last scrape: {formatDistanceToNow(lastRunAt, { addSuffix: true })}</span>
+        </>
+      )}
+      {nextRunAt && nextRunAt > new Date() && (
+        <>
+          <span className="text-slate-300">·</span>
+          <span>Next: {formatDistanceToNow(nextRunAt)}</span>
+        </>
+      )}
+      {health === "red" && (
+        <>
+          <span className="text-slate-300">·</span>
+          <Link href="/settings" className="font-medium text-red-600 hover:underline">
+            View details
+          </Link>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Action cards ──────────────────────────────────────────────────────────────
+
+function ActionCard({
+  icon,
+  count,
+  label,
+  subtitle,
+  href,
+  featured,
+}: {
+  icon: React.ReactNode;
+  count: number;
+  label: string;
+  subtitle: string;
+  href: string;
+  featured?: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`flex flex-col gap-2 rounded-xl border bg-white p-5 shadow-sm transition-all hover:shadow-md ${
+        featured ? "border-brand-300 ring-1 ring-brand-200" : "border-slate-200 hover:border-brand-200"
+      }`}
+    >
+      <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
+        {icon}
+        {label}
+      </div>
+      <p className="text-4xl font-bold tabular-nums text-slate-900">{count}</p>
+      <p className="text-xs text-slate-400">{subtitle}</p>
+    </Link>
+  );
+}
+
+// ── Pipeline bar ──────────────────────────────────────────────────────────────
+
+function PipelineBar({ stats }: { stats: PipelineStats | null }) {
+  if (!stats || stats.discovered === 0) return null;
+  const total = stats.discovered;
+
+  function Segment({
+    count,
+    label,
+    color,
+  }: {
+    count: number;
+    label: string;
+    color: string;
+  }) {
+    if (count === 0) return null;
+    const pct = Math.max(4, (count / total) * 100);
+    return (
+      <div className="flex flex-col items-center gap-1 min-w-0" style={{ flex: pct }}>
+        <div className={`h-4 w-full rounded-sm ${color}`} />
+        <span className="text-xs text-slate-500 truncate">
+          {count.toLocaleString()} {label}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h2 className="mb-3 text-sm font-semibold text-slate-700">Pipeline</h2>
+      <div className="flex items-end gap-1 overflow-hidden">
+        <Segment count={stats.discovered} label="discovered" color="bg-slate-200" />
+        <Segment count={stats.scored} label="scored" color="bg-blue-200" />
+        <Segment count={stats.shortlisted} label="shortlisted" color="bg-brand-300" />
+        <Segment count={stats.tailored} label="tailored" color="bg-indigo-300" />
+        <Segment count={stats.approved} label="approved" color="bg-green-400" />
+      </div>
+    </div>
+  );
+}
+
+// ── Empty state (fresh profile, no jobs yet) ──────────────────────────────────
+
+function EmptyState({ scrapeIntervalHours }: { scrapeIntervalHours: number }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-100">
+        <Zap className="h-6 w-6 text-brand-600" />
+      </div>
+      <h3 className="text-lg font-semibold text-slate-900">Your agents are warming up</h3>
+      <p className="mt-2 text-sm text-slate-500">
+        First scrape runs in the next {scrapeIntervalHours} hours. Jobs will appear here automatically.
+      </p>
+      <div className="mt-6 flex items-center justify-center gap-3">
+        <form action={async () => { "use server"; await triggerAgent("scout").catch(() => {}); }}>
+          <button
+            type="submit"
+            className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
+          >
+            <Zap className="h-4 w-4" /> Trigger scrape now
+          </button>
+        </form>
+        <Link
+          href="/settings"
+          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
+        >
+          Edit profile
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default async function DashboardPage() {
   const profileStatus = await fetchProfileStatus().catch(() => null);
@@ -36,118 +221,142 @@ export default async function DashboardPage() {
     redirect("/onboarding");
   }
 
-  const { stats, recentJobs, pendingEmails, ghostStats, error } = await getDashboardData();
+  const [rawProfile, agentStatus, pipelineStats, pendingApprovals, upcomingInterviews] =
+    await Promise.all([
+      fetchRawProfile().catch((): RawProfile => ({})),
+      fetchAllAgentStatus().catch((): AllAgentStatus | null => null),
+      fetchPipelineStats().catch((): PipelineStats | null => null),
+      fetchPendingApprovals().catch((): PendingApproval[] => []),
+      getUpcomingInterviews(14).catch(() => []),
+    ]);
 
-  if (error) {
-    return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
-        <div className="rounded-xl border border-red-200 bg-red-50 p-8 max-w-lg">
-          <h2 className="text-xl font-semibold text-red-800 mb-2">
-            Backend Unavailable
-          </h2>
-          <p className="text-red-700 text-sm mb-4">{error}</p>
-          <p className="text-slate-500 text-xs">
-            Run <code className="bg-slate-100 px-1 py-0.5 rounded">make dev-back</code> to start the API server.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const threshold = rawProfile.scoring?.shortlist_threshold ?? 0.75;
+  const scrapeIntervalHours = rawProfile.preferences?.scrape_interval_hours ?? 4;
+
+  const topJobs = await fetchJobs({ min_match_score: threshold, hide_ghosts: true }, 0, 5).catch(
+    () => ({ items: [], total: 0 }),
+  );
+
+  // Dashboard subtitle from profile
+  const roles = rawProfile.search?.target_roles?.join(", ") ?? "";
+  const locationParts =
+    rawProfile.search?.locations
+      ?.map((l) => (l.remote_preference === "remote" ? "Remote" : l.city))
+      .filter(Boolean) ?? [];
+  const locations = locationParts.join(", ");
+  const subtitle = roles ? [roles, locations].filter(Boolean).join(" — ") : null;
+
+  // Action card counts
+  const reviewCount = pendingApprovals.length;
+  const prepCount = upcomingInterviews.filter(
+    (i) => i.scheduled_at != null && new Date(i.scheduled_at) > new Date(),
+  ).length;
+  const newMatchCount = topJobs.total;
+  const aboveThresholdCount = topJobs.items.filter(
+    (j) => j.match_score != null && j.match_score >= threshold,
+  ).length;
+
+  const allCaughtUp = reviewCount === 0 && prepCount === 0 && newMatchCount === 0;
+  const noJobsYet = (pipelineStats?.discovered ?? 0) === 0;
 
   return (
-    <div className="space-y-8">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Outside-IR35 UK contract roles — scraped automatically every 4 hours
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link href="/jobs">
-            <Button variant="outline" size="sm">
-              View All Jobs
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          </Link>
-        </div>
-      </div>
-
-      {/* Stats */}
-      {stats && <StatsBar stats={stats} />}
-
-      {/* Pending emails card */}
-      {pendingEmails.length > 0 && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Mail className="h-5 w-5 text-amber-600" />
-            <div>
-              <p className="text-sm font-semibold text-amber-900">
-                {pendingEmails.length} follow-up email{pendingEmails.length !== 1 ? "s" : ""} awaiting review
-              </p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                {pendingEmails.slice(0, 2).map((e) =>
-                  `${e.email_type === "post_interview_thankyou" ? "Thank-you" : "Follow-up"}${e.company ? ` · ${e.company}` : ""}`
-                ).join(" · ")}
-                {pendingEmails.length > 2 && ` · +${pendingEmails.length - 2} more`}
-              </p>
-            </div>
-          </div>
-          <Link href="/applications">
-            <Button variant="outline" size="sm" className="border-amber-300 text-amber-800 hover:bg-amber-100">
-              Review
-              <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-            </Button>
-          </Link>
-        </div>
-      )}
-
-      {/* Ghost stats card */}
-      {ghostStats && ghostStats.likely_ghost > 0 && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Ghost className="h-5 w-5 text-red-500" />
-            <div>
-              <p className="text-sm font-semibold text-red-900">
-                {ghostStats.likely_ghost} likely ghost job{ghostStats.likely_ghost !== 1 ? "s" : ""} filtered
-                {ghostStats.suspicious > 0 && ` · ${ghostStats.suspicious} suspicious`}
-              </p>
-              <p className="text-xs text-red-700 mt-0.5">
-                Saving ~{Math.round(ghostStats.likely_ghost * 0.5 * 10) / 10} hrs of wasted applications
-              </p>
-            </div>
-          </div>
-          <Link href="/jobs?hide_ghosts=false">
-            <Button variant="outline" size="sm" className="border-red-300 text-red-800 hover:bg-red-100">
-              Review
-              <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
-            </Button>
-          </Link>
-        </div>
-      )}
-
-      {/* Recent jobs */}
+    <div className="space-y-6">
+      {/* Header */}
       <div>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Recent Listings
-          </h2>
-          <Link href="/jobs">
-            <Button variant="ghost" size="sm" className="text-brand-600">
-              View all {stats?.total_jobs ?? ""} jobs
-              <ArrowRight className="ml-1 h-4 w-4" />
-            </Button>
-          </Link>
-        </div>
-        <JobTable jobs={recentJobs} />
+        <h1 className="text-2xl font-bold text-slate-900">Home</h1>
+        {subtitle && (
+          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+        )}
       </div>
 
-      {/* Refresh hint */}
-      <p className="flex items-center gap-1.5 text-xs text-slate-400">
-        <RefreshCw className="h-3.5 w-3.5" />
-        Dashboard refreshes every 60 seconds. Scraping runs every 4 hours automatically.
-      </p>
+      {/* Section A: Agent status strip */}
+      <AgentStatusStrip agentStatus={agentStatus} scrapeIntervalHours={scrapeIntervalHours} />
+
+      {/* Empty state for fresh setups */}
+      {noJobsYet ? (
+        <EmptyState scrapeIntervalHours={scrapeIntervalHours} />
+      ) : (
+        <>
+          {/* Section B: Action cards */}
+          {allCaughtUp ? (
+            <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              {"You're all caught up."}
+              {pipelineStats && (
+                <span className="font-normal text-green-700">
+                  Next scrape {formatDistanceToNow(
+                    addHours(
+                      agentStatus?.agents.find((a) => a.agent_name === "scout")?.last_run_at
+                        ? new Date(agentStatus.agents.find((a) => a.agent_name === "scout")!.last_run_at!)
+                        : new Date(),
+                      scrapeIntervalHours,
+                    ),
+                  )}.
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {reviewCount > 0 && (
+                <ActionCard
+                  featured
+                  icon={<ClipboardCheck className="h-4 w-4 text-brand-500" />}
+                  count={reviewCount}
+                  label="Review needed"
+                  subtitle="tailored applications ready"
+                  href="/approvals"
+                />
+              )}
+              {prepCount > 0 && (
+                <ActionCard
+                  icon={<Briefcase className="h-4 w-4 text-indigo-500" />}
+                  count={prepCount}
+                  label="Interview coming up"
+                  subtitle={
+                    upcomingInterviews[0]?.scheduled_at
+                      ? formatDistanceToNow(new Date(upcomingInterviews[0].scheduled_at), { addSuffix: true })
+                      : "upcoming interviews"
+                  }
+                  href="/applications"
+                />
+              )}
+              {newMatchCount > 0 && (
+                <ActionCard
+                  icon={<Stars className="h-4 w-4 text-amber-500" />}
+                  count={newMatchCount}
+                  label="New matches"
+                  subtitle={
+                    aboveThresholdCount > 0
+                      ? `${aboveThresholdCount} above ${Math.round(threshold * 100)}% threshold`
+                      : "jobs discovered recently"
+                  }
+                  href={`/jobs?min_match_score=${threshold}`}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Section C: Top matches */}
+          {topJobs.items.length > 0 && (
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-slate-700">Top matches</h2>
+                <Link href="/jobs" className="flex items-center gap-1 text-xs text-brand-600 hover:underline">
+                  View all jobs <ArrowRight className="h-3 w-3" />
+                </Link>
+              </div>
+              <div className="space-y-2">
+                {topJobs.items.map((job) => (
+                  <JobCard key={job.id} job={job} threshold={threshold} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Section D: Pipeline bar */}
+          <PipelineBar stats={pipelineStats} />
+        </>
+      )}
     </div>
   );
 }

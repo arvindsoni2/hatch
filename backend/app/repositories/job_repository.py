@@ -8,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.job import JobPosting, ScrapeLog
+from ..models.job_score import JobScore
 from ..schemas.ghost import GhostScore, GhostStats
 from ..schemas.job import (
     JobPostingCreate,
@@ -165,7 +166,30 @@ class JobRepository:
         result = await self._session.execute(query)
         rows = result.scalars().all()
 
-        return [JobPostingRead.model_validate(r) for r in rows], total
+        # Bulk-fetch per-dimension scores for these jobs in one query
+        score_map: dict[str, JobScore] = {}
+        if rows:
+            job_ids = [r.id for r in rows]
+            score_res = await self._session.execute(
+                select(JobScore).where(JobScore.job_id.in_(job_ids))
+            )
+            score_map = {s.job_id: s for s in score_res.scalars().all()}
+
+        items: list[JobPostingRead] = []
+        for r in rows:
+            posting = JobPostingRead.model_validate(r)
+            if r.id in score_map:
+                s = score_map[r.id]
+                posting = posting.model_copy(
+                    update={
+                        "skill_match": s.skill_match,
+                        "experience_match": s.experience_match,
+                        "rate_match": s.rate_match,
+                        "location_match": s.location_match,
+                    }
+                )
+            items.append(posting)
+        return items, total
 
     async def get_unclassified(self, limit: int = 100) -> list[JobPosting]:
         """Fetch jobs where match_score IS NULL for the classifier to process.

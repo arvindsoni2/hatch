@@ -37,6 +37,11 @@ export interface Job {
   working_pattern: string | null;
   match_score: number | null;
   match_reasons: string[] | null;
+  // Per-dimension scores (from job_scores join)
+  skill_match: number | null;
+  experience_match: number | null;
+  rate_match: number | null;
+  location_match: number | null;
   // Ghost detection fields
   ghost_score: number | null;
   ghost_verdict: string | null;
@@ -1364,4 +1369,22 @@ export interface ProfileStatus {
 
 export async function fetchProfileStatus(): Promise<ProfileStatus> {
   return apiFetch<ProfileStatus>("/api/v2/profile/status", { cache: "no-store" });
+}
+
+export interface RawProfile {
+  candidate?: { name?: string; title?: string; years_experience?: number };
+  search?: {
+    target_roles?: string[];
+    locations?: Array<{ city?: string; country?: string; remote_preference?: string }>;
+    contract_type?: string;
+  };
+  compensation?: { min_rate?: number; max_rate?: number; rate_type?: string; currency?: string };
+  skills?: { primary?: string[]; secondary?: string[]; certifications?: string[] };
+  preferences?: { scrape_interval_hours?: number; max_tailor_batch?: number };
+  scoring?: { shortlist_threshold?: number };
+  llm?: { provider?: string; primary_model?: string; triage_model?: string };
+}
+
+export async function fetchRawProfile(): Promise<RawProfile> {
+  return apiFetch<RawProfile>("/api/v2/profile", { cache: "no-store" });
 }
