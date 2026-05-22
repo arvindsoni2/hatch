@@ -1,3 +1,8 @@
+# ──────────────────────── Assignment / internal docs ─────────────────────────
+01_PRD_JobPilot_v2.md
+02_Design_JobPilot_v2.md
+jobpilot-agentic-handoff-spec.md
+
 # ──────────────────────── Secrets ────────────────────────
 .env
 .env.local
