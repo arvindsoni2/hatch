@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ subject }}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+      font-family: Arial, Calibri, sans-serif;
+      font-size: 16px;
+      color: #333333;
+      -webkit-text-size-adjust: 100%;
+    }
+    .wrapper {
+      width: 100%;
+      background-color: #f4f4f4;
+      padding: 24px 0;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .header {
+      padding: 28px 36px 20px 36px;
+      border-bottom: 2px solid #e8e8e8;
+    }
+    .header h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+    .body {
+      padding: 28px 36px;
+      line-height: 1.65;
+      color: #333333;
+      font-size: 15px;
+    }
+    .greeting {
+      margin-bottom: 16px;
+    }
+    .content {
+      margin-bottom: 20px;
+      white-space: pre-line;
+    }
+    .sign-off {
+      margin-top: 24px;
+    }
+    .footer {
+      padding: 20px 36px 28px 36px;
+      border-top: 1px solid #e8e8e8;
+      font-size: 13px;
+      color: #666666;
+      line-height: 1.6;
+    }
+    .footer a {
+      color: #0066cc;
+      text-decoration: none;
+    }
+    @media only screen and (max-width: 620px) {
+      .container {
+        width: 100% !important;
+        border-radius: 0;
+      }
+      .header,
+      .body,
+      .footer {
+        padding-left: 20px !important;
+        padding-right: 20px !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="container">
+      <div class="header">
+        <h2>{{ candidate_name }}</h2>
+      </div>
+      <div class="body">
+        <div class="greeting">{{ greeting }}</div>
+        <div class="content">{{ body }}</div>
+        <div class="sign-off">
+          {{ sign_off }}<br>
+          <strong>{{ candidate_name }}</strong>
+        </div>
+      </div>
+      <div class="footer">
+        {{ candidate_name }}<br>
+        {% if candidate_phone %}<a href="tel:{{ candidate_phone }}">{{ candidate_phone }}</a> &nbsp;|&nbsp; {% endif %}
+        {% if candidate_email %}<a href="mailto:{{ candidate_email }}">{{ candidate_email }}</a>{% endif %}
+        {% if linkedin_url %}&nbsp;|&nbsp; <a href="{{ linkedin_url }}">LinkedIn</a>{% endif %}
+        {% if portfolio_url %}&nbsp;|&nbsp; <a href="{{ portfolio_url }}">Portfolio</a>{% endif %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>

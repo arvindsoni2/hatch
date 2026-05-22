@@ -1,0 +1,12 @@
+{{ greeting }}
+
+{{ body }}
+
+{{ sign_off }}
+{{ candidate_name }}
+
+--
+{{ candidate_name }}
+{% if candidate_phone %}{{ candidate_phone }}  |  {% endif %}{% if candidate_email %}{{ candidate_email }}{% endif %}
+{% if linkedin_url %}LinkedIn: {{ linkedin_url }}{% endif %}
+{% if portfolio_url %}Portfolio: {{ portfolio_url }}{% endif %}

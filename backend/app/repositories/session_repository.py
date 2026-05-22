@@ -1,0 +1,255 @@
+"""Database access layer for Coach interview sessions, questions, and recordings."""
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..models.coach_session import InterviewSession, SessionQuestion, SessionRecording
+from ..schemas.coach import SessionListItem
+
+logger = logging.getLogger(__name__)
+
+
+class SessionRepository:
+    """All database operations for interview sessions, questions, and recordings."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    # ──────────────────────── Sessions ────────────────────────
+
+    async def create_session(
+        self,
+        company_name: str,
+        role_title: str,
+        config: dict,
+        application_id: str | None = None,
+    ) -> InterviewSession:
+        """Create a new interview session record.
+
+        Args:
+            company_name: Name of the company being interviewed for.
+            role_title: Job title / role being practised.
+            config: Session configuration dict (question_count, categories, etc.).
+            application_id: Optional FK to an application record.
+
+        Returns:
+            Persisted InterviewSession ORM object.
+        """
+        session = InterviewSession(
+            application_id=application_id,
+            company_name=company_name,
+            role_title=role_title,
+            config=config,
+            status="setup",
+            started_at=datetime.utcnow(),
+        )
+        self._session.add(session)
+        await self._session.flush()
+        await self._session.refresh(session)
+        return session
+
+    async def get_session(self, session_id: str) -> InterviewSession | None:
+        """Fetch an interview session by its primary key.
+
+        Args:
+            session_id: UUID of the session.
+
+        Returns:
+            InterviewSession ORM object, or None if not found.
+        """
+        result = await self._session.execute(
+            select(InterviewSession).where(InterviewSession.id == session_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_sessions(
+        self, limit: int = 20, status: str | None = None
+    ) -> list[SessionListItem]:
+        """List interview sessions, newest first.
+
+        Args:
+            limit: Maximum number of results.
+            status: Optional status filter (setup|active|completed|abandoned).
+
+        Returns:
+            List of SessionListItem Pydantic schemas.
+        """
+        query = select(InterviewSession).order_by(InterviewSession.created_at.desc()).limit(limit)
+        if status:
+            query = query.where(InterviewSession.status == status)
+        result = await self._session.execute(query)
+        rows = result.scalars().all()
+        return [
+            SessionListItem(
+                id=r.id,
+                company_name=r.company_name,
+                role_title=r.role_title,
+                status=r.status,
+                overall_score=r.overall_score,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ]
+
+    async def update_session_status(self, session_id: str, status: str) -> None:
+        """Update the status of an interview session.
+
+        Args:
+            session_id: UUID of the session.
+            status: New status string (setup|active|completed|abandoned).
+        """
+        extra: dict = {}
+        if status == "completed":
+            extra["completed_at"] = datetime.utcnow()
+        await self._session.execute(
+            update(InterviewSession)
+            .where(InterviewSession.id == session_id)
+            .values(status=status, **extra)
+        )
+
+    async def update_session_score(
+        self, session_id: str, overall_score: float, feedback_summary: str
+    ) -> None:
+        """Persist the overall score and executive feedback summary for a session.
+
+        Args:
+            session_id: UUID of the session.
+            overall_score: Aggregated score (0-10).
+            feedback_summary: Executive summary text.
+        """
+        await self._session.execute(
+            update(InterviewSession)
+            .where(InterviewSession.id == session_id)
+            .values(overall_score=overall_score, feedback_summary=feedback_summary)
+        )
+
+    # ──────────────────────── Questions ────────────────────────
+
+    async def add_questions(
+        self, session_id: str, questions: list[dict]
+    ) -> list[SessionQuestion]:
+        """Bulk-insert questions for a session.
+
+        Args:
+            session_id: UUID of the parent session.
+            questions: List of dicts with keys: question_num, text, category,
+                difficulty, context, model_answer, order_in_session.
+
+        Returns:
+            List of persisted SessionQuestion ORM objects.
+        """
+        db_questions = []
+        for q in questions:
+            sq = SessionQuestion(
+                session_id=session_id,
+                question_num=q["question_num"],
+                text=q["text"],
+                category=q["category"],
+                difficulty=q.get("difficulty", "medium"),
+                context=q.get("context"),
+                model_answer=q.get("model_answer"),
+                order_in_session=q["order_in_session"],
+            )
+            self._session.add(sq)
+            db_questions.append(sq)
+
+        await self._session.flush()
+        for sq in db_questions:
+            await self._session.refresh(sq)
+        return db_questions
+
+    async def get_questions(self, session_id: str) -> list[SessionQuestion]:
+        """Fetch all questions for a session, ordered by order_in_session.
+
+        Args:
+            session_id: UUID of the session.
+
+        Returns:
+            Ordered list of SessionQuestion ORM objects.
+        """
+        result = await self._session.execute(
+            select(SessionQuestion)
+            .where(SessionQuestion.session_id == session_id)
+            .order_by(SessionQuestion.order_in_session)
+        )
+        return list(result.scalars().all())
+
+    async def get_question(self, question_id: str) -> SessionQuestion | None:
+        """Fetch a single question by its primary key.
+
+        Args:
+            question_id: UUID of the question.
+
+        Returns:
+            SessionQuestion ORM object, or None if not found.
+        """
+        result = await self._session.execute(
+            select(SessionQuestion).where(SessionQuestion.id == question_id)
+        )
+        return result.scalar_one_or_none()
+
+    # ──────────────────────── Recordings ────────────────────────
+
+    async def save_recording(
+        self,
+        session_id: str,
+        question_id: str,
+        recording_type: str,
+        transcript: str | None,
+        speech_metrics: dict | None,
+        video_metrics: dict | None,
+        evaluation_json: str | None,
+        audio_uri: str | None = None,
+        video_uri: str | None = None,
+    ) -> SessionRecording:
+        """Persist a recording (transcript + optional media URIs + evaluation).
+
+        Args:
+            session_id: UUID of the parent session.
+            question_id: UUID of the question being answered.
+            recording_type: 'audio', 'video', or 'text'.
+            transcript: Answer transcript text.
+            speech_metrics: Dict of speech analysis metrics.
+            video_metrics: Dict of video analysis metrics.
+            evaluation_json: JSON-serialised AnswerEvaluation.
+            audio_uri: Optional path/URL to audio file.
+            video_uri: Optional path/URL to video file.
+
+        Returns:
+            Persisted SessionRecording ORM object.
+        """
+        recording = SessionRecording(
+            session_id=session_id,
+            question_id=question_id,
+            recording_type=recording_type,
+            transcript=transcript,
+            audio_uri=audio_uri,
+            video_uri=video_uri,
+            speech_metrics=speech_metrics,
+            video_metrics=video_metrics,
+            evaluation_json=evaluation_json,
+        )
+        self._session.add(recording)
+        await self._session.flush()
+        await self._session.refresh(recording)
+        return recording
+
+    async def get_recordings(self, session_id: str) -> list[SessionRecording]:
+        """Fetch all recordings for a session, oldest first.
+
+        Args:
+            session_id: UUID of the session.
+
+        Returns:
+            List of SessionRecording ORM objects.
+        """
+        result = await self._session.execute(
+            select(SessionRecording)
+            .where(SessionRecording.session_id == session_id)
+            .order_by(SessionRecording.created_at)
+        )
+        return list(result.scalars().all())

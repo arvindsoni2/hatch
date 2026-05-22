@@ -1,0 +1,165 @@
+"""Tests for AnswerEvaluatorService — good answer scores high, poor answer low, follow-up triggered."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from app.schemas.coach import AnswerEvaluation, SpeechMetrics
+from app.services.answer_evaluator import AnswerEvaluatorService, _FOLLOW_UP_THRESHOLD
+
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
+
+# ---------------------------------------------------------------------------
+# Shared mock responses
+# ---------------------------------------------------------------------------
+
+GOOD_EVAL_RESPONSE = {
+    "scores": {
+        "relevance": 9,
+        "star_structure": 8,
+        "technical_depth": 9,
+        "conciseness": 8,
+        "communication": 8,
+        "impact_metrics": 9,
+    },
+    "overall": 8.5,
+    "feedback": "Excellent STAR structure with specific quantitative outcomes.",
+    "strengths": ["Clear STAR structure", "Quantified outcomes", "Technical depth"],
+    "improvements": ["Could mention team size"],
+    "follow_up_question": None,
+    "speech_coaching": [],
+}
+
+POOR_EVAL_RESPONSE = {
+    "scores": {
+        "relevance": 4,
+        "star_structure": 2,
+        "technical_depth": 3,
+        "conciseness": 4,
+        "communication": 4,
+        "impact_metrics": 2,
+    },
+    "overall": 3.2,
+    "feedback": "The answer lacks specifics and relies heavily on vague language.",
+    "strengths": ["Some effort at structure"],
+    "improvements": ["Add a specific example", "Quantify outcomes", "Reduce filler words"],
+    "follow_up_question": "Can you give me a specific example with numbers?",
+    "speech_coaching": ["Try to reduce filler words like 'um' and 'basically'."],
+}
+
+
+@pytest.fixture()
+def mock_claude_good():
+    claude = MagicMock()
+    claude.complete_json = AsyncMock(return_value=GOOD_EVAL_RESPONSE)
+    return claude
+
+
+@pytest.fixture()
+def mock_claude_poor():
+    claude = MagicMock()
+    claude.complete_json = AsyncMock(return_value=POOR_EVAL_RESPONSE)
+    return claude
+
+
+@pytest.fixture()
+def good_answer():
+    data = json.loads((FIXTURES_DIR / "sample_answers_good.json").read_text())
+    return data
+
+
+@pytest.fixture()
+def poor_answer():
+    data = json.loads((FIXTURES_DIR / "sample_answers_poor.json").read_text())
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_good_answer_scores_high(mock_claude_good, good_answer) -> None:
+    """A strong STAR answer should score above 7.0 overall."""
+    evaluator = AnswerEvaluatorService(mock_claude_good)
+    result = await evaluator.evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+    )
+    assert isinstance(result, AnswerEvaluation)
+    assert result.overall >= 7.0
+
+
+@pytest.mark.asyncio
+async def test_poor_answer_scores_low(mock_claude_poor, poor_answer) -> None:
+    """A vague answer with fillers should score below 5.0 overall."""
+    evaluator = AnswerEvaluatorService(mock_claude_poor)
+    result = await evaluator.evaluate(
+        question=poor_answer["question"],
+        category=poor_answer["category"],
+        transcript=poor_answer["transcript"],
+    )
+    assert result.overall < 5.0
+
+
+@pytest.mark.asyncio
+async def test_follow_up_triggered_for_poor_answer(mock_claude_poor, poor_answer) -> None:
+    """A follow_up_question is returned when overall score < _FOLLOW_UP_THRESHOLD."""
+    evaluator = AnswerEvaluatorService(mock_claude_poor)
+    result = await evaluator.evaluate(
+        question=poor_answer["question"],
+        category=poor_answer["category"],
+        transcript=poor_answer["transcript"],
+    )
+    assert result.overall < _FOLLOW_UP_THRESHOLD
+    assert result.follow_up_question is not None
+
+
+@pytest.mark.asyncio
+async def test_no_follow_up_for_good_answer(mock_claude_good, good_answer) -> None:
+    """No follow_up_question when the answer scores well."""
+    evaluator = AnswerEvaluatorService(mock_claude_good)
+    result = await evaluator.evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+    )
+    assert result.follow_up_question is None
+
+
+@pytest.mark.asyncio
+async def test_evaluate_with_speech_metrics(mock_claude_good, good_answer) -> None:
+    """evaluate() accepts optional speech_metrics without error."""
+    evaluator = AnswerEvaluatorService(mock_claude_good)
+    metrics = SpeechMetrics(filler_count=2, wpm=145.0, hedging_count=1, duration_ms=45000, pause_count=3)
+    result = await evaluator.evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+        speech_metrics=metrics,
+    )
+    assert isinstance(result, AnswerEvaluation)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_returns_all_six_dimensions(mock_claude_good, good_answer) -> None:
+    """AnswerEvaluation.scores contains all 6 required dimension keys."""
+    evaluator = AnswerEvaluatorService(mock_claude_good)
+    result = await evaluator.evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+    )
+    expected_keys = {"relevance", "star_structure", "technical_depth", "conciseness", "communication", "impact_metrics"}
+    assert expected_keys.issubset(set(result.scores.keys()))
+
+
+@pytest.mark.asyncio
+async def test_follow_up_threshold_constant() -> None:
+    """_FOLLOW_UP_THRESHOLD is 6.0 as specified."""
+    assert _FOLLOW_UP_THRESHOLD == 6.0

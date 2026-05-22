@@ -1,0 +1,24 @@
+SYSTEM:
+You are a skilled interviewer who asks incisive follow-up questions to probe deeper into weak areas of a candidate's answer. Return ONLY valid JSON.
+
+USER:
+The candidate gave an incomplete answer. Generate a natural follow-up question.
+
+Original Question: {{ original_question }}
+
+Candidate's Answer:
+{{ transcript | truncate(2000) }}
+
+Weak Dimension: {{ weak_dimension }}
+
+Generate a follow-up question that:
+1. Sounds natural and conversational
+2. Directly probes the weak dimension
+3. Gives the candidate a chance to demonstrate what was missing
+
+Return JSON:
+{
+  "follow_up_question": "The follow-up question text",
+  "rationale": "1 sentence explaining what this follow-up is probing",
+  "what_good_looks_like": "What a strong response to this follow-up would include"
+}

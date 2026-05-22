@@ -1,0 +1,39 @@
+Solutions Architect — Outside IR35 Contract
+Location: London / Hybrid (2 days onsite)
+Rate: £650–£750 per day
+Duration: 6 months (likely extension)
+IR35 Status: Outside IR35
+
+About the Role:
+We are seeking an experienced Solutions Architect to join our digital transformation programme at a leading FTSE 100 energy company. You will work closely with our CTO and Engineering Leadership to define and deliver cloud-native architecture patterns across our operational technology and enterprise systems.
+
+Key Responsibilities:
+- Lead architecture design and review for hybrid cloud workloads spanning AWS and Azure
+- Define and enforce Architecture Decision Records (ADRs) and C4 model diagrams
+- Drive adoption of cloud-native patterns: microservices, event-driven architecture, API-first design
+- Collaborate with delivery teams to ensure architectural governance and non-functional requirements are met
+- Champion GenAI/Agentic AI adoption — design RAG architectures and evaluate LLM integration patterns
+- Engage with C-suite stakeholders and present technical strategies to non-technical audiences
+- Support data platform modernisation initiatives using Snowflake and Databricks
+- Mentor senior engineers and build internal architecture capability
+
+Must-Have Requirements:
+- 15+ years of enterprise architecture experience
+- Deep AWS expertise (EC2, S3, Lambda, ECS, CloudFormation, RDS)
+- Proven track record delivering cloud migrations and modernisation programmes
+- Strong architecture design skills: microservices, API design (REST/GraphQL), domain-driven design
+- Experience with Infrastructure as Code: Terraform, CloudFormation
+- Stakeholder management at C-suite level
+- TOGAF or equivalent enterprise architecture framework experience
+
+Nice-to-Have:
+- GenAI / LLM integration experience (RAG, LangChain, LangGraph)
+- Snowflake or Databricks data platform experience
+- SAFe or large-scale Agile delivery experience
+- AWS certifications (SAA, SAP)
+- Energy sector or regulated industry experience
+
+What We're Looking For:
+We need someone who combines deep technical expertise with the commercial acumen to translate business strategy into delivered architecture. You will operate as a trusted advisor to our technology leadership and be hands-on when needed.
+
+Please note: This is a genuine outside-IR35 engagement. You must operate via a limited company. We cannot consider PAYE or umbrella candidates.

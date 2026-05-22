@@ -1,0 +1,24 @@
+{
+  "company_name": "Accenture",
+  "sector": "Professional Services / Technology Consulting",
+  "website": "https://www.accenture.com",
+  "description": "Accenture is a global professional services company with leading capabilities in digital, cloud and security. Combining unmatched experience and specialised skills across more than 40 industries, they offer Strategy and Consulting, Technology and Operations services.",
+  "recent_news": [
+    "Accenture acquires AI startup to bolster generative AI capabilities (2024)",
+    "Accenture reports strong quarterly growth driven by cloud migration projects",
+    "Partnership announced with Google Cloud for enterprise AI solutions"
+  ],
+  "key_products": [
+    "Accenture Cloud Platform",
+    "myNav (Cloud Navigator)",
+    "SynOps — intelligent operations platform",
+    "Accenture Applied Intelligence"
+  ],
+  "tech_stack_signals": [
+    "AWS, Azure, GCP — major hyperscaler partnerships",
+    "Salesforce, SAP, ServiceNow — ISV alliances",
+    "Python, Java, Node.js — primary development languages",
+    "Kubernetes, Terraform — infrastructure tooling",
+    "Generative AI / LLM integration projects"
+  ]
+}

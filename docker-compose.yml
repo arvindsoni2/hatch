@@ -1,0 +1,64 @@
+# JobPilot — Docker Compose Configuration
+# Local deployment for privacy and zero cloud costs
+
+version: '3.9'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jobpilot-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/jobpilot.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - REED_API_KEY=${REED_API_KEY:-}
+      - ADZUNA_APP_ID=${ADZUNA_APP_ID:-}
+      - ADZUNA_APP_KEY=${ADZUNA_APP_KEY:-}
+      - SCRAPE_INTERVAL_HOURS=${SCRAPE_INTERVAL_HOURS:-4}
+      - PLAYWRIGHT_HEADLESS=true
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - db-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # Playwright browser install takes time on first run
+    restart: unless-stopped
+    networks:
+      - jobpilot
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+    container_name: jobpilot-frontend
+    environment:
+      - API_URL=http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - jobpilot
+
+volumes:
+  db-data:
+    driver: local
+
+networks:
+  jobpilot:
+    driver: bridge

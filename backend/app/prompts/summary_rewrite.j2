@@ -1,0 +1,28 @@
+You are a CV summary specialist for UK technology contractors.
+
+Rewrite the professional summary section to better match the job requirements.
+
+CURRENT SUMMARY:
+{{ current_summary }}
+
+JD ANALYSIS:
+{{ jd_analysis | tojson }}
+
+{% if instruction %}
+SPECIFIC INSTRUCTION: {{ instruction }}
+{% endif %}
+
+REQUIREMENTS:
+- 3-4 sentences maximum
+- Lead with most relevant experience/sector for this role
+- Embed 2-3 ATS keywords naturally
+- Include at least one quantified metric
+- Active voice, no "I am" constructions
+
+Return ONLY valid JSON:
+
+{
+  "summary": "string — rewritten summary",
+  "keywords_embedded": ["array of ATS keywords used"],
+  "changes_made": "string — brief explanation of what changed and why"
+}

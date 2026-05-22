@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JobPilot Daily Digest</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f8; margin: 0; padding: 0; }
+  .container { max-width: 600px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+  .header { background: #1e3a5f; color: #fff; padding: 24px 32px; }
+  .header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  .header p { margin: 4px 0 0; font-size: 13px; opacity: .8; }
+  .section { padding: 20px 32px; border-bottom: 1px solid #e8ecf0; }
+  .section:last-child { border-bottom: none; }
+  .section-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #6b7280; margin: 0 0 12px; }
+  .job-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 16px; margin-bottom: 10px; }
+  .job-title { font-size: 15px; font-weight: 600; color: #1e3a5f; margin: 0 0 4px; }
+  .job-meta { font-size: 12px; color: #6b7280; margin: 0 0 8px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge-green { background: #d1fae5; color: #065f46; }
+  .badge-amber { background: #fef3c7; color: #92400e; }
+  .badge-red { background: #fee2e2; color: #991b1b; }
+  .badge-blue { background: #dbeafe; color: #1e40af; }
+  .apply-btn { display: inline-block; margin-top: 8px; padding: 6px 14px; background: #1e3a5f; color: #fff; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: 500; }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; text-align: center; }
+  .stat-num { font-size: 24px; font-weight: 700; color: #1e3a5f; }
+  .stat-label { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .followup-item { padding: 8px 0; border-bottom: 1px solid #f0f2f4; }
+  .followup-item:last-child { border-bottom: none; }
+  .followup-title { font-size: 14px; font-weight: 500; }
+  .followup-due { font-size: 12px; color: #dc2626; }
+  .footer { background: #f8fafc; padding: 16px 32px; font-size: 12px; color: #9ca3af; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>JobPilot Daily Digest</h1>
+    <p>{{ date }} — Your job search summary</p>
+  </div>
+
+  <!-- Pipeline Stats -->
+  <div class="section">
+    <div class="section-title">Pipeline Overview</div>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="stat-num">{{ stats.applied }}</div>
+        <div class="stat-label">Applied</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num">{{ stats.interview }}</div>
+        <div class="stat-label">Interview</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num">{{ stats.offered }}</div>
+        <div class="stat-label">Offered</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num">{{ stats.new_jobs }}</div>
+        <div class="stat-label">New Matches</div>
+      </div>
+    </div>
+  </div>
+
+  {% if top_jobs %}
+  <!-- Top Job Matches -->
+  <div class="section">
+    <div class="section-title">Top Matches (last 24h)</div>
+    {% for job in top_jobs %}
+    <div class="job-card">
+      <div class="job-title">{{ job.title }}</div>
+      <div class="job-meta">
+        {{ job.company or 'Unknown Company' }} &bull;
+        {{ job.location or 'Location TBC' }} &bull;
+        {{ job.rate_text or 'Rate TBC' }}
+      </div>
+      {% if job.match_score is not none %}
+        {% if job.match_score >= 85 %}
+          <span class="badge badge-green">{{ job.match_score|int }}% match</span>
+        {% elif job.match_score >= 70 %}
+          <span class="badge badge-amber">{{ job.match_score|int }}% match</span>
+        {% else %}
+          <span class="badge badge-blue">{{ job.match_score|int }}% match</span>
+        {% endif %}
+      {% endif %}
+      {% if job.working_pattern == 'remote' %}
+        <span class="badge badge-green" style="margin-left:4px">Remote</span>
+      {% elif job.working_pattern == 'hybrid' %}
+        <span class="badge badge-blue" style="margin-left:4px">Hybrid</span>
+      {% endif %}
+      {% if job.ir35_status == 'outside' %}
+        <span class="badge badge-green" style="margin-left:4px">Outside IR35</span>
+      {% elif job.ir35_status == 'inside' %}
+        <span class="badge badge-red" style="margin-left:4px">Inside IR35</span>
+      {% endif %}
+      {% if job.match_reasons %}
+      <div style="margin-top:6px; font-size:12px; color:#374151;">
+        {{ job.match_reasons | join(' &bull; ') }}
+      </div>
+      {% endif %}
+      <a class="apply-btn" href="{{ job.url }}">View Job</a>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if follow_ups %}
+  <!-- Follow-ups Due Today -->
+  <div class="section">
+    <div class="section-title">Follow-ups Due Today</div>
+    {% for f in follow_ups %}
+    <div class="followup-item">
+      <div class="followup-title">{{ f.company or 'Application' }} — {{ f.note or f.type }}</div>
+      <div class="followup-due">Due: {{ f.due_date }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if interviews %}
+  <!-- Upcoming Interviews -->
+  <div class="section">
+    <div class="section-title">Upcoming Interviews</div>
+    {% for i in interviews %}
+    <div class="followup-item">
+      <div class="followup-title">{{ i.company or 'Interview' }} — Round {{ i.round_number }} ({{ i.type }})</div>
+      <div class="followup-due">{{ i.scheduled_at }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if auto_apply_results %}
+  <!-- Auto-Apply Results -->
+  <div class="section">
+    <div class="section-title">Auto-Apply Results (last 24h)</div>
+    {% for r in auto_apply_results %}
+    <div class="followup-item">
+      <div class="followup-title">{{ r.job_title or r.job_url }}</div>
+      <div style="font-size:12px; color:#6b7280;">{{ r.platform or '' }} &bull; {{ r.status }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Footer -->
+  <div class="footer">
+    Sent by JobPilot &bull; <a href="http://localhost:3000" style="color:#6b7280;">Open Dashboard</a>
+  </div>
+
+</div>
+</body>
+</html>

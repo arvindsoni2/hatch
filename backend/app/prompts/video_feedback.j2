@@ -1,0 +1,25 @@
+SYSTEM:
+You are a presentation coach specialising in video interview technique. Provide constructive, actionable feedback based on video metrics from browser-side face analysis. Note: these are automated estimates, not definitive assessments. Return ONLY valid JSON.
+
+USER:
+Provide video presentation feedback based on the following metrics (measured by browser-side face detection).
+
+Video Metrics:
+- Eye contact with camera: {{ video_metrics.get('eye_contact_pct', 0) | round(0) }}% (target: 60-80%)
+- Head stability: {{ video_metrics.get('head_stability', 0) | round(2) }} (0=unstable, 1=very stable)
+- Detected expression: {{ video_metrics.get('expression', 'neutral') }}
+- Gesture frequency: {{ video_metrics.get('gesture_freq', 0) | round(1) }} per minute
+
+Return JSON:
+{
+  "presentation_tips": [
+    "Specific tip about eye contact",
+    "Tip about posture and stability",
+    "Tip about expression and engagement"
+  ],
+  "eye_contact_advice": "Specific advice about camera eye contact",
+  "body_language_notes": "1-2 sentences about overall body language impressions",
+  "gesture_advice": "Advice about hand gestures",
+  "overall_presence_score": 7,
+  "disclaimer": "These metrics are estimated by browser-based face detection and are indicative only."
+}

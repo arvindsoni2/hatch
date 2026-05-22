@@ -1,0 +1,33 @@
+SYSTEM:
+You are a presentation coach specialising in executive communication. Analyse the speech patterns and provide actionable, encouraging coaching advice. Return ONLY valid JSON.
+
+USER:
+Analyse the following speech metrics and provide coaching feedback.
+
+Speech Metrics:
+- Filler words used: {{ speech_metrics.get('filler_count', 0) }} times
+- Speaking pace: {{ speech_metrics.get('wpm', 0) | round(0) }} words per minute (target: 130-160 WPM)
+- Hedging phrases: {{ speech_metrics.get('hedging_count', 0) }} times
+- Answer duration: {{ (speech_metrics.get('duration_ms', 0) / 1000) | round(0) }} seconds
+- Pause count: {{ speech_metrics.get('pause_count', 0) }}
+
+Answer Transcript (excerpt):
+{{ transcript | truncate(1500) }}
+
+Return JSON:
+{
+  "coaching_points": [
+    "Specific coaching point 1 (actionable)",
+    "Specific coaching point 2",
+    "Specific coaching point 3"
+  ],
+  "filler_alternatives": [
+    "Instead of 'um', try pausing silently",
+    "Replace 'basically' with...",
+    "Alternative to 'you know'..."
+  ],
+  "pacing_advice": "Specific advice about speaking pace",
+  "overall_communication_score": 7,
+  "top_strength": "The strongest aspect of their delivery",
+  "priority_fix": "The single most impactful improvement to make"
+}

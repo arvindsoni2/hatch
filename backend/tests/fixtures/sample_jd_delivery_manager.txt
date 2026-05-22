@@ -1,0 +1,37 @@
+Technical Delivery Manager — Outside IR35
+Location: Bristol / Hybrid (3 days per week onsite)
+Rate: £550–£650 per day
+Duration: 9 months
+IR35 Status: Outside IR35
+
+The Opportunity:
+A major UK aviation group is seeking an experienced Technical Delivery Manager to lead a strategic platform re-engineering programme. You will be responsible for coordinating 4–6 cross-functional squads delivering microservices migration from a legacy monolith.
+
+Your Responsibilities:
+- Own end-to-end delivery across 4–6 Agile squads (40+ engineers)
+- Run SAFe Programme Increment planning events and manage PI objectives
+- Manage £5M+ programme budget, forecast and report to ExCo monthly
+- Resolve delivery blockers, manage dependencies, escalate risks appropriately
+- Coordinate with third-party vendors and offshore teams (India)
+- Define and track delivery metrics: velocity, cycle time, deployment frequency, MTTR
+- Drive adoption of DevOps practices: CI/CD, automated testing, infrastructure-as-code
+- Stakeholder management: CTO, CPO, and programme board reporting
+- Lead sprint reviews, retrospectives, and quarterly business reviews
+
+What You Must Have:
+- 10+ years delivering complex technology programmes
+- SAFe Agilist certification (SA or SPC preferred)
+- Experience managing offshore and distributed delivery teams
+- Strong understanding of cloud delivery on AWS or Azure
+- Excellent stakeholder management at director and C-suite level
+- Track record of managing multi-million pound budgets
+- PMP, PRINCE2 or equivalent project management qualification
+
+Good to Have:
+- Aviation, transport or regulated industry background
+- Experience with JIRA Advanced Roadmaps, Confluence, and programme reporting tools
+- Knowledge of DORA metrics and engineering effectiveness
+- Agile coaching experience at programme level
+
+We Need Someone Who:
+Can balance people leadership with programme governance. Strong on process but pragmatic in delivery. Able to hold difficult conversations with both technical teams and senior stakeholders.

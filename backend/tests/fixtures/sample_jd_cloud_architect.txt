@@ -1,0 +1,36 @@
+Senior Cloud Architect — Outside IR35 Contract
+Location: Remote (occasional travel to Manchester office)
+Rate: £700–£800 per day
+Duration: 12 months
+IR35 Status: Outside IR35
+
+Role Overview:
+A leading financial services firm is seeking a Senior Cloud Architect to lead the design and delivery of a greenfield AWS-native platform. This role sits within the Cloud Centre of Excellence and requires hands-on delivery alongside strategic thinking.
+
+Responsibilities:
+- Architect scalable, secure AWS solutions following the AWS Well-Architected Framework
+- Lead cloud security design: IAM, VPC design, encryption at rest/transit, GuardDuty, SecurityHub
+- Design and implement CI/CD pipelines using GitHub Actions and AWS CodePipeline
+- Define cost optimisation strategies: Reserved Instances, Savings Plans, right-sizing
+- Implement infrastructure as code using Terraform and AWS CDK
+- Design data streaming architectures using Apache Kafka and AWS Kinesis
+- Work with data engineering teams on Databricks and Snowflake integration patterns
+- Create and maintain architecture documentation: C4 diagrams, ADRs, solution design documents
+- Lead AWS migration assessments and cloud adoption framework reviews
+
+Essential Skills:
+- Expert-level AWS (5+ years): EC2, S3, Lambda, ECS/EKS, RDS/Aurora, DynamoDB, CloudFront
+- Terraform (3+ years) — production-grade modules, state management, workspaces
+- Cloud security — CIS benchmarks, NIST, PCI-DSS compliance patterns
+- Microservices and container orchestration (Kubernetes/EKS)
+- API design and management: REST, GraphQL, AWS API Gateway
+- DevSecOps: SAST/DAST integration, container scanning, secrets management (Vault/Secrets Manager)
+
+Desirable:
+- AWS certifications (SAP-C02, SCS-C02, ANS-C01)
+- MLOps experience: SageMaker, ML pipelines, model serving
+- FinTech or banking sector experience
+- Apache Kafka or AWS Kinesis streaming architecture
+
+The Environment:
+You will join a team of 8 cloud architects working within a programme delivering core banking modernisation. Collaborative, technically rigorous, outcomes-focused.

@@ -1,0 +1,62 @@
+SYSTEM:
+You are an expert interview coach generating a comprehensive post-session feedback report. Be honest, constructive, and specific. Reference actual scores and patterns from the session. The report should feel like personalised coaching, not generic advice. Return ONLY valid JSON.
+
+USER:
+Generate a comprehensive feedback report for this mock interview session.
+
+Candidate: {{ candidate_name }}
+Role Applied For: {{ role_title }}
+Company: {{ company_name }}
+Session Date: {{ session_date }}
+Questions Answered: {{ answered_count }} of {{ total_questions }}
+Overall Score: {{ overall_score | round(1) }}/10
+
+Score Breakdown by Category:
+{% for category, score in category_scores.items() %}
+- {{ category }}: {{ score | round(1) }}/10
+{% endfor %}
+
+Question-by-Question Summary:
+{% for q in question_summaries %}
+Q{{ loop.index }}. [{{ q.category }}] {{ q.question_text | truncate(100) }}
+  Score: {{ q.overall_score | round(1) }}/10 | Strengths: {{ q.strengths | join(', ') }} | Gaps: {{ q.improvements | join(', ') }}
+{% endfor %}
+
+{% if speech_summary %}
+Speech Analysis:
+- Average fillers per answer: {{ speech_summary.get('avg_fillers', 0) | round(1) }}
+- Average WPM: {{ speech_summary.get('avg_wpm', 0) | round(0) }}
+- Hedging frequency: {{ speech_summary.get('avg_hedging', 0) | round(1) }} per answer
+{% endif %}
+
+Generate a personalised feedback report. Return JSON:
+{
+  "executive_summary": "3-4 sentence executive summary of the session performance. Be specific about what went well and what needs work.",
+  "strengths": [
+    "Specific strength 1 with example from session",
+    "Specific strength 2",
+    "Specific strength 3"
+  ],
+  "improvement_areas": [
+    "Priority improvement 1 (most impactful)",
+    "Priority improvement 2",
+    "Priority improvement 3"
+  ],
+  "coaching_points": [
+    "Actionable coaching point 1",
+    "Actionable coaching point 2",
+    "Actionable coaching point 3",
+    "Actionable coaching point 4"
+  ],
+  "practice_plan": [
+    {"day": 1, "focus": "STAR Structure", "activity": "Specific activity description", "resource": "Resource name or URL type"},
+    {"day": 2, "focus": "Technical Depth", "activity": "Activity description", "resource": null},
+    {"day": 3, "focus": "Communication", "activity": "Activity description", "resource": null},
+    {"day": 4, "focus": "Metrics & Impact", "activity": "Activity description", "resource": null},
+    {"day": 5, "focus": "Full Mock Session", "activity": "Record a full practice session focusing on the top 3 improvements", "resource": null},
+    {"day": 6, "focus": "Research & Preparation", "activity": "Company research and question prep for specific role", "resource": null},
+    {"day": 7, "focus": "Final Review", "activity": "Review recordings and refine top 3 answers", "resource": null}
+  ],
+  "readiness_assessment": "Brief statement on interview readiness (e.g., 'Ready with preparation', 'Needs 1-2 more practice sessions')",
+  "motivational_note": "1 encouraging sentence to close the report"
+}

@@ -1,0 +1,7 @@
+{
+  "question": "Tell me about a time you led a large-scale cloud migration. What was the outcome?",
+  "category": "Behavioural",
+  "transcript": "Absolutely. At my previous engagement with a FTSE 100 energy company, I was the lead Solutions Architect for a migration of 200 on-premises workloads to AWS. The situation was that the company had a 2026 data-centre exit mandate and had already spent 18 months stalled on strategy. My task was to design a pragmatic migration roadmap and get executive buy-in within 60 days. I started by conducting a full application portfolio assessment using AWS Migration Evaluator, categorising workloads into the six Rs: rehost, replatform, refactor, retain, retire, replace. I then facilitated a two-day architecture workshop with 12 senior stakeholders to align on the target state — a hub-and-spoke AWS Landing Zone with Transit Gateway, GuardDuty, and centralised logging. I built the business case showing a 34% reduction in total cost of ownership over three years, which secured the £4.2 million programme budget. The result was that we migrated the first 80 workloads within six months, achieving 99.95% uptime during the transition and earning the team a company innovation award. The remaining 120 workloads were on track for completion by Q3 of the following year.",
+  "duration_ms": 95000,
+  "expected_overall_min": 7.5
+}
