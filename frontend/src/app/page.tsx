@@ -8,7 +8,6 @@ import {
   fetchPendingApprovals,
   fetchJobs,
   getUpcomingInterviews,
-  triggerAgent,
   type AllAgentStatus,
   type PipelineStats,
   type PendingApproval,
@@ -16,6 +15,7 @@ import {
 } from "@/lib/api";
 import { JobCard } from "@/components/JobCard";
 import { Button } from "@/components/ui/button";
+import { TriggerScrapeButton } from "@/components/TriggerScrapeButton";
 import { ArrowRight, CheckCircle2, AlertTriangle, XCircle, Zap, ClipboardCheck, Briefcase, Stars } from "lucide-react";
 import { formatDistanceToNow, addHours } from "date-fns";
 
@@ -59,11 +59,7 @@ function AgentStatusStrip({
           <Link href="/settings" className="text-xs font-medium underline underline-offset-2">
             Check agent status
           </Link>
-          <form action={async () => { "use server"; await triggerAgent("scout").catch(() => {}); }}>
-            <button type="submit" className="text-xs font-medium underline underline-offset-2">
-              Trigger scrape now
-            </button>
-          </form>
+          <TriggerScrapeButton variant="link" />
         </div>
       </div>
     );
@@ -193,15 +189,8 @@ function EmptyState({ scrapeIntervalHours }: { scrapeIntervalHours: number }) {
       <p className="mt-2 text-sm text-slate-500">
         First scrape runs in the next {scrapeIntervalHours} hours. Jobs will appear here automatically.
       </p>
-      <div className="mt-6 flex items-center justify-center gap-3">
-        <form action={async () => { "use server"; await triggerAgent("scout").catch(() => {}); }}>
-          <button
-            type="submit"
-            className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 transition-colors"
-          >
-            <Zap className="h-4 w-4" /> Trigger scrape now
-          </button>
-        </form>
+      <div className="mt-6 flex flex-col items-center gap-3">
+        <TriggerScrapeButton variant="primary" />
         <Link
           href="/settings"
           className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
