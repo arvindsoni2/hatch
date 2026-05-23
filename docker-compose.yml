@@ -24,9 +24,10 @@ services:
       - "8000:8000"
     volumes:
       # Bind-mount data/ so profile.yaml and the SQLite DB are editable on the host
-      - ./data:/app/data
+      # :z adds SELinux shared label (required on Fedora/RHEL with SELinux enforcing)
+      - ./data:/app/data:z
       # Bind-mount locales/ so new locale packs are picked up without rebuild
-      - ./locales:/app/locales:ro
+      - ./locales:/app/locales:ro,z
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
