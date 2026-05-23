@@ -10,8 +10,18 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/jobpilot.db"
 
-    # AI
+    # LLM provider keys — only the one matching profile.yaml llm.provider needs to be set
     ANTHROPIC_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_API_KEY: str = ""
+    AZURE_OPENAI_ENDPOINT: str = ""
+    AZURE_OPENAI_API_VERSION: str = "2024-02-15-preview"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+
+    # Region / locale
+    LOCALE: str = "uk"
+    ADZUNA_COUNTRY: str = "gb"
 
     # External API keys (optional — scrapers skip gracefully if missing)
     REED_API_KEY: str = ""

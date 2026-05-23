@@ -12,7 +12,8 @@ from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-ADZUNA_API_BASE = "https://api.adzuna.com/v1/api/jobs/gb/search"
+def _adzuna_base_url() -> str:
+    return f"https://api.adzuna.com/v1/api/jobs/{settings.ADZUNA_COUNTRY}/search"
 SEARCH_WHAT = (
     "solutions architect OR cloud architect OR enterprise architect OR data architect"
     " OR technical architect OR delivery manager OR technical lead"
@@ -52,7 +53,7 @@ class AdzunaScraper(BaseScraper):
                     "content-type": "application/json",
                     "posted_in": settings.SCRAPE_LOOKBACK_DAYS,
                 }
-                response = await client.get(f"{ADZUNA_API_BASE}/1", params=params)
+                response = await client.get(f"{_adzuna_base_url()}/1", params=params)
                 response.raise_for_status()
                 data = response.json()
 
