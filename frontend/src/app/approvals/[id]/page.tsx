@@ -111,7 +111,7 @@ export default function ApprovalDetailPage() {
 
   useEffect(() => {
     fetchApprovalDetail(id)
-      .then((d) => setDetail(d as ApprovalDetail))
+      .then((d) => setDetail(d as unknown as ApprovalDetail))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [id]);
