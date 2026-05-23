@@ -10,8 +10,19 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-# Locale packs live at the repo root alongside backend/ and frontend/
-_LOCALES_DIR = Path(__file__).resolve().parents[4] / "locales"
+# Locale packs: try repo-root (local dev) then /app/locales (Docker bind-mount)
+def _find_locales_dir() -> Path:
+    candidates = [
+        Path(__file__).resolve().parents[3] / "locales",  # local: .../Job_Pilot_v2/locales
+        Path("/app/locales"),                               # Docker bind-mount
+        Path(__file__).resolve().parents[2] / "locales",  # fallback: backend/locales
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return candidates[0]  # return first candidate even if missing (triggers warning in _load_all)
+
+_LOCALES_DIR = _find_locales_dir()
 
 
 class LocaleNotFoundError(ValueError):
