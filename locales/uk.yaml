@@ -1,0 +1,83 @@
+id: "uk"
+name: "United Kingdom"
+flag: "🇬🇧"
+
+currency: "GBP"
+currency_symbol: "£"
+default_rate_type: "daily"
+
+rate_types:
+  - id: "daily"
+    label: "Daily rate"
+    example: "£650/day"
+  - id: "annual"
+    label: "Annual salary"
+    example: "£85,000/yr"
+  - id: "hourly"
+    label: "Hourly rate"
+    example: "£80/hr"
+
+legal_fields:
+  - id: "ir35_preference"
+    label: "IR35 preference"
+    type: "select"
+    options:
+      - value: "outside"
+        label: "Outside IR35 (preferred)"
+      - value: "inside"
+        label: "Inside IR35"
+      - value: "any"
+        label: "Either / not specified"
+    default: "any"
+  - id: "right_to_work"
+    label: "UK right to work"
+    type: "select"
+    options:
+      - value: "citizen"
+        label: "British citizen / settled status"
+      - value: "visa"
+        label: "Skilled Worker / other visa"
+      - value: "requires_sponsorship"
+        label: "Requires sponsorship"
+    default: "citizen"
+
+scoring_context: >
+  When scoring location_match, consider IR35 status alignment.
+  Candidate IR35 preference: {ir35_preference}.
+  If the job specifies an IR35 status that conflicts with the preference, penalise location_match.
+  Right to work: {right_to_work} — if sponsorship is required and the job does not offer it, score location_match as 0.
+
+job_boards:
+  - id: "reed"
+    name: "Reed"
+    enabled: true
+    scraper: "ReedScraper"
+  - id: "cwjobs"
+    name: "CWJobs"
+    enabled: true
+    scraper: "CWJobsScraper"
+  - id: "contractoruk"
+    name: "ContractorUK"
+    enabled: true
+    scraper: "ContractorUKScraper"
+  - id: "jobserve"
+    name: "JobServe"
+    enabled: true
+    scraper: "JobServeScraper"
+  - id: "adzuna"
+    name: "Adzuna"
+    enabled: true
+    scraper: "AdzunaScraper"
+  - id: "itjobswatch"
+    name: "IT Jobs Watch"
+    enabled: false
+    scraper: "ITJobsWatchScraper"
+  - id: "linkedin"
+    name: "LinkedIn"
+    enabled: false
+    scraper: "LinkedInScraper"
+
+onboarding_defaults:
+  contract_type: "contract"
+  remote_preference: "hybrid"
+  scrape_interval_hours: 4

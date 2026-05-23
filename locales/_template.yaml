@@ -1,0 +1,54 @@
+# JobPilot locale pack template
+# Copy this file to <locale_id>.yaml and fill in the values.
+# locale_id should be a short lowercase string: "uk", "us", "in", "de", etc.
+# Community contributors: see examples/ for reference implementations.
+
+id: "LOCALE_ID"
+name: "Country / Region Name"
+flag: "🏳️"
+
+# ── Currency & compensation ────────────────────────────────────────────────────
+currency: "USD"           # ISO 4217 code
+currency_symbol: "$"
+default_rate_type: "annual"   # annual | monthly | daily | hourly
+
+rate_types:
+  - id: "annual"
+    label: "Annual salary"
+    example: "$120,000/yr"
+  # Add more as relevant for the locale
+
+# ── Legal / compliance fields ─────────────────────────────────────────────────
+# These appear in the onboarding wizard and are stored in profile.yaml under
+# compensation.legal_preferences. The scorer_agent injects the selected values
+# into scoring_context for the location_match dimension.
+legal_fields:
+  - id: "work_auth"
+    label: "Work authorisation"
+    type: "select"
+    options:
+      - value: "citizen"
+        label: "Citizen / Permanent resident"
+      - value: "visa_required"
+        label: "Requires visa sponsorship"
+    default: "citizen"
+
+# ── Scoring context (injected into scorer_agent prompt) ───────────────────────
+# Use {key} placeholders for values from legal_preferences.
+scoring_context: >
+  Evaluate location_match based on job location versus candidate preference.
+  Work authorisation: {work_auth}.
+
+# ── Job boards ────────────────────────────────────────────────────────────────
+job_boards:
+  - id: "linkedin"
+    name: "LinkedIn"
+    enabled: true
+    scraper: "LinkedInScraper"
+  # Add more boards for the locale
+
+# ── Onboarding defaults ───────────────────────────────────────────────────────
+onboarding_defaults:
+  contract_type: "permanent"    # permanent | contract | freelance
+  remote_preference: "hybrid"   # remote | hybrid | onsite
+  scrape_interval_hours: 4

@@ -187,6 +187,10 @@ class ScorerAgent(BaseAgent):
         locations = "; ".join(
             f"{loc.city} ({loc.remote_preference})" for loc in profile.search.locations
         )
+
+        # Inject locale-specific scoring context for location_match dimension
+        locale_context = self._get_locale_scoring_context(profile)
+
         return (
             f"Score this job for a candidate with the following profile:\n\n"
             f"Title: {profile.candidate.title}, {profile.candidate.years_experience} years experience\n"
@@ -195,16 +199,28 @@ class ScorerAgent(BaseAgent):
             f"Preferred domains: {preferred_domains}\n"
             f"Key achievements: {proof_summaries}\n"
             f"Target locations: {locations}\n"
-            f"Rate range: {comp.currency} {comp.min_rate}–{comp.max_rate} ({comp.rate_type})\n"
-            f"IR35 preference: {comp.ir35_preference}\n\n"
+            f"Rate range: {comp.currency} {comp.min_rate}–{comp.max_rate} ({comp.rate_type})\n\n"
             f"Job:\nTitle: {job.title}\nCompany: {job.company or 'N/A'}\n"
             f"Location: {job.location or 'N/A'}\nRate: {job.rate_text or 'N/A'}\n"
-            f"IR35: {job.ir35_status or 'N/A'}\n"
+            f"IR35/contract status: {job.ir35_status or 'N/A'}\n"
             f"Description:\n{(job.description or '')[:3000]}\n\n"
             f"Score on four dimensions (0.0–1.0):\n"
             f"- skill_match (weight {weights.skill_match}): how well skills match?\n"
             f"- experience_match (weight {weights.experience_match}): seniority/domain alignment?\n"
             f"- rate_match (weight {weights.rate_match}): rate within candidate range?\n"
             f"- location_match (weight {weights.location_match}): location/remote policy match?\n"
+            f"{locale_context}\n"
             f"overall_score = weighted sum using the weights above."
         )
+
+    def _get_locale_scoring_context(self, profile: Any) -> str:
+        """Return locale-specific instructions for the location_match dimension."""
+        try:
+            from ..services.locale_service import get_scoring_context
+            legal_prefs: dict[str, str] = getattr(profile.compensation, "legal_preferences", {})
+            ctx = get_scoring_context(profile.locale, legal_prefs)
+            if ctx:
+                return f"Additional location_match guidance ({profile.locale} locale):\n{ctx}"
+        except Exception:
+            pass
+        return ""

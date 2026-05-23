@@ -1,0 +1,72 @@
+id: "in"
+name: "India"
+flag: "🇮🇳"
+
+currency: "INR"
+currency_symbol: "₹"
+default_rate_type: "annual"
+
+rate_types:
+  - id: "annual"
+    label: "Annual CTC"
+    example: "₹25 LPA"
+  - id: "monthly"
+    label: "Monthly salary"
+    example: "₹2,00,000/mo"
+
+legal_fields:
+  - id: "notice_period"
+    label: "Notice period"
+    type: "select"
+    options:
+      - value: "immediate"
+        label: "Immediate joiner"
+      - value: "15_days"
+        label: "15 days"
+      - value: "30_days"
+        label: "30 days"
+      - value: "60_days"
+        label: "60 days"
+      - value: "90_days"
+        label: "90 days"
+    default: "30_days"
+  - id: "work_preference"
+    label: "Work preference"
+    type: "select"
+    options:
+      - value: "remote"
+        label: "Remote only"
+      - value: "hybrid"
+        label: "Hybrid"
+      - value: "onsite"
+        label: "On-site"
+    default: "hybrid"
+
+scoring_context: >
+  When scoring location_match, consider notice period compatibility.
+  Candidate notice period: {notice_period}.
+  If the job requires an immediate joiner and the candidate has a 90-day notice, penalise location_match.
+  Work preference: {work_preference} — if the job does not match the preferred arrangement, penalise accordingly.
+
+job_boards:
+  - id: "naukri"
+    name: "Naukri"
+    enabled: true
+    scraper: "NaukriScraper"
+  - id: "linkedin"
+    name: "LinkedIn"
+    enabled: true
+    scraper: "LinkedInScraper"
+  - id: "indeed"
+    name: "Indeed"
+    enabled: true
+    scraper: "IndeedScraper"
+  - id: "instahyre"
+    name: "Instahyre"
+    enabled: false
+    scraper: "InstahyreScraper"
+
+onboarding_defaults:
+  contract_type: "permanent"
+  remote_preference: "hybrid"
+  scrape_interval_hours: 6

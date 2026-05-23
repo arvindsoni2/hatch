@@ -16,6 +16,7 @@ from ..schemas.job import (
     ScrapeResult,
     StatsResponse,
 )
+from ..services.archive_service import archive_old_jobs, unarchive_job
 from ..services.job_service import JobService
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -231,3 +232,42 @@ async def delete_job(
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return {"status": "deleted", "id": job_id}
+
+
+# ──────────────────────── Archive Endpoints ────────────────────────
+
+@router.post("/archive/run", response_model=dict[str, int])
+async def run_archive(
+    days: Optional[int] = Query(default=None, ge=1, description="Override archive_after_days from profile"),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Archive active jobs older than the configured threshold.
+
+    Uses profile.preferences.archive_after_days unless overridden with ?days=N.
+    Returns {archived: N}.
+    """
+    if days is None:
+        try:
+            from ..agents.tools.profile_loader import load_profile
+            days = load_profile().preferences.archive_after_days
+        except Exception:
+            days = 30
+
+    count = await archive_old_jobs(db, days)
+    return {"archived": count}
+
+
+@router.post("/{job_id}/unarchive", response_model=dict[str, str])
+async def unarchive(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Restore an archived job (sets is_active=True).
+
+    Raises:
+        HTTPException 404: If job not found.
+    """
+    found = await unarchive_job(db, job_id)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    return {"status": "unarchived", "id": job_id}

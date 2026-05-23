@@ -1,0 +1,107 @@
+"""Locale pack service — loads YAML locale definitions and provides locale config."""
+from __future__ import annotations
+
+import logging
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+logger = logging.getLogger(__name__)
+
+# Locale packs live at the repo root alongside backend/ and frontend/
+_LOCALES_DIR = Path(__file__).resolve().parents[4] / "locales"
+
+
+class LocaleNotFoundError(ValueError):
+    pass
+
+
+@lru_cache(maxsize=None)
+def _load_all() -> dict[str, dict[str, Any]]:
+    """Load and cache all locale YAML files from the locales/ directory."""
+    packs: dict[str, dict[str, Any]] = {}
+    if not _LOCALES_DIR.exists():
+        logger.warning("locales/ directory not found at %s", _LOCALES_DIR)
+        return packs
+
+    for path in sorted(_LOCALES_DIR.glob("*.yaml")):
+        if path.stem.startswith("_"):
+            continue  # skip _template.yaml and similar meta files
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or "id" not in data:
+                logger.warning("Skipping malformed locale file: %s", path)
+                continue
+            packs[data["id"]] = data
+        except yaml.YAMLError as exc:
+            logger.warning("Failed to parse locale file %s: %s", path, exc)
+
+    return packs
+
+
+def get_locale(locale_id: str) -> dict[str, Any]:
+    """Return the locale pack for *locale_id*.
+
+    Raises LocaleNotFoundError if the locale is not installed.
+    """
+    packs = _load_all()
+    if locale_id not in packs:
+        raise LocaleNotFoundError(f"Locale '{locale_id}' not found. Available: {list(packs)}")
+    return packs[locale_id]
+
+
+def list_locales() -> list[dict[str, Any]]:
+    """Return a summary list of all available locales (id, name, flag)."""
+    return [
+        {"id": pack["id"], "name": pack["name"], "flag": pack.get("flag", "")}
+        for pack in _load_all().values()
+    ]
+
+
+def get_scoring_context(locale_id: str, legal_preferences: dict[str, str]) -> str:
+    """Return the scoring_context string with legal_preferences values interpolated.
+
+    Used by scorer_agent to inject locale-aware context into the scoring prompt.
+    """
+    try:
+        pack = get_locale(locale_id)
+    except LocaleNotFoundError:
+        return ""
+    template: str = pack.get("scoring_context", "")
+    try:
+        return template.format_map(legal_preferences)
+    except KeyError as exc:
+        logger.debug("scoring_context template missing key %s for locale %s", exc, locale_id)
+        return template
+
+
+def get_job_boards(locale_id: str, *, enabled_only: bool = True) -> list[dict[str, Any]]:
+    """Return job board configs for a locale, optionally filtering to enabled ones."""
+    try:
+        pack = get_locale(locale_id)
+    except LocaleNotFoundError:
+        return []
+    boards: list[dict[str, Any]] = pack.get("job_boards", [])
+    if enabled_only:
+        return [b for b in boards if b.get("enabled", False)]
+    return boards
+
+
+def get_onboarding_defaults(locale_id: str) -> dict[str, Any]:
+    """Return the onboarding_defaults section for a locale."""
+    try:
+        pack = get_locale(locale_id)
+    except LocaleNotFoundError:
+        return {}
+    return pack.get("onboarding_defaults", {})
+
+
+def get_legal_fields(locale_id: str) -> list[dict[str, Any]]:
+    """Return legal_fields definitions for the onboarding wizard."""
+    try:
+        pack = get_locale(locale_id)
+    except LocaleNotFoundError:
+        return []
+    return pack.get("legal_fields", [])

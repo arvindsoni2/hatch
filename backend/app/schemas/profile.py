@@ -33,9 +33,11 @@ class SearchConfig(BaseModel):
 class CompensationConfig(BaseModel):
     min_rate: float = 0
     max_rate: float = 0
-    rate_type: Literal["daily", "hourly", "annual"] = "daily"
+    rate_type: Literal["daily", "hourly", "annual", "monthly"] = "daily"
     currency: str = "GBP"
     ir35_preference: Literal["outside", "inside", "any"] = "any"
+    # Locale-specific legal/compliance preferences (e.g. work_auth, notice_period)
+    legal_preferences: dict[str, str] = Field(default_factory=dict)
 
 
 class SkillsConfig(BaseModel):
@@ -107,12 +109,14 @@ class PreferencesConfig(BaseModel):
     scrape_interval_hours: int = 4
     max_tailor_batch: int = 5
     follow_up_days: list[int] = Field(default_factory=lambda: [5, 10, 15])
-    locale: str = "en-GB"
+    locale: str = "en-GB"  # display/date locale (BCP-47)
+    archive_after_days: int = 30  # auto-archive jobs older than this
 
 
 class Profile(BaseModel):
     """Root schema for profile.yaml. Validates the full user configuration."""
 
+    locale: str = "uk"  # geographic locale ID (matches locales/*.yaml id field)
     candidate: CandidateConfig = Field(default_factory=CandidateConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     compensation: CompensationConfig = Field(default_factory=CompensationConfig)

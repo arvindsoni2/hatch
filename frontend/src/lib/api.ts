@@ -1388,3 +1388,63 @@ export interface RawProfile {
 export async function fetchRawProfile(): Promise<RawProfile> {
   return apiFetch<RawProfile>("/api/v2/profile", { cache: "no-store" });
 }
+
+export async function saveProfile(data: Record<string, unknown>): Promise<RawProfile> {
+  return apiFetch<RawProfile>("/api/v2/profile", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function testLLMConnection(provider: string, apiKey: string): Promise<{ ok: boolean; error?: string }> {
+  return apiFetch<{ ok: boolean; error?: string }>("/api/v2/profile/test-connection", {
+    method: "POST",
+    body: JSON.stringify({ provider, api_key: apiKey }),
+  });
+}
+
+// ──────────────────────── Locales ────────────────────────
+
+export interface LocaleSummary {
+  id: string;
+  name: string;
+  flag: string;
+}
+
+export interface LocaleLegalField {
+  id: string;
+  label: string;
+  type: "select" | "text";
+  options?: Array<{ value: string; label: string }>;
+  default: string;
+}
+
+export interface LocaleBoard {
+  id: string;
+  name: string;
+  enabled: boolean;
+  scraper: string;
+}
+
+export async function fetchLocales(): Promise<LocaleSummary[]> {
+  return apiFetch<LocaleSummary[]>("/api/v2/locales");
+}
+
+export async function fetchLocaleLegalFields(localeId: string): Promise<LocaleLegalField[]> {
+  return apiFetch<LocaleLegalField[]>(`/api/v2/locales/${localeId}/legal-fields`);
+}
+
+export async function fetchLocaleBoards(localeId: string): Promise<LocaleBoard[]> {
+  return apiFetch<LocaleBoard[]>(`/api/v2/locales/${localeId}/boards?enabled_only=false`);
+}
+
+// ──────────────────────── Archive ────────────────────────
+
+export async function runArchive(days?: number): Promise<{ archived: number }> {
+  const qs = days !== undefined ? `?days=${days}` : "";
+  return apiFetch<{ archived: number }>(`/api/jobs/archive/run${qs}`, { method: "POST" });
+}
+
+export async function unarchiveJob(jobId: string): Promise<{ status: string; id: string }> {
+  return apiFetch<{ status: string; id: string }>(`/api/jobs/${jobId}/unarchive`, { method: "POST" });
+}

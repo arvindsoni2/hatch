@@ -14,6 +14,7 @@ from .database import AsyncSessionLocal, init_db
 from .repositories.application_repository import ApplicationRepository
 from .repositories.job_repository import JobRepository
 from .routers.agents import router as agents_router
+from .routers.locales import router as locales_router
 from .routers.profile import router as profile_router
 from .routers.analytics import router as analytics_router
 from .routers.applications import router as applications_router
@@ -153,6 +154,7 @@ def create_app() -> FastAPI:
     app.include_router(events_router)
     # v2: profile-driven configuration
     app.include_router(profile_router)
+    app.include_router(locales_router)
 
     return app
 

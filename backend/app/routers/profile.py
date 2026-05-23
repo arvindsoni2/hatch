@@ -1,13 +1,17 @@
 """Profile CRUD API — read, write, validate, and check profile.yaml."""
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
 from ..agents.tools.profile_loader import invalidate_cache
+from ..agents.tools.llm_factory import get_triage_model
 from ..schemas.profile import Profile
+from ..services.locale_service import list_locales
 from ..services.profile_service import (
     load_profile,
     load_profile_raw,
@@ -16,6 +20,7 @@ from ..services.profile_service import (
     validate_profile_data,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/profile", tags=["profile"])
 
 
@@ -76,3 +81,39 @@ async def profile_status() -> dict[str, Any]:
         "llm_provider": profile.llm.provider,
         "target_roles": profile.search.target_roles,
     }
+
+
+@router.post("/test-connection")
+async def test_llm_connection(data: dict[str, Any]) -> dict[str, Any]:
+    """Test that the LLM API key / provider in the submitted profile config is valid.
+
+    Temporarily sets the relevant env var, makes a minimal LLM call, then
+    restores the env. Returns {ok: bool, error?: str}.
+    """
+    provider: str = data.get("provider", "anthropic")
+    api_key: str = data.get("api_key", "")
+    env_var_map = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "google": "GOOGLE_API_KEY",
+        "azure": "AZURE_OPENAI_API_KEY",
+    }
+    env_var = env_var_map.get(provider)
+    original: str | None = None
+
+    try:
+        if env_var and api_key:
+            original = os.environ.get(env_var)
+            os.environ[env_var] = api_key
+
+        llm = get_triage_model()
+        await llm.ainvoke("Reply with the single word OK.")
+        return {"ok": True}
+    except Exception as exc:
+        logger.debug("LLM connection test failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    finally:
+        if env_var and original is not None:
+            os.environ[env_var] = original
+        elif env_var and api_key:
+            os.environ.pop(env_var, None)

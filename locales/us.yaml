@@ -1,0 +1,81 @@
+id: "us"
+name: "United States"
+flag: "🇺🇸"
+
+currency: "USD"
+currency_symbol: "$"
+default_rate_type: "annual"
+
+rate_types:
+  - id: "annual"
+    label: "Annual salary"
+    example: "$150,000/yr"
+  - id: "hourly"
+    label: "Hourly rate"
+    example: "$75/hr"
+  - id: "monthly"
+    label: "Monthly rate"
+    example: "$12,000/mo"
+
+legal_fields:
+  - id: "work_auth"
+    label: "Work authorisation"
+    type: "select"
+    options:
+      - value: "us_citizen"
+        label: "US Citizen"
+      - value: "green_card"
+        label: "Green Card / Permanent Resident"
+      - value: "h1b"
+        label: "H-1B (sponsored)"
+      - value: "opt_cpt"
+        label: "OPT / CPT"
+      - value: "requires_sponsorship"
+        label: "Requires sponsorship"
+    default: "us_citizen"
+  - id: "clearance"
+    label: "Security clearance"
+    type: "select"
+    options:
+      - value: "none"
+        label: "None"
+      - value: "public_trust"
+        label: "Public Trust"
+      - value: "secret"
+        label: "Secret"
+      - value: "top_secret"
+        label: "Top Secret / SCI"
+    default: "none"
+
+scoring_context: >
+  When scoring location_match, consider work authorisation compatibility.
+  Candidate work authorisation: {work_auth}.
+  If the job requires sponsorship-ineligible candidates (e.g., "no sponsorship") and candidate requires sponsorship, score location_match as 0.
+  Security clearance: {clearance} — if the job requires a clearance the candidate does not hold, penalise location_match significantly.
+
+job_boards:
+  - id: "linkedin"
+    name: "LinkedIn"
+    enabled: true
+    scraper: "LinkedInScraper"
+  - id: "indeed"
+    name: "Indeed"
+    enabled: true
+    scraper: "IndeedScraper"
+  - id: "dice"
+    name: "Dice"
+    enabled: true
+    scraper: "DiceScraper"
+  - id: "glassdoor"
+    name: "Glassdoor"
+    enabled: false
+    scraper: "GlassdoorScraper"
+  - id: "wellfound"
+    name: "Wellfound (AngelList)"
+    enabled: false
+    scraper: "WellfoundScraper"
+
+onboarding_defaults:
+  contract_type: "permanent"
+  remote_preference: "remote"
+  scrape_interval_hours: 4
