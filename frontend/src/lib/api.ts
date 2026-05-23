@@ -1448,3 +1448,151 @@ export async function runArchive(days?: number): Promise<{ archived: number }> {
 export async function unarchiveJob(jobId: string): Promise<{ status: string; id: string }> {
   return apiFetch<{ status: string; id: string }>(`/api/jobs/${jobId}/unarchive`, { method: "POST" });
 }
+
+// ──────────────────────── Activity Timeline ────────────────────────
+
+export interface ActivityItem {
+  id: string;
+  timestamp: string;
+  agent: string;
+  event_type: string;
+  status: string;
+  title: string;
+  detail: string | null;
+  job_id: string | null;
+  cost_estimate: number | null;
+  model_used: string | null;
+}
+
+export interface ActivityList {
+  items: ActivityItem[];
+  total: number;
+}
+
+export async function fetchActivity(limit = 20, hours = 24): Promise<ActivityList> {
+  return apiFetch<ActivityList>(`/api/events/activity?limit=${limit}&hours=${hours}`);
+}
+
+export async function fetchCostSummary(days = 30): Promise<{
+  total_cost_usd: number;
+  by_agent: Record<string, number>;
+  total_calls: number;
+}> {
+  return apiFetch(`/api/events/costs?days=${days}`);
+}
+
+// ──────────────────────── Decision Trail ────────────────────────
+
+export interface DecisionStep {
+  step: number;
+  agent: string;
+  event_type: string;
+  status: string;
+  timestamp: string;
+  summary: string;
+  reasoning: string | null;
+  score: number | null;
+  skill_match: number | null;
+  experience_match: number | null;
+  rate_match: number | null;
+  location_match: number | null;
+  model_used: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  cost_estimate: number | null;
+  duration_ms: number | null;
+  ats_score: number | null;
+}
+
+export interface DecisionTrail {
+  job_id: string;
+  job_title: string | null;
+  steps: DecisionStep[];
+  total_cost_usd: number;
+}
+
+export async function fetchJobDecisions(jobId: string): Promise<DecisionTrail> {
+  return apiFetch<DecisionTrail>(`/api/jobs/${jobId}/decisions`);
+}
+
+// ──────────────────────── Resume / CV Management ────────────────────────
+
+export interface ResumeStatus {
+  exists: boolean;
+  filename: string | null;
+  uploaded_at: string | null;
+  parsed: boolean;
+  sections: Record<string, boolean>;
+  skills_count: number;
+  experience_count: number;
+  proof_points_count: number;
+}
+
+export async function fetchResumeStatus(): Promise<ResumeStatus> {
+  return apiFetch<ResumeStatus>("/api/resume/status");
+}
+
+export async function uploadResume(file: File): Promise<ResumeStatus> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch<ResumeStatus>("/api/resume/upload", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function fetchMasterCvJson(): Promise<Record<string, unknown>> {
+  return apiFetch<Record<string, unknown>>("/api/resume/json");
+}
+
+// ──────────────────────── Follow-up Reminders ────────────────────────
+
+export interface FollowUpReminder {
+  application_id: string;
+  job_title: string | null;
+  company: string | null;
+  applied_date: string | null;
+  days_since_applied: number;
+  follow_up_number: number;
+  due_date: string;
+  overdue: boolean;
+}
+
+export async function fetchFollowUpReminders(): Promise<FollowUpReminder[]> {
+  return apiFetch<FollowUpReminder[]>("/api/applications/follow-up-reminders");
+}
+
+// ──────────────────────── Analytics Enhancements ────────────────────────
+
+export interface AtsCorrelationBucket {
+  range: string;
+  label: string;
+  total: number;
+  responses: number;
+  response_rate_pct: number;
+}
+
+export interface AtsCorrelation {
+  buckets: AtsCorrelationBucket[];
+  total_scored: number;
+  message?: string;
+}
+
+export async function fetchAtsCorrelation(): Promise<AtsCorrelation> {
+  return apiFetch<AtsCorrelation>("/api/analytics/ats-correlation");
+}
+
+export interface SkillFrequencyItem {
+  skill: string;
+  count: number;
+}
+
+export interface SkillFrequency {
+  skills: SkillFrequencyItem[];
+  total_jobs_analyzed: number;
+  message?: string;
+}
+
+export async function fetchSkillFrequency(limit = 20): Promise<SkillFrequency> {
+  return apiFetch<SkillFrequency>(`/api/analytics/skill-frequency?limit=${limit}`);
+}

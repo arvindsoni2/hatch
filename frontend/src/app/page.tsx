@@ -8,15 +8,18 @@ import {
   fetchPendingApprovals,
   fetchJobs,
   getUpcomingInterviews,
+  fetchFollowUpReminders,
   type AllAgentStatus,
   type PipelineStats,
   type PendingApproval,
   type RawProfile,
+  type FollowUpReminder,
 } from "@/lib/api";
 import { JobCard } from "@/components/JobCard";
 import { Button } from "@/components/ui/button";
 import { TriggerScrapeButton } from "@/components/TriggerScrapeButton";
-import { ArrowRight, CheckCircle2, AlertTriangle, XCircle, Zap, ClipboardCheck, Briefcase, Stars } from "lucide-react";
+import { ActivityTimeline } from "@/components/ActivityTimeline";
+import { ArrowRight, CheckCircle2, AlertTriangle, XCircle, Zap, ClipboardCheck, Briefcase, Stars, Bell } from "lucide-react";
 import { formatDistanceToNow, addHours } from "date-fns";
 
 export const revalidate = 60;
@@ -165,9 +168,12 @@ function PipelineBar({ stats }: { stats: PipelineStats | null }) {
 
   return (
     <div>
-      <h2 className="mb-3 text-sm font-semibold text-slate-700">Pipeline</h2>
+      <div className="mb-3 flex items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-slate-700">Jobs pipeline</h2>
+        <span className="text-xs text-slate-400">{total.toLocaleString()} jobs found by Scout</span>
+      </div>
       <div className="flex items-end gap-1 overflow-hidden">
-        <Segment count={stats.discovered} label="discovered" color="bg-slate-200" />
+        <Segment count={stats.discovered} label="jobs found" color="bg-slate-200" />
         <Segment count={stats.scored} label="scored" color="bg-blue-200" />
         <Segment count={stats.shortlisted} label="shortlisted" color="bg-brand-300" />
         <Segment count={stats.tailored} label="tailored" color="bg-indigo-300" />
@@ -202,6 +208,63 @@ function EmptyState({ scrapeIntervalHours }: { scrapeIntervalHours: number }) {
   );
 }
 
+// ── Follow-up reminders ───────────────────────────────────────────────────────
+
+function FollowUpSection({ reminders }: { reminders: FollowUpReminder[] }) {
+  if (reminders.length === 0) return null;
+  const overdue = reminders.filter((r) => r.overdue);
+  const upcoming = reminders.filter((r) => !r.overdue);
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <Bell className="h-4 w-4 text-amber-500" />
+          Follow-up reminders
+          {overdue.length > 0 && (
+            <span className="rounded-full bg-red-100 text-red-700 text-xs px-2 py-0.5 font-medium">
+              {overdue.length} overdue
+            </span>
+          )}
+        </h2>
+        <Link href="/applications" className="flex items-center gap-1 text-xs text-brand-600 hover:underline">
+          View all <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100 overflow-hidden">
+        {reminders.slice(0, 5).map((r) => (
+          <div key={r.application_id} className="flex items-center justify-between px-4 py-3 gap-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800 truncate">
+                {r.job_title ?? "Untitled Role"}
+              </p>
+              {r.company && (
+                <p className="text-xs text-slate-500 truncate">{r.company}</p>
+              )}
+            </div>
+            <div className="flex items-center gap-3 shrink-0 text-right">
+              <div>
+                <p className="text-xs text-slate-500">
+                  {r.days_since_applied}d since applied
+                </p>
+                <p className={`text-xs font-medium ${r.overdue ? "text-red-600" : "text-amber-600"}`}>
+                  Follow-up #{r.follow_up_number} {r.overdue ? "overdue" : "due"}
+                </p>
+              </div>
+              <span className={`h-2 w-2 rounded-full shrink-0 ${r.overdue ? "bg-red-400" : "bg-amber-400"}`} />
+            </div>
+          </div>
+        ))}
+        {reminders.length > 5 && (
+          <div className="px-4 py-2 text-xs text-slate-400 text-center">
+            +{reminders.length - 5} more — <Link href="/applications" className="text-brand-600 hover:underline">view all</Link>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default async function DashboardPage() {
@@ -210,13 +273,14 @@ export default async function DashboardPage() {
     redirect("/onboarding");
   }
 
-  const [rawProfile, agentStatus, pipelineStats, pendingApprovals, upcomingInterviews] =
+  const [rawProfile, agentStatus, pipelineStats, pendingApprovals, upcomingInterviews, followUpReminders] =
     await Promise.all([
       fetchRawProfile().catch((): RawProfile => ({})),
       fetchAllAgentStatus().catch((): AllAgentStatus | null => null),
       fetchPipelineStats().catch((): PipelineStats | null => null),
       fetchPendingApprovals().catch((): PendingApproval[] => []),
       getUpcomingInterviews(14).catch(() => []),
+      fetchFollowUpReminders().catch((): FollowUpReminder[] => []),
     ]);
 
   const threshold = rawProfile.scoring?.shortlist_threshold ?? 0.75;
@@ -344,6 +408,12 @@ export default async function DashboardPage() {
 
           {/* Section D: Pipeline bar */}
           <PipelineBar stats={pipelineStats} />
+
+          {/* Section E: Follow-up reminders */}
+          <FollowUpSection reminders={followUpReminders} />
+
+          {/* Section F: Activity timeline */}
+          <ActivityTimeline />
         </>
       )}
     </div>

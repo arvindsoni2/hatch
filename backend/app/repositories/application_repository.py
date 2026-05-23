@@ -48,7 +48,16 @@ class ApplicationRepository:
 
         Returns:
             The created application as ApplicationRead.
+
+        Raises:
+            ValueError: If job_id is provided but the referenced job does not exist.
         """
+        if data.job_id is not None:
+            job_exists = await self._session.execute(
+                select(JobPosting.id).where(JobPosting.id == data.job_id)
+            )
+            if job_exists.scalar_one_or_none() is None:
+                raise ValueError(f"Job {data.job_id} not found — cannot create orphaned application")
         db_obj = Application(**data.model_dump())
         self._session.add(db_obj)
         await self._session.flush()
@@ -314,7 +323,8 @@ class ApplicationRepository:
         )
         counts: dict[str, int] = dict(result.all())
 
-        active_statuses = {"discovered", "shortlisted", "applied", "interview", "offered"}
+        # "discovered" is a raw Scout-found job, not an application the user is pursuing
+        active_statuses = {"shortlisted", "applied", "interview", "offered"}
         active_count = sum(counts.get(s, 0) for s in active_statuses)
         applied_count = (
             counts.get("applied", 0)

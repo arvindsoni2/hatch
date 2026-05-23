@@ -11,54 +11,65 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  ArrowLeft,
-  Building2,
-  CheckCircle2,
-  Clock,
-  FileText,
-  MapPin,
-  RefreshCw,
-  XCircle,
+  ArrowLeft, Building2, CheckCircle2, Clock, FileText,
+  MapPin, RefreshCw, XCircle, ChevronDown, ChevronUp,
+  AlertTriangle, Save,
 } from "lucide-react";
+
+interface AtsDetails {
+  overall_score?: number;
+  keyword_matches?: string[];
+  keyword_misses?: string[];
+  format_warnings?: string[];
+  improvements?: string[];
+  ats_analysis?: {
+    matched_keywords?: string[];
+    missing_keywords?: string[];
+    score?: number;
+  };
+}
 
 interface ApprovalDetail {
   application: {
-    id: string
-    status: string
-    approval_status: string
-    agent_created: boolean
-    created_at: string | null
-  }
+    id: string;
+    status: string;
+    approval_status: string;
+    agent_created: boolean;
+    created_at: string | null;
+  };
   job: {
-    id: string | null
-    title: string | null
-    company: string | null
-    location: string | null
-    rate_text: string | null
-    ir35_status: string | null
-    description: string | null
-  } | null
+    id: string | null;
+    title: string | null;
+    company: string | null;
+    location: string | null;
+    rate_text: string | null;
+    ir35_status: string | null;
+    description: string | null;
+  } | null;
   score: {
-    overall_score: number | null
-    skill_match: number | null
-    experience_match: number | null
-    rate_match: number | null
-    location_match: number | null
-    reasoning: string | null
-  } | null
+    overall_score: number | null;
+    skill_match: number | null;
+    experience_match: number | null;
+    rate_match: number | null;
+    location_match: number | null;
+    reasoning: string | null;
+  } | null;
   documents: {
-    id: string
-    document_type: string
-    version: number
-    file_path: string
-    ats_score: number | null
-    created_at: string | null
-  }[]
+    id: string;
+    document_type: string;
+    version: number;
+    file_path: string;
+    ats_score: number | null;
+    ats_details: AtsDetails | null;
+    content_text: string | null;
+    created_at: string | null;
+  }[];
+  notes: string | null;
 }
 
-function ScoreRadar({
-  skill, experience, rate, location,
-}: {
+// ── Score radar ───────────────────────────────────────────────────────────────
+
+function ScoreRadar({ skill, experience, rate, location }: {
   skill: number | null; experience: number | null;
   rate: number | null; location: number | null;
 }) {
@@ -72,18 +83,13 @@ function ScoreRadar({
     <div className="grid grid-cols-2 gap-3">
       {bars.map(({ label, value }) => {
         const pct = value !== null ? Math.round(value * 100) : null;
-        const colour = pct === null ? "bg-slate-200"
-          : pct >= 85 ? "bg-green-500"
-          : pct >= 70 ? "bg-amber-500"
-          : "bg-red-400";
         return (
           <div key={label} className="text-center">
             <div className="relative h-16 w-16 mx-auto mb-1">
               <svg viewBox="0 0 36 36" className="h-16 w-16 -rotate-90">
                 <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e2e8f0" strokeWidth="3" />
                 <circle
-                  cx="18" cy="18" r="15.9155"
-                  fill="none"
+                  cx="18" cy="18" r="15.9155" fill="none"
                   stroke={pct === null ? "#cbd5e1" : pct >= 85 ? "#22c55e" : pct >= 70 ? "#f59e0b" : "#f87171"}
                   strokeWidth="3"
                   strokeDasharray={`${pct ?? 0} 100`}
@@ -102,23 +108,138 @@ function ScoreRadar({
   );
 }
 
+// ── ATS rubric ────────────────────────────────────────────────────────────────
+
+function AtsRubric({ atsScore, atsDetails }: { atsScore: number | null; atsDetails: AtsDetails | null }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!atsScore) return null;
+
+  const matched = atsDetails?.keyword_matches
+    ?? atsDetails?.ats_analysis?.matched_keywords ?? [];
+  const missing = atsDetails?.keyword_misses
+    ?? atsDetails?.ats_analysis?.missing_keywords ?? [];
+  const improvements = atsDetails?.improvements ?? [];
+  const formatWarnings = atsDetails?.format_warnings ?? [];
+
+  const color = atsScore >= 80 ? "text-green-700 bg-green-50" : atsScore >= 60 ? "text-amber-700 bg-amber-50" : "text-red-700 bg-red-50";
+  const barColor = atsScore >= 80 ? "bg-green-500" : atsScore >= 60 ? "bg-amber-400" : "bg-red-400";
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <button
+        onClick={() => setExpanded((p) => !p)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-3">
+          <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${color}`}>
+            ATS {atsScore}%
+          </span>
+          <div className="w-32 bg-slate-100 rounded-full h-2 overflow-hidden">
+            <div className={`h-full rounded-full ${barColor}`} style={{ width: `${atsScore}%` }} />
+          </div>
+        </div>
+        {expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-slate-100 px-4 py-3 space-y-3 text-sm">
+          {matched.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-green-700 mb-1.5">
+                ✓ Matched keywords ({matched.length})
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {matched.map((kw) => (
+                  <span key={kw} className="rounded-full bg-green-100 text-green-700 px-2 py-0.5 text-xs">{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {missing.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-red-600 mb-1.5">
+                ✗ Missing keywords ({missing.length})
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {missing.map((kw) => (
+                  <span key={kw} className="rounded-full bg-red-100 text-red-600 px-2 py-0.5 text-xs">{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {formatWarnings.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-amber-700 mb-1">Structure warnings</p>
+              <ul className="space-y-0.5">
+                {formatWarnings.map((w, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-xs text-amber-700">
+                    <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" /> {w}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {improvements.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-slate-600 mb-1">Recommendations</p>
+              <ol className="space-y-0.5 list-decimal list-inside">
+                {improvements.map((imp, i) => (
+                  <li key={i} className="text-xs text-slate-600">{imp}</li>
+                ))}
+              </ol>
+            </div>
+          )}
+          {matched.length === 0 && missing.length === 0 && improvements.length === 0 && (
+            <p className="text-xs text-slate-400">Detailed ATS analysis not available for this version.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
 export default function ApprovalDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [detail, setDetail] = useState<ApprovalDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<"approving" | "rejecting" | null>(null);
+  const [notes, setNotes] = useState("");
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
 
   useEffect(() => {
     fetchApprovalDetail(id)
-      .then((d) => setDetail(d as unknown as ApprovalDetail))
+      .then((d) => {
+        const typed = d as unknown as ApprovalDetail;
+        setDetail(typed);
+        setNotes(typed.notes ?? "");
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [id]);
 
+  const saveNotes = async () => {
+    setNotesSaving(true);
+    try {
+      await fetch(`/api/agents/approvals/${id}/notes`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes }),
+      });
+      setNotesSaved(true);
+      setTimeout(() => setNotesSaved(false), 2000);
+    } finally {
+      setNotesSaving(false);
+    }
+  };
+
   const handleApprove = async () => {
     setActing("approving");
     try {
+      if (notes !== (detail?.notes ?? "")) await saveNotes();
       await approveApplication(id);
       router.push("/approvals");
     } finally {
@@ -155,7 +276,6 @@ export default function ApprovalDetailPage() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Back button */}
       <button
         onClick={() => router.back()}
         className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
@@ -171,14 +291,10 @@ export default function ApprovalDetailPage() {
               <CardTitle className="text-xl">{job?.title ?? "Untitled Role"}</CardTitle>
               <div className="flex items-center gap-3 mt-1.5 text-sm text-slate-500 flex-wrap">
                 {job?.company && (
-                  <span className="flex items-center gap-1">
-                    <Building2 className="h-3.5 w-3.5" /> {job.company}
-                  </span>
+                  <span className="flex items-center gap-1"><Building2 className="h-3.5 w-3.5" /> {job.company}</span>
                 )}
                 {job?.location && (
-                  <span className="flex items-center gap-1">
-                    <MapPin className="h-3.5 w-3.5" /> {job.location}
-                  </span>
+                  <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> {job.location}</span>
                 )}
                 {job?.rate_text && (
                   <span className="font-semibold text-slate-700">{job.rate_text}</span>
@@ -190,10 +306,8 @@ export default function ApprovalDetailPage() {
             </div>
             <Badge
               className={
-                application.approval_status === "approved"
-                  ? "bg-green-100 text-green-700"
-                  : application.approval_status === "rejected"
-                  ? "bg-red-100 text-red-700"
+                application.approval_status === "approved" ? "bg-green-100 text-green-700"
+                  : application.approval_status === "rejected" ? "bg-red-100 text-red-700"
                   : "bg-amber-100 text-amber-700"
               }
             >
@@ -232,7 +346,7 @@ export default function ApprovalDetailPage() {
         </Card>
       )}
 
-      {/* Documents */}
+      {/* Documents with ATS rubric */}
       <div className="grid gap-4 sm:grid-cols-2">
         {[{ doc: cv, label: "Tailored CV" }, { doc: cl, label: "Cover Letter" }].map(({ doc, label }) => (
           <Card key={label}>
@@ -242,28 +356,17 @@ export default function ApprovalDetailPage() {
                 {label}
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               {doc ? (
-                <div className="space-y-1">
-                  <p className="text-xs text-slate-500">Version {doc.version}</p>
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs text-slate-500">Version {doc.version}</p>
+                    <p className="text-xs text-slate-400 truncate">{doc.file_path}</p>
+                  </div>
                   {doc.ats_score !== null && (
-                    <p className="text-xs">
-                      ATS score:{" "}
-                      <span
-                        className={
-                          doc.ats_score >= 80
-                            ? "text-green-600 font-semibold"
-                            : doc.ats_score >= 60
-                            ? "text-amber-600 font-semibold"
-                            : "text-red-500 font-semibold"
-                        }
-                      >
-                        {doc.ats_score}
-                      </span>
-                    </p>
+                    <AtsRubric atsScore={doc.ats_score} atsDetails={doc.ats_details} />
                   )}
-                  <p className="text-xs text-slate-400 truncate">{doc.file_path}</p>
-                </div>
+                </>
               ) : (
                 <p className="text-xs text-slate-400">Not generated yet</p>
               )}
@@ -271,6 +374,45 @@ export default function ApprovalDetailPage() {
           </Card>
         ))}
       </div>
+
+      {/* Reviewer notes / inline edit */}
+      {!isDecided && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Reviewer notes</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-slate-500">
+              Add any notes or edits before approving. These are saved with the application.
+            </p>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={5}
+              placeholder="e.g. Adjusted summary to emphasise stakeholder management. Add SAFe experience if asked."
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500 resize-y"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void saveNotes()}
+                disabled={notesSaving}
+              >
+                {notesSaving ? (
+                  <RefreshCw className="h-3.5 w-3.5 mr-1 animate-spin" />
+                ) : (
+                  <Save className="h-3.5 w-3.5 mr-1" />
+                )}
+                {notesSaved ? "Saved!" : "Save notes"}
+              </Button>
+              {notesSaved && (
+                <CheckCircle2 className="h-4 w-4 text-green-500" />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Approval actions */}
       {!isDecided && (
@@ -285,7 +427,7 @@ export default function ApprovalDetailPage() {
             ) : (
               <CheckCircle2 className="h-4 w-4 mr-2" />
             )}
-            Approve Application
+            Save &amp; Approve
           </Button>
           <Button
             variant="outline"
@@ -307,6 +449,9 @@ export default function ApprovalDetailPage() {
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <Clock className="h-4 w-4" />
           This application was {application.approval_status}.
+          {detail.notes && (
+            <span className="ml-2 text-slate-400 italic">&ldquo;{detail.notes}&rdquo;</span>
+          )}
         </div>
       )}
     </div>

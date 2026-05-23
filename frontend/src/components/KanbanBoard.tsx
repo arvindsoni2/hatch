@@ -127,7 +127,7 @@ function StatsRibbon({ stats }: { stats: KanbanStats }) {
   return (
     <div className="flex flex-wrap gap-3 mb-4">
       {[
-        { label: "Active", value: stats.active_count, color: "text-indigo-600" },
+        { label: "Active Applications", value: stats.active_count, color: "text-indigo-600" },
         { label: "Applied", value: stats.applied_count, color: "text-blue-600" },
         { label: "Response Rate", value: `${stats.response_rate.toFixed(1)}%`, color: "text-emerald-600" },
         {

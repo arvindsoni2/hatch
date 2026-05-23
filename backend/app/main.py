@@ -22,6 +22,7 @@ from .routers.auto_apply import router as auto_apply_router
 from .routers.digest import router as digest_router
 from .routers.emails import router as emails_router
 from .routers.events import router as events_router
+from .routers.resume import router as resume_router
 from .routers.ghost import router as ghost_router
 from .routers.stories import router as stories_router
 from .routers.interviews import router as interviews_router
@@ -155,6 +156,7 @@ def create_app() -> FastAPI:
     # v2: profile-driven configuration
     app.include_router(profile_router)
     app.include_router(locales_router)
+    app.include_router(resume_router)
 
     return app
 

@@ -21,7 +21,7 @@ services:
       - MAX_TAILOR_BATCH=${MAX_TAILOR_BATCH:-5}
       - AUTO_APPROVE=false
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       # Bind-mount data/ so profile.yaml and the SQLite DB are editable on the host
       # :z adds SELinux shared label (required on Fedora/RHEL with SELinux enforcing)
@@ -49,7 +49,7 @@ services:
       - API_URL=http://backend:8000
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       backend:
         condition: service_healthy

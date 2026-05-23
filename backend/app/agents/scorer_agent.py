@@ -7,6 +7,7 @@ The LLM used is determined by profile.yaml llm config via llm_factory.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -17,9 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.job_score import JobScore
 from ..models.job import JobPosting
+from ..models.cost_tracking import CostTracking
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
-from .tools.llm_factory import get_triage_model, get_primary_model
+from .tools.llm_factory import get_triage_model, get_primary_model, estimate_tokens, estimate_cost
 from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.scorer")
@@ -114,16 +116,46 @@ class ScorerAgent(BaseAgent):
         if job is None:
             raise ValueError(f"Job {job_id} not found in DB")
 
+        profile_cfg = profile.llm
+        triage_model_name = profile_cfg.triage_model
+        primary_model_name = profile_cfg.primary_model
+
         # Triage pre-filter (cheap model — rejects obvious non-matches)
         triage_prompt = self._build_triage_prompt(job, profile)
+        t0 = time.monotonic()
         triage: _TriageResult = await triage_llm.ainvoke(triage_prompt)
+        triage_ms = int((time.monotonic() - t0) * 1000)
+        triage_tok_in = estimate_tokens(triage_prompt)
+        triage_tok_out = estimate_tokens(triage.reason)
+        db.add(CostTracking(
+            agent_name="scorer",
+            job_id=job_id,
+            model=triage_model_name,
+            tokens_in=triage_tok_in,
+            tokens_out=triage_tok_out,
+            cost_estimate=estimate_cost(triage_model_name, triage_tok_in, triage_tok_out),
+        ))
         if not triage.relevant:
             self._log.info("Job %s pre-filtered: %s", job_id, triage.reason)
+            await db.commit()
             return "skipped"
 
         # Detailed scoring (primary model — weights from profile.yaml)
         scoring_prompt = self._build_scoring_prompt(job, profile)
+        t1 = time.monotonic()
         score: _ScoreResult = await primary_llm.ainvoke(scoring_prompt)
+        score_ms = int((time.monotonic() - t1) * 1000)
+        score_tok_in = estimate_tokens(scoring_prompt)
+        score_tok_out = estimate_tokens(score.reasoning)
+        cost = estimate_cost(primary_model_name, score_tok_in, score_tok_out)
+        db.add(CostTracking(
+            agent_name="scorer",
+            job_id=job_id,
+            model=primary_model_name,
+            tokens_in=score_tok_in,
+            tokens_out=score_tok_out,
+            cost_estimate=cost,
+        ))
 
         # Persist score
         existing = await db.execute(select(JobScore).where(JobScore.job_id == job_id))
@@ -151,6 +183,11 @@ class ScorerAgent(BaseAgent):
                 "rate_match": score.rate_match,
                 "location_match": score.location_match,
                 "reasoning": score.reasoning,
+                "model_used": primary_model_name,
+                "tokens_in": score_tok_in,
+                "tokens_out": score_tok_out,
+                "cost_estimate": cost,
+                "duration_ms": score_ms,
             },
             db,
         )

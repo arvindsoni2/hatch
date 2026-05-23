@@ -7,7 +7,13 @@ from typing import Any, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic import BaseModel
+from sqlalchemy import select
+
 from ..database import get_db
+from ..models.agent_event import AgentEvent
+from ..models.job_score import JobScore
+from ..models.cost_tracking import CostTracking
 from ..repositories.job_repository import JobRepository
 from ..schemas.job import (
     JobPostingRead,
@@ -18,6 +24,34 @@ from ..schemas.job import (
 )
 from ..services.archive_service import archive_old_jobs, unarchive_job
 from ..services.job_service import JobService
+
+
+class DecisionStep(BaseModel):
+    step: int
+    agent: str
+    event_type: str
+    status: str
+    timestamp: datetime
+    summary: str
+    reasoning: str | None = None
+    score: float | None = None
+    skill_match: float | None = None
+    experience_match: float | None = None
+    rate_match: float | None = None
+    location_match: float | None = None
+    model_used: str | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    cost_estimate: float | None = None
+    duration_ms: int | None = None
+    ats_score: float | None = None
+
+
+class DecisionTrail(BaseModel):
+    job_id: str
+    job_title: str | None
+    steps: list[DecisionStep]
+    total_cost_usd: float
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 health_router = APIRouter(tags=["health"])
@@ -270,4 +304,119 @@ async def unarchive(
     found = await unarchive_job(db, job_id)
     if not found:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+
+
+# ──────────────────────── Decision Trail ─────────────────────────────────────
+
+@router.get("/{job_id}/decisions", response_model=DecisionTrail)
+async def get_job_decisions(
+    job_id: str,
+    service: JobService = Depends(get_job_service),
+    db: AsyncSession = Depends(get_db),
+) -> DecisionTrail:
+    """Return the full agent decision trail for a specific job."""
+    job = await service._repo.get_by_id(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+
+    # Fetch all events for this job
+    events_result = await db.execute(
+        select(AgentEvent)
+        .where(AgentEvent.payload["job_id"].as_string() == job_id)
+        .order_by(AgentEvent.created_at.asc())
+    )
+    events = events_result.scalars().all()
+
+    # Fetch cost tracking records for this job
+    cost_result = await db.execute(
+        select(CostTracking).where(CostTracking.job_id == job_id)
+    )
+    cost_rows = cost_result.scalars().all()
+    total_cost = sum(r.cost_estimate or 0.0 for r in cost_rows)
+
+    steps: list[DecisionStep] = []
+    step_num = 1
+
+    # Add discovered step
+    steps.append(DecisionStep(
+        step=step_num,
+        agent="scout",
+        event_type="discovered",
+        status="completed",
+        timestamp=job.created_at,
+        summary=f"Discovered from {getattr(job, 'source', 'unknown')}",
+    ))
+    step_num += 1
+
+    # Build steps from events
+    for event in events:
+        payload: dict = event.payload or {}
+        etype = event.event_type
+
+        if etype == "job_scored":
+            score_val = payload.get("score", 0)
+            steps.append(DecisionStep(
+                step=step_num,
+                agent="scorer",
+                event_type=etype,
+                status=event.status,
+                timestamp=event.created_at,
+                summary=f"Scored {round(score_val * 100)}% overall",
+                reasoning=payload.get("reasoning"),
+                score=score_val,
+                skill_match=payload.get("skill_match"),
+                experience_match=payload.get("experience_match"),
+                rate_match=payload.get("rate_match"),
+                location_match=payload.get("location_match"),
+                model_used=payload.get("model_used"),
+                tokens_in=payload.get("tokens_in"),
+                tokens_out=payload.get("tokens_out"),
+                cost_estimate=payload.get("cost_estimate"),
+                duration_ms=payload.get("duration_ms"),
+            ))
+        elif etype == "job_shortlisted":
+            score_val = payload.get("score", 0)
+            threshold = payload.get("threshold", 0.75)
+            steps.append(DecisionStep(
+                step=step_num,
+                agent="scorer",
+                event_type=etype,
+                status=event.status,
+                timestamp=event.created_at,
+                summary=f"Auto-shortlisted: {round(score_val * 100)}% ≥ {round(threshold * 100)}% threshold",
+            ))
+        elif etype == "cv_tailored":
+            steps.append(DecisionStep(
+                step=step_num,
+                agent="tailor",
+                event_type=etype,
+                status=event.status,
+                timestamp=event.created_at,
+                summary=f"CV + cover letter generated — ATS score: {payload.get('ats_score', '?')}%",
+                ats_score=payload.get("ats_score"),
+                model_used=payload.get("model_used"),
+                tokens_in=payload.get("tokens_in"),
+                tokens_out=payload.get("tokens_out"),
+                cost_estimate=payload.get("cost_estimate"),
+                duration_ms=payload.get("duration_ms"),
+            ))
+        elif etype in ("application_approved", "application_rejected"):
+            steps.append(DecisionStep(
+                step=step_num,
+                agent="human",
+                event_type=etype,
+                status=event.status,
+                timestamp=event.created_at,
+                summary="Approved by user" if etype == "application_approved" else "Rejected by user",
+            ))
+        else:
+            continue
+        step_num += 1
+
+    return DecisionTrail(
+        job_id=job_id,
+        job_title=getattr(job, "title", None),
+        steps=steps,
+        total_cost_usd=round(total_cost, 6),
+    )
     return {"status": "unarchived", "id": job_id}

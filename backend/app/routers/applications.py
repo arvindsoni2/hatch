@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -223,6 +225,70 @@ async def update_application(
             status_code=404, detail=f"Application '{app_id}' not found."
         )
     return updated
+
+
+@router.get("/follow-up-reminders")
+async def get_follow_up_reminders(
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Return applications that are due or overdue for a follow-up.
+
+    Uses profile.yaml follow_up_days config (default [5, 10, 15]) to determine
+    when follow-ups should be sent after the applied_date.
+    """
+    from ..models.application import Application
+    from ..models.job import JobPosting
+    from ..agents.tools.profile_loader import load_profile
+
+    profile = load_profile()
+    follow_up_days: list[int] = profile.preferences.follow_up_days
+
+    result = await db.execute(
+        select(Application).where(
+            Application.status == "applied",
+            Application.applied_date.isnot(None),
+            Application.is_active == True,
+        )
+    )
+    apps = result.scalars().all()
+
+    now = datetime.utcnow()
+    reminders: list[dict[str, Any]] = []
+
+    for app in apps:
+        if app.applied_date is None:
+            continue
+
+        days_since = (now - app.applied_date).days
+
+        job_title: str | None = None
+        company: str | None = None
+        if app.job_id:
+            job_r = await db.execute(select(JobPosting).where(JobPosting.id == app.job_id))
+            job = job_r.scalar_one_or_none()
+            if job:
+                job_title = job.title
+                company = job.company
+
+        for i, threshold in enumerate(sorted(follow_up_days)):
+            if days_since >= threshold:
+                # Only add the latest breached threshold
+                if i == len(follow_up_days) - 1 or days_since < sorted(follow_up_days)[i + 1]:
+                    due_date = app.applied_date + timedelta(days=threshold)
+                    reminders.append({
+                        "application_id": app.id,
+                        "job_title": job_title,
+                        "company": company,
+                        "applied_date": app.applied_date.isoformat(),
+                        "days_since_applied": days_since,
+                        "follow_up_number": i + 1,
+                        "due_date": due_date.isoformat(),
+                        "overdue": days_since > threshold,
+                    })
+                    break
+
+    reminders.sort(key=lambda r: r["days_since_applied"], reverse=True)
+    return reminders
 
 
 @router.patch("/{app_id}/status", response_model=ApplicationRead)

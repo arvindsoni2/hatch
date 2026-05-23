@@ -143,3 +143,139 @@ async def get_ab_testing(
         "by_cv_variant": by_cv,
         "by_cl_variant": by_cl,
     }
+
+
+@router.get("/ats-correlation")
+async def get_ats_correlation(
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return ATS score vs response rate correlation data.
+
+    Buckets applications by ATS score range and calculates response rate per bucket.
+    Useful for validating whether higher ATS scores lead to more responses.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+    from ..models.application import Application  # noqa: PLC0415
+    from ..models.document import GeneratedDocument  # noqa: PLC0415
+
+    # Get applications with ATS-scored CVs
+    result = await db.execute(
+        select(
+            Application.id,
+            Application.response_received,
+        ).where(Application.is_active.is_(True))
+    )
+    apps = {row.id: row.response_received for row in result.all()}
+
+    if not apps:
+        return {"buckets": [], "message": "No applications yet"}
+
+    # Get ATS scores for CV documents
+    docs_result = await db.execute(
+        select(
+            GeneratedDocument.application_id,
+            GeneratedDocument.ats_score,
+        ).where(
+            GeneratedDocument.document_type == "cv",
+            GeneratedDocument.ats_score.isnot(None),
+            GeneratedDocument.application_id.in_(list(apps.keys())),
+        )
+    )
+
+    # Take the latest CV ATS score per application
+    ats_by_app: dict[str, int] = {}
+    for row in docs_result.all():
+        if row.application_id not in ats_by_app:
+            ats_by_app[row.application_id] = row.ats_score
+
+    if len(ats_by_app) < 5:
+        return {"buckets": [], "message": f"Not enough data ({len(ats_by_app)} scored CVs). Need at least 5."}
+
+    # Bucket into 0-59, 60-74, 75-84, 85-100
+    buckets: dict[str, dict] = {
+        "0–59": {"total": 0, "responses": 0, "label": "Low (<60)"},
+        "60–74": {"total": 0, "responses": 0, "label": "Fair (60–74)"},
+        "75–84": {"total": 0, "responses": 0, "label": "Good (75–84)"},
+        "85–100": {"total": 0, "responses": 0, "label": "Excellent (85+)"},
+    }
+
+    for app_id, ats_score in ats_by_app.items():
+        response = apps.get(app_id, False)
+        if ats_score < 60:
+            key = "0–59"
+        elif ats_score < 75:
+            key = "60–74"
+        elif ats_score < 85:
+            key = "75–84"
+        else:
+            key = "85–100"
+        buckets[key]["total"] += 1
+        if response:
+            buckets[key]["responses"] += 1
+
+    output = []
+    for key, b in buckets.items():
+        if b["total"] > 0:
+            output.append({
+                "range": key,
+                "label": b["label"],
+                "total": b["total"],
+                "responses": b["responses"],
+                "response_rate_pct": round(b["responses"] / b["total"] * 100, 1),
+            })
+
+    return {"buckets": output, "total_scored": len(ats_by_app)}
+
+
+@router.get("/skill-frequency")
+async def get_skill_frequency(
+    limit: int = Query(20, ge=5, le=50),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return most-demanded skills from job postings that were shortlisted.
+
+    Reads keywords from job_scores ATS analysis to find the most common
+    skill gaps across jobs that passed the scoring threshold.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+    from ..models.job_score import JobScore  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    result = await db.execute(
+        select(JobScore.reasoning, JobScore.overall_score)
+        .where(JobScore.overall_score.isnot(None))
+        .order_by(JobScore.overall_score.desc())
+        .limit(200)
+    )
+    rows = result.all()
+
+    # Also pull from agent_events payload for keyword data
+    from ..models.agent_event import AgentEvent  # noqa: PLC0415
+    events_result = await db.execute(
+        select(AgentEvent.payload)
+        .where(AgentEvent.event_type == "job_scored")
+        .limit(200)
+    )
+
+    skill_counts: dict[str, int] = {}
+    for row in events_result.scalars().all():
+        if not row:
+            continue
+        try:
+            payload = json.loads(row) if isinstance(row, str) else row
+            keywords = payload.get("keyword_matches", []) + payload.get("keyword_misses", [])
+            for kw in keywords:
+                kw = kw.lower().strip()
+                if kw:
+                    skill_counts[kw] = skill_counts.get(kw, 0) + 1
+        except Exception:
+            continue
+
+    if not skill_counts:
+        return {"skills": [], "message": "No keyword data yet — run the scorer agent first"}
+
+    sorted_skills = sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    return {
+        "skills": [{"skill": k, "count": v} for k, v in sorted_skills],
+        "total_jobs_analyzed": len(rows),
+    }

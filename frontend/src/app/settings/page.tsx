@@ -258,6 +258,22 @@ export default function SettingsPage() {
               </a>
             }
           />
+          <FieldRow
+            label="Master CV"
+            value={
+              <a href="/settings/resume" className="text-brand-600 hover:underline">
+                Upload &amp; manage master CV →
+              </a>
+            }
+          />
+          <FieldRow
+            label="System event log"
+            value={
+              <a href="/settings/system" className="text-brand-600 hover:underline">
+                View agent events &amp; LLM costs →
+              </a>
+            }
+          />
         </div>
         <p className="mt-4 text-xs text-slate-400">
           Personal tool built for UK outside-IR35 contract role hunting.

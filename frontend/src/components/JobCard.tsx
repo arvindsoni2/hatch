@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { ExternalLink, BookmarkPlus, Check, Loader2 } from "lucide-react";
@@ -79,18 +80,26 @@ export function JobCard({ job, threshold = 0.75 }: JobCardProps) {
       </div>
 
       <div className="min-w-0 flex-1">
-        <a
-          href={job.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="group/link flex items-center gap-1"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span className="text-sm font-semibold text-slate-900 group-hover/link:text-brand-600 transition-colors truncate">
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/jobs/${job.id}`}
+            className="text-sm font-semibold text-slate-900 hover:text-brand-600 transition-colors truncate"
+            onClick={(e) => e.stopPropagation()}
+          >
             {job.title}
-          </span>
-          <ExternalLink className="h-3 w-3 shrink-0 text-slate-300 group-hover/link:text-brand-400" />
-        </a>
+          </Link>
+          {job.url && (
+            <a
+              href={job.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <ExternalLink className="h-3 w-3 text-slate-300 hover:text-brand-400" />
+            </a>
+          )}
+        </div>
         {metaParts.length > 0 && (
           <p className="mt-0.5 text-xs text-slate-500 truncate">{metaParts.join(" · ")}</p>
         )}

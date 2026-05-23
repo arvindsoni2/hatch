@@ -20,6 +20,17 @@ from ..schemas.agent_state import AgentStateRead, AgentStatusSummary, AllAgentSt
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
+
+def _safe_json(value: str | None) -> Any:
+    """Parse a JSON string field safely, returning None on failure."""
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except Exception:
+        return None
+
+
 # ── Dependency: resolve orchestrator from app state ───────────────────────────
 
 def _get_orchestrator(request: Request) -> Any:
@@ -219,10 +230,13 @@ async def get_approval_detail(
                 "version": d.version,
                 "file_path": d.file_path,
                 "ats_score": d.ats_score,
+                "ats_details": _safe_json(d.ats_details),
+                "content_text": getattr(d, "content_text", None),
                 "created_at": d.created_at.isoformat() if d.created_at else None,
             }
             for d in docs
         ],
+        "notes": app.notes,
     }
 
 
@@ -274,6 +288,28 @@ async def reject_application(
     )
     await db.commit()
     return {"application_id": application_id, "status": "rejected"}
+
+
+@router.patch("/approvals/{application_id}/notes")
+async def update_application_notes(
+    application_id: str,
+    body: dict[str, str],
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Save reviewer notes on an application before approving."""
+    notes = body.get("notes", "")
+    result = await db.execute(
+        select(Application).where(Application.id == application_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    await db.execute(
+        update(Application)
+        .where(Application.id == application_id)
+        .values(notes=notes)
+    )
+    await db.commit()
+    return {"application_id": application_id, "notes": notes}
 
 
 # ── Dashboard stats ───────────────────────────────────────────────────────────
