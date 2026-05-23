@@ -95,7 +95,7 @@ class ScoringConfig(BaseModel):
 class LLMConfig(BaseModel):
     provider: Literal["anthropic", "openai", "google", "ollama", "azure", "aws_bedrock"] = "anthropic"
     triage_model: str = "claude-haiku-4-5-20251001"
-    primary_model: str = "claude-sonnet-4-20250514"
+    primary_model: str = "claude-sonnet-4-6"
     api_key_env: str = "ANTHROPIC_API_KEY"
     base_url: str | None = None
     temperature: float = 0.3

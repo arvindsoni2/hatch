@@ -23,7 +23,7 @@ const TOTAL_STEPS = 5;
 const LLM_PROVIDERS = [
   { id: "anthropic", label: "Anthropic (Claude)", keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
   { id: "openai", label: "OpenAI (GPT)", keyEnv: "OPENAI_API_KEY", triageDefault: "gpt-4o-mini", primaryDefault: "gpt-4o" },
-  { id: "google", label: "Google (Gemini)", keyEnv: "GOOGLE_API_KEY", triageDefault: "gemini-2.0-flash", primaryDefault: "gemini-2.5-pro" },
+  { id: "google", label: "Google (Gemini)", keyEnv: "GOOGLE_API_KEY", triageDefault: "gemini-3.0-flash", primaryDefault: "gemini-3.0-pro" },
   { id: "ollama", label: "Ollama (local — free)", keyEnv: "", triageDefault: "gemma3:4b", primaryDefault: "qwen3:14b" },
 ];
 
@@ -593,20 +593,36 @@ export default function OnboardingPage() {
             )}
 
             {/* ── Navigation ───────────────────────────────────────────────── */}
-            <div className="flex justify-between mt-8 pt-4 border-t">
-              <Button variant="outline" onClick={() => setStep(step - 1)} disabled={step === 1}>
-                <ChevronLeft className="w-4 h-4 mr-1" /> Back
-              </Button>
-              {step < TOTAL_STEPS ? (
-                <Button onClick={() => setStep(step + 1)}>
-                  Continue <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              ) : (
-                <Button onClick={handleFinish} disabled={saving} className="bg-brand-600 hover:bg-brand-700 text-white gap-2">
-                  {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : <><Zap className="h-4 w-4" /> Start JobPilot</>}
-                </Button>
-              )}
-            </div>
+            {(() => {
+              const stepErrors: Record<number, string> = {
+                1: !candidate.name.trim() ? "Name is required." : "",
+                2: search.target_roles.length === 0 ? "Add at least one target job title to continue." : "",
+              };
+              const blockMsg = stepErrors[step] ?? "";
+              return (
+              <div className="mt-8 pt-4 border-t space-y-3">
+                {blockMsg && (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                    {blockMsg}
+                  </p>
+                )}
+                <div className="flex justify-between">
+                  <Button variant="outline" onClick={() => setStep(step - 1)} disabled={step === 1}>
+                    <ChevronLeft className="w-4 h-4 mr-1" /> Back
+                  </Button>
+                  {step < TOTAL_STEPS ? (
+                    <Button onClick={() => setStep(step + 1)} disabled={!!blockMsg}>
+                      Continue <ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  ) : (
+                    <Button onClick={handleFinish} disabled={saving} className="bg-brand-600 hover:bg-brand-700 text-white gap-2">
+                      {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : <><Zap className="h-4 w-4" /> Start JobPilot</>}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
