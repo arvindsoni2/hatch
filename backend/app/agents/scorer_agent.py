@@ -6,6 +6,7 @@ The LLM used is determined by profile.yaml llm config via llm_factory.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -26,7 +27,8 @@ from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.scorer")
 
-_BATCH_SIZE = 10
+_BATCH_SIZE = 5
+_INTER_JOB_DELAY = 5.0  # seconds between API calls — respects free-tier 15 RPM limit
 
 
 class _TriageResult(BaseModel):
@@ -78,7 +80,9 @@ class ScorerAgent(BaseAgent):
 
         scored = skipped = errors = 0
 
-        for event in pending:
+        for i, event in enumerate(pending):
+            if i > 0:
+                await asyncio.sleep(_INTER_JOB_DELAY)
             await self._bus.mark_processing(event["id"], db)
             try:
                 result = await self._score_job(event, db, profile, triage_llm, primary_llm)
