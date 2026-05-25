@@ -50,22 +50,58 @@ def _extract_text_from_pdf(path: str) -> str:
     return "\n".join(page.extract_text() or "" for page in reader.pages)
 
 
+_SECTION_ALIASES: dict[str, str] = {
+    "professional experience": "experience",
+    "work experience": "experience",
+    "employment history": "experience",
+    "employment": "experience",
+    "technical skills and tools": "skills",
+    "technical skills": "skills",
+    "skills and tools": "skills",
+    "key skills": "skills",
+    "core competencies": "skills",
+    "competencies": "skills",
+    "awards & certifications": "certifications",
+    "awards and certifications": "certifications",
+    "certifications and awards": "certifications",
+    "qualifications": "certifications",
+    "professional summary": "summary",
+    "career summary": "summary",
+    "executive summary": "summary",
+    "personal profile": "profile",
+    "contact information": "contact",
+    "contact details": "contact",
+}
+
+_SECTION_RE = re.compile(
+    r"^(professional experience|work experience|employment history|employment|"
+    r"technical skills and tools|technical skills|skills and tools|key skills|"
+    r"core competencies|competencies|skills?|"
+    r"awards? & certifications?|awards? and certifications?|certifications?|"
+    r"professional summary|career summary|executive summary|summary|"
+    r"profile|personal profile|objective|"
+    r"education|qualifications|"
+    r"projects?|achievements?|publications?|references?|"
+    r"contact(?: information| details)?|personal|languages?)[\s:]*$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_heading(heading: str) -> str:
+    key = heading.lower().rstrip(":").strip()
+    return _SECTION_ALIASES.get(key, key)
+
+
 def _parse_sections(text: str) -> dict[str, Any]:
     """Heuristic section splitter — groups lines under detected headings."""
-    section_headers = re.compile(
-        r"^(experience|work experience|employment|education|skills?|certifications?|"
-        r"summary|profile|objective|projects?|achievements?|publications?|references?|"
-        r"contact|personal|languages?)[\s:]*$",
-        re.IGNORECASE,
-    )
     sections: dict[str, list[str]] = {}
     current = "header"
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        if section_headers.match(stripped):
-            current = stripped.lower().rstrip(":")
+        if _SECTION_RE.match(stripped):
+            current = _normalize_heading(stripped)
             sections.setdefault(current, [])
         else:
             sections.setdefault(current, []).append(stripped)
@@ -73,27 +109,56 @@ def _parse_sections(text: str) -> dict[str, Any]:
 
 
 def _extract_skills(text: str) -> list[str]:
-    skills: list[str] = []
     skills_section = ""
     in_skills = False
+    skill_heading = re.compile(
+        r"^(technical skills.*|skills?(?: and tools)?|key skills|core competencies|competencies)[\s:]*$",
+        re.IGNORECASE,
+    )
+    stop_heading = re.compile(
+        r"^(experience|professional experience|education|employment|certifications?|awards?|"
+        r"summary|profile|projects?|references?)[\s:]*$",
+        re.IGNORECASE,
+    )
     for line in text.splitlines():
-        if re.match(r"^skills?[\s:]*$", line.strip(), re.IGNORECASE):
+        stripped = line.strip()
+        if skill_heading.match(stripped):
             in_skills = True
             continue
         if in_skills:
-            if re.match(r"^(experience|education|employment|certifications?)[\s:]*$", line.strip(), re.IGNORECASE):
+            if stop_heading.match(stripped):
                 break
-            skills_section += " " + line
+            skills_section += " " + stripped
+
+    raw_skills: list[str] = []
     if skills_section:
-        skills = [s.strip(" •·-") for s in re.split(r"[,|•·\n]+", skills_section) if s.strip(" •·-")]
-    return [s for s in skills if 1 < len(s) < 60][:50]
+        # Split on commas, bullets, pipes, newlines — also split "Category: item1, item2"
+        for chunk in re.split(r"[,|•·\n]+", skills_section):
+            # Strip category labels like "Agile Delivery Tools:"
+            chunk = re.sub(r"^[^:]{3,30}:\s*", "", chunk.strip())
+            chunk = chunk.strip(" •·-()")
+            if chunk:
+                raw_skills.append(chunk)
+
+    return [s for s in raw_skills if 1 < len(s) < 60][:60]
 
 
 def _count_experience_items(sections: dict[str, Any]) -> int:
-    exp_text = sections.get("experience", sections.get("work experience", sections.get("employment", "")))
+    # Look in experience, profile (fallback if parser lumped experience there), or full text
+    exp_text = (
+        sections.get("experience")
+        or sections.get("professional experience")
+        or sections.get("work experience")
+        or sections.get("employment")
+        or sections.get("profile")  # pypdf sometimes lumps experience into profile
+        or ""
+    )
     if not exp_text:
         return 0
-    return len(re.findall(r"\b(19|20)\d{2}\b", str(exp_text)))
+    # Count distinct year ranges (e.g. "2022 – Present", "07/2011 – 05/2022")
+    dates = re.findall(r"\b(19|20)\d{2}\b", str(exp_text))
+    # Divide by 2 (start/end per role) as a rough role count, minimum from unique years
+    return max(len(set(dates)) - 1, len(dates) // 2)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -197,6 +262,8 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
         "_source": filename,
         "_parsed_at": datetime.utcnow().isoformat(),
         "_raw_sections": sections,
+        # Promote normalised sections to top-level so status checks find them
+        **{k: v for k, v in sections.items() if not k.startswith("_")},
     }
     if skills:
         cv_json["skills"] = {"extracted": {"display_name": "Skills", "items": skills}}
@@ -211,12 +278,21 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
     }
     _meta_path().write_text(json.dumps(meta))
 
+    sections_present: dict[str, bool] = {
+        "personal": bool(sections.get("header") or sections.get("contact") or sections.get("personal")),
+        "summary": bool(sections.get("summary") or sections.get("profile")),
+        "experience": bool(sections.get("experience") or sections.get("employment")),
+        "skills": bool(skills or sections.get("skills")),
+        "education": bool(sections.get("education")),
+        "certifications": bool(sections.get("certifications")),
+    }
+
     return ResumeStatus(
         exists=True,
         filename=filename,
         uploaded_at=meta["uploaded_at"],
         parsed=True,
-        sections={k: True for k in sections},
+        sections=sections_present,
         skills_count=len(skills),
         experience_count=exp_count,
         proof_points_count=len(load_profile().proof_points),

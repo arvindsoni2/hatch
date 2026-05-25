@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 import {
   ArrowLeft, Upload, CheckCircle2, AlertCircle, FileText,
   Loader2, RefreshCw, ExternalLink,
@@ -213,11 +214,11 @@ export default function ResumePage() {
 
               {/* Actions */}
               <div className="flex items-center gap-3 border-t border-slate-100 pt-4">
-                <Link href="/api/resume/json" target="_blank">
+                <a href={`${API_BASE}/api/resume/json`} target="_blank" rel="noopener noreferrer">
                   <Button variant="outline" size="sm">
                     <ExternalLink className="h-3.5 w-3.5 mr-1" /> View parsed JSON
                   </Button>
-                </Link>
+                </a>
                 <Link href="/settings">
                   <Button variant="outline" size="sm">
                     Edit proof points
