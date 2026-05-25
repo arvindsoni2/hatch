@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { getDigestStatus, sendDigest, DigestStatus } from "../../lib/api"
+import Link from "next/link"
+import { getDigestStatus, sendDigest, DigestStatus, API_BASE } from "../../lib/api"
 import { DigestPreview } from "../../components/DigestPreview"
 
 interface SectionCardProps {
@@ -45,10 +46,22 @@ function toBoolean(val: unknown): boolean {
 
 type ToastVariant = "success" | "error"
 
+interface ProfileData {
+  candidate?: { name?: string; title?: string; years_experience?: number }
+  search?: {
+    target_roles?: string[]
+    locations?: { city?: string; country?: string; remote_preference?: string }[]
+    contract_type?: string
+  }
+  compensation?: { min_rate?: number; max_rate?: number; currency?: string; rate_type?: string; ir35_preference?: string }
+  llm?: { provider?: string; primary_model?: string }
+}
+
 export default function SettingsPage() {
   const [digestStatus, setDigestStatus] = useState<DigestStatusData | null>(null)
   const [digestLoading, setDigestLoading] = useState(true)
   const [digestError, setDigestError] = useState<string | null>(null)
+  const [profileData, setProfileData] = useState<ProfileData | null>(null)
 
   const [toast, setToast] = useState<{ message: string; variant: ToastVariant } | null>(null)
   const [sendingDigest, setSendingDigest] = useState(false)
@@ -58,8 +71,12 @@ export default function SettingsPage() {
       setDigestLoading(true)
       setDigestError(null)
       try {
-        const data = await getDigestStatus()
-        setDigestStatus(data)
+        const [digestData, profileResp] = await Promise.all([
+          getDigestStatus(),
+          fetch(`${API_BASE}/api/v2/profile`).then((r) => r.json() as Promise<ProfileData>),
+        ])
+        setDigestStatus(digestData)
+        setProfileData(profileResp)
       } catch (err) {
         setDigestError(err instanceof Error ? err.message : "Failed to load digest status")
       } finally {
@@ -202,20 +219,46 @@ export default function SettingsPage() {
 
       {/* Section 3: Candidate Profile */}
       <SectionCard title="Candidate Profile">
-        <div className="divide-y divide-slate-100">
-          <FieldRow label="Name" value="Solutions Architect" />
-          <FieldRow label="Location" value="United Kingdom" />
-          <FieldRow label="Primary target role" value="Solutions Architect" />
-          <FieldRow label="Secondary target roles" value="Enterprise Architect, Cloud Architect" />
-          <FieldRow label="Rate expectation" value="£700–£900/day" />
-          <FieldRow label="Preferred working pattern" value="Hybrid / Remote" />
-          <FieldRow label="IR35 preference" value="Outside IR35 only" />
-          <FieldRow label="Years of experience" value="20+" />
-        </div>
+        {profileData ? (() => {
+          const roles = profileData.search?.target_roles ?? []
+          const loc = profileData.search?.locations?.[0]
+          const location = [loc?.city, loc?.country].filter(Boolean).join(", ") || "—"
+          const primaryRole = roles[0] ?? "—"
+          const secondaryRoles = roles.slice(1).join(", ") || "—"
+          const comp = profileData.compensation
+          const rateLabel = comp && (comp.min_rate ?? 0) > 0 && (comp.max_rate ?? 0) > 0
+            ? `${comp.currency ?? "£"}${comp.min_rate}–${comp.max_rate}/${comp.rate_type === "daily" ? "day" : "hr"}`
+            : comp && (comp.min_rate ?? 0) > 0
+            ? `${comp.currency ?? "£"}${comp.min_rate}+/${comp.rate_type === "daily" ? "day" : "hr"}`
+            : "Not set"
+          const remoteLabel = loc?.remote_preference
+            ? loc.remote_preference === "any" ? "Any (on-site / hybrid / remote)" : loc.remote_preference
+            : "—"
+          const ir35Label = comp?.ir35_preference
+            ? comp.ir35_preference === "any" ? "Any" : comp.ir35_preference === "outside" ? "Outside IR35 only" : comp.ir35_preference
+            : "—"
+          const yearsExp = profileData.candidate?.years_experience != null
+            ? `${profileData.candidate.years_experience}+`
+            : "—"
+          return (
+            <div className="divide-y divide-slate-100">
+              <FieldRow label="Name" value={profileData.candidate?.name ?? "—"} />
+              <FieldRow label="Location" value={location} />
+              <FieldRow label="Primary target role" value={primaryRole} />
+              <FieldRow label="Secondary target roles" value={secondaryRoles} />
+              <FieldRow label="Rate expectation" value={rateLabel} />
+              <FieldRow label="Preferred working pattern" value={remoteLabel} />
+              <FieldRow label="IR35 preference" value={ir35Label} />
+              <FieldRow label="Years of experience" value={yearsExp} />
+            </div>
+          )
+        })() : (
+          <p className="text-sm text-slate-400 py-2">Loading profile…</p>
+        )}
         <p className="mt-4 text-xs text-slate-400">
-          Edit{" "}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-600">candidate_profile.json</code>{" "}
-          to update these details.
+          <Link href="/settings/profile" className="text-brand-600 hover:underline">
+            Edit profile settings →
+          </Link>
         </p>
       </SectionCard>
 
@@ -230,7 +273,7 @@ export default function SettingsPage() {
           />
           <FieldRow
             label="AI model"
-            value="claude-sonnet-4-20250514"
+            value={profileData?.llm?.primary_model ?? "—"}
           />
           <FieldRow
             label="API documentation"
