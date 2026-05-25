@@ -4,7 +4,7 @@
 
 // Server-side (SSR/RSC) uses the internal Docker service name;
 // client-side uses the public URL visible from the browser.
-const API_BASE =
+export const API_BASE =
   typeof window === "undefined"
     ? (process.env.API_URL ?? "http://localhost:8000")
     : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");

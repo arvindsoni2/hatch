@@ -8,6 +8,7 @@ import {
   AlertTriangle, Clock, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { API_BASE } from "@/lib/api";
 
 interface AgentEvent {
   id: string;
@@ -65,7 +66,7 @@ export default function SystemLogPage() {
       if (filter.agent) params.set("source_agent", filter.agent);
       if (filter.status) params.set("status", filter.status);
       if (filter.type) params.set("event_type", filter.type);
-      const res = await fetch(`/api/events?${params}`);
+      const res = await fetch(`${API_BASE}/api/events?${params}`);
       const data: EventPage = await res.json();
       setEvents(data.items);
       setTotal(data.total);
@@ -76,7 +77,7 @@ export default function SystemLogPage() {
 
   const loadCosts = useCallback(async () => {
     try {
-      const res = await fetch("/api/events/costs?days=30");
+      const res = await fetch(`${API_BASE}/api/events/costs?days=30`);
       setCosts(await res.json());
     } catch {
       // cost endpoint not critical
@@ -89,7 +90,7 @@ export default function SystemLogPage() {
   const retryEvent = async (id: string) => {
     setRetrying(id);
     try {
-      await fetch(`/api/events/${id}/retry`, { method: "POST" });
+      await fetch(`${API_BASE}/api/events/${id}/retry`, { method: "POST" });
       await load();
     } finally {
       setRetrying(null);

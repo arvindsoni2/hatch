@@ -6,6 +6,7 @@ import {
   fetchApprovalDetail,
   approveApplication,
   rejectApplication,
+  API_BASE,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -224,7 +225,7 @@ export default function ApprovalDetailPage() {
   const saveNotes = async () => {
     setNotesSaving(true);
     try {
-      await fetch(`/api/agents/approvals/${id}/notes`, {
+      await fetch(`${API_BASE}/api/agents/approvals/${id}/notes`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ notes }),

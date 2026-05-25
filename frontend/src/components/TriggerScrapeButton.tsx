@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Zap, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { API_BASE } from "@/lib/api";
 
 interface ScrapeResult {
   agent: string;
@@ -25,7 +26,7 @@ export function TriggerScrapeButton({ variant = "primary" }: { variant?: "primar
     setResult(null);
     setErrorMsg("");
     try {
-      const res = await fetch("/api/agents/scout/trigger", { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/agents/scout/trigger`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: ScrapeResult = await res.json();
       setResult(data.result);

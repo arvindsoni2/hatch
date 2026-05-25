@@ -8,15 +8,16 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, CheckCircle2, Save, RefreshCw } from "lucide-react";
+import { API_BASE } from "@/lib/api";
 
 async function fetchProfile(): Promise<Record<string, unknown>> {
-  const res = await fetch("/api/v2/profile");
+  const res = await fetch(`${API_BASE}/api/v2/profile`);
   if (!res.ok) throw new Error("Failed to load profile");
   return res.json();
 }
 
 async function saveProfile(data: Record<string, unknown>): Promise<void> {
-  const res = await fetch("/api/v2/profile", {
+  const res = await fetch(`${API_BASE}/api/v2/profile`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
