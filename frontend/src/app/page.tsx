@@ -335,18 +335,18 @@ export default async function DashboardPage() {
             <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
               <CheckCircle2 className="h-4 w-4 text-green-600" />
               {"You're all caught up."}
-              {pipelineStats && (
-                <span className="font-normal text-green-700">
-                  Next scrape {formatDistanceToNow(
-                    addHours(
-                      agentStatus?.agents.find((a) => a.agent_name === "scout")?.last_run_at
-                        ? new Date(agentStatus.agents.find((a) => a.agent_name === "scout")!.last_run_at!)
-                        : new Date(),
-                      scrapeIntervalHours,
-                    ),
-                  )}.
-                </span>
-              )}
+              {pipelineStats && (() => {
+                const scoutLastRun = agentStatus?.agents.find((a) => a.agent_name === "scout")?.last_run_at;
+                const nextRun = scoutLastRun ? addHours(new Date(scoutLastRun), scrapeIntervalHours) : null;
+                const isFuture = nextRun && nextRun > new Date();
+                return (
+                  <span className="font-normal text-green-700">
+                    {isFuture
+                      ? `Next scrape ${formatDistanceToNow(nextRun!, { addSuffix: true })}.`
+                      : `Scout runs every ${scrapeIntervalHours}h.`}
+                  </span>
+                );
+              })()}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
