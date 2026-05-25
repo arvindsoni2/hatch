@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, MapPin, Banknote, Sparkles } from "lucide-react";
+import { Building2, MapPin, Banknote, Sparkles, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
 import type { ApplicationListItem, Priority } from "@/lib/api";
@@ -28,6 +28,7 @@ function AgentScoreBadge({ score }: { score: number | null }) {
 interface KanbanCardProps {
   application: ApplicationListItem;
   isDragging?: boolean;
+  isOverdue?: boolean;
   onClick?: () => void;
 }
 
@@ -38,7 +39,7 @@ const PRIORITY_LABELS: Record<Priority, string> = {
   low: "Low",
 };
 
-export function KanbanCard({ application, isDragging = false, onClick }: KanbanCardProps) {
+export function KanbanCard({ application, isDragging = false, isOverdue = false, onClick }: KanbanCardProps) {
   const daysInStatus = Math.floor(
     (Date.now() - new Date(application.updated_at).getTime()) / (1000 * 60 * 60 * 24),
   );
@@ -53,6 +54,7 @@ export function KanbanCard({ application, isDragging = false, onClick }: KanbanC
         "bg-white border border-slate-200 rounded-lg p-3 cursor-pointer select-none",
         "hover:border-indigo-300 hover:shadow-sm transition-all",
         isDragging && "opacity-50 rotate-2 shadow-lg",
+        isOverdue && "border-l-4 border-l-red-400",
       )}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -87,9 +89,16 @@ export function KanbanCard({ application, isDragging = false, onClick }: KanbanC
       )}
 
       <div className="flex items-center justify-between mt-2">
-        <span className="text-xs text-slate-400">
-          {daysInStatus === 0 ? "Today" : `${daysInStatus}d in status`}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-slate-400">
+            {daysInStatus === 0 ? "Today" : `${daysInStatus}d in status`}
+          </span>
+          {isOverdue && (
+            <span className="flex items-center gap-0.5 text-xs text-red-500 font-medium" title="Follow-up overdue">
+              <Clock className="h-3 w-3" /> overdue
+            </span>
+          )}
+        </div>
         {application.job_source && (
           <Badge variant="secondary" className="text-xs">
             {application.job_source}

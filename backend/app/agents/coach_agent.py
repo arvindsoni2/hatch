@@ -8,11 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.application import Application, InterviewRound
+from ..models.cost_tracking import CostTracking
 from ..models.job import JobPosting
 from ..schemas.coach import CreateSessionRequest
 from ..services.coach_service import CoachService
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
+from .tools.llm_factory import estimate_cost, estimate_tokens
 from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.coach")
@@ -110,6 +112,22 @@ class CoachAgent(BaseAgent):
             "Interview prep ready: session %s, %d questions.",
             session.id, len(session.questions),
         )
+
+        # Track LLM cost: estimate based on context in, Q&A pairs out
+        profile = load_profile()
+        primary_model = profile.llm.primary_model
+        context_text = (jd_text or "") + company_name + role_title
+        tok_in = estimate_tokens(context_text)
+        tok_out = estimate_tokens(context_text) // 2 + len(session.questions) * 200
+        db.add(CostTracking(
+            agent_name="coach",
+            job_id=application.job_id,
+            model=primary_model,
+            tokens_in=tok_in,
+            tokens_out=tok_out,
+            cost_estimate=estimate_cost(primary_model, tok_in, tok_out),
+        ))
+        await db.commit()
 
         await self.emit_event(
             "prep_ready",

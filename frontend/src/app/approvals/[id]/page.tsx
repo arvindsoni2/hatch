@@ -30,6 +30,14 @@ interface AtsDetails {
   };
 }
 
+interface JdAnalysis {
+  requirements?: { must_have?: string[]; nice_to_have?: string[] };
+  ats_keywords?: { technical?: string[]; methodologies?: string[]; soft_skills?: string[]; domain?: string[]; certifications?: string[] };
+  tone_analysis?: { red_flags?: string[] };
+  responsibilities?: string[];
+  skill_match?: { matched?: string[]; missing?: string[]; recommendations?: string[] };
+}
+
 interface ApprovalDetail {
   application: {
     id: string;
@@ -62,6 +70,7 @@ interface ApprovalDetail {
     file_path: string;
     ats_score: number | null;
     ats_details: AtsDetails | null;
+    jd_analysis: JdAnalysis | null;
     content_text: string | null;
     created_at: string | null;
   }[];
@@ -192,6 +201,92 @@ function AtsRubric({ atsScore, atsDetails }: { atsScore: number | null; atsDetai
           )}
           {matched.length === 0 && missing.length === 0 && improvements.length === 0 && (
             <p className="text-xs text-slate-400">Detailed ATS analysis not available for this version.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tailoring context ────────────────────────────────────────────────────────
+
+function TailoringContext({ jdAnalysis }: { jdAnalysis: JdAnalysis | null }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!jdAnalysis) return null;
+
+  const mustHave = jdAnalysis.requirements?.must_have ?? [];
+  const niceToHave = jdAnalysis.requirements?.nice_to_have ?? [];
+  const allKeywords = [
+    ...(jdAnalysis.ats_keywords?.technical ?? []),
+    ...(jdAnalysis.ats_keywords?.methodologies ?? []),
+    ...(jdAnalysis.ats_keywords?.domain ?? []),
+    ...(jdAnalysis.ats_keywords?.certifications ?? []),
+  ];
+  const redFlags = jdAnalysis.tone_analysis?.red_flags ?? [];
+  const skillMissing = jdAnalysis.skill_match?.missing ?? [];
+  const recommendations = jdAnalysis.skill_match?.recommendations ?? [];
+
+  const hasData = mustHave.length > 0 || niceToHave.length > 0 || allKeywords.length > 0;
+  if (!hasData) return null;
+
+  return (
+    <div className="rounded-lg border border-indigo-100 bg-indigo-50/50">
+      <button
+        onClick={() => setExpanded((p) => !p)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left"
+      >
+        <span className="text-xs font-semibold text-indigo-700">What the tailor targeted</span>
+        {expanded ? <ChevronUp className="h-4 w-4 text-indigo-400" /> : <ChevronDown className="h-4 w-4 text-indigo-400" />}
+      </button>
+      {expanded && (
+        <div className="border-t border-indigo-100 px-4 py-3 space-y-3 text-xs">
+          {mustHave.length > 0 && (
+            <div>
+              <p className="font-semibold text-slate-700 mb-1">Must-have requirements targeted</p>
+              <ul className="space-y-0.5">
+                {mustHave.slice(0, 6).map((r, i) => <li key={i} className="text-slate-600">• {r}</li>)}
+              </ul>
+            </div>
+          )}
+          {allKeywords.length > 0 && (
+            <div>
+              <p className="font-semibold text-slate-700 mb-1.5">ATS keywords inserted</p>
+              <div className="flex flex-wrap gap-1">
+                {allKeywords.slice(0, 20).map((kw) => (
+                  <span key={kw} className="rounded-full bg-indigo-100 text-indigo-700 px-2 py-0.5">{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {skillMissing.length > 0 && (
+            <div>
+              <p className="font-semibold text-amber-700 mb-1">Skill gaps not covered</p>
+              <div className="flex flex-wrap gap-1">
+                {skillMissing.map((kw) => (
+                  <span key={kw} className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5">{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {redFlags.length > 0 && (
+            <div>
+              <p className="font-semibold text-red-600 mb-1">Red flags identified</p>
+              <ul className="space-y-0.5">
+                {redFlags.map((f, i) => (
+                  <li key={i} className="flex items-start gap-1.5 text-red-600">
+                    <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" /> {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {recommendations.length > 0 && (
+            <div>
+              <p className="font-semibold text-slate-600 mb-1">Recommendations applied</p>
+              <ol className="space-y-0.5 list-decimal list-inside">
+                {recommendations.map((r, i) => <li key={i} className="text-slate-600">{r}</li>)}
+              </ol>
+            </div>
           )}
         </div>
       )}
@@ -366,6 +461,9 @@ export default function ApprovalDetailPage() {
                   </div>
                   {doc.ats_score !== null && (
                     <AtsRubric atsScore={doc.ats_score} atsDetails={doc.ats_details} />
+                  )}
+                  {doc.document_type === "cv" && (
+                    <TailoringContext jdAnalysis={doc.jd_analysis} />
                   )}
                 </>
               ) : (

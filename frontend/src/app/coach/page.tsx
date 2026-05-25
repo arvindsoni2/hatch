@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { listSessions, SessionListItem, SessionResponse } from "@/lib/api";
 import { SessionLauncher } from "@/components/coach/SessionLauncher";
-import { Brain, ChevronRight, Plus, X } from "lucide-react";
+import { Brain, BookOpen, ChevronRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -33,7 +34,7 @@ export default function CoachPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-8">
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Brain className="h-6 w-6 text-indigo-400" />
           <div>
@@ -48,6 +49,19 @@ export default function CoachPage() {
           <Plus className="h-4 w-4" />
           New Session
         </Button>
+      </div>
+
+      {/* Sub-navigation */}
+      <div className="mb-6 flex gap-1 rounded-xl border border-slate-700 bg-slate-800 p-1">
+        <span className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white">
+          <Brain className="h-3.5 w-3.5" /> Sessions
+        </span>
+        <Link
+          href="/coach/stories"
+          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors"
+        >
+          <BookOpen className="h-3.5 w-3.5" /> Story Bank
+        </Link>
       </div>
 
       {/* Launcher modal */}

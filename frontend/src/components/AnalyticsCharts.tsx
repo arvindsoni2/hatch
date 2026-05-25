@@ -13,8 +13,11 @@ import {
   Pie,
   Cell,
   Legend,
+  ReferenceLine,
+  LineChart,
+  Line,
 } from "recharts";
-import type { AnalyticsDashboard } from "@/lib/api";
+import type { AnalyticsDashboard, ScoreDistributionBucket, DailyCostEntry } from "@/lib/api";
 
 const COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
 
@@ -102,6 +105,83 @@ export function SourceBreakdownChart({ sources }: SourceChartProps) {
         </Pie>
         <Tooltip />
       </PieChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function ScoreDistributionChart({
+  buckets,
+  threshold,
+}: {
+  buckets: ScoreDistributionBucket[];
+  threshold: number;
+}) {
+  const data = buckets.map((b) => ({
+    bucket: b.bucket,
+    count: b.count,
+    aboveThreshold: b.min >= threshold,
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={data} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+        <XAxis dataKey="bucket" tick={{ fontSize: 10 }} />
+        <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+        <Tooltip formatter={(v: number) => [v, "Jobs"]} />
+        <ReferenceLine
+          x={`${Math.round(threshold * 10) * 10}–${Math.round(threshold * 10) * 10 + 10}%`}
+          stroke="#6366f1"
+          strokeDasharray="4 2"
+          label={{ value: "Threshold", fontSize: 10, fill: "#6366f1" }}
+        />
+        <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+          {data.map((entry, i) => (
+            <Cell key={i} fill={entry.aboveThreshold ? "#10b981" : "#cbd5e1"} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+const AGENT_COLORS: Record<string, string> = {
+  scout: "#6366f1",
+  scorer: "#10b981",
+  tailor: "#f59e0b",
+  coach: "#8b5cf6",
+  unknown: "#94a3b8",
+};
+
+export function DailyCostChart({ days }: { days: DailyCostEntry[] }) {
+  const agents = Array.from(
+    new Set(days.flatMap((d) => Object.keys(d.by_agent)))
+  );
+  // Recharts can't access nested keys — flatten by_agent into top-level fields
+  const flatDays = days.map((d) => {
+    const row: Record<string, string | number> = { date: d.date, total: d.total };
+    for (const agent of agents) {
+      row[agent] = d.by_agent[agent] ?? 0;
+    }
+    return row;
+  });
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <LineChart data={flatDays} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+        <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.slice(5)} />
+        <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `£${v.toFixed(2)}`} />
+        <Tooltip formatter={(v: number, name: string) => [`£${v.toFixed(4)}`, name]} />
+        <Legend />
+        {agents.map((agent) => (
+          <Line
+            key={agent}
+            type="monotone"
+            dataKey={agent}
+            name={agent}
+            stroke={AGENT_COLORS[agent] ?? "#94a3b8"}
+            dot={false}
+            strokeWidth={2}
+          />
+        ))}
+      </LineChart>
     </ResponsiveContainer>
   );
 }

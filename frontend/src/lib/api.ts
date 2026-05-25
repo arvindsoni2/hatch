@@ -1597,3 +1597,37 @@ export interface SkillFrequency {
 export async function fetchSkillFrequency(limit = 20): Promise<SkillFrequency> {
   return apiFetch<SkillFrequency>(`/api/analytics/skill-frequency?limit=${limit}`);
 }
+
+export interface ScoreDistributionBucket { bucket: string; min: number; max: number; count: number }
+export interface ScoreDistribution { buckets: ScoreDistributionBucket[]; threshold: number; total: number }
+export async function fetchScoreDistribution(): Promise<ScoreDistribution> {
+  return apiFetch<ScoreDistribution>('/api/analytics/score-distribution');
+}
+
+export interface MonthlyCosts { total: number; currency: string; by_agent: Record<string, number>; budget: number; budget_pct: number }
+export async function fetchCostsMonthly(): Promise<MonthlyCosts> {
+  return apiFetch<MonthlyCosts>('/api/analytics/costs/monthly');
+}
+
+export interface DailyCostEntry { date: string; total: number; by_agent: Record<string, number> }
+export interface DailyCosts { days: DailyCostEntry[] }
+export async function fetchCostsDaily(days = 30): Promise<DailyCosts> {
+  return apiFetch<DailyCosts>(`/api/analytics/costs/daily?days=${days}`);
+}
+
+export interface AgentPerformanceRow { agent: string; runs_today: number; runs_this_week: number; success_rate: number; last_error: string | null; last_run_at: string | null }
+export interface AgentPerformance { agents: AgentPerformanceRow[] }
+export async function fetchAgentPerformance(): Promise<AgentPerformance> {
+  return apiFetch<AgentPerformance>('/api/analytics/agent-performance');
+}
+
+export interface SearchQuality { total_discovered: number; passed_triage: number; shortlisted: number; triage_pass_rate: number; shortlist_rate: number; threshold: number }
+export async function fetchSearchQuality(): Promise<SearchQuality> {
+  return apiFetch<SearchQuality>('/api/analytics/search-quality');
+}
+
+export interface SkillGapEntry { skill: string; count: number }
+export interface SkillGaps { skills: SkillGapEntry[]; message?: string }
+export async function fetchSkillGaps(limit = 15): Promise<SkillGaps> {
+  return apiFetch<SkillGaps>(`/api/analytics/skill-gaps?limit=${limit}`);
+}

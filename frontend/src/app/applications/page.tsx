@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   fetchKanban,
+  fetchFollowUpReminders,
   updateApplicationStatus,
   createApplication,
   type ApplicationListItem,
@@ -23,6 +24,7 @@ export default function ApplicationsPage() {
     response_rate: 0,
     overdue_count: 0,
   });
+  const [overdueIds, setOverdueIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
@@ -30,9 +32,13 @@ export default function ApplicationsPage() {
 
   const loadKanban = useCallback(async () => {
     try {
-      const response = await fetchKanban();
+      const [response, reminders] = await Promise.all([
+        fetchKanban(),
+        fetchFollowUpReminders().catch(() => []),
+      ]);
       setKanbanData(response.columns);
       setStats(response.stats);
+      setOverdueIds(new Set(reminders.filter((r) => r.overdue).map((r) => r.application_id)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load applications");
     } finally {
@@ -95,6 +101,7 @@ export default function ApplicationsPage() {
           <KanbanBoard
             initialData={kanbanData}
             stats={stats}
+            overdueIds={overdueIds}
             onStatusChange={handleStatusChange}
             onCardClick={(id) => setSelectedAppId(id)}
           />

@@ -66,9 +66,10 @@ const COLUMN_COLORS: Record<string, string> = {
 interface SortableCardProps {
   application: ApplicationListItem;
   onCardClick: (id: string) => void;
+  isOverdue?: boolean;
 }
 
-function SortableCard({ application, onCardClick }: SortableCardProps) {
+function SortableCard({ application, onCardClick, isOverdue }: SortableCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: application.id, data: { status: application.status } });
 
@@ -82,6 +83,7 @@ function SortableCard({ application, onCardClick }: SortableCardProps) {
       <KanbanCard
         application={application}
         isDragging={isDragging}
+        isOverdue={isOverdue}
         onClick={() => onCardClick(application.id)}
       />
     </div>
@@ -94,9 +96,10 @@ interface ColumnProps {
   status: ApplicationStatus;
   items: ApplicationListItem[];
   onCardClick: (id: string) => void;
+  overdueIds?: Set<string>;
 }
 
-function KanbanColumn({ status, items, onCardClick }: ColumnProps) {
+function KanbanColumn({ status, items, onCardClick, overdueIds }: ColumnProps) {
   return (
     <div className={cn("flex flex-col min-w-[240px] w-[240px] rounded-xl border-t-4 bg-slate-50", COLUMN_COLORS[status])}>
       <div className="px-3 py-2 flex items-center justify-between border-b border-slate-200">
@@ -108,7 +111,7 @@ function KanbanColumn({ status, items, onCardClick }: ColumnProps) {
       <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
         <div className="flex flex-col gap-2 p-2 min-h-[100px]" data-column-id={status}>
           {items.map((app) => (
-            <SortableCard key={app.id} application={app} onCardClick={onCardClick} />
+            <SortableCard key={app.id} application={app} onCardClick={onCardClick} isOverdue={overdueIds?.has(app.id)} />
           ))}
           {items.length === 0 && (
             <div className="text-center text-xs text-slate-400 py-6 border-2 border-dashed border-slate-200 rounded-lg">
@@ -150,11 +153,12 @@ function StatsRibbon({ stats }: { stats: KanbanStats }) {
 interface KanbanBoardProps {
   initialData: Record<string, ApplicationListItem[]>;
   stats: KanbanStats;
+  overdueIds?: Set<string>;
   onStatusChange: (id: string, newStatus: ApplicationStatus) => Promise<void>;
   onCardClick: (id: string) => void;
 }
 
-export function KanbanBoard({ initialData, stats, onStatusChange, onCardClick }: KanbanBoardProps) {
+export function KanbanBoard({ initialData, stats, overdueIds, onStatusChange, onCardClick }: KanbanBoardProps) {
   const [columns, setColumns] = useState<Record<string, ApplicationListItem[]>>(initialData);
   const [activeItem, setActiveItem] = useState<ApplicationListItem | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -239,6 +243,7 @@ export function KanbanBoard({ initialData, stats, onStatusChange, onCardClick }:
               status={status}
               items={columns[status] ?? []}
               onCardClick={onCardClick}
+              overdueIds={overdueIds}
             />
           ))}
         </div>

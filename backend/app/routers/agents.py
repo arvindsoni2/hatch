@@ -231,6 +231,7 @@ async def get_approval_detail(
                 "file_path": d.file_path,
                 "ats_score": d.ats_score,
                 "ats_details": _safe_json(d.ats_details),
+                "jd_analysis": _safe_json(d.jd_analysis_snapshot),
                 "content_text": getattr(d, "content_text", None),
                 "created_at": d.created_at.isoformat() if d.created_at else None,
             }

@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/jobs", label: "Jobs", exact: false },
   { href: "/approvals", label: "Approvals", exact: false, badge: true },
   { href: "/applications", label: "Pipeline", exact: false },
+  { href: "/analytics", label: "Analytics", exact: false },
   { href: "/coach", label: "Interview prep", exact: false },
 ];
 

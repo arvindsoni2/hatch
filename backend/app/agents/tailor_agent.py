@@ -9,10 +9,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.application import Application
+from ..models.cost_tracking import CostTracking
 from ..models.job import JobPosting
 from ..services.tailor_service import TailorService
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
+from .tools.llm_factory import estimate_cost, estimate_tokens
 from .tools.profile_loader import load_profile
 
 logger = logging.getLogger("jobpilot.agent.tailor")
@@ -104,6 +106,19 @@ class TailorAgent(BaseAgent):
             jd_text=jd_text,
             db=db,
         )
+
+        # Track LLM cost: estimate based on JD length in, CV+CL length out
+        primary_model = profile.llm.primary_model
+        tok_in = estimate_tokens(jd_text)
+        tok_out = estimate_tokens(jd_text) * 2  # CV + cover letter ≈ 2x input
+        db.add(CostTracking(
+            agent_name="tailor",
+            job_id=job_id,
+            model=primary_model,
+            tokens_in=tok_in,
+            tokens_out=tok_out,
+            cost_estimate=estimate_cost(primary_model, tok_in, tok_out),
+        ))
 
         # Mark job as auto_tailored
         await db.execute(

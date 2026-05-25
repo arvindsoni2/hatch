@@ -52,9 +52,11 @@ interface ProfileData {
     target_roles?: string[]
     locations?: { city?: string; country?: string; remote_preference?: string }[]
     contract_type?: string
+    scrape_interval_hours?: number
   }
   compensation?: { min_rate?: number; max_rate?: number; currency?: string; rate_type?: string; ir35_preference?: string }
-  llm?: { provider?: string; primary_model?: string }
+  llm?: { provider?: string; primary_model?: string; triage_model?: string; api_key_env?: string; temperature?: number; monthly_budget?: number; currency?: string }
+  job_boards?: { name: string; enabled: boolean; scraper: string }[]
 }
 
 export default function SettingsPage() {
@@ -262,7 +264,70 @@ export default function SettingsPage() {
         </p>
       </SectionCard>
 
-      {/* Section 4: About */}
+      {/* Section 4: Job Boards */}
+      <SectionCard title="Job Boards">
+        {profileData?.job_boards && profileData.job_boards.length > 0 ? (
+          <div className="divide-y divide-slate-100">
+            {profileData.job_boards.map((board) => (
+              <div key={board.name} className="flex items-center justify-between py-2.5">
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className={`h-2 w-2 rounded-full shrink-0 ${board.enabled ? "bg-green-500" : "bg-slate-300"}`}
+                  />
+                  <span className="text-sm font-medium text-slate-700 capitalize">{board.name}</span>
+                  {board.scraper && (
+                    <span className="text-xs text-slate-400">({board.scraper})</span>
+                  )}
+                </div>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${board.enabled ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"}`}>
+                  {board.enabled ? "Active" : "Disabled"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400 py-2">
+            No job boards configured. Add boards to <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-600">profile.yaml</code> under <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-600">search.job_boards</code>.
+          </p>
+        )}
+        {profileData?.search?.scrape_interval_hours && (
+          <p className="mt-3 text-xs text-slate-400">
+            Scrape interval: every {profileData.search.scrape_interval_hours} hours · <Link href="/settings/profile" className="text-brand-600 hover:underline">Edit in profile →</Link>
+          </p>
+        )}
+      </SectionCard>
+
+      {/* Section 5: LLM Provider */}
+      <SectionCard title="LLM Provider">
+        {profileData?.llm ? (
+          <div className="divide-y divide-slate-100">
+            <FieldRow label="Provider" value={
+              <span className="capitalize">{(profileData.llm.provider ?? "—").replace("_", " ")}</span>
+            } />
+            <FieldRow label="Primary model" value={profileData.llm.primary_model ?? "—"} />
+            <FieldRow label="Triage model" value={profileData.llm.triage_model ?? "—"} />
+            <FieldRow label="API key env var" value={
+              <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                {profileData.llm.api_key_env ?? "—"}
+              </code>
+            } />
+            <FieldRow label="Temperature" value={profileData.llm.temperature?.toString() ?? "0.1"} />
+            {profileData.llm.monthly_budget && (
+              <FieldRow
+                label="Monthly budget"
+                value={`${profileData.llm.currency ?? "£"}${profileData.llm.monthly_budget}`}
+              />
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-400 py-2">Loading LLM configuration…</p>
+        )}
+        <p className="mt-4 text-xs text-slate-400">
+          Switch providers by editing <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-600">profile.yaml</code> · <Link href="/settings/profile" className="text-brand-600 hover:underline">Open editor →</Link>
+        </p>
+      </SectionCard>
+
+      {/* Section 6: About */}
       <SectionCard title="About">
         <div className="divide-y divide-slate-100">
           <FieldRow label="Application" value="JobPilot" />

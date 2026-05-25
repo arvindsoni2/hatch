@@ -43,6 +43,8 @@ class _ScoreResult(BaseModel):
     location_match: float
     overall_score: float
     reasoning: str
+    keyword_matches: list[str] = []
+    keyword_misses: list[str] = []
 
 
 class ScorerAgent(BaseAgent):
@@ -187,6 +189,8 @@ class ScorerAgent(BaseAgent):
                 "rate_match": score.rate_match,
                 "location_match": score.location_match,
                 "reasoning": score.reasoning,
+                "keyword_matches": score.keyword_matches,
+                "keyword_misses": score.keyword_misses,
                 "model_used": primary_model_name,
                 "tokens_in": score_tok_in,
                 "tokens_out": score_tok_out,
@@ -251,7 +255,10 @@ class ScorerAgent(BaseAgent):
             f"- rate_match (weight {weights.rate_match}): rate within candidate range?\n"
             f"- location_match (weight {weights.location_match}): location/remote policy match?\n"
             f"{locale_context}\n"
-            f"overall_score = weighted sum using the weights above."
+            f"overall_score = weighted sum using the weights above.\n\n"
+            f"Also return two keyword lists:\n"
+            f"- keyword_matches: skills/tools mentioned in the job that the candidate clearly has (max 15)\n"
+            f"- keyword_misses: skills/tools required by the job that the candidate lacks (max 10)"
         )
 
     def _get_locale_scoring_context(self, profile: Any) -> str:

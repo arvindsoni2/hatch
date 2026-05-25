@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { listStories, StoryListItem } from "@/lib/api";
 import { StoryBankGrid } from "@/components/coach/StoryBankGrid";
 import { StoryFilters } from "@/components/coach/StoryFilters";
-import { BookOpen, Plus } from "lucide-react";
+import { Brain, BookOpen, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function StoryBankPage() {
@@ -55,6 +56,19 @@ export default function StoryBankPage() {
           <Plus className="h-4 w-4" />
           Add Story
         </Button>
+      </div>
+
+      {/* Sub-navigation */}
+      <div className="mb-6 flex gap-1 rounded-xl border border-slate-700 bg-slate-800 p-1">
+        <Link
+          href="/coach"
+          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors"
+        >
+          <Brain className="h-3.5 w-3.5" /> Sessions
+        </Link>
+        <span className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white">
+          <BookOpen className="h-3.5 w-3.5" /> Story Bank
+        </span>
       </div>
 
       <div className="mb-5">

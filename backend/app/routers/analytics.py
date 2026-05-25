@@ -72,6 +72,242 @@ async def get_sources(
     return await service._repo.get_source_breakdown()
 
 
+@router.get("/score-distribution")
+async def get_score_distribution(db: AsyncSession = Depends(get_db)) -> dict:
+    """Return job score distribution bucketed into 10% intervals."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from ..models.job_score import JobScore  # noqa: PLC0415
+    from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+
+    result = await db.execute(select(JobScore.overall_score).where(JobScore.overall_score.isnot(None)))
+    scores = [row[0] for row in result.all()]
+
+    buckets = [{"bucket": f"{i*10}–{i*10+10}%", "min": i / 10, "max": (i + 1) / 10, "count": 0} for i in range(10)]
+    for s in scores:
+        idx = min(int(s * 10), 9)
+        buckets[idx]["count"] += 1
+
+    profile = load_profile()
+    threshold = profile.scoring.shortlist_threshold
+
+    return {"buckets": buckets, "threshold": threshold, "total": len(scores)}
+
+
+@router.get("/costs/monthly")
+async def get_costs_monthly(db: AsyncSession = Depends(get_db)) -> dict:
+    """Return LLM cost totals for the current calendar month."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from datetime import date  # noqa: PLC0415
+    from ..models.cost_tracking import CostTracking  # noqa: PLC0415
+    from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    result = await db.execute(
+        select(CostTracking.agent_name, CostTracking.cost_estimate)
+        .where(CostTracking.created_at >= month_start.isoformat())
+    )
+    rows = result.all()
+
+    by_agent: dict[str, float] = {}
+    total = 0.0
+    for row in rows:
+        agent = row.agent_name or "unknown"
+        by_agent[agent] = round(by_agent.get(agent, 0.0) + (row.cost_estimate or 0.0), 4)
+        total += row.cost_estimate or 0.0
+
+    profile = load_profile()
+    budget = getattr(profile.llm, "monthly_budget", 15.0)
+    currency = getattr(profile.llm, "currency", "GBP")
+
+    return {
+        "total": round(total, 4),
+        "currency": currency,
+        "by_agent": by_agent,
+        "budget": budget,
+        "budget_pct": round(total / budget * 100, 1) if budget else 0.0,
+    }
+
+
+@router.get("/costs/daily")
+async def get_costs_daily(
+    days: int = Query(30, ge=7, le=90),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return daily LLM costs for the last N days, grouped by agent."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy import func  # noqa: PLC0415
+    from datetime import date, timedelta  # noqa: PLC0415
+    from ..models.cost_tracking import CostTracking  # noqa: PLC0415
+
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    result = await db.execute(
+        select(
+            func.date(CostTracking.created_at).label("day"),
+            CostTracking.agent_name,
+            func.sum(CostTracking.cost_estimate).label("total"),
+        )
+        .where(CostTracking.created_at >= cutoff)
+        .group_by(func.date(CostTracking.created_at), CostTracking.agent_name)
+        .order_by(func.date(CostTracking.created_at))
+    )
+    rows = result.all()
+
+    daily: dict[str, dict] = {}
+    for row in rows:
+        day = str(row.day)
+        if day not in daily:
+            daily[day] = {"date": day, "total": 0.0, "by_agent": {}}
+        daily[day]["by_agent"][row.agent_name or "unknown"] = round(float(row.total or 0), 4)
+        daily[day]["total"] = round(daily[day]["total"] + float(row.total or 0), 4)
+
+    return {"days": sorted(daily.values(), key=lambda x: x["date"])}
+
+
+@router.get("/agent-performance")
+async def get_agent_performance(db: AsyncSession = Depends(get_db)) -> dict:
+    """Return run counts, success rate, and last error per agent."""
+    from sqlalchemy import select, func  # noqa: PLC0415
+    from datetime import date, timedelta  # noqa: PLC0415
+    from ..models.agent_event import AgentEvent  # noqa: PLC0415
+    from ..models.agent_state import AgentState  # noqa: PLC0415
+
+    today = date.today().isoformat()
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
+
+    runs_today = await db.execute(
+        select(AgentEvent.source_agent, func.count().label("n"))
+        .where(func.date(AgentEvent.created_at) == today)
+        .group_by(AgentEvent.source_agent)
+    )
+    today_map = {r.source_agent: r.n for r in runs_today}
+
+    runs_week = await db.execute(
+        select(AgentEvent.source_agent, func.count().label("n"))
+        .where(AgentEvent.created_at >= week_ago)
+        .group_by(AgentEvent.source_agent)
+    )
+    week_map = {r.source_agent: r.n for r in runs_week}
+
+    errors = await db.execute(
+        select(AgentEvent.source_agent, func.count().label("n"))
+        .where(AgentEvent.status == "failed")
+        .group_by(AgentEvent.source_agent)
+    )
+    error_map = {r.source_agent: r.n for r in errors}
+
+    total_events = await db.execute(
+        select(AgentEvent.source_agent, func.count().label("n"))
+        .group_by(AgentEvent.source_agent)
+    )
+    total_map = {r.source_agent: r.n for r in total_events}
+
+    last_error_result = await db.execute(
+        select(AgentEvent.source_agent, AgentEvent.error_message)
+        .where(AgentEvent.status == "failed")
+        .order_by(AgentEvent.created_at.desc())
+    )
+    last_err_map: dict[str, str | None] = {}
+    for r in last_error_result:
+        if r.source_agent not in last_err_map:
+            last_err_map[r.source_agent] = r.error_message
+
+    states_result = await db.execute(select(AgentState))
+    states = {s.agent_name: s for s in states_result.scalars()}
+
+    agents = set(list(today_map) + list(week_map) + list(total_map))
+    rows = []
+    for agent in sorted(agents):
+        if not agent:
+            continue
+        total = total_map.get(agent, 0)
+        errs = error_map.get(agent, 0)
+        success_rate = round((total - errs) / total * 100, 1) if total else 100.0
+        state = states.get(agent)
+        rows.append({
+            "agent": agent,
+            "runs_today": today_map.get(agent, 0),
+            "runs_this_week": week_map.get(agent, 0),
+            "success_rate": success_rate,
+            "last_error": last_err_map.get(agent),
+            "last_run_at": state.last_run_at.isoformat() if state and state.last_run_at else None,
+        })
+
+    return {"agents": rows}
+
+
+@router.get("/search-quality")
+async def get_search_quality(db: AsyncSession = Depends(get_db)) -> dict:
+    """Return triage pass rate and shortlist rate vs total discovered."""
+    from sqlalchemy import select, func  # noqa: PLC0415
+    from ..models.job_score import JobScore  # noqa: PLC0415
+    from ..models.agent_event import AgentEvent  # noqa: PLC0415
+    from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+
+    total_discovered = await db.execute(
+        select(func.count()).select_from(AgentEvent)
+        .where(AgentEvent.event_type == "job_discovered")
+    )
+    total = total_discovered.scalar_one() or 0
+
+    total_scored = await db.execute(select(func.count()).select_from(JobScore))
+    scored = total_scored.scalar_one() or 0
+
+    profile = load_profile()
+    threshold = profile.scoring.shortlist_threshold
+    shortlisted_result = await db.execute(
+        select(func.count()).select_from(JobScore)
+        .where(JobScore.overall_score >= threshold)
+    )
+    shortlisted = shortlisted_result.scalar_one() or 0
+
+    return {
+        "total_discovered": total,
+        "passed_triage": scored,
+        "shortlisted": shortlisted,
+        "triage_pass_rate": round(scored / total * 100, 1) if total else 0.0,
+        "shortlist_rate": round(shortlisted / total * 100, 1) if total else 0.0,
+        "threshold": threshold,
+    }
+
+
+@router.get("/skill-gaps")
+async def get_skill_gaps(
+    limit: int = Query(15, ge=5, le=30),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return most-common skills the candidate is missing across scored jobs."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from ..models.agent_event import AgentEvent  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    events_result = await db.execute(
+        select(AgentEvent.payload)
+        .where(AgentEvent.event_type == "job_scored")
+        .limit(200)
+    )
+
+    gap_counts: dict[str, int] = {}
+    for row in events_result.scalars().all():
+        if not row:
+            continue
+        try:
+            payload = json.loads(row) if isinstance(row, str) else row
+            for kw in payload.get("keyword_misses", []):
+                kw = kw.lower().strip()
+                if kw:
+                    gap_counts[kw] = gap_counts.get(kw, 0) + 1
+        except Exception:
+            continue
+
+    if not gap_counts:
+        return {"skills": [], "message": "No gap data yet — run the scorer agent first"}
+
+    sorted_gaps = sorted(gap_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    return {"skills": [{"skill": k, "count": v} for k, v in sorted_gaps]}
+
+
 @router.get("/ab-testing")
 async def get_ab_testing(
     db: AsyncSession = Depends(get_db),
