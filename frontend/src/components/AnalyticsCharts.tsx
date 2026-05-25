@@ -126,7 +126,7 @@ export function ScoreDistributionChart({
       <BarChart data={data} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
         <XAxis dataKey="bucket" tick={{ fontSize: 10 }} />
         <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-        <Tooltip formatter={(v: number) => [v, "Jobs"]} />
+        <Tooltip formatter={(v) => [v, "Jobs"]} />
         <ReferenceLine
           x={`${Math.round(threshold * 10) * 10}–${Math.round(threshold * 10) * 10 + 10}%`}
           stroke="#6366f1"
@@ -168,7 +168,7 @@ export function DailyCostChart({ days }: { days: DailyCostEntry[] }) {
       <LineChart data={flatDays} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
         <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.slice(5)} />
         <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `£${v.toFixed(2)}`} />
-        <Tooltip formatter={(v: number, name: string) => [`£${v.toFixed(4)}`, name]} />
+        <Tooltip formatter={(v, name) => [`£${Number(v).toFixed(4)}`, name]} />
         <Legend />
         {agents.map((agent) => (
           <Line
