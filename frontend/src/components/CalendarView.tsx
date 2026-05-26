@@ -13,8 +13,9 @@ import {
   subMonths,
   isToday,
 } from "date-fns";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { downloadInterviewIcs } from "@/lib/api";
 import type { InterviewRound, FollowUp } from "@/lib/api";
 
 interface CalendarViewProps {
@@ -158,10 +159,17 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
                   {i.type.replace(/_/g, " ")} interview
                 </span>
                 {i.scheduled_at && (
-                  <span className="text-slate-400 ml-auto">
+                  <span className="text-slate-400">
                     {format(new Date(i.scheduled_at), "HH:mm")}
                   </span>
                 )}
+                <button
+                  onClick={() => void downloadInterviewIcs(i.id)}
+                  title="Export to calendar"
+                  className="ml-auto text-indigo-400 hover:text-indigo-600"
+                >
+                  <CalendarPlus className="h-3.5 w-3.5" />
+                </button>
               </div>
             ))}
             {selectedFollowUps.map((f) => (

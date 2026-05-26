@@ -4,8 +4,9 @@ import { formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft, ExternalLink, Search, Brain, FileText,
   CheckCircle2, AlertTriangle, Clock, DollarSign,
+  CheckCheck, XCircle, TrendingUp,
 } from "lucide-react";
-import { fetchJob, fetchJobDecisions, type DecisionStep } from "@/lib/api";
+import { fetchJob, fetchJobDecisions, fetchGapAnalysis, type DecisionStep, type GapAnalysis } from "@/lib/api";
 
 export const revalidate = 60;
 
@@ -124,12 +125,104 @@ function StepCard({ step }: { step: DecisionStep }) {
   );
 }
 
+// ── Gap analysis card ─────────────────────────────────────────────────────────
+
+function GapAnalysisCard({ gap }: { gap: GapAnalysis }) {
+  const pct = gap.match_percentage;
+  const barColor = pct >= 75 ? "bg-green-500" : pct >= 50 ? "bg-amber-400" : "bg-red-400";
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-indigo-500" />
+          Skills Gap Analysis
+        </h2>
+        <span className={`text-lg font-bold tabular-nums ${pct >= 75 ? "text-green-700" : pct >= 50 ? "text-amber-600" : "text-red-600"}`}>
+          {pct}%
+        </span>
+      </div>
+
+      {/* Match bar */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+          <span>{gap.matched_skills.length} matched</span>
+          <span>{gap.missing_skills.length} missing</span>
+        </div>
+        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* Matched skills */}
+        {gap.matched_skills.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-green-700 mb-2 flex items-center gap-1">
+              <CheckCheck className="h-3.5 w-3.5" /> Matched skills
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {gap.matched_skills.map((s) => (
+                <span key={s} className="rounded-md bg-green-50 border border-green-200 px-2 py-0.5 text-xs text-green-700">
+                  {s}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Missing skills */}
+        {gap.missing_skills.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-red-600 mb-2 flex items-center gap-1">
+              <XCircle className="h-3.5 w-3.5" /> Profile skills not in JD
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {gap.missing_skills.map((s) => (
+                <span key={s} className="rounded-md bg-slate-50 border border-slate-200 px-2 py-0.5 text-xs text-slate-500">
+                  {s}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* JD-only keywords */}
+      {gap.jd_only_keywords.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium text-amber-700 mb-2">JD keywords not in your profile</p>
+          <div className="flex flex-wrap gap-1.5">
+            {gap.jd_only_keywords.map((kw) => (
+              <span key={kw} className="rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs text-amber-700">
+                {kw}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recommendations */}
+      {gap.recommendations.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-slate-100 space-y-1.5">
+          {gap.recommendations.map((rec, i) => (
+            <p key={i} className="text-xs text-slate-600 leading-relaxed">
+              {rec}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default async function JobDetailPage({ params }: { params: { id: string } }) {
-  const [job, decisions] = await Promise.all([
+  const [job, decisions, gap] = await Promise.all([
     fetchJob(params.id).catch(() => null),
     fetchJobDecisions(params.id).catch(() => null),
+    fetchGapAnalysis(params.id).catch(() => null),
   ]);
 
   if (!job) notFound();
@@ -210,6 +303,9 @@ export default async function JobDetailPage({ params }: { params: { id: string }
           </div>
         )}
       </div>
+
+      {/* Gap analysis */}
+      {gap && <div id="gap"><GapAnalysisCard gap={gap} /></div>}
 
       {/* Decision trail */}
       {decisions && decisions.steps.length > 0 && (

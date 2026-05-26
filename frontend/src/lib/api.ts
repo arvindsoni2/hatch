@@ -1684,3 +1684,32 @@ export interface RateLimitStatus {
 export async function fetchRateLimitStatus(): Promise<RateLimitStatus> {
   return apiFetch<RateLimitStatus>('/api/agents/rate-limit-status');
 }
+
+// ── Gap Analysis ──────────────────────────────────────────────────────
+
+export interface GapAnalysis {
+  matched_skills: string[];
+  missing_skills: string[];
+  match_percentage: number;
+  jd_only_keywords: string[];
+  recommendations: string[];
+}
+
+export async function fetchGapAnalysis(jobId: string): Promise<GapAnalysis> {
+  return apiFetch<GapAnalysis>(`/api/v2/jobs/${jobId}/gap-analysis`);
+}
+
+// ── Interview .ics export ─────────────────────────────────────────────
+
+export async function downloadInterviewIcs(interviewId: string): Promise<void> {
+  const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+  const url = `${BASE}/api/v2/interviews/${interviewId}/ical`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to download .ics: ${res.status}`);
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `interview_${interviewId}.ics`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}

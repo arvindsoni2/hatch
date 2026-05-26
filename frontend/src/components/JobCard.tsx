@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ExternalLink, BookmarkPlus, Check, Loader2 } from "lucide-react";
+import { ExternalLink, BookmarkPlus, Check, Loader2, GitCompareArrows } from "lucide-react";
 import type { Job } from "@/lib/api";
 import { trackFromJob } from "@/lib/api";
 import { ScoreBadge } from "@/components/ScoreBadge";
@@ -105,9 +105,16 @@ export function JobCard({ job, threshold = 0.75 }: JobCardProps) {
         )}
       </div>
 
-      <div className="hidden shrink-0 min-w-[120px] text-right sm:block">
+      <div className="hidden shrink-0 min-w-[140px] text-right sm:block">
         {timeLabel && <p className="text-xs text-slate-400">{timeLabel}</p>}
         <p className="text-xs text-slate-400">{SOURCE_LABELS[job.source] ?? job.source}</p>
+        <Link
+          href={`/jobs/${job.id}#gap`}
+          className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-600 mt-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GitCompareArrows className="h-3 w-3" /> Gap analysis
+        </Link>
       </div>
 
       <div className="shrink-0">

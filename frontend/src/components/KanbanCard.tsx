@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, MapPin, Banknote, Sparkles, Clock } from "lucide-react";
+import { Building2, MapPin, Banknote, Sparkles, Clock, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
 import type { ApplicationListItem, Priority } from "@/lib/api";
@@ -99,11 +99,25 @@ export function KanbanCard({ application, isDragging = false, isOverdue = false,
             </span>
           )}
         </div>
-        {application.job_source && (
-          <Badge variant="secondary" className="text-xs">
-            {application.job_source}
-          </Badge>
-        )}
+        <div className="flex items-center gap-1.5">
+          {application.status === "interview" && (
+            <span
+              title="Open to add interview to calendar"
+              className="inline-flex items-center text-xs text-amber-500 hover:text-amber-700 cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onClick) onClick();
+              }}
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+            </span>
+          )}
+          {application.job_source && (
+            <Badge variant="secondary" className="text-xs">
+              {application.job_source}
+            </Badge>
+          )}
+        </div>
       </div>
     </div>
   );

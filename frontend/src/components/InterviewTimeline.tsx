@@ -1,6 +1,10 @@
-import { Phone, Code2, Users, Presentation, CheckCircle2, Clock } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import { Phone, Code2, Users, Presentation, CheckCircle2, Clock, CalendarPlus, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { downloadInterviewIcs } from "@/lib/api";
 import type { InterviewRound } from "@/lib/api";
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -23,6 +27,39 @@ const STATUS_STYLES: Record<string, string> = {
 
 interface InterviewTimelineProps {
   interviews: InterviewRound[];
+}
+
+function IcsButton({ interviewId }: { interviewId: string }) {
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+
+  async function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (state === "loading") return;
+    setState("loading");
+    try {
+      await downloadInterviewIcs(interviewId);
+      setState("idle");
+    } catch {
+      setState("error");
+      setTimeout(() => setState("idle"), 3000);
+    }
+  }
+
+  return (
+    <button
+      onClick={handleDownload}
+      disabled={state === "loading"}
+      title="Add to calendar"
+      className="inline-flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 disabled:opacity-50"
+    >
+      {state === "loading" ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <CalendarPlus className="h-3.5 w-3.5" />
+      )}
+      {state === "error" ? "Failed" : "Add to calendar"}
+    </button>
+  );
 }
 
 export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
@@ -74,11 +111,16 @@ export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
               </div>
 
               {round.scheduled_at && (
-                <p className="text-xs text-slate-500 mb-1">
-                  {format(new Date(round.scheduled_at), "EEE d MMM yyyy 'at' HH:mm")}
-                  {round.duration_minutes != null && ` · ${round.duration_minutes} min`}
-                  {round.location && ` · ${round.location}`}
-                </p>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs text-slate-500">
+                    {format(new Date(round.scheduled_at), "EEE d MMM yyyy 'at' HH:mm")}
+                    {round.duration_minutes != null && ` · ${round.duration_minutes} min`}
+                    {round.location && ` · ${round.location}`}
+                  </p>
+                  {round.status !== "cancelled" && (
+                    <IcsButton interviewId={round.id} />
+                  )}
+                </div>
               )}
 
               {round.interviewer_name && (

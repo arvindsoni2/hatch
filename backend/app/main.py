@@ -25,10 +25,12 @@ from .routers.resume import router as resume_router
 from .routers.ghost import router as ghost_router
 from .routers.stories import router as stories_router
 from .routers.interviews import router as interviews_router
+from .routers.interviews_ical import router as interviews_ical_router
 from .routers.jobs import health_router, router as jobs_router
 from .routers.coach import router as coach_router
 from .routers.settings import router as settings_router
 from .routers.tailor import router as tailor_router
+from .routers.gap_analysis import router as gap_analysis_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
 from .services.claude_client import ClaudeClient
@@ -143,8 +145,10 @@ def create_app() -> FastAPI:
     # Routers
     app.include_router(health_router)
     app.include_router(jobs_router)
+    app.include_router(gap_analysis_router)
     app.include_router(applications_router)
     app.include_router(interviews_router)
+    app.include_router(interviews_ical_router)
     app.include_router(analytics_router)
     app.include_router(tailor_router)
     app.include_router(coach_router)
