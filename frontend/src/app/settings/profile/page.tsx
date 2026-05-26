@@ -167,6 +167,96 @@ export default function ProfileSettingsPage() {
         </CardContent>
       </Card>
 
+      {/* ── Locale ────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Locale</CardTitle>
+          <CardDescription className="text-xs">
+            Controls job boards, currency format, and rate type. Switching locale does not auto-replace your job_boards list.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: "uk", flag: "🇬🇧", label: "UK" },
+              { id: "in", flag: "🇮🇳", label: "India" },
+              { id: "us", flag: "🇺🇸", label: "US" },
+              { id: "de", flag: "🇩🇪", label: "Germany" },
+            ].map(({ id, flag, label }) => {
+              const active = String(get(["locale"], "uk")) === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => update(["locale"], id)}
+                  className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                    active
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                      : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  {flag} {label}
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Location ──────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Location</CardTitle>
+          <CardDescription className="text-xs">Primary location used by scrapers for search.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <Label>City</Label>
+            <Input
+              value={String((get(["search", "locations"], []) as Array<Record<string,unknown>>)[0]?.city ?? "")}
+              onChange={(e) => {
+                const locs = structuredClone((get(["search", "locations"], [{ city: "", country: "IN", remote_preference: "any" }]) as Array<Record<string,unknown>>));
+                if (!locs[0]) locs[0] = {};
+                locs[0].city = e.target.value;
+                update(["search", "locations"], locs);
+              }}
+              placeholder="Pune, Mumbai, Bengaluru…"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Country code</Label>
+            <Input
+              value={String((get(["search", "locations"], []) as Array<Record<string,unknown>>)[0]?.country ?? "")}
+              onChange={(e) => {
+                const locs = structuredClone((get(["search", "locations"], [{ city: "", country: "IN", remote_preference: "any" }]) as Array<Record<string,unknown>>));
+                if (!locs[0]) locs[0] = {};
+                locs[0].country = e.target.value.toUpperCase();
+                update(["search", "locations"], locs);
+              }}
+              placeholder="IN, GB, US…"
+              className="uppercase"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Remote preference</Label>
+            <select
+              className="w-full border rounded-md p-2 text-sm"
+              value={String((get(["search", "locations"], []) as Array<Record<string,unknown>>)[0]?.remote_preference ?? "any")}
+              onChange={(e) => {
+                const locs = structuredClone((get(["search", "locations"], [{ city: "", country: "IN", remote_preference: "any" }]) as Array<Record<string,unknown>>));
+                if (!locs[0]) locs[0] = {};
+                locs[0].remote_preference = e.target.value;
+                update(["search", "locations"], locs);
+              }}
+            >
+              <option value="any">Any</option>
+              <option value="remote">Remote only</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="onsite">On-site only</option>
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* ── Search ────────────────────────────────────────────────────── */}
       <Card>
         <CardHeader><CardTitle className="text-base">Target Roles</CardTitle><CardDescription className="text-xs">Job titles the Scout agent will search for.</CardDescription></CardHeader>
@@ -175,6 +265,44 @@ export default function ProfileSettingsPage() {
             tags={(get(["search", "target_roles"], []) as string[])}
             onChange={(v) => update(["search", "target_roles"], v)}
           />
+        </CardContent>
+      </Card>
+
+      {/* ── Job Boards ────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Job Boards</CardTitle>
+          <CardDescription className="text-xs">Toggle which boards the Scout agent scrapes.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="divide-y divide-slate-100">
+            {((get(["job_boards"], []) as Array<Record<string, unknown>>)).map((board, idx) => (
+              <div key={String(board.name)} className="flex items-center justify-between py-2.5">
+                <div className="flex items-center gap-2.5">
+                  <span className={`h-2 w-2 rounded-full shrink-0 ${board.enabled ? "bg-green-500" : "bg-slate-300"}`} />
+                  <span className="text-sm font-medium text-slate-700">{String(board.name)}</span>
+                  <span className="text-xs text-slate-400">({String(board.scraper)})</span>
+                </div>
+                <button
+                  onClick={() => {
+                    const boards = structuredClone(get(["job_boards"], []) as Array<Record<string, unknown>>);
+                    boards[idx] = { ...boards[idx], enabled: !boards[idx].enabled };
+                    update(["job_boards"], boards);
+                  }}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    board.enabled
+                      ? "bg-green-50 border-green-200 text-green-700 hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                      : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-green-50 hover:border-green-200 hover:text-green-700"
+                  }`}
+                >
+                  {board.enabled ? "Enabled" : "Disabled"}
+                </button>
+              </div>
+            ))}
+          </div>
+          {(get(["job_boards"], []) as unknown[]).length === 0 && (
+            <p className="text-sm text-slate-400 py-2">No boards configured. Save after adding boards manually or via locale.</p>
+          )}
         </CardContent>
       </Card>
 

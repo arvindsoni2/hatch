@@ -12,9 +12,11 @@ from .adzuna import AdzunaScraper
 from .base import BaseScraper
 from .contractoruk import ContractorUKScraper
 from .cwjobs import CWJobsScraper
+from .indeed_india import IndeedIndiaScraper
 from .itjobswatch import ITJobsWatchScraper
 from .jobserve import JobServeScraper
 from .linkedin import LinkedInScraper
+from .naukri import NaukriScraper
 from .reed import ReedScraper
 
 if TYPE_CHECKING:
@@ -24,13 +26,18 @@ logger = logging.getLogger(__name__)
 
 # Map locale YAML scraper IDs → scraper classes
 SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
+    # UK boards
     "ReedScraper": ReedScraper,
     "CWJobsScraper": CWJobsScraper,
     "ContractorUKScraper": ContractorUKScraper,
     "JobServeScraper": JobServeScraper,
     "AdzunaScraper": AdzunaScraper,
     "ITJobsWatchScraper": ITJobsWatchScraper,
+    # Global
     "LinkedInScraper": LinkedInScraper,
+    # India boards
+    "NaukriScraper": NaukriScraper,
+    "IndeedIndiaScraper": IndeedIndiaScraper,
 }
 
 

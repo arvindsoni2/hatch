@@ -58,9 +58,9 @@ job_boards:
     enabled: true
     scraper: "LinkedInScraper"
   - id: "indeed"
-    name: "Indeed"
+    name: "Indeed India"
     enabled: true
-    scraper: "IndeedScraper"
+    scraper: "IndeedIndiaScraper"
   - id: "instahyre"
     name: "Instahyre"
     enabled: false

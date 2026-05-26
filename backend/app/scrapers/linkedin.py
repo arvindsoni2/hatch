@@ -63,16 +63,26 @@ class LinkedInScraper(BaseScraper):
             "Referer": "https://www.linkedin.com/",
         }
 
-        keywords = quote(
-            "solutions architect OR cloud architect OR enterprise architect"
-            " OR data architect OR delivery manager OR technical lead"
-            " OR product owner OR agile delivery"
-        )
+        try:
+            from ..agents.tools.profile_loader import load_profile
+            _profile = load_profile()
+            _roles = list(_profile.search.target_roles)
+            _loc = _profile.search.locations[0].city if _profile.search.locations else None
+            _country = _profile.search.locations[0].country if _profile.search.locations else "GB"
+            _location_str = _loc or (_country if len(_country) > 2 else "")
+            _keywords_raw = " OR ".join(_roles[:6]) if _roles else (
+                "solutions architect OR delivery manager OR technical lead OR product owner"
+            )
+        except Exception:
+            _keywords_raw = "solutions architect OR cloud architect OR delivery manager OR technical lead"
+            _location_str = ""
+
+        keywords = quote(_keywords_raw)
+        location_param = f"&location={quote(_location_str)}" if _location_str else ""
         url = (
             "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
             f"?keywords={keywords}"
-            "&location=United+Kingdom"
-            "&f_JT=C"  # Contract type
+            f"{location_param}"
             "&start=0"
         )
 
@@ -176,6 +186,12 @@ class LinkedInScraper(BaseScraper):
         working_pattern = self.detect_working_pattern(combined_text)
         rate_type = self.detect_rate_type("")
 
+        try:
+            from ..agents.tools.profile_loader import load_profile as _lp
+            _currency = _lp().compensation.currency or "USD"
+        except Exception:
+            _currency = "USD"
+
         return JobPostingCreate(
             title=title,
             company=company,
@@ -183,7 +199,7 @@ class LinkedInScraper(BaseScraper):
             rate_text=None,
             rate_min=None,
             rate_max=None,
-            currency="GBP",
+            currency=_currency,
             ir35_status=ir35_status,
             description=full_text[:1000] if full_text else None,
             url=href,

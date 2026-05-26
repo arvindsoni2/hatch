@@ -12,13 +12,34 @@ from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
+def _adzuna_country() -> str:
+    """Return Adzuna country code from profile locale, falling back to config."""
+    try:
+        from ..agents.tools.profile_loader import load_profile
+        locale = (load_profile().locale or "").lower()
+        _LOCALE_TO_ADZUNA = {"in": "in", "uk": "gb", "us": "us", "de": "de", "gb": "gb"}
+        return _LOCALE_TO_ADZUNA.get(locale, settings.ADZUNA_COUNTRY)
+    except Exception:
+        return settings.ADZUNA_COUNTRY
+
+
 def _adzuna_base_url() -> str:
-    return f"https://api.adzuna.com/v1/api/jobs/{settings.ADZUNA_COUNTRY}/search"
-SEARCH_WHAT = (
-    "solutions architect OR cloud architect OR enterprise architect OR data architect"
-    " OR technical architect OR delivery manager OR technical lead"
-    " OR product owner OR agile delivery contract"
-)
+    return f"https://api.adzuna.com/v1/api/jobs/{_adzuna_country()}/search"
+
+
+def _adzuna_search_what() -> str:
+    try:
+        from ..agents.tools.profile_loader import load_profile
+        roles = load_profile().search.target_roles
+        if roles:
+            return " OR ".join(roles[:6])
+    except Exception:
+        pass
+    return (
+        "solutions architect OR cloud architect OR enterprise architect OR data architect"
+        " OR technical architect OR delivery manager OR technical lead"
+        " OR product owner OR agile delivery"
+    )
 RESULTS_PER_PAGE = 50
 
 
@@ -48,7 +69,7 @@ class AdzunaScraper(BaseScraper):
                     "app_id": settings.ADZUNA_APP_ID,
                     "app_key": settings.ADZUNA_APP_KEY,
                     "results_per_page": RESULTS_PER_PAGE,
-                    "what": SEARCH_WHAT,
+                    "what": _adzuna_search_what(),
                     "contract": 1,
                     "content-type": "application/json",
                     "posted_in": settings.SCRAPE_LOOKBACK_DAYS,
