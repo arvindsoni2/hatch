@@ -116,7 +116,7 @@ class ScoutAgent(BaseAgent):
                 new_count += 1
 
                 # Emit discovery event
-                await self.emit_event(
+                event_id = await self.emit_event(
                     "job_discovered",
                     {
                         "job_id": saved.id,
@@ -126,6 +126,10 @@ class ScoutAgent(BaseAgent):
                         "source": source,
                     },
                     db,
+                )
+                self._log.info(
+                    "Emitted job_discovered: %s at %s (job_id=%s, event_id=%s)",
+                    saved.title, saved.company, saved.id, event_id,
                 )
             except Exception as exc:
                 self._log.exception(

@@ -86,6 +86,12 @@ class ScorerAgent(BaseAgent):
             await self.update_state(db, "idle")
             return {"scored": 0, "skipped": 0, "errors": 0}
 
+        self._log.info(
+            "Scorer processing %d job_discovered event(s) (event_ids=%s).",
+            len(pending),
+            [e["id"] for e in pending],
+        )
+
         profile = load_profile()
         method = self._resolve_method(profile)
         limiter = get_limiter()
@@ -150,6 +156,12 @@ class ScorerAgent(BaseAgent):
         # Phase 3 — process each job
         for event, job, local_score in local_results:
             await self._bus.mark_processing(event["id"], db)
+            self._log.info(
+                "Scorer processing event=%s job_id=%s '%s' (local=%.2f, method=%s)",
+                event["id"], job.id, job.title,
+                local_score.overall_score,
+                "llm" if id(event) in for_llm else "local",
+            )
             try:
                 if id(event) in for_llm:
                     result_tag = await self._score_with_llm(
@@ -159,6 +171,10 @@ class ScorerAgent(BaseAgent):
                     result_tag = await self._persist_local_score(event, job, local_score, db, profile)
 
                 await self._bus.mark_completed(event["id"], db)
+                self._log.info(
+                    "Scored job_id=%s: result=%s (event=%s)",
+                    job.id, result_tag, event["id"],
+                )
                 if result_tag == "skipped":
                     skipped += 1
                 else:

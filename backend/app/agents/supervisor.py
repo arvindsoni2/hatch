@@ -53,13 +53,35 @@ class SupervisorAgent:
     async def tick(self, db: AsyncSession) -> dict[str, Any]:
         """Process one batch of pending events.
 
+        job_discovered events are intentionally excluded from the supervisor's
+        poll — the ScorerAgent owns their full lifecycle (pending → processing
+        → completed). The supervisor just triggers a scorer run when any
+        discoveries are waiting, then processes all other event types.
+
         Returns a summary of actions taken this tick.
         """
-        events = await self._bus.poll(db, limit=20)
-        if not events:
+        processed = 0
+
+        # Check for pending discoveries and delegate to scorer (scorer owns
+        # the event lifecycle — it marks them processing/completed itself)
+        discoveries = await self._bus.poll(
+            db, event_type="job_discovered", status="pending", limit=1
+        )
+        if discoveries:
+            logger.info(
+                "Supervisor: %d+ pending job_discovered events — triggering scorer.",
+                len(discoveries),
+            )
+            await self._scorer.run(db)
+            processed += 1
+
+        # Process all other event types (exclude job_discovered — scorer handles those)
+        all_events = await self._bus.poll(db, limit=20)
+        events = [e for e in all_events if e["event_type"] != "job_discovered"]
+
+        if not events and not discoveries:
             return {"processed": 0}
 
-        processed = 0
         for event in events:
             try:
                 await self._route(event, db)
@@ -102,12 +124,13 @@ class SupervisorAgent:
     async def _handle_job_discovered(
         self, event: dict[str, Any], db: AsyncSession
     ) -> None:
-        """Trigger scorer for newly discovered jobs."""
-        # The scorer agent polls job_discovered events itself; we just
-        # acknowledge here and delegate batch scoring via ScorerAgent.run().
+        """Scorer owns job_discovered lifecycle — this handler should never be
+        reached since tick() filters them out before _route(). Guard only."""
+        logger.warning(
+            "Supervisor unexpectedly received job_discovered event %s — scorer should own this.",
+            event["id"],
+        )
         await self._bus.mark_completed(event["id"], db)
-        # Fire a scorer pass (will batch internally)
-        await self._scorer.run(db)
 
     async def _handle_job_scored(
         self, event: dict[str, Any], db: AsyncSession
