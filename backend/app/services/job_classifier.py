@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..models.job import JobPosting
 from ..prompts import render_prompt
-from .llm_factory import get_triage_model
+from ..agents.tools.llm_factory import get_triage_model
 
 logger = logging.getLogger(__name__)
 
