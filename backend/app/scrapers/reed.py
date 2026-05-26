@@ -104,16 +104,32 @@ class ReedScraper(BaseScraper):
         rate_min: float | None = None
         rate_max: float | None = None
 
+        # Reed's API returns salaryType as text ("Annual", "Daily", etc.) but
+        # inconsistently labels contract day rates as "Annual". Use a numeric
+        # heuristic: any rate < £2000 is unambiguously a day rate for UK IT
+        # contracts — no architect earns £500/year.
+        _DAY_RATE_THRESHOLD = 2_000
+
         if min_salary and max_salary:
             rate_min = float(min_salary)
             rate_max = float(max_salary)
-            if "day" in salary_type:
+            is_day = (
+                "day" in salary_type.lower()
+                or "daily" in salary_type.lower()
+                or salary_type == "2"
+                or rate_min < _DAY_RATE_THRESHOLD
+            )
+            if is_day:
                 rate_text = f"£{rate_min:.0f}-£{rate_max:.0f}/day"
             else:
                 rate_text = f"£{rate_min:.0f}-£{rate_max:.0f}/year"
         elif min_salary:
             rate_min = rate_max = float(min_salary)
-            rate_text = f"£{rate_min:.0f}"
+            is_day = (
+                "day" in salary_type.lower()
+                or rate_min < _DAY_RATE_THRESHOLD
+            )
+            rate_text = f"£{rate_min:.0f}/day" if is_day else f"£{rate_min:.0f}"
 
         # Posted date
         posted_at: datetime | None = None
