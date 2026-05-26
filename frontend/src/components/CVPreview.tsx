@@ -7,13 +7,23 @@ interface CVPreviewProps {
   jdAnalysis?: JDAnalysisResult | null;
 }
 
-function highlightKeywords(text: string, keywords: string[]): string {
-  if (!keywords.length) return text;
+function SafeHighlight({ text, keywords }: { text: string; keywords: string[] }) {
+  if (!keywords.length) return <>{text}</>;
   const escaped = keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const pattern = new RegExp(`(${escaped.join("|")})`, "gi");
-  return text.replace(
-    pattern,
-    '<mark class="bg-blue-500/30 text-blue-200 rounded px-0.5">$1</mark>',
+  const parts = text.split(pattern);
+  return (
+    <>
+      {parts.map((part, i) =>
+        pattern.test(part) ? (
+          <mark key={i} className="bg-blue-500/30 text-blue-200 rounded px-0.5">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
   );
 }
 
@@ -47,10 +57,9 @@ export function CVPreview({ cv, jdAnalysis }: CVPreviewProps) {
         <h3 className="mb-2 border-b border-slate-600 pb-1 text-xs font-bold uppercase tracking-widest text-indigo-400">
           Professional Summary
         </h3>
-        <p
-          className="text-slate-300 leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: highlightKeywords(cv.summary, keywords) }}
-        />
+        <p className="text-slate-300 leading-relaxed">
+          <SafeHighlight text={cv.summary} keywords={keywords} />
+        </p>
       </section>
 
       {/* Skills */}
@@ -66,12 +75,9 @@ export function CVPreview({ cv, jdAnalysis }: CVPreviewProps) {
                   {sg.display_name}:
                 </span>
               )}
-              <span
-                className="text-slate-300 text-xs"
-                dangerouslySetInnerHTML={{
-                  __html: highlightKeywords((sg.items ?? []).join("  ·  "), keywords),
-                }}
-              />
+              <span className="text-slate-300 text-xs">
+                <SafeHighlight text={(sg.items ?? []).join("  ·  ")} keywords={keywords} />
+              </span>
             </div>
           ))}
         </section>
@@ -92,11 +98,9 @@ export function CVPreview({ cv, jdAnalysis }: CVPreviewProps) {
               <p className="mb-2 italic text-slate-400">{exp.company}</p>
               <ul className="space-y-1 pl-3">
                 {exp.achievements.map((ach, j) => (
-                  <li
-                    key={j}
-                    className="text-slate-300 before:mr-2 before:content-['•']"
-                    dangerouslySetInnerHTML={{ __html: highlightKeywords(ach, keywords) }}
-                  />
+                  <li key={j} className="text-slate-300 before:mr-2 before:content-['•']">
+                    <SafeHighlight text={ach} keywords={keywords} />
+                  </li>
                 ))}
               </ul>
             </div>

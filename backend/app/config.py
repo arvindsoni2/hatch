@@ -47,15 +47,11 @@ class Settings(BaseSettings):
     MATCH_SCORE_MIN_FOR_DIGEST: int = 70
     MATCH_SCORE_MIN_FOR_AUTO_APPLY: int = 60
 
-    # Auto-apply
-    AUTO_APPLY_ENABLED: bool = True
+    # Auto-apply (disabled — manual approval only per PRD non-goals)
+    AUTO_APPLY_ENABLED: bool = False
     AUTO_APPLY_MAX_PER_HOUR: int = 10
     AUTO_APPLY_COOLDOWN_SECONDS: int = 30
     AUTO_APPLY_ENABLED_BOARDS: str = "reed,cwjobs"
-    REED_EMAIL: str = ""
-    REED_PASSWORD: str = ""
-    CWJOBS_EMAIL: str = ""
-    CWJOBS_PASSWORD: str = ""
 
     # Daily digest email
     DIGEST_ENABLED: bool = True

@@ -173,12 +173,11 @@ async def get_env_status() -> dict[str, Any]:
         if value:
             configured[provider] = {
                 "env_var": env_var,
-                "set": True,
-                "masked": value[:4] + "•" * min(8, len(value) - 4) if len(value) > 4 else "••••",
+                "configured": True,
             }
 
     # Add Ollama — no key needed
-    configured["ollama"] = {"env_var": None, "set": True, "masked": None}
+    configured["ollama"] = {"env_var": None, "configured": True}
 
     # Current provider from profile
     current_provider = "unknown"
@@ -195,5 +194,4 @@ async def get_env_status() -> dict[str, Any]:
         "configured_providers": configured,
         "current_provider": current_provider,
         "tier": current_tier,
-        "api_keys_file": str(_API_KEYS_FILE),
     }

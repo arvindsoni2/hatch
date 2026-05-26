@@ -48,7 +48,10 @@ class DocxCLBuilder:
         """
         out_dir = _OUTPUT_BASE / application_id
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"cl_v{version}_{variant_label}.docx"
+        out_path = (out_dir / f"cl_v{version}_{variant_label}.docx").resolve()
+        expected_parent = _OUTPUT_BASE.resolve()
+        if not str(out_path).startswith(str(expected_parent)):
+            raise ValueError(f"Output path traversal detected: {out_path}")
 
         spec = _build_cl_spec(cover_letter, jd_analysis, personal)
 

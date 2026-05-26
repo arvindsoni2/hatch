@@ -18,7 +18,6 @@ from .routers.locales import router as locales_router
 from .routers.profile import router as profile_router
 from .routers.analytics import router as analytics_router
 from .routers.applications import router as applications_router
-from .routers.auto_apply import router as auto_apply_router
 from .routers.digest import router as digest_router
 from .routers.emails import router as emails_router
 from .routers.events import router as events_router
@@ -122,12 +121,13 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI instance.
     """
+    _debug = settings.LOG_LEVEL.upper() == "DEBUG"
     app = FastAPI(
         title="JobPilot v2 API",
         description="Autonomous multi-agent job search automation — profile-driven, human-in-the-loop.",
         version="2.0.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url="/docs" if _debug else None,
+        redoc_url="/redoc" if _debug else None,
         lifespan=lifespan,
     )
 
@@ -148,7 +148,6 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(tailor_router)
     app.include_router(coach_router)
-    app.include_router(auto_apply_router)
     app.include_router(digest_router)
     app.include_router(emails_router)
     app.include_router(ghost_router)
