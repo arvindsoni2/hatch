@@ -117,27 +117,50 @@ JobPilot v2 is an autonomous, multi-agent job search system that handles the ful
 
 ## Quick Start
 
-### Prerequisites
+### One-command install (recommended)
 
-- Docker & Docker Compose
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arvindsoni2/jobpilot-v2/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+iwr https://raw.githubusercontent.com/arvindsoni2/jobpilot-v2/main/install.ps1 | iex
+```
+
+The installer checks prerequisites (Docker/Podman, git), clones the repo, creates a template `.env`, builds and starts the containers, and optionally installs a systemd user service on Linux.
+
+---
+
+### Manual install
+
+#### Prerequisites
+
+- Docker & Docker Compose (or Podman + podman-compose)
 - An API key for your chosen LLM provider (or Ollama for local/free)
+- git
 
-### 1. Clone
+#### 1. Clone
 
 ```bash
 git clone https://github.com/arvindsoni2/jobpilot-v2.git
 cd jobpilot-v2
 ```
 
-### 2. Configure environment
+#### 2. Configure environment
 
 ```bash
-# Create .env and set at least one LLM provider key:
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env   # default provider
-# or: OPENAI_API_KEY / GOOGLE_API_KEY / (no key needed for Ollama)
+# Create .env — add at least one LLM provider key:
+echo "GOOGLE_API_KEY=AIza..." > .env   # Gemini (free tier available)
+# or: ANTHROPIC_API_KEY / OPENAI_API_KEY / (no key for Ollama)
 ```
 
-### 3. Start
+> You can also add/rotate API keys later via **Settings → AI Provider** in the dashboard — keys are validated live and saved to `data/api_keys.env` (survives container restarts).
+
+#### 3. Start
 
 ```bash
 make dev

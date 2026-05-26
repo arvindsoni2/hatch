@@ -83,6 +83,8 @@ class ScoringWeights(BaseModel):
 class ScoringConfig(BaseModel):
     weights: ScoringWeights = Field(default_factory=ScoringWeights)
     shortlist_threshold: float = 0.75
+    method: Literal["auto", "llm", "local", "hybrid"] = "auto"
+    hybrid_llm_top_pct: float = 0.20  # fraction of top-scoring local jobs to send to LLM
 
     @field_validator("shortlist_threshold")
     @classmethod

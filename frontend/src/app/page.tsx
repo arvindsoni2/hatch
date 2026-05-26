@@ -9,11 +9,13 @@ import {
   fetchJobs,
   getUpcomingInterviews,
   fetchFollowUpReminders,
+  fetchRateLimitStatus,
   type AllAgentStatus,
   type PipelineStats,
   type PendingApproval,
   type RawProfile,
   type FollowUpReminder,
+  type RateLimitStatus,
 } from "@/lib/api";
 import { JobCard } from "@/components/JobCard";
 import { Button } from "@/components/ui/button";
@@ -101,6 +103,32 @@ function AgentStatusStrip({
           </Link>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Rate limit banner ─────────────────────────────────────────────────────────
+
+function RateLimitBanner({ status }: { status: RateLimitStatus | null }) {
+  if (!status) return null;
+  if (!status.throttled && status.rpm_remaining > 3 && status.last_429_at === null) return null;
+
+  const is429 = status.last_429_at !== null;
+  const msg = is429
+    ? `Provider returned 429. Backing off ${Math.round(status.wait_seconds)}s. Scoring paused.`
+    : status.throttled
+    ? `Rate limited: waiting ${Math.round(status.wait_seconds)}s before next LLM call.`
+    : `Rate limit close: ${status.rpm_remaining} of ${status.rpm_limit} requests/min remaining.`;
+
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+        <span>{msg}</span>
+      </div>
+      <Link href="/analytics" className="text-xs font-medium underline underline-offset-2">
+        View rate stats
+      </Link>
     </div>
   );
 }
@@ -273,7 +301,7 @@ export default async function DashboardPage() {
     redirect("/onboarding");
   }
 
-  const [rawProfile, agentStatus, pipelineStats, pendingApprovals, upcomingInterviews, followUpReminders] =
+  const [rawProfile, agentStatus, pipelineStats, pendingApprovals, upcomingInterviews, followUpReminders, rateLimitStatus] =
     await Promise.all([
       fetchRawProfile().catch((): RawProfile => ({})),
       fetchAllAgentStatus().catch((): AllAgentStatus | null => null),
@@ -281,6 +309,7 @@ export default async function DashboardPage() {
       fetchPendingApprovals().catch((): PendingApproval[] => []),
       getUpcomingInterviews(14).catch(() => []),
       fetchFollowUpReminders().catch((): FollowUpReminder[] => []),
+      fetchRateLimitStatus().catch((): RateLimitStatus | null => null),
     ]);
 
   const threshold = rawProfile.scoring?.shortlist_threshold ?? 0.75;
@@ -324,6 +353,7 @@ export default async function DashboardPage() {
 
       {/* Section A: Agent status strip */}
       <AgentStatusStrip agentStatus={agentStatus} scrapeIntervalHours={scrapeIntervalHours} />
+      <RateLimitBanner status={rateLimitStatus} />
 
       {/* Empty state for fresh setups */}
       {noJobsYet ? (

@@ -15,6 +15,7 @@ import {
   fetchCostsDaily,
   fetchAgentPerformance,
   fetchSearchQuality,
+  fetchRateLimitStatus,
 } from "@/lib/api";
 import Link from "next/link";
 
@@ -41,6 +42,7 @@ export default async function AnalyticsPage() {
     costsDaily,
     agentPerf,
     searchQuality,
+    rateLimitStatus,
   ] = await Promise.all([
     fetchAnalyticsDashboard().catch(() => null),
     fetchAtsCorrelation().catch(() => null),
@@ -51,6 +53,7 @@ export default async function AnalyticsPage() {
     fetchCostsDaily(30).catch(() => null),
     fetchAgentPerformance().catch(() => null),
     fetchSearchQuality().catch(() => null),
+    fetchRateLimitStatus().catch(() => null),
   ]);
 
   const { stats, funnel, trends, sources, avg_days_to_interview } = dashboard ?? {
@@ -263,7 +266,48 @@ export default async function AnalyticsPage() {
           </div>
         )}
 
-        {/* Section H + I: Source Breakdown & Weekly Trends */}
+        {/* Section H: Rate Limit Health */}
+        {rateLimitStatus && (
+          <div className="bg-white rounded-xl border border-slate-200 p-6">
+            <h2 className="text-sm font-semibold text-slate-700 mb-1">LLM Rate Limit Health</h2>
+            <p className="text-xs text-slate-400 mb-4">Current scorer API usage against provider limits</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className={`text-2xl font-bold ${rateLimitStatus.throttled ? "text-amber-600" : "text-green-600"}`}>
+                  {rateLimitStatus.rpm_used}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">RPM used</div>
+                <div className="text-xs text-slate-400">of {rateLimitStatus.rpm_limit}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-slate-700">{rateLimitStatus.rpm_remaining}</div>
+                <div className="text-xs text-slate-500 mt-1">RPM remaining</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-slate-700">{rateLimitStatus.rpd_used}</div>
+                <div className="text-xs text-slate-500 mt-1">RPD used</div>
+                <div className="text-xs text-slate-400">of {rateLimitStatus.rpd_limit}</div>
+              </div>
+              <div className="text-center">
+                <div className={`text-2xl font-bold ${rateLimitStatus.last_429_at !== null ? "text-red-600" : "text-green-600"}`}>
+                  {rateLimitStatus.last_429_at !== null ? "429" : "OK"}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">Provider status</div>
+                {rateLimitStatus.wait_seconds > 0 && (
+                  <div className="text-xs text-amber-600">wait {Math.round(rateLimitStatus.wait_seconds)}s</div>
+                )}
+              </div>
+            </div>
+            {rateLimitStatus.throttled && (
+              <div className="mt-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                Scorer is throttled — waiting {Math.round(rateLimitStatus.wait_seconds)}s before next call.
+                Set <code className="bg-amber-100 rounded px-0.5">scoring.method: hybrid</code> or <code className="bg-amber-100 rounded px-0.5">local</code> in profile.yaml to reduce API usage.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Section I + J: Source Breakdown & Weekly Trends */}
         <div className="grid md:grid-cols-2 gap-6">
           <div className="bg-white rounded-xl border border-slate-200 p-6">
             <h2 className="text-sm font-semibold text-slate-700 mb-4">Source Breakdown</h2>

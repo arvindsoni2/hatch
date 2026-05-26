@@ -348,3 +348,10 @@ async def pipeline_stats(
         "tailored": tailored,
         "approved": approved,
     }
+
+
+@router.get("/rate-limit-status")
+async def rate_limit_status() -> dict:
+    """Return current LLM rate limiter state for the dashboard."""
+    from ..agents.tools.rate_limiter import get_limiter  # noqa: PLC0415
+    return get_limiter().status().as_dict()

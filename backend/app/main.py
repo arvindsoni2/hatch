@@ -28,6 +28,7 @@ from .routers.stories import router as stories_router
 from .routers.interviews import router as interviews_router
 from .routers.jobs import health_router, router as jobs_router
 from .routers.coach import router as coach_router
+from .routers.settings import router as settings_router
 from .routers.tailor import router as tailor_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
@@ -157,6 +158,7 @@ def create_app() -> FastAPI:
     app.include_router(profile_router)
     app.include_router(locales_router)
     app.include_router(resume_router)
+    app.include_router(settings_router)
 
     return app
 
