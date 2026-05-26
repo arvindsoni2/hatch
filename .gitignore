@@ -1,0 +1,133 @@
+# ──────────────────────── Assignment / internal docs ─────────────────────────
+01_PRD_JobPilot_v2.md
+02_Design_JobPilot_v2.md
+jobpilot-agentic-handoff-spec.md
+03_UX_Redesign_Spec.md
+04_Gap_Analysis_Improvements.md
+Job_Pilot_v2/UX_changes.md
+05_Code_Review_Claude_Code_Instructions.md
+06_UX_Accessibility_Improvements.md
+UX_changes.md
+07_Security_Pipeline_Features.md
+# ──────────────────────── Secrets ────────────────────────
+.env
+.env.example
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+env-v2-additions.txt
+# ──────────────────────── Python ────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# ──────────────────────── Node / Next.js ────────────────────────
+node_modules/
+.next/
+out/
+build/
+.npm
+.eslintcache
+.yarn-integrity
+yarn-error.log*
+npm-debug.log*
+lerna-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+
+# ──────────────────────── Database ────────────────────────
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ──────────────────────── User data (never commit) ───────────────────────────
+# profile.yaml and master_cv.json contain personal information.
+data/profile.yaml
+data/master_cv.json
+data/jobpilot.db
+data/jobpilot.db-wal
+data/jobpilot.db-shm
+data/langgraph_checkpoints.db
+data/langgraph_checkpoints.db-wal
+data/langgraph_checkpoints.db-shm
+data/chroma/
+data/logs/
+# Allow the example template and .gitkeep placeholder
+!data/profile.yaml.example
+!data/.gitkeep
+data/master_cv.meta.json
+data/api_keys.env
+
+# ──────────────────────── Docker ────────────────────────
+.dockerignore
+
+# ──────────────────────── IDE / OS ────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# ──────────────────────── Expo / React Native ────────────────────────
+.expo/
+.expo-shared/
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+*.orig.*
+web-build/
+
+# ──────────────────────── Logs ────────────────────────
+logs/
+*.log
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# ──────────────────────── Playwright ────────────────────────
+playwright-report/
+test-results/
+
+# ──────────────────────── Graphify ────────────────────────
+graphify-out/
+
+# ──────────────────────── Personal ────────────────────────
+candidate_profile.json 
+candidate_profile_template.json
+master_cv.json
+master_cv_schema.json
