@@ -41,17 +41,17 @@ export default function StoryBankPage() {
     <main className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <BookOpen className="h-6 w-6 text-indigo-400" />
+          <BookOpen className="h-6 w-6 text-indigo-600" />
           <div>
-            <h1 className="text-2xl font-bold text-slate-100">Story Bank</h1>
-            <p className="text-sm text-slate-400">
+            <h1 className="text-2xl font-bold text-slate-900">Story Bank</h1>
+            <p className="text-sm text-slate-500">
               {total} canonical STAR {total === 1 ? "story" : "stories"}
             </p>
           </div>
         </div>
         <Button
           onClick={() => router.push("/coach/stories/new")}
-          className="gap-2 bg-indigo-600 hover:bg-indigo-500"
+          className="gap-2 bg-indigo-600 hover:bg-indigo-700"
         >
           <Plus className="h-4 w-4" />
           Add Story
@@ -59,10 +59,10 @@ export default function StoryBankPage() {
       </div>
 
       {/* Sub-navigation */}
-      <div className="mb-6 flex gap-1 rounded-xl border border-slate-700 bg-slate-800 p-1">
+      <div className="mb-6 flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
         <Link
           href="/coach"
-          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-slate-400 hover:bg-slate-700 hover:text-slate-200 transition-colors"
+          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-slate-500 hover:bg-white hover:text-slate-900 transition-colors"
         >
           <Brain className="h-3.5 w-3.5" /> Sessions
         </Link>

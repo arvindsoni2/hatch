@@ -34,7 +34,7 @@ export function StoryFilters({
       <select
         value={archetype}
         onChange={(e) => onArchetypeChange(e.target.value)}
-        className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none"
+        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
       >
         <option value="">All archetypes</option>
         {ARCHETYPES.map((a) => (
@@ -49,13 +49,13 @@ export function StoryFilters({
         placeholder="Filter by tag..."
         value={tag}
         onChange={(e) => onTagChange(e.target.value)}
-        className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-indigo-500 focus:outline-none w-36"
+        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-36"
       />
 
       <select
         value={minStrength}
         onChange={(e) => onMinStrengthChange(e.target.value)}
-        className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 focus:border-indigo-500 focus:outline-none"
+        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
       >
         <option value="">Any strength</option>
         <option value="7">Strong (7+)</option>

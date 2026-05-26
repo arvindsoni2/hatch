@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 
 const STRENGTH_COLOR = (s: number) =>
-  s >= 8 ? "text-emerald-400" : s >= 5 ? "text-amber-400" : "text-slate-400";
+  s >= 8 ? "text-emerald-600" : s >= 5 ? "text-amber-600" : "text-slate-400";
 
 function StarRating({ rating, onRate }: { rating: number; onRate: (r: number) => void }) {
   return (
@@ -22,7 +22,7 @@ function StarRating({ rating, onRate }: { rating: number; onRate: (r: number) =>
         <button key={i} onClick={() => onRate(i)}>
           <Star
             className={`h-5 w-5 transition-colors ${
-              i <= rating ? "text-amber-400 fill-amber-400" : "text-slate-600 hover:text-amber-400"
+              i <= rating ? "text-amber-400 fill-amber-400" : "text-slate-300 hover:text-amber-400"
             }`}
           />
         </button>
@@ -35,8 +35,8 @@ function STARSection({ label, content }: { label: string; content: string | null
   if (!content) return null;
   return (
     <div>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-indigo-400 mb-1">{label}</h3>
-      <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{content}</p>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-indigo-600 mb-1">{label}</h3>
+      <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{content}</p>
     </div>
   );
 }
@@ -86,12 +86,12 @@ export default function StoryDetailPage() {
   };
 
   if (loading) {
-    return <div className="flex justify-center py-20 text-slate-500 text-sm">Loading…</div>;
+    return <div className="flex justify-center py-20 text-slate-400 text-sm">Loading…</div>;
   }
   if (error || !story) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <p className="text-red-400">{error || "Story not found"}</p>
+        <p className="text-red-600">{error || "Story not found"}</p>
       </main>
     );
   }
@@ -101,23 +101,23 @@ export default function StoryDetailPage() {
       {/* Header */}
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <button onClick={() => router.back()} className="text-slate-400 hover:text-slate-200">
+          <button onClick={() => router.back()} className="text-slate-400 hover:text-slate-700 transition-colors">
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <BookOpen className="h-5 w-5 text-indigo-400 shrink-0" />
+          <BookOpen className="h-5 w-5 text-indigo-600 shrink-0" />
           <div>
-            <h1 className="text-xl font-bold text-slate-100">{story.title}</h1>
-            {story.summary && <p className="text-sm text-slate-400 mt-0.5">{story.summary}</p>}
+            <h1 className="text-xl font-bold text-slate-900">{story.title}</h1>
+            {story.summary && <p className="text-sm text-slate-500 mt-0.5">{story.summary}</p>}
           </div>
         </div>
         <div className="flex gap-2 shrink-0">
           {!editing && (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setEditing(true)} className="gap-1.5 text-slate-400">
+              <Button variant="ghost" size="sm" onClick={() => setEditing(true)} className="gap-1.5 text-slate-500 hover:text-slate-700">
                 <Edit2 className="h-3.5 w-3.5" />
                 Edit
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleDelete} className="gap-1.5 text-red-400 hover:text-red-300">
+              <Button variant="ghost" size="sm" onClick={handleDelete} className="gap-1.5 text-red-500 hover:text-red-700">
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete
               </Button>
@@ -128,7 +128,7 @@ export default function StoryDetailPage() {
 
       {/* Stats bar */}
       {!editing && (
-        <div className="mb-6 flex flex-wrap items-center gap-6 rounded-xl border border-slate-700 bg-slate-800/40 px-5 py-4">
+        <div className="mb-6 flex flex-wrap items-center gap-6 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
           <div className="flex flex-col items-center">
             <span className={`text-2xl font-bold ${STRENGTH_COLOR(story.strength_score)}`}>
               {story.strength_score.toFixed(1)}
@@ -136,11 +136,11 @@ export default function StoryDetailPage() {
             <span className="text-xs text-slate-500">Strength</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-2xl font-bold text-slate-200">{story.times_used}</span>
+            <span className="text-2xl font-bold text-slate-800">{story.times_used}</span>
             <span className="text-xs text-slate-500">Uses</span>
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-2xl font-bold text-slate-200">v{story.version}</span>
+            <span className="text-2xl font-bold text-slate-800">v{story.version}</span>
             <span className="text-xs text-slate-500">Version</span>
           </div>
           <div className="flex flex-col gap-1">
@@ -152,7 +152,7 @@ export default function StoryDetailPage() {
 
       {/* Edit mode */}
       {editing ? (
-        <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <StoryEditor
             initialData={story}
             onSave={handleUpdate}
@@ -161,7 +161,7 @@ export default function StoryDetailPage() {
           />
         </div>
       ) : (
-        <div className="space-y-6 rounded-xl border border-slate-700 bg-slate-800/60 p-6">
+        <div className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <STARSection label="Situation" content={story.situation} />
           <STARSection label="Task" content={story.task} />
           <STARSection label="Action" content={story.action} />
@@ -169,33 +169,33 @@ export default function StoryDetailPage() {
           <STARSection label="Reflection" content={story.reflection} />
 
           {/* Metadata */}
-          <div className="border-t border-slate-700 pt-4 space-y-3">
+          <div className="border-t border-slate-200 pt-4 space-y-3">
             {(story.tags ?? []).length > 0 && (
               <div>
-                <p className="text-xs text-slate-500 mb-1.5">Tags</p>
+                <p className="text-xs font-medium text-slate-500 mb-1.5">Tags</p>
                 <div className="flex flex-wrap gap-1.5">
                   {story.tags!.map((t) => (
-                    <span key={t} className="rounded-full bg-slate-700 px-2.5 py-0.5 text-xs text-slate-300">{t}</span>
+                    <span key={t} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700">{t}</span>
                   ))}
                 </div>
               </div>
             )}
             {(story.skills ?? []).length > 0 && (
               <div>
-                <p className="text-xs text-slate-500 mb-1.5">Skills</p>
+                <p className="text-xs font-medium text-slate-500 mb-1.5">Skills</p>
                 <div className="flex flex-wrap gap-1.5">
                   {story.skills!.map((s) => (
-                    <span key={s} className="rounded-full bg-indigo-900/40 border border-indigo-700 px-2.5 py-0.5 text-xs text-indigo-300">{s}</span>
+                    <span key={s} className="rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-xs text-indigo-700">{s}</span>
                   ))}
                 </div>
               </div>
             )}
             {(story.archetype_fit ?? []).length > 0 && (
               <div>
-                <p className="text-xs text-slate-500 mb-1.5">Best for</p>
+                <p className="text-xs font-medium text-slate-500 mb-1.5">Best for</p>
                 <div className="flex flex-wrap gap-1.5">
                   {story.archetype_fit!.map((a) => (
-                    <span key={a} className="rounded-full bg-emerald-900/40 border border-emerald-700 px-2.5 py-0.5 text-xs text-emerald-300">{a.replace(/_/g, " ")}</span>
+                    <span key={a} className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs text-emerald-700">{a.replace(/_/g, " ")}</span>
                   ))}
                 </div>
               </div>

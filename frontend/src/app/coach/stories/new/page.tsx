@@ -26,20 +26,20 @@ export default function NewStoryPage() {
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
       <div className="mb-6 flex items-center gap-3">
-        <button onClick={() => router.back()} className="text-slate-400 hover:text-slate-200">
+        <button onClick={() => router.back()} className="text-slate-400 hover:text-slate-700 transition-colors">
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <BookOpen className="h-5 w-5 text-indigo-400" />
-        <h1 className="text-xl font-bold text-slate-100">New Story</h1>
+        <BookOpen className="h-5 w-5 text-indigo-600" />
+        <h1 className="text-xl font-bold text-slate-900">New Story</h1>
       </div>
 
       {error && (
-        <div className="mb-4 rounded-lg border border-red-700 bg-red-900/30 px-4 py-3 text-sm text-red-300">
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <StoryEditor
           onSave={handleSave}
           onCancel={() => router.back()}

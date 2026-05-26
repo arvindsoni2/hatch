@@ -52,14 +52,16 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
     }
   };
 
+  const inputCls = "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+
   return (
-    <div className="mx-auto max-w-lg rounded-xl border border-slate-700 bg-slate-800 p-6">
+    <div className="mx-auto max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
       <div className="mb-6 flex items-center gap-2">
         {([1, 2, 3] as const).map((s) => (
           <div
             key={s}
             className={`h-2 flex-1 rounded-full transition-colors ${
-              s <= step ? "bg-indigo-500" : "bg-slate-600"
+              s <= step ? "bg-indigo-500" : "bg-slate-200"
             }`}
           />
         ))}
@@ -67,41 +69,41 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
 
       {step === 1 && (
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-100">Company &amp; Role</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Company &amp; Role</h2>
           <div>
-            <label className="mb-1 block text-sm text-slate-400">Company Name</label>
+            <label className="mb-1 block text-sm font-medium text-slate-600">Company Name</label>
             <input
               type="text"
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
               placeholder="e.g. Accenture"
-              className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+              className={inputCls}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm text-slate-400">Role Title</label>
+            <label className="mb-1 block text-sm font-medium text-slate-600">Role Title</label>
             <input
               type="text"
               value={roleTitle}
               onChange={(e) => setRoleTitle(e.target.value)}
               placeholder="e.g. Solutions Architect"
-              className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+              className={inputCls}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm text-slate-400">Job Description (optional)</label>
+            <label className="mb-1 block text-sm font-medium text-slate-600">Job Description <span className="font-normal text-slate-400">(optional)</span></label>
             <textarea
               value={jdText}
               onChange={(e) => setJdText(e.target.value)}
               rows={4}
               placeholder="Paste the JD here for tailored questions..."
-              className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+              className={inputCls + " resize-none"}
             />
           </div>
           <Button
             onClick={() => setStep(2)}
             disabled={!companyName.trim() || !roleTitle.trim()}
-            className="w-full bg-indigo-600 hover:bg-indigo-500"
+            className="w-full bg-indigo-600 hover:bg-indigo-700"
           >
             Next →
           </Button>
@@ -110,10 +112,10 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
 
       {step === 2 && (
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-100">Session Configuration</h2>
+          <h2 className="text-lg font-semibold text-slate-900">Session Configuration</h2>
           <div>
-            <label className="mb-2 block text-sm text-slate-400">
-              Questions: <span className="font-semibold text-slate-100">{questionCount}</span>
+            <label className="mb-2 block text-sm font-medium text-slate-600">
+              Questions: <span className="font-semibold text-indigo-600">{questionCount}</span>
             </label>
             <input
               type="range"
@@ -121,20 +123,20 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
               max={20}
               value={questionCount}
               onChange={(e) => setQuestionCount(Number(e.target.value))}
-              className="w-full accent-indigo-500"
+              className="w-full accent-indigo-600"
             />
           </div>
           <div>
-            <label className="mb-2 block text-sm text-slate-400">Difficulty</label>
+            <label className="mb-2 block text-sm font-medium text-slate-600">Difficulty</label>
             <div className="flex gap-2">
               {(["easy", "medium", "hard"] as const).map((d) => (
                 <button
                   key={d}
                   onClick={() => setDifficulty(d)}
-                  className={`flex-1 rounded-lg px-3 py-1.5 text-sm capitalize transition-colors ${
+                  className={`flex-1 rounded-md px-3 py-1.5 text-sm capitalize transition-colors ${
                     difficulty === d
                       ? "bg-indigo-600 text-white"
-                      : "bg-slate-700 text-slate-400 hover:bg-slate-600"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
                   {d}
@@ -143,7 +145,7 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
             </div>
           </div>
           <div>
-            <label className="mb-2 block text-sm text-slate-400">Categories (leave blank for all)</label>
+            <label className="mb-2 block text-sm font-medium text-slate-600">Categories <span className="font-normal text-slate-400">(leave blank for all)</span></label>
             <div className="flex flex-wrap gap-2">
               {CATEGORIES.map((cat) => (
                 <button
@@ -152,7 +154,7 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
                   className={`rounded-full px-3 py-1 text-xs transition-colors ${
                     selectedCategories.includes(cat)
                       ? "bg-indigo-600 text-white"
-                      : "bg-slate-700 text-slate-400 hover:bg-slate-600"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
                   {cat}
@@ -161,14 +163,10 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setStep(1)}
-              className="flex-1 border-slate-600 text-slate-400"
-            >
+            <Button variant="outline" onClick={() => setStep(1)} className="flex-1 text-slate-600">
               ← Back
             </Button>
-            <Button onClick={() => setStep(3)} className="flex-1 bg-indigo-600 hover:bg-indigo-500">
+            <Button onClick={() => setStep(3)} className="flex-1 bg-indigo-600 hover:bg-indigo-700">
               Next →
             </Button>
           </div>
@@ -177,31 +175,27 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
 
       {step === 3 && (
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-slate-100">Ready to Start?</h2>
-          <div className="rounded-lg bg-slate-700/50 p-4 text-sm text-slate-300 space-y-1">
-            <p><span className="text-slate-500">Company:</span> {companyName}</p>
-            <p><span className="text-slate-500">Role:</span> {roleTitle}</p>
-            <p><span className="text-slate-500">Questions:</span> {questionCount}</p>
-            <p><span className="text-slate-500">Difficulty:</span> {difficulty}</p>
+          <h2 className="text-lg font-semibold text-slate-900">Ready to Start?</h2>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 text-sm text-slate-700 space-y-1">
+            <p><span className="font-medium text-slate-500">Company:</span> {companyName}</p>
+            <p><span className="font-medium text-slate-500">Role:</span> {roleTitle}</p>
+            <p><span className="font-medium text-slate-500">Questions:</span> {questionCount}</p>
+            <p><span className="font-medium text-slate-500">Difficulty:</span> {difficulty}</p>
             {selectedCategories.length > 0 && (
-              <p><span className="text-slate-500">Categories:</span> {selectedCategories.join(", ")}</p>
+              <p><span className="font-medium text-slate-500">Categories:</span> {selectedCategories.join(", ")}</p>
             )}
           </div>
           {error && (
-            <p className="rounded-lg bg-red-900/30 px-3 py-2 text-sm text-red-400">{error}</p>
+            <p className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{error}</p>
           )}
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setStep(2)}
-              className="flex-1 border-slate-600 text-slate-400"
-            >
+            <Button variant="outline" onClick={() => setStep(2)} className="flex-1 text-slate-600">
               ← Back
             </Button>
             <Button
               onClick={handleStart}
               disabled={loading}
-              className="flex-1 bg-indigo-600 hover:bg-indigo-500"
+              className="flex-1 bg-indigo-600 hover:bg-indigo-700"
             >
               {loading ? "Generating questions…" : "Start Session"}
             </Button>
