@@ -68,11 +68,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     reminder_repo = ApplicationRepository(scheduler_session)
 
-    # AI classifier
+    # AI classifier — provider-agnostic via llm_factory
+    job_classifier = JobClassifier()
+
+    # Email generation still uses ClaudeClient directly (Anthropic-only for now)
     claude_client = ClaudeClient()
     email_gen = EmailGenerator(claude_client)
     reminder_svc = ReminderService(reminder_repo, email_generator=email_gen)
-    job_classifier = JobClassifier(claude_client)
 
     # Digest service
     digest_svc = None

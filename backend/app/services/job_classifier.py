@@ -4,17 +4,15 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.job import JobPosting
 from ..prompts import render_prompt
-
-if TYPE_CHECKING:
-    from .claude_client import ClaudeClient
+from .llm_factory import get_triage_model
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +20,17 @@ _PROFILE_PATH = Path(__file__).parent.parent / "templates" / "candidate_profile.
 
 
 class JobClassifier:
-    """Enriches job postings with AI-classified metadata in batches."""
+    """Enriches job postings with AI-classified metadata in batches.
 
-    def __init__(self, client: ClaudeClient) -> None:
-        self._client = client
+    Uses the triage model from llm_factory so it works with any configured
+    provider (Anthropic, OpenAI, Google, Ollama, etc.).
+    """
+
+    def __init__(self) -> None:
+        pass
 
     async def classify_batch(self, jobs: list[JobPosting]) -> list[dict]:
-        """Classify a batch of jobs in a single Claude call.
+        """Classify a batch of jobs in a single LLM call.
 
         Args:
             jobs: List of JobPosting ORM objects to classify.
@@ -61,8 +63,23 @@ class JobClassifier:
             system = "You are a technical recruiter. Return only valid JSON."
             user = prompt
 
+        json_instruction = "\n\nIMPORTANT: Respond ONLY with valid JSON. No markdown, no code blocks, no explanation."
+
         try:
-            result = await self._client.complete_json(system=system, user=user, max_tokens=4096)
+            model = get_triage_model()
+            messages = [
+                SystemMessage(content=system + json_instruction),
+                HumanMessage(content=user),
+            ]
+            response = await model.ainvoke(messages)
+            text = response.content if isinstance(response.content, str) else str(response.content)
+
+            cleaned = text.strip()
+            if cleaned.startswith("```"):
+                lines = cleaned.split("\n")
+                cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+            result = json.loads(cleaned)
             return result.get("jobs", [])
         except Exception as exc:
             logger.error("Batch classify failed (%d jobs): %s", len(jobs), exc)
@@ -103,11 +120,13 @@ class JobClassifier:
             # Build lookup by id
             by_id: dict[str, dict] = {c["id"]: c for c in classifications if "id" in c}
 
-            for job in batch:
-                classification = by_id.get(job.id)
-                if not classification:
-                    continue
-                try:
+            # Wrap each batch's DB writes in a try/rollback so a failed execute
+            # never leaves the session in a broken state for the next batch.
+            try:
+                for job in batch:
+                    classification = by_id.get(job.id)
+                    if not classification:
+                        continue
                     await db.execute(
                         update(JobPosting)
                         .where(JobPosting.id == job.id)
@@ -122,10 +141,17 @@ class JobClassifier:
                         )
                     )
                     classified += 1
-                except Exception as exc:
-                    logger.warning("Failed to update job %s: %s", job.id, exc)
+                await db.commit()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist batch %d-%d, rolling back: %s",
+                    batch_start + 1,
+                    batch_start + len(batch),
+                    exc,
+                )
+                await db.rollback()
+                continue
 
-            await db.commit()
             logger.info(
                 "Classified batch %d-%d (%d/%d done)",
                 batch_start + 1,
