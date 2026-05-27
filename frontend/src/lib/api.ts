@@ -2,12 +2,13 @@
  * JobPilot API client — typed wrappers around the FastAPI backend.
  */
 
-// Server-side (SSR/RSC) uses the internal Docker service name;
-// client-side uses the public URL visible from the browser.
+// Server-side (SSR/RSC) calls the backend directly using IPv4 to avoid
+// browser-style localhost→IPv6 resolution. Client-side uses relative paths
+// so the browser's request goes to the same origin (proxied by Next.js rewrites).
 export const API_BASE =
   typeof window === "undefined"
-    ? (process.env.API_URL ?? "http://localhost:8000")
-    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
+    ? (process.env.API_URL ?? "http://127.0.0.1:8000")
+    : "";
 
 // ──────────────────────── Types ────────────────────────
 
