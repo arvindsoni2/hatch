@@ -155,6 +155,17 @@ class ScoutAgent(BaseAgent):
                     "error": f"job processing error: {exc}",
                 })
 
+        await self.emit_event(
+            "scrape_complete",
+            {
+                "source": source,
+                "jobs_found": found,
+                "jobs_new": new_count,
+                "duplicates_filtered": found - new_count,
+                "errors": len(errors),
+            },
+            db,
+        )
         self._log.info(
             "%s: %d found, %d new.", source, found, new_count
         )

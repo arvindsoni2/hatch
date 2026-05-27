@@ -15,8 +15,14 @@ from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
+from langchain_core.outputs import LLMResult
 
 from .profile_loader import load_profile
+
+try:
+    from langchain_core.callbacks import BaseCallbackHandler as _BaseCallbackHandler
+except ImportError:
+    _BaseCallbackHandler = object  # type: ignore[assignment,misc]
 
 # Per-million-token pricing (USD) for common models — approximate estimates
 _COST_TABLE: dict[str, tuple[float, float]] = {
@@ -35,6 +41,52 @@ _COST_TABLE: dict[str, tuple[float, float]] = {
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-4o": (2.50, 10.00),
 }
+
+
+class CostTrackingCallback(_BaseCallbackHandler):  # type: ignore[misc]
+    """LangChain callback that captures token usage and queues CostTracking rows.
+
+    Usage:
+        cb = CostTrackingCallback(agent_name="scorer", model="gemini-2.5-flash", job_id=job_id)
+        llm.invoke(prompt, config={"callbacks": [cb]})
+        await cb.flush(db)
+    """
+
+    def __init__(self, agent_name: str, model: str, job_id: str | None = None) -> None:
+        super().__init__()
+        self.agent_name = agent_name
+        self.model = model
+        self.job_id = job_id
+        self._pending: list[dict[str, Any]] = []
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        usage = (response.llm_output or {}).get("token_usage", {})
+        tokens_in = usage.get("prompt_tokens") or usage.get("input_token_count") or 0
+        tokens_out = usage.get("completion_tokens") or usage.get("generated_token_count") or 0
+        if not tokens_in and not tokens_out:
+            text = " ".join(
+                g.text for gen in response.generations for g in gen if hasattr(g, "text")
+            )
+            tokens_out = estimate_tokens(text)
+        cost = estimate_cost(self.model, tokens_in, tokens_out)
+        self._pending.append({
+            "agent_name": self.agent_name,
+            "model": self.model,
+            "job_id": self.job_id,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "cost_estimate": cost,
+        })
+
+    async def flush(self, db: Any) -> None:
+        """Write all queued CostTracking rows to the database."""
+        if not self._pending:
+            return
+        from ...models.cost_tracking import CostTracking
+        for row in self._pending:
+            db.add(CostTracking(**row))
+        await db.flush()
+        self._pending.clear()
 
 
 def estimate_tokens(text: str) -> int:
