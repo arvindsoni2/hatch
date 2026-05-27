@@ -45,13 +45,9 @@ class Settings(BaseSettings):
     CLASSIFIER_BATCH_SIZE: int = 30
     CLASSIFIER_RUN_INTERVAL_MINUTES: int = 30
     MATCH_SCORE_MIN_FOR_DIGEST: int = 70
-    MATCH_SCORE_MIN_FOR_AUTO_APPLY: int = 60
 
-    # Auto-apply (disabled — manual approval only per PRD non-goals)
+    # Auto-apply permanently disabled — manual approval only per PRD non-goals
     AUTO_APPLY_ENABLED: bool = False
-    AUTO_APPLY_MAX_PER_HOUR: int = 10
-    AUTO_APPLY_COOLDOWN_SECONDS: int = 30
-    AUTO_APPLY_ENABLED_BOARDS: str = "reed,cwjobs"
 
     # Daily digest email
     DIGEST_ENABLED: bool = True
