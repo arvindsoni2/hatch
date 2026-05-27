@@ -35,9 +35,9 @@ const WORKING_PATTERNS = [
   { value: "on_site", label: "On-site" },
 ]
 
-const IR35_OPTIONS = [
-  { value: "outside", label: "Outside IR35" },
-  { value: "inside", label: "Inside IR35" },
+const LEGAL_STATUS_OPTIONS = [
+  { value: "outside", label: "Outside (preferred)" },
+  { value: "inside", label: "Inside" },
   { value: "unknown", label: "Unknown" },
 ]
 
@@ -164,11 +164,11 @@ export function AdvancedFilterPanel({
           </div>
         </div>
 
-        {/* IR35 Status */}
+        {/* Contract status */}
         <div>
-          <SectionHeading>IR35 Status</SectionHeading>
+          <SectionHeading>Contract Status</SectionHeading>
           <div className="space-y-1.5">
-            {IR35_OPTIONS.map(({ value, label }) => {
+            {LEGAL_STATUS_OPTIONS.map(({ value, label }) => {
               const count = countFor("ir35_status", value)
               const isOutside = value === "outside"
               return (

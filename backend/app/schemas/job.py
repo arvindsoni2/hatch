@@ -22,6 +22,7 @@ class JobPostingCreate(BaseModel):
     rate_max: float | None = None
     currency: str = "GBP"
     ir35_status: str | None = None
+    legal_fields: dict[str, str] = {}
     contract_length: str | None = None
     description: str | None = None
     url: str
@@ -59,6 +60,7 @@ class JobPostingRead(BaseModel):
     rate_max: float | None = None
     currency: str = "GBP"
     ir35_status: str | None = None
+    legal_fields: dict[str, str] | None = None
     contract_length: str | None = None
     description: str | None = None
     url: str

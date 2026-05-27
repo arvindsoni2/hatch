@@ -131,7 +131,7 @@ function ProfileTab({ data }: { data: ProfileData | null }) {
           <FieldRow label="Remote preference" value={loc?.remote_preference ?? "—"} />
           <FieldRow label="Contract type" value={data.search?.contract_type ?? "—"} />
           <FieldRow label="Rate expectation" value={rateLabel} />
-          <FieldRow label="IR35 preference" value={comp?.ir35_preference ?? "—"} />
+          <FieldRow label="Legal preference" value={comp?.legal_preferences ? Object.values(comp.legal_preferences)[0] ?? "—" : "—"} />
         </div>
       </SectionCard>
 

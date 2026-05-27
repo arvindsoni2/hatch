@@ -395,9 +395,12 @@ export default function ApprovalDetailPage() {
                 {job?.rate_text && (
                   <span className="font-semibold text-slate-700">{job.rate_text}</span>
                 )}
-                {job?.ir35_status && (
-                  <Badge variant="outline" className="text-xs">{job.ir35_status} IR35</Badge>
-                )}
+                {(() => {
+                  const legalVal = Object.values(job?.legal_fields ?? {})[0] ?? job?.ir35_status;
+                  return legalVal ? (
+                    <Badge variant="outline" className="text-xs capitalize">{legalVal.replace(/_/g, " ")}</Badge>
+                  ) : null;
+                })()}
               </div>
             </div>
             <Badge

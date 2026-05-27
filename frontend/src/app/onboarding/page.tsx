@@ -172,7 +172,7 @@ export default function OnboardingPage() {
   const [locations, setLocations] = useState([{ city: "", country: "", radius_miles: 30, remote_preference: "hybrid" }]);
 
   // Step 3 — Compensation & legal
-  const [compensation, setCompensation] = useState({ min_rate: 0, max_rate: 0, rate_type: "daily", currency: "GBP", ir35_preference: "any", legal_preferences: {} as Record<string, string> });
+  const [compensation, setCompensation] = useState({ min_rate: 0, max_rate: 0, rate_type: "daily", currency: "", legal_preferences: {} as Record<string, string> });
   const [legalFields, setLegalFields] = useState<LocaleLegalField[]>([]);
 
   // Step 4 — Skills
@@ -247,7 +247,6 @@ export default function OnboardingPage() {
     search: { ...search, locations },
     compensation: {
       ...compensation,
-      ir35_preference: compensation.legal_preferences["ir35_preference"] ?? compensation.ir35_preference,
     },
     skills,
     domains,
@@ -347,11 +346,11 @@ export default function OnboardingPage() {
                 <div className="grid grid-cols-3 gap-3">
                   <div className="space-y-1">
                     <Label>City *</Label>
-                    <Input value={locations[0].city} onChange={(e) => setLocations([{ ...locations[0], city: e.target.value }])} placeholder="London" />
+                    <Input value={locations[0].city} onChange={(e) => setLocations([{ ...locations[0], city: e.target.value }])} placeholder="City" />
                   </div>
                   <div className="space-y-1">
                     <Label>Country *</Label>
-                    <Input value={locations[0].country} onChange={(e) => setLocations([{ ...locations[0], country: e.target.value }])} placeholder="UK" />
+                    <Input value={locations[0].country} onChange={(e) => setLocations([{ ...locations[0], country: e.target.value }])} placeholder="Country" />
                   </div>
                   <div className="space-y-1">
                     <Label>Remote preference</Label>
@@ -403,7 +402,7 @@ export default function OnboardingPage() {
                 </div>
                 <div className="space-y-1 w-1/3">
                   <Label>Currency</Label>
-                  <Input value={compensation.currency} onChange={(e) => setCompensation({ ...compensation, currency: e.target.value })} placeholder="GBP" />
+                  <Input value={compensation.currency} onChange={(e) => setCompensation({ ...compensation, currency: e.target.value })} placeholder="Currency (e.g. GBP, USD, INR)" />
                 </div>
 
                 {legalFields.length > 0 && (

@@ -161,6 +161,7 @@ class ITJobsWatchScraper(BaseScraper):
             rate_max=rate_max,
             currency="GBP",
             ir35_status=ir35_status,
+            legal_fields={"ir35_status": ir35_status} if ir35_status else {},
             description=full_text[:1000] if full_text else None,
             url=url,
             source=self.name,

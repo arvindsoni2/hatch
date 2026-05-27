@@ -22,6 +22,7 @@ export interface Job {
   rate_max: number | null;
   currency: string;
   ir35_status: "inside" | "outside" | "unknown" | null;
+  legal_fields?: Record<string, string>;
   contract_length: string | null;
   description: string | null;
   url: string;

@@ -450,7 +450,7 @@ class ScorerAgent(BaseAgent):
             f"Rate range: {comp.currency} {comp.min_rate}–{comp.max_rate} ({comp.rate_type})\n\n"
             f"Job:\nTitle: {job.title}\nCompany: {job.company or 'N/A'}\n"
             f"Location: {job.location or 'N/A'}\nRate: {job.rate_text or 'N/A'}\n"
-            f"IR35/contract status: {job.ir35_status or 'N/A'}\n"
+            f"Legal/contract fields: {getattr(job, 'legal_fields', None) or {'ir35_status': job.ir35_status} if job.ir35_status else {}}\n"
             f"Description:\n{(job.description or '')[:3000]}\n\n"
             f"Score on four dimensions (0.0–1.0):\n"
             f"- skill_match (weight {weights.skill_match}): how well skills match?\n"

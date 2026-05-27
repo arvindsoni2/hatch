@@ -201,6 +201,7 @@ class LinkedInScraper(BaseScraper):
             rate_max=None,
             currency=_currency,
             ir35_status=ir35_status,
+            legal_fields={"ir35_status": ir35_status} if ir35_status else {},
             description=full_text[:1000] if full_text else None,
             url=href,
             source=self.name,

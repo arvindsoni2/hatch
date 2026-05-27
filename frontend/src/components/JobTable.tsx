@@ -16,17 +16,13 @@ interface JobTableProps {
 
 type TrackState = "idle" | "loading" | "done" | "exists";
 
-function IR35Cell({ status }: { status: Job["ir35_status"] }) {
-  if (!status) return <span className="text-slate-400">—</span>;
-  const variant =
-    status === "outside" ? "outside" : status === "inside" ? "inside" : "unknown";
-  const label =
-    status === "outside"
-      ? "Outside"
-      : status === "inside"
-        ? "Inside"
-        : "Unknown";
-  return <Badge variant={variant}>{label}</Badge>;
+function LegalFieldCell({ job }: { job: Job }) {
+  const fields = job.legal_fields ?? (job.ir35_status ? { ir35_status: job.ir35_status } : {});
+  const entries = Object.entries(fields);
+  if (!entries.length) return <span className="text-slate-400">—</span>;
+  const [, value] = entries[0];
+  const variant = value === "outside" ? "outside" : value === "inside" ? "inside" : "unknown";
+  return <Badge variant={variant}>{value}</Badge>;
 }
 
 function SourceCell({ source }: { source: string }) {
@@ -154,7 +150,7 @@ export function JobTable({ jobs, className }: JobTableProps) {
                 Rate
               </th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                IR35
+                Status
               </th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Source
@@ -227,9 +223,9 @@ export function JobTable({ jobs, className }: JobTableProps) {
                   <RateCell job={job} />
                 </td>
 
-                {/* IR35 */}
+                {/* Contract status */}
                 <td className="px-4 py-3 text-sm">
-                  <IR35Cell status={job.ir35_status} />
+                  <LegalFieldCell job={job} />
                 </td>
 
                 {/* Source */}

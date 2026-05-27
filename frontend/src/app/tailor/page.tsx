@@ -277,7 +277,7 @@ export default function TailorPage() {
                     )}
                     {analysis.analysis.contract_details.ir35_status && (
                       <div className="rounded-lg bg-slate-700/50 p-2">
-                        <p className="text-xs text-slate-500">IR35</p>
+                        <p className="text-xs text-slate-500">Contract status</p>
                         <p className="text-sm font-medium text-slate-200">
                           {analysis.analysis.contract_details.ir35_status}
                         </p>

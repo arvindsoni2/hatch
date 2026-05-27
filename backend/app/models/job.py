@@ -37,6 +37,7 @@ class JobPosting(Base):
     rate_max: Mapped[float | None] = mapped_column(Float, nullable=True)
     currency: Mapped[str] = mapped_column(String(8), default="GBP")
     ir35_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    legal_fields: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     contract_length: Mapped[str | None] = mapped_column(String(128), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     url: Mapped[str] = mapped_column(String(2048), unique=True, nullable=False)

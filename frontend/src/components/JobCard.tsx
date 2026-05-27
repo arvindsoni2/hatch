@@ -36,10 +36,12 @@ export function JobCard({ job, threshold = 0.75 }: JobCardProps) {
   const [trackState, setTrackState] = useState<"idle" | "loading" | "done" | "exists">("idle");
 
   const rate = formatRate(job);
-  const ir35Label =
-    job.ir35_status === "outside" ? "Outside IR35"
-    : job.ir35_status === "inside" ? "Inside IR35"
-    : null;
+  // Prefer legal_fields (locale-neutral); fall back to ir35_status for legacy data
+  const legalLabel = (() => {
+    const fields = job.legal_fields ?? (job.ir35_status ? { ir35_status: job.ir35_status } : {});
+    const [, val] = Object.entries(fields)[0] ?? [];
+    return val ?? null;
+  })();
 
   const timeLabel = job.posted_at
     ? `Posted ${formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })}`
@@ -47,7 +49,7 @@ export function JobCard({ job, threshold = 0.75 }: JobCardProps) {
     ? `Discovered ${formatDistanceToNow(new Date(job.scraped_at), { addSuffix: true })}`
     : null;
 
-  const metaParts = [job.company, job.location, rate, ir35Label].filter(
+  const metaParts = [job.company, job.location, rate, legalLabel].filter(
     (p): p is string => p != null && p !== "",
   );
 

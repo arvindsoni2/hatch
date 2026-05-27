@@ -32,10 +32,10 @@ const SOURCES = [
   { value: "linkedin", label: "LinkedIn" },
 ];
 
-const IR35_OPTIONS = [
-  { value: "", label: "All IR35 Status" },
-  { value: "outside", label: "Outside IR35" },
-  { value: "inside", label: "Inside IR35" },
+const LEGAL_STATUS_OPTIONS = [
+  { value: "", label: "All Contract Status" },
+  { value: "outside", label: "Outside (preferred)" },
+  { value: "inside", label: "Inside" },
   { value: "unknown", label: "Unknown" },
 ];
 
@@ -86,13 +86,13 @@ export function FilterPanel({
           />
         </div>
 
-        {/* IR35 Status */}
+        {/* Contract status */}
         <Select
           value={filters.ir35_status}
           onChange={(e) => handleChange("ir35_status", e.target.value)}
-          aria-label="Filter by IR35 status"
+          aria-label="Filter by contract status"
         >
-          {IR35_OPTIONS.map((opt) => (
+          {LEGAL_STATUS_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>

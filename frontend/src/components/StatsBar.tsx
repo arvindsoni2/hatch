@@ -46,9 +46,9 @@ function StatCard({ label, value, icon, description, highlight }: StatCardProps)
 }
 
 export function StatsBar({ stats }: StatsBarProps) {
-  const outsideCount = stats.by_ir35["outside"] ?? 0;
-  const insideCount = stats.by_ir35["inside"] ?? 0;
-  const unknownCount = stats.by_ir35["unknown"] ?? 0;
+  const outsideCount = stats.by_ir35?.["outside"] ?? 0;
+  const insideCount = stats.by_ir35?.["inside"] ?? 0;
+  const unknownCount = stats.by_ir35?.["unknown"] ?? 0;
 
   return (
     <div className="space-y-4">
@@ -73,7 +73,7 @@ export function StatsBar({ stats }: StatsBarProps) {
           description="Scraped in last 7 days"
         />
         <StatCard
-          label="Outside IR35"
+          label="Preferred Status"
           value={outsideCount.toLocaleString()}
           icon={<CheckCircle className="h-5 w-5" />}
           description={`${insideCount} inside · ${unknownCount} unknown`}

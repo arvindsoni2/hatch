@@ -261,12 +261,15 @@ export default async function JobDetailPage({ params }: { params: { id: string }
                   <span>{job.rate_text}</span>
                 </>
               )}
-              {job.ir35_status && (
-                <>
-                  <span className="text-slate-300">·</span>
-                  <span className="capitalize">{job.ir35_status.replace("_", " ")}</span>
-                </>
-              )}
+              {(() => {
+                const legalVal = Object.values(job.legal_fields ?? {})[0] ?? job.ir35_status;
+                return legalVal ? (
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="capitalize">{legalVal.replace(/_/g, " ")}</span>
+                  </>
+                ) : null;
+              })()}
               {job.source && (
                 <>
                   <span className="text-slate-300">·</span>

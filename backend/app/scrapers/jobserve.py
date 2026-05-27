@@ -174,6 +174,7 @@ class JobServeScraper(BaseScraper):
                 rate_max=rate_max,
                 currency="GBP",
                 ir35_status=ir35_status,
+            legal_fields={"ir35_status": ir35_status} if ir35_status else {},
                 description=full_text[:2000],
                 url=href,
                 source=self.name,

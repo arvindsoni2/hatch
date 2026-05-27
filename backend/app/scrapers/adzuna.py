@@ -159,6 +159,7 @@ class AdzunaScraper(BaseScraper):
             rate_max=rate_max,
             currency="GBP",
             ir35_status=ir35_status,
+            legal_fields={"ir35_status": ir35_status} if ir35_status else {},
             description=description,
             url=url,
             source=self.name,

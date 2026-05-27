@@ -12,7 +12,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "JobPilot — Autonomous Job Search",
   description: "AI-powered autonomous job search automation.",
-  keywords: ["contract jobs", "outside IR35", "solutions architect", "UK contracts"],
+  keywords: ["contract jobs", "solutions architect", "autonomous job search"],
 };
 
 export default function RootLayout({
