@@ -161,8 +161,17 @@ class AgentOrchestrator:
                 if "supervisor" not in self._paused:
                     async with self._db_factory() as db:
                         result = await self.supervisor.tick(db)
-                        if result.get("processed", 0) > 0:
-                            logger.info("Supervisor processed %d events.", result["processed"])
+                    # Supervisor session is now CLOSED — scorer gets its own fresh
+                    # session so LLM calls don't hold the write lock and block
+                    # concurrent manual triggers from updating agent_state.
+                    if result.get("scorer_triggered") and "scorer" not in self._paused:
+                        try:
+                            async with self._db_factory() as db:
+                                await self.scorer.run(db)
+                        except Exception as exc:
+                            logger.exception("Scorer run (from supervisor loop) failed: %s", exc)
+                    if result.get("processed", 0) > 0:
+                        logger.info("Supervisor processed %d events.", result["processed"])
             except asyncio.CancelledError:
                 logger.info("Supervisor loop cancelled.")
                 break

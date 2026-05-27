@@ -62,17 +62,19 @@ class SupervisorAgent:
         """
         processed = 0
 
-        # Check for pending discoveries and delegate to scorer (scorer owns
-        # the event lifecycle — it marks them processing/completed itself)
+        # Check for pending discoveries — scorer runs AFTER this session closes
+        # (see AgentOrchestrator._supervisor_loop) to avoid holding the write lock
+        # across LLM calls and blocking concurrent manual triggers.
+        scorer_triggered = False
         discoveries = await self._bus.poll(
             db, event_type="job_discovered", status="pending", limit=1
         )
         if discoveries:
             logger.info(
-                "Supervisor: %d+ pending job_discovered events — triggering scorer.",
+                "Supervisor: %d+ pending job_discovered events — will trigger scorer.",
                 len(discoveries),
             )
-            await self._scorer.run(db)
+            scorer_triggered = True
             processed += 1
 
         # Process all other event types (exclude job_discovered — scorer handles those)
@@ -80,7 +82,7 @@ class SupervisorAgent:
         events = [e for e in all_events if e["event_type"] != "job_discovered"]
 
         if not events and not discoveries:
-            return {"processed": 0}
+            return {"processed": 0, "scorer_triggered": False}
 
         for event in events:
             try:
@@ -90,7 +92,7 @@ class SupervisorAgent:
                 logger.exception("Supervisor routing error for %s: %s", event["id"], exc)
                 await self._bus.mark_failed(event["id"], str(exc), db)
 
-        return {"processed": processed}
+        return {"processed": processed, "scorer_triggered": scorer_triggered}
 
     # ── Event routing ─────────────────────────────────────────────────
 

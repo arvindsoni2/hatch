@@ -5,6 +5,7 @@ import importlib
 import logging
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..repositories.job_repository import JobRepository
@@ -111,8 +112,19 @@ class ScoutAgent(BaseAgent):
                 if is_dup:
                     continue
 
-                # Save to DB via repository
-                saved = await repo.create(job_schema)
+                # Use a savepoint so a duplicate-URL IntegrityError only rolls
+                # back this one insert and not the entire session transaction.
+                try:
+                    async with db.begin_nested():
+                        saved = await repo.create(job_schema)
+                except IntegrityError:
+                    self._log.debug(
+                        "Duplicate URL skipped for '%s' from %s.",
+                        getattr(job_schema, "title", "?"),
+                        source,
+                    )
+                    continue
+
                 new_count += 1
 
                 # Emit discovery event
