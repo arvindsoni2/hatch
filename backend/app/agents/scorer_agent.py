@@ -383,8 +383,6 @@ class ScorerAgent(BaseAgent):
             "location_match": score.location_match,
             "overall_score": score.overall_score,
             "reasoning": score.reasoning,
-            "keyword_matches": score.keyword_matches,
-            "keyword_misses": score.keyword_misses,
         }
         if row is None:
             db.add(JobScore(id=str(uuid.uuid4()), job_id=job_id, **score_data))

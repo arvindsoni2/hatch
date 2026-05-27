@@ -178,6 +178,61 @@ def make_application_create(
     )
 
 
+# ── Agent test fixtures ──────────────────────────────────────
+
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
+
+
+@pytest.fixture
+def mock_profile():
+    """Complete mock profile matching the Profile Pydantic schema."""
+    profile = MagicMock()
+    profile.locale = "uk"
+    profile.candidate = MagicMock(name="Test User", title="Delivery Lead", years_experience=20, summary="Senior delivery professional")
+    profile.search = MagicMock(
+        target_roles=["Delivery Lead", "Product Owner"],
+        locations=[MagicMock(city="London", country="UK", remote_preference="hybrid", radius_miles=30)],
+        contract_type="contract",
+    )
+    profile.compensation = MagicMock(min_rate=550, max_rate=700, rate_type="daily", currency="GBP")
+    profile.skills = MagicMock(primary=["agile delivery", "stakeholder management", "cloud architecture"], secondary=["python", "devops"], certifications=["PMP", "PSM-1"])
+    profile.domains = MagicMock(preferred=["Energy", "Financial Services"], excluded=[])
+    profile.proof_points = [
+        MagicMock(id="pp1", summary="£500K savings via mobile platform", context="Northern Powergrid", metrics="£500K/year", tags=["cost-savings", "mobile"]),
+    ]
+    profile.scoring = MagicMock(
+        method="hybrid", shortlist_threshold=0.75,
+        weights=MagicMock(skill_match=0.35, experience_match=0.30, compensation_match=0.20, location_match=0.15),
+        hybrid_llm_top_pct=0.20,
+    )
+    profile.llm = MagicMock(provider="anthropic", triage_model="claude-haiku-4-5-20251001", primary_model="claude-sonnet-4-6", temperature=0.3, max_retries=3, track_costs=True, monthly_budget=15, currency="GBP", api_key_env="ANTHROPIC_API_KEY", base_url=None)
+    profile.preferences = MagicMock(scrape_interval_hours=4, max_tailor_batch=5, follow_up_days=[5, 10, 15], archive_after_days=30, locale="en-GB")
+    profile.job_boards = [MagicMock(name="reed", enabled=True, scraper="ReedScraper")]
+    return profile
+
+
+@pytest.fixture
+def mock_event_bus():
+    """Mock EventBus with emit/poll/mark methods."""
+    bus = AsyncMock()
+    bus.emit = AsyncMock(return_value="test-event-id")
+    bus.poll = AsyncMock(return_value=[])
+    bus.mark_processing = AsyncMock()
+    bus.mark_completed = AsyncMock()
+    bus.mark_failed = AsyncMock()
+    return bus
+
+
+@pytest.fixture
+def mock_llm_response_score():
+    """Mock structured scoring response from LLM."""
+    return MagicMock(
+        skill_match=0.85, experience_match=0.90, rate_match=0.80, location_match=1.0,
+        overall_score=0.87, reasoning="Strong match on delivery and architecture",
+        keyword_matches=["agile", "delivery", "stakeholder"], keyword_misses=["SAFe"],
+    )
+
+
 @pytest_asyncio.fixture
 async def sample_application(db_session: AsyncSession):
     """Insert and return a single sample Application in the test database."""
