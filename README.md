@@ -58,6 +58,8 @@ JobPilot v2 is an autonomous, multi-agent job search system that handles the ful
 | **Human-in-the-loop** | Mandatory approval checkpoint before any application leaves the system — never auto-submits |
 | **Autonomous pipeline** | APScheduler cron → event bus → LangGraph StateGraph routes events to correct agents |
 | **Interview coaching** | Company research, 12 categorised questions, STAR model answers mapped to your proof points |
+| **JD gap analysis** | Per-job skill gap card: matched skills, missing skills, JD-only keywords, match %, actionable recommendations |
+| **Calendar export** | Download any interview round as an `.ics` file — one click to add to Google Calendar, Outlook, or Apple Calendar |
 | **Job archiving** | Configurable auto-archive for stale listings; archived jobs stay in DB for history |
 | **Self-hosted** | Docker Compose on any laptop. SQLite + ChromaDB — no external services required |
 
@@ -105,12 +107,20 @@ JobPilot v2 is an autonomous, multi-agent job search system that handles the ful
 | `routers/profile.py` | **New** | Profile CRUD + live LLM connection test endpoint |
 | `routers/locales.py` | **New** | Locale list, legal fields, board config for onboarding wizard |
 | `components/Navigation.tsx` | **New** | 5-item nav with live approval badge, active-route highlight |
-| `components/JobCard.tsx` | **Rewritten** | Horizontal card; score badge with per-dimension tooltip |
+| `components/JobCard.tsx` | **Rewritten** | Horizontal card; score badge with per-dimension tooltip; gap analysis link |
 | `components/ScoreBadge.tsx` | **New** | Colour-coded score badge with 4-dimension hover breakdown |
 | `components/ErrorBanner.tsx` | **New** | API key invalid / scraper failure / no matching jobs banners |
+| `components/GapAnalysisCard.tsx` | **New** | Inline JD gap analysis: match bar, matched/missing skill pills, JD-only keywords, recommendations |
+| `components/InterviewTimeline.tsx` | **Updated** | "Add to calendar" button per interview round — downloads `.ics` |
 | `app/page.tsx` (dashboard) | **Rewritten** | Agent status strip, action cards, pipeline bar, top matches |
 | `app/jobs/page.tsx` | **Rewritten** | Score band legend, match threshold toggle, archive view |
+| `app/jobs/[id]/page.tsx` | **Updated** | Gap analysis section fetched server-side and rendered below job header |
 | `app/onboarding/page.tsx` | **Rewritten** | 5-step wizard with locale picker, STAR proof points, API key tester, board toggles |
+| `app/settings/profile/page.tsx` | **Updated** | Locale switcher, location editor (city/country/remote), job board enable/disable toggles |
+| `routers/gap_analysis.py` | **New** | `GET /api/v2/jobs/{id}/gap-analysis` — keyword diff between profile skills and JD text |
+| `routers/interviews_ical.py` | **New** | `GET /api/v2/interviews/{id}/ical` — iCalendar `.ics` download for interview rounds |
+| `scrapers/naukri.py` | **New** | Naukri.com job scraper (India) via `jobapi/v3/search` API |
+| `scrapers/indeed_india.py` | **New** | Indeed India scraper (`in.indeed.com`) |
 | `examples/` | **New** | 3 example profiles (UK contractor, US SWE, EU PM) |
 
 ---
@@ -331,9 +341,13 @@ GET    /api/v2/locales/{id}/legal-fields Compliance field definitions for onboar
 # Jobs
 GET    /api/jobs/                         List jobs (filter, paginate, match score)
 GET    /api/jobs/{id}                    Single job
+GET    /api/v2/jobs/{id}/gap-analysis    JD skill gap: matched, missing, keywords, recommendations
 POST   /api/jobs/scrape                  Trigger scraper(s) now
 POST   /api/jobs/archive/run             Archive jobs older than profile threshold
 POST   /api/jobs/{id}/unarchive          Restore an archived job
+
+# Interviews
+GET    /api/v2/interviews/{id}/ical      Download interview round as .ics calendar file
 
 # Agents
 GET    /api/agents/status                All agent statuses
