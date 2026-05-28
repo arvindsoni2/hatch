@@ -130,7 +130,6 @@ def create_app() -> FastAPI:
         version="2.0.0",
         docs_url="/docs",
         redoc_url="/redoc" if _debug else None,
-        redirect_slashes=False,
         lifespan=lifespan,
     )
 

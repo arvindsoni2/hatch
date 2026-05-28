@@ -103,7 +103,8 @@ async def get_filter_counts(
     return await service._repo.get_filter_counts()
 
 
-@router.get("/", response_model=PaginatedResponse[JobPostingRead])
+@router.get("", response_model=PaginatedResponse[JobPostingRead])
+@router.get("/", response_model=PaginatedResponse[JobPostingRead], include_in_schema=False)
 async def list_jobs(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
