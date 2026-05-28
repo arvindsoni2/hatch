@@ -140,7 +140,7 @@ export default function OnboardingPage() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
       <div className="w-full max-w-2xl">
         <div className="mb-6 text-center">
-          <h1 className="text-3xl font-bold text-slate-900">Welcome to JobPilot</h1>
+          <h1 className="text-3xl font-bold text-slate-900">Welcome to Hatch</h1>
           <p className="mt-2 text-slate-500">Set up your profile and launch your autonomous job search.</p>
         </div>
 

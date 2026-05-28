@@ -19,7 +19,7 @@ describe("InstallPrompt", () => {
       (event as Event & { preventDefault: () => void }).preventDefault = vi.fn();
       window.dispatchEvent(event);
     });
-    expect(screen.getByText(/install jobpilot/i)).toBeInTheDocument();
+    expect(screen.getByText(/install hatch/i)).toBeInTheDocument();
   });
 
   it("dismisses and remembers in localStorage", () => {
@@ -31,7 +31,7 @@ describe("InstallPrompt", () => {
     });
     fireEvent.click(screen.getByText(/not now/i));
     expect(localStorage.getItem("pwa-install-dismissed")).toBe("1");
-    expect(screen.queryByText(/install jobpilot/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/install hatch/i)).not.toBeInTheDocument();
   });
 
   it("install button has minimum 44px touch target", () => {

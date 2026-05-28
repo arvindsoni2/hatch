@@ -102,7 +102,7 @@ export default function ResumePage() {
 
       <h1 className="text-2xl font-bold text-slate-900">Master CV</h1>
       <p className="text-sm text-slate-500">
-        Upload your CV once. JobPilot uses it to generate tailored applications for each job.
+        Upload your CV once. Hatch uses it to generate tailored applications for each job.
         Supported formats: <strong>.docx</strong> and <strong>.pdf</strong>.
       </p>
 

@@ -173,7 +173,7 @@ function ResumeTab() {
     <div className="space-y-6">
       <SectionCard title="Master CV">
         <p className="text-sm text-slate-600 mb-4">
-          Upload and manage your master CV. JobPilot parses it to extract work experience,
+          Upload and manage your master CV. Hatch parses it to extract work experience,
           skills, and proof points used when tailoring applications.
         </p>
         <Link
@@ -530,7 +530,7 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
 
       <SectionCard title="About">
         <div className="divide-y divide-slate-100">
-          <FieldRow label="Application" value="JobPilot v2" />
+          <FieldRow label="Application" value="Hatch" />
           <FieldRow label="AI model" value={profileData?.llm?.primary_model ?? "—"} />
           <FieldRow
             label="API documentation"
@@ -585,7 +585,7 @@ export default function SettingsPage() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-500">Configure JobPilot — profile, resume, AI provider, job boards, and system.</p>
+        <p className="mt-1 text-sm text-slate-500">Configure Hatch — profile, resume, AI provider, job boards, and system.</p>
       </div>
 
       {/* Tab bar */}

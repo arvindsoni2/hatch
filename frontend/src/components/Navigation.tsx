@@ -40,9 +40,9 @@ export function Navigation() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600">
-            <span className="text-sm font-bold text-white">JP</span>
+            <span className="text-sm font-bold text-white">H</span>
           </div>
-          <span className="text-lg font-semibold text-slate-900">JobPilot</span>
+          <span className="text-lg font-semibold text-slate-900">Hatch</span>
         </Link>
 
         {/* Nav items */}

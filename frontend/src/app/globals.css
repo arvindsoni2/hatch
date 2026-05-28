@@ -2,18 +2,100 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-  }
+/* ========== Hatch design system ========== */
 
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', monospace;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 14px rgba(0,0,0,0.08);
+  --shadow-lg: 0 16px 40px rgba(0,0,0,0.14);
+
+  --transition: 160ms cubic-bezier(.4,0,.2,1);
+  --sidebar-width: 248px;
+}
+
+/* ---- Dark (default) ---- */
+:root, [data-theme="dark"], .dark {
+  --bg: #0a0a0c;
+  --bg-elevated: #0f0f12;
+  --surface: #131317;
+  --surface-2: #18181d;
+  --surface-3: #1e1e24;
+  --border: #1f1f26;
+  --border-strong: #2a2a33;
+  --border-subtle: #18181d;
+  --text: #ececef;
+  --text-dim: #9a9aa3;
+  --text-muted: #5e5e68;
+  --accent: #3b82f6;
+  --accent-hover: #5b96f8;
+  --accent-soft: rgba(59,130,246,0.14);
+  --accent-soft-strong: rgba(59,130,246,0.22);
+  --success: #34d399;
+  --success-soft: rgba(52,211,153,0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(248,113,113,0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251,191,36,0.14);
+  --purple: #c084fc;
+  --purple-soft: rgba(192,132,252,0.14);
+}
+
+/* ---- Light ---- */
+[data-theme="light"], :root:not(.dark) {
+  --bg: #fafafa;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f5f5f7;
+  --surface-3: #ebebef;
+  --border: #e7e7eb;
+  --border-strong: #d4d4d8;
+  --border-subtle: #f0f0f3;
+  --text: #18181b;
+  --text-dim: #52525b;
+  --text-muted: #a1a1aa;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: rgba(37,99,235,0.08);
+  --accent-soft-strong: rgba(37,99,235,0.14);
+  --success: #16a34a;
+  --success-soft: rgba(22,163,74,0.10);
+  --danger: #dc2626;
+  --danger-soft: rgba(220,38,38,0.10);
+  --warning: #d97706;
+  --warning-soft: rgba(217,119,6,0.10);
+  --purple: #7c3aed;
+  --purple-soft: rgba(124,58,237,0.10);
+}
+
+@layer base {
   * {
     box-sizing: border-box;
   }
 
   html {
     scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.005em;
+    text-rendering: optimizeLegibility;
+    min-height: 100vh;
   }
 }
 
@@ -25,3 +107,9 @@
     overflow: hidden;
   }
 }
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }

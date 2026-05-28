@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Navigation } from "@/components/Navigation";
+import { Sidebar } from "@/components/Sidebar";
 import { BottomNav } from "@/components/BottomNav";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { InstallPrompt } from "@/components/InstallPrompt";
@@ -13,9 +13,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "JobPilot — Autonomous Job Search",
-  description: "AI-powered autonomous job search automation.",
-  keywords: ["contract jobs", "solutions architect", "autonomous job search"],
+  title: "Hatch — AI-powered job search",
+  description: "AI-powered autonomous job search with human-in-the-loop approvals.",
+  keywords: ["job search", "AI jobs", "autonomous job search", "job discovery"],
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -34,24 +34,45 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#4f46e5" />
+        <meta name="theme-color" content="#3b82f6" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var stored = localStorage.getItem('theme');
+                  var theme = stored === 'light' ? 'light' : 'dark';
+                  document.documentElement.setAttribute('data-theme', theme);
+                  if (theme === 'dark') document.documentElement.classList.add('dark');
+                } catch(e) {
+                  document.documentElement.setAttribute('data-theme', 'dark');
+                  document.documentElement.classList.add('dark');
+                }
+              })();
+            `,
+          }}
+        />
       </head>
-      <body className={`${inter.variable} font-sans antialiased bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100`}>
+      <body
+        className={`${inter.variable} font-sans antialiased`}
+        style={{ background: "var(--bg)", color: "var(--text)" }}
+      >
         <OfflineIndicator />
-        <Navigation />
 
-        <main className="mx-auto max-w-7xl px-4 py-8 pb-24 sm:px-6 lg:px-8 md:pb-8">
-          {children}
-        </main>
+        <div className="flex" style={{ minHeight: "100vh" }}>
+          <Sidebar />
 
+          {/* Main content area */}
+          <div className="flex flex-col flex-1 min-w-0">
+            <main className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-8 md:pb-8">
+              {children}
+            </main>
+          </div>
+        </div>
+
+        {/* Mobile bottom nav */}
         <BottomNav />
         <InstallPrompt />
-
-        <footer className="mt-16 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-6 hidden md:block">
-          <div className="mx-auto max-w-7xl px-4 text-center text-sm text-slate-400 dark:text-slate-500 sm:px-6 lg:px-8">
-            JobPilot — autonomous job search, human-in-the-loop approvals
-          </div>
-        </footer>
       </body>
     </html>
   );

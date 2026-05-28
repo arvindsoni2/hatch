@@ -47,7 +47,7 @@ export function BottomNav() {
               key={item.href}
               href={item.href}
               className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] transition-colors min-h-[44px] justify-center ${
-                isActive ? "text-indigo-600 font-medium" : "text-slate-400"
+                isActive ? "text-blue-500 font-medium" : "text-slate-400 dark:text-slate-500"
               }`}
             >
               <span className="relative">

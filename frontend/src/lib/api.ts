@@ -1,5 +1,5 @@
 /**
- * JobPilot API client — typed wrappers around the FastAPI backend.
+ * Hatch API client — typed wrappers around the FastAPI backend.
  */
 
 // Server-side (SSR/RSC) calls the backend directly using IPv4 to avoid

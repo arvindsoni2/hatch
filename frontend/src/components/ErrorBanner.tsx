@@ -36,7 +36,7 @@ const CONFIG: Record<
     icon: <XCircle className="h-5 w-5 shrink-0" />,
     title: "AI provider key invalid",
     defaultMessage:
-      "JobPilot couldn't reach your configured LLM provider. Scoring and tailoring will be paused until the key is fixed.",
+      "Hatch couldn't reach your configured LLM provider. Scoring and tailoring will be paused until the key is fixed.",
     cta: { label: "Fix in Settings", href: "/settings" },
     colorClass: "bg-red-50 text-red-800",
     borderClass: "border-red-200",

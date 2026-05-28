@@ -23,7 +23,7 @@ export function InstallPrompt() {
 
   return (
     <div className="fixed bottom-20 md:bottom-4 left-4 right-4 md:left-auto md:right-4 md:w-80 z-50 bg-white border border-slate-200 rounded-xl shadow-lg p-4">
-      <p className="font-medium text-sm text-slate-900 mb-1">Install JobPilot</p>
+      <p className="font-medium text-sm text-slate-900 mb-1">Install Hatch</p>
       <p className="text-xs text-slate-500 mb-3">Add to your home screen for quick access on any device.</p>
       <div className="flex gap-2">
         <button

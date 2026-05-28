@@ -81,7 +81,7 @@ export function StepReview({
       >
         {saving
           ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</>
-          : <><Zap className="h-4 w-4" /> Start JobPilot</>}
+          : <><Zap className="h-4 w-4" /> Start Hatch</>}
       </Button>
     </div>
   );

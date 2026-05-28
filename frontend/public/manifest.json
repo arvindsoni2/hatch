@@ -1,11 +1,11 @@
 {
-  "name": "JobPilot — Autonomous Job Search",
-  "short_name": "JobPilot",
+  "name": "Hatch — AI-powered job search",
+  "short_name": "Hatch",
   "description": "AI-powered job search automation with human-in-the-loop approvals",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#4f46e5",
+  "background_color": "#0a0a0c",
+  "theme_color": "#3b82f6",
   "orientation": "any",
   "categories": ["productivity", "business"],
   "icons": [
