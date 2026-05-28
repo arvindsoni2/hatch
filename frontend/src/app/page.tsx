@@ -17,11 +17,21 @@ import {
   type FollowUpReminder,
   type RateLimitStatus,
 } from "@/lib/api";
-import { JobCard } from "@/components/JobCard";
-import { Button } from "@/components/ui/button";
 import { TriggerScrapeButton } from "@/components/TriggerScrapeButton";
 import { ActivityTimeline } from "@/components/ActivityTimeline";
-import { ArrowRight, CheckCircle2, AlertTriangle, XCircle, Zap, ClipboardCheck, Briefcase, Stars, Bell } from "lucide-react";
+import {
+  Inbox,
+  Send,
+  Target,
+  Sparkles,
+  ArrowUp,
+  ArrowDown,
+  AlertTriangle,
+  CheckCircle2,
+  Zap,
+  Bell,
+  ExternalLink,
+} from "lucide-react";
 import { formatDistanceToNow, addHours } from "date-fns";
 
 export const revalidate = 60;
@@ -37,7 +47,7 @@ function getSystemHealth(agentStatus: AllAgentStatus | null): "green" | "amber" 
   return "green";
 }
 
-function AgentStatusStrip({
+function AgentStatusBanner({
   agentStatus,
   scrapeIntervalHours,
 }: {
@@ -47,7 +57,6 @@ function AgentStatusStrip({
   const health = getSystemHealth(agentStatus);
   const scout = agentStatus?.agents.find((a) => a.agent_name === "scout");
   const lastRunAt = scout?.last_run_at ? new Date(scout.last_run_at) : null;
-  const nextRunAt = lastRunAt ? addHours(lastRunAt, scrapeIntervalHours) : null;
   const hoursSinceLastRun = lastRunAt
     ? (Date.now() - lastRunAt.getTime()) / (1000 * 60 * 60)
     : null;
@@ -55,12 +64,19 @@ function AgentStatusStrip({
 
   if (isStale) {
     return (
-      <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+      <div
+        className="flex items-center justify-between rounded-xl px-4 py-3 text-sm"
+        style={{
+          background: "var(--warning-soft)",
+          border: "1px solid var(--warning)",
+          color: "var(--warning)",
+        }}
+      >
         <div className="flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+          <AlertTriangle size={14} />
           <span>No scrapes in the last {Math.round(hoursSinceLastRun!)} hours.</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Link href="/settings" className="text-xs font-medium underline underline-offset-2">
             Check agent status
           </Link>
@@ -70,38 +86,65 @@ function AgentStatusStrip({
     );
   }
 
-  const dotColor =
-    health === "green" ? "bg-green-500" : health === "amber" ? "bg-amber-400" : "bg-red-500";
-  const statusText =
-    health === "green"
-      ? "All agents running"
-      : health === "amber"
-      ? "Agents idle"
-      : "Agent error — check settings";
+  if (health === "red") {
+    return (
+      <div
+        className="flex items-center gap-2 rounded-xl px-4 py-3 text-sm"
+        style={{ background: "var(--danger-soft)", color: "var(--danger)", border: "1px solid var(--danger)" }}
+      >
+        <AlertTriangle size={14} />
+        <span>Agent error —</span>
+        <Link href="/settings" className="font-medium underline underline-offset-2">
+          check settings
+        </Link>
+      </div>
+    );
+  }
 
+  return null;
+}
+
+// ── KPI card ──────────────────────────────────────────────────────────────────
+
+function KpiCard({
+  icon,
+  label,
+  value,
+  delta,
+  deltaUp,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string | number;
+  delta?: string;
+  deltaUp?: boolean;
+}) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-500 shadow-sm">
-      <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
-      <span className="font-medium text-slate-700">{statusText}</span>
-      {lastRunAt && (
-        <>
-          <span className="text-slate-300">·</span>
-          <span>Last scrape: {formatDistanceToNow(lastRunAt, { addSuffix: true })}</span>
-        </>
-      )}
-      {nextRunAt && nextRunAt > new Date() && (
-        <>
-          <span className="text-slate-300">·</span>
-          <span>Next: {formatDistanceToNow(nextRunAt)}</span>
-        </>
-      )}
-      {health === "red" && (
-        <>
-          <span className="text-slate-300">·</span>
-          <Link href="/settings" className="font-medium text-red-600 hover:underline">
-            View details
-          </Link>
-        </>
+    <div
+      className="rounded-xl p-5"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+    >
+      <div
+        className="flex items-center gap-1.5 text-xs font-medium mb-2"
+        style={{ color: "var(--text-muted)" }}
+      >
+        {icon}
+        {label}
+      </div>
+      <div
+        className="text-3xl font-bold mb-1.5"
+        style={{ letterSpacing: "-0.02em", color: "var(--text)" }}
+      >
+        {value}
+      </div>
+      {delta && (
+        <div
+          className="flex items-center gap-1 text-xs font-medium"
+          style={{ color: deltaUp ? "var(--success)" : "var(--danger)" }}
+        >
+          {deltaUp ? <ArrowUp size={10} /> : <ArrowDown size={10} />}
+          {delta}
+        </div>
       )}
     </div>
   );
@@ -113,122 +156,49 @@ function RateLimitBanner({ status }: { status: RateLimitStatus | null }) {
   if (!status) return null;
   if (!status.throttled && status.rpm_remaining > 3 && status.last_429_at === null) return null;
 
-  const is429 = status.last_429_at !== null;
-  const msg = is429
-    ? `Provider returned 429. Backing off ${Math.round(status.wait_seconds)}s. Scoring paused.`
+  const msg = status.last_429_at !== null
+    ? `Provider returned 429. Backing off ${Math.round(status.wait_seconds)}s.`
     : status.throttled
-    ? `Rate limited: waiting ${Math.round(status.wait_seconds)}s before next LLM call.`
-    : `Rate limit close: ${status.rpm_remaining} of ${status.rpm_limit} requests/min remaining.`;
+    ? `Rate limited: waiting ${Math.round(status.wait_seconds)}s.`
+    : `Rate limit close: ${status.rpm_remaining} of ${status.rpm_limit} req/min remaining.`;
 
   return (
-    <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-      <div className="flex items-center gap-2">
-        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-        <span>{msg}</span>
-      </div>
-      <Link href="/analytics" className="text-xs font-medium underline underline-offset-2">
+    <div
+      className="flex items-center gap-2 rounded-xl px-4 py-3 text-sm"
+      style={{ background: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)" }}
+    >
+      <AlertTriangle size={14} />
+      <span>{msg}</span>
+      <Link href="/analytics" className="ml-auto text-xs font-medium underline underline-offset-2">
         View rate stats
       </Link>
     </div>
   );
 }
 
-// ── Action cards ──────────────────────────────────────────────────────────────
-
-function ActionCard({
-  icon,
-  count,
-  label,
-  subtitle,
-  href,
-  featured,
-}: {
-  icon: React.ReactNode;
-  count: number;
-  label: string;
-  subtitle: string;
-  href: string;
-  featured?: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className={`flex flex-col gap-2 rounded-xl border bg-white p-5 shadow-sm transition-all hover:shadow-md ${
-        featured ? "border-brand-300 ring-1 ring-brand-200" : "border-slate-200 hover:border-brand-200"
-      }`}
-    >
-      <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-        {icon}
-        {label}
-      </div>
-      <p className="text-4xl font-bold tabular-nums text-slate-900">{count}</p>
-      <p className="text-xs text-slate-400">{subtitle}</p>
-    </Link>
-  );
-}
-
-// ── Pipeline bar ──────────────────────────────────────────────────────────────
-
-function PipelineBar({ stats }: { stats: PipelineStats | null }) {
-  if (!stats || stats.discovered === 0) return null;
-  const total = stats.discovered;
-
-  function Segment({
-    count,
-    label,
-    color,
-  }: {
-    count: number;
-    label: string;
-    color: string;
-  }) {
-    if (count === 0) return null;
-    const pct = Math.max(4, (count / total) * 100);
-    return (
-      <div className="flex flex-col items-center gap-1 min-w-0" style={{ flex: pct }}>
-        <div className={`h-4 w-full rounded-sm ${color}`} />
-        <span className="text-xs text-slate-500 truncate">
-          {count.toLocaleString()} {label}
-        </span>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <div className="mb-3 flex items-baseline gap-2">
-        <h2 className="text-sm font-semibold text-slate-700">Jobs pipeline</h2>
-        <span className="text-xs text-slate-400">{total.toLocaleString()} jobs found by Scout</span>
-      </div>
-      <div className="flex items-end gap-1 overflow-hidden">
-        <Segment count={stats.discovered} label="jobs found" color="bg-slate-200" />
-        <Segment count={stats.scored} label="scored" color="bg-blue-200" />
-        <Segment count={stats.shortlisted} label="shortlisted" color="bg-brand-300" />
-        <Segment count={stats.tailored} label="tailored" color="bg-indigo-300" />
-        <Segment count={stats.approved} label="approved" color="bg-green-400" />
-      </div>
-    </div>
-  );
-}
-
-// ── Empty state (fresh profile, no jobs yet) ──────────────────────────────────
+// ── Empty state ───────────────────────────────────────────────────────────────
 
 function EmptyState({ scrapeIntervalHours }: { scrapeIntervalHours: number }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-10 text-center shadow-sm">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-100">
-        <Zap className="h-6 w-6 text-brand-600" />
+    <div
+      className="rounded-xl p-10 text-center"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+    >
+      <div
+        className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full"
+        style={{ background: "var(--accent-soft)", color: "var(--accent)" }}
+      >
+        <Zap size={24} />
       </div>
-      <h3 className="text-lg font-semibold text-slate-900">Your agents are warming up</h3>
-      <p className="mt-2 text-sm text-slate-500">
+      <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--text)" }}>
+        Your agents are warming up
+      </h3>
+      <p className="text-sm mb-6" style={{ color: "var(--text-muted)" }}>
         First scrape runs in the next {scrapeIntervalHours} hours. Jobs will appear here automatically.
       </p>
-      <div className="mt-6 flex flex-col items-center gap-3">
+      <div className="flex flex-col items-center gap-3">
         <TriggerScrapeButton variant="primary" />
-        <Link
-          href="/settings"
-          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
-        >
+        <Link href="/settings" className="text-sm" style={{ color: "var(--text-muted)" }}>
           Edit profile
         </Link>
       </div>
@@ -241,53 +211,194 @@ function EmptyState({ scrapeIntervalHours }: { scrapeIntervalHours: number }) {
 function FollowUpSection({ reminders }: { reminders: FollowUpReminder[] }) {
   if (reminders.length === 0) return null;
   const overdue = reminders.filter((r) => r.overdue);
-  const upcoming = reminders.filter((r) => !r.overdue);
 
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-          <Bell className="h-4 w-4 text-amber-500" />
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--text)" }}>
+          <Bell size={14} style={{ color: "var(--warning)" }} />
           Follow-up reminders
           {overdue.length > 0 && (
-            <span className="rounded-full bg-red-100 text-red-700 text-xs px-2 py-0.5 font-medium">
+            <span
+              className="text-xs px-2 py-0.5 rounded-full font-medium"
+              style={{ background: "var(--danger-soft)", color: "var(--danger)" }}
+            >
               {overdue.length} overdue
             </span>
           )}
-        </h2>
-        <Link href="/applications" className="flex items-center gap-1 text-xs text-brand-600 hover:underline">
-          View all <ArrowRight className="h-3 w-3" />
+        </div>
+        <Link
+          href="/applications"
+          className="flex items-center gap-1 text-xs font-medium"
+          style={{ color: "var(--accent)" }}
+        >
+          View all <ExternalLink size={10} />
         </Link>
       </div>
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm divide-y divide-slate-100 overflow-hidden">
+      <div
+        className="rounded-xl divide-y overflow-hidden"
+        style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          "--tw-divide-opacity": 1,
+        } as React.CSSProperties}
+      >
         {reminders.slice(0, 5).map((r) => (
           <div key={r.application_id} className="flex items-center justify-between px-4 py-3 gap-4">
             <div className="min-w-0">
-              <p className="text-sm font-medium text-slate-800 truncate">
+              <p className="text-sm font-medium truncate" style={{ color: "var(--text)" }}>
                 {r.job_title ?? "Untitled Role"}
               </p>
               {r.company && (
-                <p className="text-xs text-slate-500 truncate">{r.company}</p>
+                <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{r.company}</p>
               )}
             </div>
             <div className="flex items-center gap-3 shrink-0 text-right">
               <div>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                   {r.days_since_applied}d since applied
                 </p>
-                <p className={`text-xs font-medium ${r.overdue ? "text-red-600" : "text-amber-600"}`}>
+                <p
+                  className="text-xs font-medium"
+                  style={{ color: r.overdue ? "var(--danger)" : "var(--warning)" }}
+                >
                   Follow-up #{r.follow_up_number} {r.overdue ? "overdue" : "due"}
                 </p>
               </div>
-              <span className={`h-2 w-2 rounded-full shrink-0 ${r.overdue ? "bg-red-400" : "bg-amber-400"}`} />
+              <span
+                className="h-2 w-2 rounded-full shrink-0"
+                style={{ background: r.overdue ? "var(--danger)" : "var(--warning)" }}
+              />
             </div>
           </div>
         ))}
         {reminders.length > 5 && (
-          <div className="px-4 py-2 text-xs text-slate-400 text-center">
-            +{reminders.length - 5} more — <Link href="/applications" className="text-brand-600 hover:underline">view all</Link>
+          <div className="px-4 py-2 text-xs text-center" style={{ color: "var(--text-muted)" }}>
+            +{reminders.length - 5} more —{" "}
+            <Link href="/applications" style={{ color: "var(--accent)" }}>
+              view all
+            </Link>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Hero section ──────────────────────────────────────────────────────────────
+
+function HeroSection({
+  reviewCount,
+  pipelineStats,
+  agentStatus,
+  scrapeIntervalHours,
+}: {
+  reviewCount: number;
+  pipelineStats: PipelineStats | null;
+  agentStatus: AllAgentStatus | null;
+  scrapeIntervalHours: number;
+}) {
+  const health = getSystemHealth(agentStatus);
+  const scout = agentStatus?.agents.find((a) => a.agent_name === "scout");
+  const lastRunAt = scout?.last_run_at ? new Date(scout.last_run_at) : null;
+  const nextRunAt = lastRunAt ? addHours(lastRunAt, scrapeIntervalHours) : null;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-[1fr_280px] gap-4 mb-6">
+      <div
+        className="rounded-xl p-6"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      >
+        <h2 className="text-xl font-semibold mb-2" style={{ color: "var(--text)", letterSpacing: "-0.015em" }}>
+          Good morning.
+        </h2>
+        <p className="text-sm mb-5" style={{ color: "var(--text-dim)", lineHeight: 1.6 }}>
+          {reviewCount > 0 ? (
+            <>
+              Hatch found{" "}
+              <strong style={{ color: "var(--text)" }}>{reviewCount} new roles</strong> that match
+              your filters. Review them when you have a moment.
+            </>
+          ) : (
+            "Your agents are working in the background. New matches will appear here."
+          )}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {reviewCount > 0 && (
+            <Link
+              href="/jobs"
+              className="inline-flex items-center gap-1.5 rounded-lg font-medium text-sm"
+              style={{
+                padding: "10px 16px",
+                background: "var(--accent)",
+                color: "#fff",
+                borderRadius: "var(--radius-sm)",
+              }}
+            >
+              <Inbox size={14} />
+              Review {reviewCount} new role{reviewCount !== 1 ? "s" : ""}
+            </Link>
+          )}
+          <Link
+            href="/applications"
+            className="inline-flex items-center gap-1.5 rounded-lg font-medium text-sm"
+            style={{
+              padding: "10px 16px",
+              background: "var(--surface-2)",
+              color: "var(--text)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+            }}
+          >
+            Open pipeline
+          </Link>
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-5"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-xs font-medium uppercase" style={{ color: "var(--text-muted)", letterSpacing: "0.06em" }}>
+            Status
+          </span>
+          <span
+            className="flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full"
+            style={{
+              background: health === "green" ? "var(--success-soft)" : "var(--warning-soft)",
+              color: health === "green" ? "var(--success)" : "var(--warning)",
+            }}
+          >
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ background: health === "green" ? "var(--success)" : "var(--warning)" }}
+            />
+            {health === "green" ? "Active" : "Idle"}
+          </span>
+        </div>
+        <div className="space-y-3">
+          {[
+            { label: "AI sourced", value: String(pipelineStats?.discovered ?? 0) },
+            { label: "Shortlisted", value: String(pipelineStats?.shortlisted ?? 0) },
+            { label: "Applied", value: String(pipelineStats?.approved ?? 0) },
+            {
+              label: "Last scrape",
+              value: lastRunAt ? formatDistanceToNow(lastRunAt, { addSuffix: true }) : "—",
+            },
+            {
+              label: "Next scrape",
+              value: nextRunAt && nextRunAt > new Date()
+                ? formatDistanceToNow(nextRunAt)
+                : `every ${scrapeIntervalHours}h`,
+            },
+          ].map(({ label, value }) => (
+            <div key={label} className="flex items-center justify-between text-sm">
+              <span style={{ color: "var(--text-muted)" }}>{label}</span>
+              <span className="font-medium" style={{ color: "var(--text)" }}>{value}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -319,131 +430,77 @@ export default async function DashboardPage() {
     () => ({ items: [], total: 0 }),
   );
 
-  // Dashboard subtitle from profile
-  const roles = rawProfile.search?.target_roles?.join(", ") ?? "";
-  const locationParts =
-    rawProfile.search?.locations
-      ?.map((l) => (l.remote_preference === "remote" ? "Remote" : l.city))
-      .filter(Boolean) ?? [];
-  const locations = locationParts.join(", ");
-  const subtitle = roles ? [roles, locations].filter(Boolean).join(" — ") : null;
-
-  // Action card counts
   const reviewCount = pendingApprovals.length;
+  const noJobsYet = (pipelineStats?.discovered ?? 0) === 0;
+
   const prepCount = upcomingInterviews.filter(
     (i) => i.scheduled_at != null && new Date(i.scheduled_at) > new Date(),
   ).length;
-  const newMatchCount = topJobs.total;
-  const aboveThresholdCount = topJobs.items.filter(
-    (j) => j.match_score != null && j.match_score >= threshold,
-  ).length;
-
-  const allCaughtUp = reviewCount === 0 && prepCount === 0 && newMatchCount === 0;
-  const noJobsYet = (pipelineStats?.discovered ?? 0) === 0;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Page header */}
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Home</h1>
-        {subtitle && (
-          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
-        )}
+        <h1 className="text-2xl font-bold mb-1" style={{ color: "var(--text)", letterSpacing: "-0.015em" }}>
+          Home
+        </h1>
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+          Your job search at a glance
+        </p>
       </div>
 
-      {/* Section A: Agent status strip */}
-      <AgentStatusStrip agentStatus={agentStatus} scrapeIntervalHours={scrapeIntervalHours} />
+      {/* Alert banners */}
+      <AgentStatusBanner agentStatus={agentStatus} scrapeIntervalHours={scrapeIntervalHours} />
       <RateLimitBanner status={rateLimitStatus} />
 
-      {/* Empty state for fresh setups */}
       {noJobsYet ? (
         <EmptyState scrapeIntervalHours={scrapeIntervalHours} />
       ) : (
         <>
-          {/* Section B: Action cards */}
-          {allCaughtUp ? (
-            <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
-              {"You're all caught up."}
-              {pipelineStats && (() => {
-                const scoutLastRun = agentStatus?.agents.find((a) => a.agent_name === "scout")?.last_run_at;
-                const nextRun = scoutLastRun ? addHours(new Date(scoutLastRun), scrapeIntervalHours) : null;
-                const isFuture = nextRun && nextRun > new Date();
-                return (
-                  <span className="font-normal text-green-700">
-                    {isFuture
-                      ? `Next scrape ${formatDistanceToNow(nextRun!, { addSuffix: true })}.`
-                      : `Scout runs every ${scrapeIntervalHours}h.`}
-                  </span>
-                );
-              })()}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              {reviewCount > 0 && (
-                <ActionCard
-                  featured
-                  icon={<ClipboardCheck className="h-4 w-4 text-brand-500" />}
-                  count={reviewCount}
-                  label="Review needed"
-                  subtitle="tailored applications ready"
-                  href="/approvals"
-                />
-              )}
-              {prepCount > 0 && (
-                <ActionCard
-                  icon={<Briefcase className="h-4 w-4 text-indigo-500" />}
-                  count={prepCount}
-                  label="Interview coming up"
-                  subtitle={
-                    upcomingInterviews[0]?.scheduled_at
-                      ? formatDistanceToNow(new Date(upcomingInterviews[0].scheduled_at), { addSuffix: true })
-                      : "upcoming interviews"
-                  }
-                  href="/applications"
-                />
-              )}
-              {newMatchCount > 0 && (
-                <ActionCard
-                  icon={<Stars className="h-4 w-4 text-amber-500" />}
-                  count={newMatchCount}
-                  label="New matches"
-                  subtitle={
-                    aboveThresholdCount > 0
-                      ? `${aboveThresholdCount} above ${Math.round(threshold * 100)}% threshold`
-                      : "jobs discovered recently"
-                  }
-                  href={`/jobs?min_match_score=${threshold}`}
-                />
-              )}
-            </div>
-          )}
+          {/* Hero: greeting + status */}
+          <HeroSection
+            reviewCount={reviewCount}
+            pipelineStats={pipelineStats}
+            agentStatus={agentStatus}
+            scrapeIntervalHours={scrapeIntervalHours}
+          />
 
-          {/* Section C: Top matches */}
-          {topJobs.items.length > 0 && (
-            <div>
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-700">Top matches</h2>
-                <Link href="/jobs" className="flex items-center gap-1 text-xs text-brand-600 hover:underline">
-                  View all jobs <ArrowRight className="h-3 w-3" />
-                </Link>
-              </div>
-              <div className="space-y-2">
-                {topJobs.items.map((job) => (
-                  <JobCard key={job.id} job={job} threshold={threshold} />
-                ))}
-              </div>
-            </div>
-          )}
+          {/* KPI strip */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <KpiCard
+              icon={<Sparkles size={12} />}
+              label="AI-sourced"
+              value={pipelineStats?.discovered ?? 0}
+            />
+            <KpiCard
+              icon={<CheckCircle2 size={12} />}
+              label="Shortlisted"
+              value={pipelineStats?.shortlisted ?? 0}
+            />
+            <KpiCard
+              icon={<Send size={12} />}
+              label="Applied"
+              value={pipelineStats?.approved ?? 0}
+            />
+            <KpiCard
+              icon={<Target size={12} />}
+              label="Prep sessions"
+              value={prepCount}
+            />
+          </div>
 
-          {/* Section D: Pipeline bar */}
-          <PipelineBar stats={pipelineStats} />
-
-          {/* Section E: Follow-up reminders */}
+          {/* Follow-up reminders */}
           <FollowUpSection reminders={followUpReminders} />
 
-          {/* Section F: Activity timeline */}
-          <ActivityTimeline />
+          {/* Activity timeline */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
+                Recent activity
+              </h2>
+            </div>
+            <ActivityTimeline />
+          </div>
         </>
       )}
     </div>
