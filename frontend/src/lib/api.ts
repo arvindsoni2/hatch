@@ -311,7 +311,7 @@ export async function fetchApplications(
   if (filters.search) params.set("search", filters.search);
   params.set("skip", String(skip));
   params.set("limit", String(limit));
-  return apiFetch<PaginatedResponse<ApplicationListItem>>(`/api/applications/?${params}`);
+  return apiFetch<PaginatedResponse<ApplicationListItem>>(`/api/applications?${params}`);
 }
 
 export async function fetchApplication(id: string): Promise<Application> {
@@ -325,7 +325,7 @@ export async function createApplication(data: {
   notes?: string;
   agency_name?: string;
 }): Promise<Application> {
-  return apiFetch<Application>("/api/applications/", {
+  return apiFetch<Application>("/api/applications", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -383,7 +383,7 @@ export async function createInterview(data: {
   interviewer_name?: string;
   prep_notes?: string;
 }): Promise<InterviewRound> {
-  return apiFetch<InterviewRound>("/api/interviews/", {
+  return apiFetch<InterviewRound>("/api/interviews", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),

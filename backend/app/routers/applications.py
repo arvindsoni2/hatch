@@ -36,7 +36,8 @@ def get_app_service(db: AsyncSession = Depends(get_db)) -> ApplicationService:
     return ApplicationService(app_repo, interview_repo)
 
 
-@router.get("/", response_model=PaginatedResponse[ApplicationListItem])
+@router.get("", response_model=PaginatedResponse[ApplicationListItem])
+@router.get("/", response_model=PaginatedResponse[ApplicationListItem], include_in_schema=False)
 async def list_applications(
     status: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
@@ -161,7 +162,8 @@ async def track_from_job(
     return await service.track_from_job(job_id)
 
 
-@router.post("/", response_model=ApplicationRead, status_code=201)
+@router.post("", response_model=ApplicationRead, status_code=201)
+@router.post("/", response_model=ApplicationRead, status_code=201, include_in_schema=False)
 async def create_application(
     data: ApplicationCreate,
     service: ApplicationService = Depends(get_app_service),
