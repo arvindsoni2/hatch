@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
@@ -16,12 +17,16 @@ from app.models.job import JobPosting
 from app.schemas.job import JobPostingCreate
 
 # ──────────────────────── In-Memory SQLite Test DB ────────────────────────
+# StaticPool forces all connections to reuse the same underlying connection,
+# ensuring the :memory: database is shared consistently across the session.
+# Without it, each SQLAlchemy checkout gets a *different* in-memory database.
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
     connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
     echo=False,
 )
 

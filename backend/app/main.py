@@ -125,11 +125,12 @@ def create_app() -> FastAPI:
     """
     _debug = settings.LOG_LEVEL.upper() == "DEBUG"
     app = FastAPI(
-        title="JobPilot v2 API",
-        description="Autonomous multi-agent job search automation — profile-driven, human-in-the-loop.",
+        title="Hatch API",
+        description="Autonomous multi-agent job search — profile-driven, human-in-the-loop.",
         version="2.0.0",
-        docs_url="/docs" if _debug else None,
+        docs_url="/docs",
         redoc_url="/redoc" if _debug else None,
+        redirect_slashes=False,
         lifespan=lifespan,
     )
 

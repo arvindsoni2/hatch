@@ -142,7 +142,7 @@ export async function fetchJobs(
     ...(filters.hide_ghosts !== undefined ? { hide_ghosts: filters.hide_ghosts } : {}),
   };
   const qs = buildQueryString(params);
-  return apiFetch<PaginatedResponse<Job>>(`/api/jobs/${qs}`);
+  return apiFetch<PaginatedResponse<Job>>(`/api/jobs${qs}`);
 }
 
 /**

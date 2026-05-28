@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport
 
 from app.main import app
 from app.schemas.coach import (
@@ -87,7 +87,7 @@ async def test_create_session_returns_201() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.create_session = AsyncMock(return_value=SAMPLE_SESSION_RESPONSE)
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/coach/sessions",
                 json={
@@ -108,7 +108,7 @@ async def test_submit_answer_returns_200() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.submit_answer = AsyncMock(return_value=SAMPLE_EVALUATION)
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/coach/sessions/session-uuid-001/submit-answer",
                 params={"question_id": "q-uuid-001"},
@@ -126,7 +126,7 @@ async def test_end_session_returns_200() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.end_session = AsyncMock(return_value=SAMPLE_REPORT)
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/api/coach/sessions/session-uuid-001/end")
     assert response.status_code == 200
     data = response.json()
@@ -141,7 +141,7 @@ async def test_get_session_not_found_returns_404() -> None:
         instance = MockSvc.return_value
         from fastapi import HTTPException
         instance.get_session = AsyncMock(side_effect=HTTPException(status_code=404, detail="Session not found"))
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/coach/sessions/nonexistent-id")
     assert response.status_code == 404
     assert "Session not found" in response.json()["detail"]
@@ -153,7 +153,7 @@ async def test_research_company_returns_200() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.research_company = AsyncMock(return_value=SAMPLE_RESEARCH)
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/coach/research",
                 params={"company_name": "Accenture", "sector": "Consulting"},
@@ -169,7 +169,7 @@ async def test_list_sessions_returns_200() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.list_sessions = AsyncMock(return_value=[])
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/api/coach/sessions")
     assert response.status_code == 200
     assert isinstance(response.json(), list)

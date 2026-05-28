@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
+from app.models.job import JobPosting
 from app.repositories.application_repository import ApplicationRepository
 from app.repositories.interview_repository import InterviewRepository
 from app.schemas.application import ApplicationCreate, ApplicationStatusUpdate
@@ -57,6 +58,14 @@ class TestCreateApplication:
         """Application is created and linked to a job_id."""
         service = make_service(db_session)
         job_id = str(uuid.uuid4())
+        # Repository validates job existence before creating application
+        job = JobPosting(id=job_id, title="Test Role", company="Test Co",
+                         url="https://example.com/job/1", source="test",
+                         ir35_status="unknown", employment_type="unknown",
+                         working_pattern="unknown", rate_type="unknown",
+                         created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+        db_session.add(job)
+        await db_session.commit()
         data = ApplicationCreate(job_id=job_id, status="discovered", agency_name="Acme")
         result = await service.create_application(data)
 
