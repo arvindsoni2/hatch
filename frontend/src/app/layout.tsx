@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Navigation } from "@/components/Navigation";
+import { BottomNav } from "@/components/BottomNav";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -36,11 +37,13 @@ export default function RootLayout({
       <body className={`${inter.variable} font-sans antialiased bg-slate-50 text-slate-900`}>
         <Navigation />
 
-        <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <main className="mx-auto max-w-7xl px-4 py-8 pb-24 sm:px-6 lg:px-8 md:pb-8">
           {children}
         </main>
 
-        <footer className="mt-16 border-t border-slate-200 bg-white py-6">
+        <BottomNav />
+
+        <footer className="mt-16 border-t border-slate-200 bg-white py-6 hidden md:block">
           <div className="mx-auto max-w-7xl px-4 text-center text-sm text-slate-400 sm:px-6 lg:px-8">
             JobPilot — autonomous job search, human-in-the-loop approvals
           </div>
