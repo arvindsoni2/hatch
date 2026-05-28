@@ -116,8 +116,8 @@ export default function JobsPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Approval queue</h1>
+          <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
             {showArchived
               ? `Archived jobs — ${total.toLocaleString()} total`
               : !showAll
@@ -171,7 +171,7 @@ export default function JobsPage() {
 
       {/* Archive result notice */}
       {archiveResult && (
-        <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-100 rounded-lg px-4 py-2.5">
+        <div className="flex items-center gap-2 text-sm rounded-lg px-4 py-2.5" style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}>
           <Archive className="h-4 w-4 text-slate-400" />
           Archived {archiveResult.archived} job{archiveResult.archived !== 1 ? "s" : ""}.
           <button onClick={() => setArchiveResult(null)} className="ml-auto text-xs underline">Dismiss</button>
@@ -217,11 +217,11 @@ export default function JobsPage() {
           </Button>
         </div>
       ) : jobs.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center">
+        <div className="rounded-xl p-12 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           {showArchived ? (
-            <p className="text-slate-500">No archived jobs. Jobs older than your configured threshold will appear here after running the archive.</p>
+            <p style={{ color: "var(--text-muted)" }}>No archived jobs. Jobs older than your configured threshold will appear here after running the archive.</p>
           ) : showAll ? (
-            <p className="text-slate-500">No jobs found. Try adjusting your filters or trigger a scrape.</p>
+            <p style={{ color: "var(--text-muted)" }}>No jobs found. Try adjusting your filters or trigger a scrape.</p>
           ) : (
             <div className="space-y-2">
               <p className="text-slate-700 font-medium">No high-match jobs right now.</p>

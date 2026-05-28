@@ -101,10 +101,13 @@ interface ColumnProps {
 
 function KanbanColumn({ status, items, onCardClick, overdueIds }: ColumnProps) {
   return (
-    <div className={cn("flex flex-col min-w-[280px] w-[280px] [scroll-snap-align:start] flex-shrink-0 rounded-xl border-t-4 bg-slate-50", COLUMN_COLORS[status])}>
-      <div className="px-3 py-2 flex items-center justify-between border-b border-slate-200">
-        <span className="text-sm font-semibold text-slate-700">{COLUMN_LABELS[status]}</span>
-        <span className="text-xs bg-white border border-slate-200 rounded-full px-2 py-0.5 text-slate-500">
+    <div
+      className={cn("flex flex-col min-w-[280px] w-[280px] [scroll-snap-align:start] flex-shrink-0 rounded-xl border-t-4", COLUMN_COLORS[status])}
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+    >
+      <div className="px-3 py-2 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
+        <span className="text-sm font-semibold" style={{ color: "var(--text-dim)" }}>{COLUMN_LABELS[status]}</span>
+        <span className="text-xs rounded-full px-2 py-0.5 font-mono" style={{ background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
           {items.length}
         </span>
       </div>
@@ -114,7 +117,7 @@ function KanbanColumn({ status, items, onCardClick, overdueIds }: ColumnProps) {
             <SortableCard key={app.id} application={app} onCardClick={onCardClick} isOverdue={overdueIds?.has(app.id)} />
           ))}
           {items.length === 0 && (
-            <div className="text-center text-xs text-slate-400 py-6 border-2 border-dashed border-slate-200 rounded-lg">
+            <div className="text-center text-xs py-6 rounded-lg" style={{ color: "var(--text-muted)", border: "2px dashed var(--border-strong)" }}>
               Drop here
             </div>
           )}
@@ -139,9 +142,9 @@ function StatsRibbon({ stats }: { stats: KanbanStats }) {
           color: stats.overdue_count > 0 ? "text-red-600" : "text-slate-500",
         },
       ].map(({ label, value, color }) => (
-        <div key={label} className="bg-white border border-slate-200 rounded-lg px-4 py-2 text-center">
+        <div key={label} className="rounded-lg px-4 py-2 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <div className={cn("text-xl font-bold", color)}>{value}</div>
-          <div className="text-xs text-slate-500">{label}</div>
+          <div className="text-xs" style={{ color: "var(--text-muted)" }}>{label}</div>
         </div>
       ))}
     </div>

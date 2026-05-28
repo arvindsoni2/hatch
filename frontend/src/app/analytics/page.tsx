@@ -23,10 +23,10 @@ export const revalidate = 300;
 
 function StatCard({ label, value, color, sub }: { label: string; value: string | number; color: string; sub?: string }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+    <div className="rounded-xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
       <div className={`text-2xl font-bold ${color}`}>{value}</div>
-      <div className="text-xs text-slate-500 mt-1">{label}</div>
-      {sub && <div className="text-xs text-slate-400 mt-0.5">{sub}</div>}
+      <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{label}</div>
+      {sub && <div className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</div>}
     </div>
   );
 }
@@ -65,9 +65,12 @@ export default async function AnalyticsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50">
+    <main className="min-h-screen" style={{ background: "var(--bg)" }}>
       <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 sm:py-8 space-y-8">
-        <h1 className="text-2xl font-bold text-slate-900">Analytics</h1>
+        <div>
+          <h1 className="text-[28px] font-semibold tracking-tight" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Analytics</h1>
+          <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>How your search is performing</p>
+        </div>
 
         {/* Section A: Summary stat cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -94,8 +97,8 @@ export default async function AnalyticsPage() {
         </div>
 
         {/* Section B: Score Distribution */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <h2 className="text-sm font-semibold text-slate-700 mb-1">Score Distribution</h2>
+        <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Score Distribution</h2>
           <p className="text-xs text-slate-400 mb-4">
             {scoreDist ? `${scoreDist.total} jobs scored` : "No scored jobs yet"} — green bars are above your shortlist threshold
           </p>
@@ -110,15 +113,15 @@ export default async function AnalyticsPage() {
         </div>
 
         {/* Section C: Pipeline Funnel */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <h2 className="text-sm font-semibold text-slate-700 mb-4">Application Funnel</h2>
+        <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <h2 className="text-sm font-semibold mb-4" style={{ color: "var(--text)" }}>Application Funnel</h2>
           <FunnelChart stages={funnel.stages} />
         </div>
 
         {/* Section D: ATS Score → Response Rate */}
         {atsCorrelation && !atsCorrelation.message && atsCorrelation.buckets.length > 0 ? (
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-700 mb-1">ATS Score → Response Rate</h2>
+          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>ATS Score → Response Rate</h2>
             <p className="text-xs text-slate-400 mb-4">
               {atsCorrelation.total_scored} CVs scored — does a higher ATS score translate to more responses?
             </p>
@@ -140,17 +143,17 @@ export default async function AnalyticsPage() {
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-700 mb-2">ATS Score → Response Rate</h2>
+          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold mb-2" style={{ color: "var(--text)" }}>ATS Score → Response Rate</h2>
             <p className="text-sm text-slate-400">{atsCorrelation?.message ?? "No data yet."}</p>
           </div>
         )}
 
         {/* Section E: Cost Tracking */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h2 className="text-sm font-semibold text-slate-700">LLM Cost Tracking (30 days)</h2>
+              <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>LLM Cost Tracking (30 days)</h2>
               {costsMonthly && (
                 <p className="text-xs text-slate-400 mt-0.5">
                   This month: <span className="font-medium text-slate-700">£{costsMonthly.total.toFixed(4)}</span>
@@ -172,8 +175,8 @@ export default async function AnalyticsPage() {
         </div>
 
         {/* Section F: Agent Performance */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6">
-          <h2 className="text-sm font-semibold text-slate-700 mb-4">Agent Performance</h2>
+        <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <h2 className="text-sm font-semibold mb-4" style={{ color: "var(--text)" }}>Agent Performance</h2>
           {agentPerf && agentPerf.agents.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -216,8 +219,8 @@ export default async function AnalyticsPage() {
 
         {/* Section G: Skills */}
         {skillFrequency && !skillFrequency.message && skillFrequency.skills.length > 0 && (
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-700 mb-1">Top Skills in Matched Jobs</h2>
+          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Top Skills in Matched Jobs</h2>
             <p className="text-xs text-slate-400 mb-4">
               Keywords appearing most frequently across {skillFrequency.total_jobs_analyzed} scored jobs
             </p>
@@ -242,8 +245,8 @@ export default async function AnalyticsPage() {
 
         {/* Section G2: Skill Gaps */}
         {skillGaps && !skillGaps.message && skillGaps.skills.length > 0 && (
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-700 mb-1">Skill Gaps to Address</h2>
+          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Skill Gaps to Address</h2>
             <p className="text-xs text-slate-400 mb-4">
               Skills required by matched jobs that aren&apos;t in your profile — consider adding them
             </p>
@@ -268,8 +271,8 @@ export default async function AnalyticsPage() {
 
         {/* Section H: Rate Limit Health */}
         {rateLimitStatus && (
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-700 mb-1">LLM Rate Limit Health</h2>
+          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>LLM Rate Limit Health</h2>
             <p className="text-xs text-slate-400 mb-4">Current scorer API usage against provider limits</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="text-center">
@@ -309,12 +312,12 @@ export default async function AnalyticsPage() {
 
         {/* Section I + J: Source Breakdown & Weekly Trends */}
         <div className="grid md:grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-700 mb-4">Source Breakdown</h2>
+          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold mb-4" style={{ color: "var(--text)" }}>Source Breakdown</h2>
             <SourceBreakdownChart sources={sources} />
           </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <h2 className="text-sm font-semibold text-slate-700 mb-4">
+          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="text-sm font-semibold mb-4" style={{ color: "var(--text)" }}>
               Weekly Trends (last {trends.weeks.length} weeks)
             </h2>
             <TrendChart weeks={trends.weeks} />

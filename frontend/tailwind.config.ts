@@ -10,6 +10,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // Semantic CSS-variable tokens — theme-aware (use instead of bg-white/text-slate-*)
+        bg: "var(--bg)",
+        surface: "var(--surface)",
+        "surface-2": "var(--surface-2)",
+        "surface-3": "var(--surface-3)",
+        border: "var(--border)",
+        fg: "var(--text)",
+        dim: "var(--text-dim)",
+        muted: "var(--text-muted)",
+        accent: "var(--accent)",
         // Hatch brand colours (blue accent)
         brand: {
           50: "#eff6ff",

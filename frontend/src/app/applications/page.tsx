@@ -62,14 +62,14 @@ export default function ApplicationsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50">
+    <main className="min-h-screen" style={{ background: "var(--bg)" }}>
       <div className="max-w-[1400px] mx-auto px-4 py-6 sm:px-6 sm:py-8">
         {/* Page header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Applications</h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Track and manage your contract applications
+            <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Pipeline</h1>
+            <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>
+              Track applications through every stage
             </p>
           </div>
           <div className="flex gap-2 items-center">
