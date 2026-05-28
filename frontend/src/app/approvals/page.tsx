@@ -103,9 +103,9 @@ export default function ApprovalsPage() {
             {approvals.length} application{approvals.length !== 1 ? "s" : ""} awaiting your review
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={refresh} className="min-h-[44px] sm:min-h-0 self-start">
-          <RefreshCw className="h-4 w-4 mr-1.5" /> Refresh
-        </Button>
+        <button onClick={refresh} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium min-h-[44px] sm:min-h-0" style={{ background: "var(--surface-2)", color: "var(--text-dim)", border: "1px solid var(--border)" }}>
+          <RefreshCw className="h-4 w-4" /> Refresh
+        </button>
       </div>
 
       {approvals.length === 0 && (
