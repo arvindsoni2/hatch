@@ -14,7 +14,9 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG API_URL=http://127.0.0.1:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV API_URL=$API_URL
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
