@@ -1392,7 +1392,7 @@ export interface RawProfile {
     locations?: Array<{ city?: string; country?: string; remote_preference?: string }>;
     contract_type?: string;
   };
-  compensation?: { min_rate?: number; max_rate?: number; rate_type?: string; currency?: string };
+  compensation?: { min_rate?: number; max_rate?: number; rate_type?: string; currency?: string; ir35_preference?: string; legal_preferences?: Record<string, string> };
   skills?: { primary?: string[]; secondary?: string[]; certifications?: string[] };
   preferences?: { scrape_interval_hours?: number; max_tailor_batch?: number };
   scoring?: { shortlist_threshold?: number };

@@ -75,6 +75,7 @@ interface ProfileData {
     currency?: string
     rate_type?: string
     ir35_preference?: string
+    legal_preferences?: Record<string, string>
   }
   skills?: { primary?: string[]; secondary?: string[]; certifications?: string[] }
   scoring?: { method?: string; shortlist_threshold?: number }

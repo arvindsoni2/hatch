@@ -53,6 +53,7 @@ interface ApprovalDetail {
     location: string | null;
     rate_text: string | null;
     ir35_status: string | null;
+    legal_fields?: Record<string, string> | null;
     description: string | null;
   } | null;
   score: {
