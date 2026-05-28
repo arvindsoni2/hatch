@@ -15,7 +15,7 @@ import {
   Moon,
   Bell,
 } from "lucide-react";
-import { fetchPendingApprovals } from "@/lib/api";
+import { fetchPendingApprovals, fetchRawProfile } from "@/lib/api";
 
 const NAV_GROUPS = [
   {
@@ -75,6 +75,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const { theme, toggle } = useTheme();
   const [approvalCount, setApprovalCount] = useState(0);
+  const [profileName, setProfileName] = useState<string | null>(null);
+  const [profileTitle, setProfileTitle] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadCount() {
@@ -88,6 +90,15 @@ export function Sidebar() {
     void loadCount();
     const interval = setInterval(() => void loadCount(), 30_000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    fetchRawProfile()
+      .then((profile) => {
+        if (profile.candidate?.name) setProfileName(profile.candidate.name);
+        if (profile.candidate?.title) setProfileTitle(profile.candidate.title);
+      })
+      .catch(() => {});
   }, []);
 
   return (
@@ -203,23 +214,24 @@ export function Sidebar() {
           style={{ color: "var(--text-dim)", borderRadius: "var(--radius-sm)" }}
         >
           <div
-            className="flex items-center justify-center rounded-full font-semibold text-xs"
+            className="flex items-center justify-center rounded-full font-semibold text-xs shrink-0"
             style={{
               width: 28,
               height: 28,
               background: "linear-gradient(135deg, #f97316, #ec4899)",
               color: "#fff",
-              flexShrink: 0,
             }}
           >
-            AK
+            {profileName
+              ? profileName.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase()
+              : "?"}
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium truncate" style={{ color: "var(--text)" }}>
-              Alex Kim
+              {profileName ?? "Profile"}
             </div>
             <div className="truncate" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-              Settings
+              {profileTitle ?? "Settings"}
             </div>
           </div>
           <Settings size={14} />

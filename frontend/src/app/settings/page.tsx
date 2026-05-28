@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import {
   getDigestStatus,
+  updateDigestSettings,
   sendDigest,
   DigestStatus,
   API_BASE,
@@ -462,12 +463,17 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
   const [digestError, setDigestError] = useState<string | null>(null)
   const [sendingDigest, setSendingDigest] = useState(false)
   const [toast, setToast] = useState<{ message: string; ok: boolean } | null>(null)
+  const [editingTimezone, setEditingTimezone] = useState(false)
+  const [timezoneInput, setTimezoneInput] = useState("")
+  const [savingTimezone, setSavingTimezone] = useState(false)
 
   useEffect(() => {
     const load = async () => {
       setDigestLoading(true)
       try {
-        setDigestStatus(await getDigestStatus())
+        const status = await getDigestStatus()
+        setDigestStatus(status)
+        setTimezoneInput(status.timezone || "UTC")
       } catch (err) {
         setDigestError(err instanceof Error ? err.message : "Failed to load digest status")
       } finally {
@@ -476,6 +482,23 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
     }
     void load()
   }, [])
+
+  const handleSaveTimezone = async () => {
+    if (!timezoneInput.trim()) return
+    setSavingTimezone(true)
+    try {
+      const updated = await updateDigestSettings({ timezone: timezoneInput.trim() })
+      setDigestStatus(updated)
+      setEditingTimezone(false)
+      setToast({ ok: true, message: "Timezone updated" })
+      setTimeout(() => setToast(null), 3000)
+    } catch (err) {
+      setToast({ ok: false, message: err instanceof Error ? err.message : "Failed to update timezone" })
+      setTimeout(() => setToast(null), 4000)
+    } finally {
+      setSavingTimezone(false)
+    }
+  }
 
   const handleSendDigest = async () => {
     setSendingDigest(true)
@@ -502,7 +525,41 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
             <div className="divide-y divide-slate-100">
               <FieldRow label="Enabled" value={<Badge variant={toBoolean(digestStatus?.enabled) ? "green" : "slate"}>{toBoolean(digestStatus?.enabled) ? "Yes" : "No"}</Badge>} />
               <FieldRow label="Send time" value={typeof digestStatus?.time === "string" && digestStatus.time ? digestStatus.time : "08:00"} />
-              <FieldRow label="Timezone" value={typeof digestStatus?.timezone === "string" && digestStatus.timezone ? digestStatus.timezone : "Europe/London"} />
+              <div className="flex items-center justify-between py-3 gap-4">
+                <span className="text-sm text-slate-500 shrink-0">Timezone</span>
+                {editingTimezone ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={timezoneInput}
+                      onChange={(e) => setTimezoneInput(e.target.value)}
+                      placeholder="e.g. Asia/Kolkata"
+                      className="rounded border border-slate-300 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-brand-500 w-44"
+                      onKeyDown={(e) => { if (e.key === "Enter") void handleSaveTimezone(); if (e.key === "Escape") setEditingTimezone(false); }}
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => void handleSaveTimezone()}
+                      disabled={savingTimezone}
+                      className="rounded bg-brand-600 px-2 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                    >
+                      {savingTimezone ? "Saving…" : "Save"}
+                    </button>
+                    <button onClick={() => setEditingTimezone(false)} className="text-xs text-slate-400 hover:text-slate-600">Cancel</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-slate-900">
+                      {digestStatus?.timezone || "UTC"}
+                    </span>
+                    <button
+                      onClick={() => { setTimezoneInput(digestStatus?.timezone || "UTC"); setEditingTimezone(true); }}
+                      className="text-xs text-brand-600 hover:underline"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                )}
+              </div>
               <FieldRow label="Frequency" value={typeof digestStatus?.frequency === "string" && digestStatus.frequency ? digestStatus.frequency : "daily"} />
               <FieldRow label="SMTP configured" value={<Badge variant={toBoolean(digestStatus?.smtp_configured) ? "green" : "amber"}>{toBoolean(digestStatus?.smtp_configured) ? "Yes" : "No"}</Badge>} />
             </div>

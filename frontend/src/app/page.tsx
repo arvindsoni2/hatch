@@ -78,7 +78,7 @@ function AgentStatusBanner({
         </div>
         <div className="flex items-center gap-3">
           <Link href="/settings" className="text-xs font-medium underline underline-offset-2">
-            Check agent status
+            Check settings
           </Link>
           <TriggerScrapeButton variant="link" />
         </div>

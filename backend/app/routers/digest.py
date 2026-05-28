@@ -74,3 +74,70 @@ async def digest_status() -> dict[str, object]:
         "smtp_configured": bool(settings.SMTP_USER),
         "recipient": settings.NOTIFICATION_EMAIL or None,
     }
+
+
+@router.patch("/settings")
+async def update_digest_settings(data: dict[str, object]) -> dict[str, object]:
+    """Update digest settings (timezone, send time, frequency, enabled).
+
+    Writes to data/api_keys.env so settings survive container restarts.
+    Returns updated digest status.
+    """
+    import os  # noqa: PLC0415
+    import re  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+    from ..config import settings  # noqa: PLC0415
+
+    allowed = {
+        "DIGEST_TIMEZONE": str,
+        "DIGEST_TIME": str,
+        "DIGEST_FREQUENCY": str,
+        "DIGEST_ENABLED": str,
+    }
+    env_file = Path(os.getenv("DATA_DIR", "./data")) / "api_keys.env"
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+
+    field_map = {
+        "timezone": "DIGEST_TIMEZONE",
+        "time": "DIGEST_TIME",
+        "frequency": "DIGEST_FREQUENCY",
+        "enabled": "DIGEST_ENABLED",
+    }
+
+    updates: dict[str, str] = {}
+    for field, env_key in field_map.items():
+        if field in data:
+            updates[env_key] = str(data[field])
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields provided")
+
+    # Read existing env file
+    lines: list[str] = []
+    if env_file.exists():
+        lines = env_file.read_text().splitlines()
+
+    for env_key, value in updates.items():
+        updated = False
+        new_lines = []
+        for line in lines:
+            if re.match(rf"^{re.escape(env_key)}\s*=", line):
+                new_lines.append(f"{env_key}={value}")
+                updated = True
+            else:
+                new_lines.append(line)
+        if not updated:
+            new_lines.append(f"{env_key}={value}")
+        lines = new_lines
+        os.environ[env_key] = value
+
+    env_file.write_text("\n".join(lines) + "\n")
+
+    return {
+        "enabled": os.environ.get("DIGEST_ENABLED", str(settings.DIGEST_ENABLED)),
+        "time": os.environ.get("DIGEST_TIME", settings.DIGEST_TIME),
+        "timezone": os.environ.get("DIGEST_TIMEZONE", settings.DIGEST_TIMEZONE),
+        "frequency": os.environ.get("DIGEST_FREQUENCY", settings.DIGEST_FREQUENCY),
+        "smtp_configured": bool(settings.SMTP_USER),
+        "recipient": settings.NOTIFICATION_EMAIL or None,
+    }

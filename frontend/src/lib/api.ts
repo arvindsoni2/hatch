@@ -990,6 +990,16 @@ export async function getDigestStatus(): Promise<DigestStatus> {
   return apiFetch<DigestStatus>('/api/digest/status')
 }
 
+export async function updateDigestSettings(
+  updates: Partial<Pick<DigestStatus, 'timezone' | 'time' | 'frequency' | 'enabled'>>
+): Promise<DigestStatus> {
+  return apiFetch<DigestStatus>('/api/digest/settings', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+}
+
 // ─────────────────────── Follow-Up Emails ───────────────────────
 
 export interface FollowUpEmailRead {

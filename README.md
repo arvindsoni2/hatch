@@ -2,9 +2,9 @@
 
 <div align="center">
 
-# JobPilot v2
+# Hatch
 
-**Open-source, self-hosted, autonomous multi-agent job search automation.**
+**Open-source, self-hosted, autonomous AI job search with human-in-the-loop approvals.**
 
 Discover → Score → Tailor → Track → Coach — fully automated, human-in-the-loop at the decisions that matter.
 
@@ -20,9 +20,9 @@ Discover → Score → Tailor → Track → Coach — fully automated, human-in-
 
 ---
 
-## What is JobPilot v2?
+## What is Hatch?
 
-JobPilot v2 is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
+Hatch is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
 
 ```text
 06:00  Scout agent runs (scheduled every 4h)
@@ -89,7 +89,7 @@ JobPilot v2 is an autonomous, multi-agent job search system that handles the ful
 └──────────────────────────────────────────────────────┘
 ```
 
-### What v2 adds over v1
+### What Hatch adds over the original
 
 | Component | Status | Description |
 |-----------|--------|-------------|
@@ -132,13 +132,13 @@ JobPilot v2 is an autonomous, multi-agent job search system that handles the ful
 **Linux / macOS:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arvindsoni2/jobpilot-v2/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-iwr https://raw.githubusercontent.com/arvindsoni2/jobpilot-v2/main/install.ps1 | iex
+iwr https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.ps1 | iex
 ```
 
 The installer checks prerequisites (Docker/Podman, git), clones the repo, creates a template `.env`, builds and starts the containers, and optionally installs a systemd user service on Linux.
@@ -156,8 +156,8 @@ The installer checks prerequisites (Docker/Podman, git), clones the repo, create
 #### 1. Clone
 
 ```bash
-git clone https://github.com/arvindsoni2/jobpilot-v2.git
-cd jobpilot-v2
+git clone https://github.com/arvindsoni2/hatch.git
+cd hatch
 ```
 
 #### 2. Configure environment
@@ -186,7 +186,7 @@ Open `http://localhost:3000`. If `data/profile.yaml` is absent, the dashboard re
 | **Your market** | Locale (🇬🇧 UK · 🇮🇳 India · 🇺🇸 US · 🇩🇪 Germany), target roles, location, remote preference |
 | **Compensation & eligibility** | Rate range, rate type, currency + locale-specific fields (IR35, work authorisation, notice period, etc.) |
 | **Skills & achievements** | Primary/secondary skills, domains, STAR proof points (used by Tailor for CV personalisation) |
-| **AI setup & launch** | LLM provider, live API key test, job board toggles, scrape interval → **Start JobPilot** |
+| **AI setup & launch** | LLM provider, live API key test, job board toggles, scrape interval → **Start Hatch** |
 
 ### 5. Or configure manually
 
@@ -312,7 +312,7 @@ preferences:
 
 ## Human-in-the-Loop
 
-JobPilot **never submits applications autonomously.** Two mandatory checkpoints:
+Hatch **never submits applications autonomously.** Two mandatory checkpoints:
 
 1. **Application approval** (`/approvals`) — review tailored CV, cover letter, score breakdown. Approve / reject / edit.
 2. **Interview prep review** (`/prep/[session_id]`) — review questions, model answers, STAR notes. Approve or regenerate.
