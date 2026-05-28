@@ -56,7 +56,7 @@ export default function JobsPage() {
       const res = await fetchJobs(
         {
           search: filters.search || undefined,
-          ir35_status: filters.ir35_status || undefined,
+          legal_fields: filters.ir35_status ? { ir35_status: filters.ir35_status } : undefined,
           source: filters.source || undefined,
           min_rate: filters.min_rate ? parseFloat(filters.min_rate) : undefined,
           hide_ghosts: showArchived ? false : filters.hide_ghosts,

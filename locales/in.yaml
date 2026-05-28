@@ -70,3 +70,11 @@ onboarding_defaults:
   contract_type: "permanent"
   remote_preference: "hybrid"
   scrape_interval_hours: 6
+
+scoring_defaults:
+  weights:
+    skill_match: 0.35
+    experience_match: 0.30
+    compensation_match: 0.20
+    location_match: 0.15
+  shortlist_threshold: 0.70

@@ -1,15 +1,21 @@
 import { render, screen, act } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 
 describe("OfflineIndicator", () => {
+  const originalOnLine = navigator.onLine;
+
   beforeEach(() => {
     Object.defineProperty(navigator, "onLine", { value: true, writable: true, configurable: true });
   });
 
+  afterEach(() => {
+    Object.defineProperty(navigator, "onLine", { value: originalOnLine, writable: true, configurable: true });
+  });
+
   it("does not render when online", () => {
-    render(<OfflineIndicator />);
-    expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
+    const { container } = render(<OfflineIndicator />);
+    expect(container.firstChild).toBeNull();
   });
 
   it("renders banner when offline", () => {
@@ -24,5 +30,15 @@ describe("OfflineIndicator", () => {
       window.dispatchEvent(new Event("offline"));
     });
     expect(screen.getByText(/offline/i)).toBeInTheDocument();
+  });
+
+  it("hides banner when coming back online", () => {
+    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    render(<OfflineIndicator />);
+    act(() => {
+      Object.defineProperty(navigator, "onLine", { value: true, writable: true, configurable: true });
+      window.dispatchEvent(new Event("online"));
+    });
+    expect(screen.queryByText(/offline/i)).not.toBeInTheDocument();
   });
 });

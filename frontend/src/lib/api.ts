@@ -76,7 +76,7 @@ export interface StatsResponse {
 
 export interface JobFilters {
   search?: string;
-  ir35_status?: string;
+  legal_fields?: Record<string, string>;
   source?: string;
   min_rate?: number;
   max_rate?: number;
@@ -129,7 +129,7 @@ export async function fetchJobs(
     skip: page * limit,
     limit,
     ...(filters.search ? { search: filters.search } : {}),
-    ...(filters.ir35_status ? { ir35_status: filters.ir35_status } : {}),
+    ...(filters.legal_fields?.ir35_status ? { ir35_status: filters.legal_fields.ir35_status } : {}),
     ...(filters.source ? { source: filters.source } : {}),
     ...(filters.min_rate !== undefined ? { min_rate: filters.min_rate } : {}),
     ...(filters.max_rate !== undefined ? { max_rate: filters.max_rate } : {}),
