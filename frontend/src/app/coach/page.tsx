@@ -34,7 +34,7 @@ export default function CoachPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <Brain className="h-6 w-6 text-indigo-600" />
           <div>
@@ -44,7 +44,7 @@ export default function CoachPage() {
         </div>
         <Button
           onClick={() => setShowLauncher(true)}
-          className="gap-2 bg-indigo-600 hover:bg-indigo-700"
+          className="gap-2 bg-indigo-600 hover:bg-indigo-700 min-h-[44px] sm:min-h-0 self-start"
         >
           <Plus className="h-4 w-4" />
           New Session

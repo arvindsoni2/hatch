@@ -28,9 +28,9 @@ function SectionCard({ title, children }: { title: string; children: React.React
 
 function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-2.5 border-b border-slate-100 last:border-0">
-      <span className="text-sm font-medium text-slate-500 shrink-0 w-48">{label}</span>
-      <span className="text-sm text-slate-800 text-right">{value}</span>
+    <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4 py-2.5 border-b border-slate-100 last:border-0">
+      <span className="text-sm font-medium text-slate-500 sm:shrink-0 sm:w-48">{label}</span>
+      <span className="text-sm text-slate-800 sm:text-right">{value}</span>
     </div>
   )
 }

@@ -101,7 +101,7 @@ interface ColumnProps {
 
 function KanbanColumn({ status, items, onCardClick, overdueIds }: ColumnProps) {
   return (
-    <div className={cn("flex flex-col min-w-[240px] w-[240px] rounded-xl border-t-4 bg-slate-50", COLUMN_COLORS[status])}>
+    <div className={cn("flex flex-col min-w-[280px] w-[280px] [scroll-snap-align:start] flex-shrink-0 rounded-xl border-t-4 bg-slate-50", COLUMN_COLORS[status])}>
       <div className="px-3 py-2 flex items-center justify-between border-b border-slate-200">
         <span className="text-sm font-semibold text-slate-700">{COLUMN_LABELS[status]}</span>
         <span className="text-xs bg-white border border-slate-200 rounded-full px-2 py-0.5 text-slate-500">
@@ -235,8 +235,8 @@ export function KanbanBoard({ initialData, stats, overdueIds, onStatusChange, on
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        {/* Active columns — horizontal scroll */}
-        <div className="flex gap-4 overflow-x-auto pb-4">
+        {/* Active columns — horizontal scroll with snap on mobile */}
+        <div className="flex gap-3 overflow-x-auto pb-4 [scroll-snap-type:x_mandatory] [-webkit-overflow-scrolling:touch]">
           {ACTIVE_COLUMNS.map((status) => (
             <KanbanColumn
               key={status}

@@ -63,25 +63,26 @@ export default function ApplicationsPage() {
 
   return (
     <main className="min-h-screen bg-slate-50">
-      <div className="max-w-[1400px] mx-auto px-6 py-8">
+      <div className="max-w-[1400px] mx-auto px-4 py-6 sm:px-6 sm:py-8">
         {/* Page header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Applications</h1>
             <p className="text-sm text-slate-500 mt-1">
               Track and manage your contract applications
             </p>
           </div>
-          <div className="flex gap-3 items-center">
+          <div className="flex gap-2 items-center">
             <Input
               placeholder="Search..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-48"
+              className="flex-1 sm:w-48 sm:flex-none"
             />
-            <Button onClick={() => void handleNewApplication()} size="sm">
+            <Button onClick={() => void handleNewApplication()} size="sm" className="min-h-[44px] sm:min-h-0 shrink-0">
               <Plus className="h-4 w-4 mr-1" />
-              New Application
+              <span className="hidden sm:inline">New Application</span>
+              <span className="sm:hidden">New</span>
             </Button>
           </div>
         </div>
