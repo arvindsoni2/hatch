@@ -1,0 +1,83 @@
+id: "ae"
+name: "United Arab Emirates"
+flag: "🇦🇪"
+
+currency: "AED"
+currency_symbol: "د.إ"
+default_rate_type: "monthly"
+
+rate_types:
+  - id: "monthly"
+    label: "Monthly salary"
+    example: "AED 25,000/mo"
+  - id: "annual"
+    label: "Annual package"
+    example: "AED 300,000/yr"
+
+legal_fields:
+  - id: "visa_status"
+    label: "Visa status"
+    type: "select"
+    options:
+      - value: "resident"
+        label: "UAE resident visa"
+      - value: "visit"
+        label: "Visit visa (needs sponsorship)"
+      - value: "golden"
+        label: "Golden visa holder"
+      - value: "freelance"
+        label: "Freelance permit"
+      - value: "any"
+        label: "Any / not specified"
+    default: "any"
+  - id: "notice_period"
+    label: "Notice period"
+    type: "select"
+    options:
+      - value: "immediate"
+        label: "Immediate"
+      - value: "30_days"
+        label: "30 days"
+      - value: "60_days"
+        label: "60 days"
+      - value: "90_days"
+        label: "90 days"
+    default: "30_days"
+
+job_boards:
+  - name: "linkedin"
+    label: "LinkedIn"
+    scraper: "LinkedInScraper"
+    enabled: true
+  - name: "bayt"
+    label: "Bayt.com"
+    scraper: "BaytScraper"
+    enabled: true
+  - name: "indeed_ae"
+    label: "Indeed UAE"
+    scraper: "IndeedScraper"
+    base_url: "https://ae.indeed.com"
+    enabled: true
+  - name: "gulftalent"
+    label: "GulfTalent"
+    scraper: "GulfTalentScraper"
+    enabled: false
+  - name: "naukrigulf"
+    label: "Naukri Gulf"
+    scraper: "NaukriGulfScraper"
+    enabled: false
+
+scoring_defaults:
+  weights:
+    skill_match: 0.40
+    experience_match: 0.25
+    compensation_match: 0.20
+    location_match: 0.15
+  shortlist_threshold: 0.70
+
+onboarding_defaults:
+  contract_type: "permanent"
+  remote_preference: "onsite"
+  scrape_interval_hours: 6
+  example_city: "Dubai"
+  example_role: "Project Manager"

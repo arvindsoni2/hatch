@@ -1,0 +1,89 @@
+id: "ie"
+name: "Ireland"
+flag: "🇮🇪"
+
+currency: "EUR"
+currency_symbol: "€"
+default_rate_type: "annual"
+
+rate_types:
+  - id: "annual"
+    label: "Annual salary"
+    example: "€85,000/yr"
+  - id: "daily"
+    label: "Daily rate"
+    example: "€600/day"
+  - id: "hourly"
+    label: "Hourly rate"
+    example: "€75/hr"
+
+legal_fields:
+  - id: "work_permit"
+    label: "Work authorisation"
+    type: "select"
+    options:
+      - value: "citizen"
+        label: "Irish / EU citizen"
+      - value: "stamp4"
+        label: "Stamp 4 (unrestricted)"
+      - value: "critical_skills"
+        label: "Critical Skills permit"
+      - value: "general_permit"
+        label: "General Employment permit"
+      - value: "requires_sponsorship"
+        label: "Requires sponsorship"
+      - value: "any"
+        label: "Any"
+    default: "any"
+  - id: "contract_type"
+    label: "Employment type"
+    type: "select"
+    options:
+      - value: "permanent"
+        label: "Permanent"
+      - value: "contract"
+        label: "Contract (B2B)"
+      - value: "fixed_term"
+        label: "Fixed-term"
+      - value: "any"
+        label: "Any"
+    default: "any"
+
+job_boards:
+  - name: "linkedin"
+    label: "LinkedIn"
+    scraper: "LinkedInScraper"
+    enabled: true
+  - name: "irishjobs"
+    label: "IrishJobs.ie"
+    scraper: "IrishJobsScraper"
+    enabled: true
+  - name: "indeed_ie"
+    label: "Indeed Ireland"
+    scraper: "IndeedScraper"
+    base_url: "https://ie.indeed.com"
+    enabled: true
+  - name: "jobs_ie"
+    label: "Jobs.ie"
+    scraper: "JobsIeScraper"
+    enabled: false
+  - name: "reed_ie"
+    label: "Reed Ireland"
+    scraper: "ReedScraper"
+    base_url: "https://www.reed.co.uk"
+    enabled: false
+
+scoring_defaults:
+  weights:
+    skill_match: 0.35
+    experience_match: 0.30
+    compensation_match: 0.20
+    location_match: 0.15
+  shortlist_threshold: 0.75
+
+onboarding_defaults:
+  contract_type: "permanent"
+  remote_preference: "hybrid"
+  scrape_interval_hours: 4
+  example_city: "Dublin"
+  example_role: "Software Engineer"

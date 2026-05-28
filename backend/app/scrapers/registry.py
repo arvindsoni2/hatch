@@ -10,13 +10,18 @@ from typing import TYPE_CHECKING
 
 from .adzuna import AdzunaScraper
 from .base import BaseScraper
+from .bayt import BaytScraper
 from .contractoruk import ContractorUKScraper
 from .cwjobs import CWJobsScraper
+from .gulftalent import GulfTalentScraper
 from .indeed_india import IndeedIndiaScraper
+from .irishjobs import IrishJobsScraper
 from .itjobswatch import ITJobsWatchScraper
+from .jobs_ie import JobsIeScraper
 from .jobserve import JobServeScraper
 from .linkedin import LinkedInScraper
 from .naukri import NaukriScraper
+from .naukrigulf import NaukriGulfScraper
 from .reed import ReedScraper
 
 if TYPE_CHECKING:
@@ -35,9 +40,17 @@ SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
     "ITJobsWatchScraper": ITJobsWatchScraper,
     # Global
     "LinkedInScraper": LinkedInScraper,
+    "IndeedScraper": IndeedIndiaScraper,  # used by ae/ie with base_url override
     # India boards
     "NaukriScraper": NaukriScraper,
     "IndeedIndiaScraper": IndeedIndiaScraper,
+    # UAE boards
+    "BaytScraper": BaytScraper,
+    "GulfTalentScraper": GulfTalentScraper,
+    "NaukriGulfScraper": NaukriGulfScraper,
+    # Ireland boards
+    "IrishJobsScraper": IrishJobsScraper,
+    "JobsIeScraper": JobsIeScraper,
 }
 
 
