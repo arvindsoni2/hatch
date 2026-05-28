@@ -114,7 +114,7 @@ export default function JobsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
           <p className="mt-1 text-sm text-slate-500">
@@ -125,12 +125,12 @@ export default function JobsPage() {
               : `All ${total.toLocaleString()} jobs`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="outline"
             size="sm"
             onClick={() => { setShowArchived((v) => !v); setPage(0); }}
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 min-h-[44px]"
           >
             <Archive className="h-4 w-4" />
             {showArchived ? "Active jobs" : "Archived"}

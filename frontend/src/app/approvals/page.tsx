@@ -95,7 +95,7 @@ export default function ApprovalsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <Sparkles className="h-6 w-6 text-amber-500" />
@@ -105,7 +105,7 @@ export default function ApprovalsPage() {
             {approvals.length} application{approvals.length !== 1 ? "s" : ""} awaiting your review
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={refresh}>
+        <Button variant="outline" size="sm" onClick={refresh} className="min-h-[44px] sm:min-h-0 self-start">
           <RefreshCw className="h-4 w-4 mr-1.5" /> Refresh
         </Button>
       </div>
@@ -153,10 +153,10 @@ export default function ApprovalsPage() {
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-3 pt-1">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
               <Button
                 size="sm"
-                className="bg-green-600 hover:bg-green-700 text-white"
+                className="bg-green-600 hover:bg-green-700 text-white min-h-[44px] sm:min-h-0"
                 onClick={() => handleApprove(app.application_id)}
                 disabled={!!acting[app.application_id]}
               >
@@ -170,7 +170,7 @@ export default function ApprovalsPage() {
               <Button
                 size="sm"
                 variant="outline"
-                className="border-red-300 text-red-600 hover:bg-red-50"
+                className="border-red-300 text-red-600 hover:bg-red-50 min-h-[44px] sm:min-h-0"
                 onClick={() => handleReject(app.application_id)}
                 disabled={!!acting[app.application_id]}
               >
