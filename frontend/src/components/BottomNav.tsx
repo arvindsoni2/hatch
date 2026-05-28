@@ -34,7 +34,7 @@ export function BottomNav() {
   }, []);
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 backdrop-blur-sm pb-safe md:hidden">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm pb-safe md:hidden">
       <div className="flex items-stretch">
         {BOTTOM_NAV_ITEMS.map((item) => {
           const Icon = item.icon;

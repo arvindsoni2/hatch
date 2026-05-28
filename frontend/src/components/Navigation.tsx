@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Settings } from "lucide-react";
 import { fetchPendingApprovals } from "@/lib/api";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home", exact: true },
@@ -34,7 +35,7 @@ export function Navigation() {
   }, []);
 
   return (
-    <header className="hidden md:block sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur-sm">
+    <header className="hidden md:block sticky top-0 z-50 border-b border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
@@ -84,6 +85,7 @@ export function Navigation() {
           >
             <Settings className="h-4 w-4" />
           </Link>
+          <ThemeToggle />
         </nav>
       </div>
     </header>

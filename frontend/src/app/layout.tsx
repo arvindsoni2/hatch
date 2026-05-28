@@ -36,7 +36,7 @@ export default function RootLayout({
       <head>
         <meta name="theme-color" content="#4f46e5" />
       </head>
-      <body className={`${inter.variable} font-sans antialiased bg-slate-50 text-slate-900`}>
+      <body className={`${inter.variable} font-sans antialiased bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100`}>
         <OfflineIndicator />
         <Navigation />
 
@@ -47,8 +47,8 @@ export default function RootLayout({
         <BottomNav />
         <InstallPrompt />
 
-        <footer className="mt-16 border-t border-slate-200 bg-white py-6 hidden md:block">
-          <div className="mx-auto max-w-7xl px-4 text-center text-sm text-slate-400 sm:px-6 lg:px-8">
+        <footer className="mt-16 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-6 hidden md:block">
+          <div className="mx-auto max-w-7xl px-4 text-center text-sm text-slate-400 dark:text-slate-500 sm:px-6 lg:px-8">
             JobPilot — autonomous job search, human-in-the-loop approvals
           </div>
         </footer>
