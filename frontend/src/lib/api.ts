@@ -81,8 +81,7 @@ export interface JobFilters {
   min_rate?: number;
   max_rate?: number;
   // V2 filters
-  employment_type?: string;
-  working_pattern?: string;
+  job_type?: string;
   min_match_score?: number;
   posted_after?: string;
   // Ghost filter
@@ -134,8 +133,10 @@ export async function fetchJobs(
     ...(filters.source ? { source: filters.source } : {}),
     ...(filters.min_rate !== undefined ? { min_rate: filters.min_rate } : {}),
     ...(filters.max_rate !== undefined ? { max_rate: filters.max_rate } : {}),
-    ...(filters.employment_type ? { employment_type: filters.employment_type } : {}),
-    ...(filters.working_pattern ? { working_pattern: filters.working_pattern } : {}),
+    ...(filters.job_type === "permanent" ? { employment_type: "permanent" } : {}),
+    ...(filters.job_type === "temporary" ? { employment_type: "contract" } : {}),
+    ...(filters.job_type === "hybrid" ? { working_pattern: "hybrid" } : {}),
+    ...(filters.job_type === "remote" ? { working_pattern: "remote" } : {}),
     ...(filters.min_match_score !== undefined ? { min_match_score: filters.min_match_score } : {}),
     ...(filters.posted_after ? { posted_after: filters.posted_after } : {}),
     ...(filters.hide_ghosts !== undefined ? { hide_ghosts: filters.hide_ghosts } : {}),

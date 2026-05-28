@@ -141,7 +141,7 @@ export function JobTable({ jobs, className }: JobTableProps) {
                 Title / Company
               </th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                Type / Pattern
+                Job Type
               </th>
               <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Location
@@ -194,23 +194,16 @@ export function JobTable({ jobs, className }: JobTableProps) {
                   </a>
                 </td>
 
-                {/* Type / Pattern */}
+                {/* Job Type */}
                 <td className="px-4 py-3 text-sm">
-                  <div className="flex flex-col gap-1">
-                    {job.employment_type ? (
-                      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 whitespace-nowrap">
-                        {job.employment_type.replace(/_/g, " ")}
+                  {(() => {
+                    const type = job.working_pattern || job.employment_type;
+                    return type ? (
+                      <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 whitespace-nowrap capitalize">
+                        {type.replace(/_/g, " ")}
                       </span>
-                    ) : null}
-                    {job.working_pattern ? (
-                      <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 whitespace-nowrap">
-                        {job.working_pattern.replace(/_/g, " ")}
-                      </span>
-                    ) : null}
-                    {!job.employment_type && !job.working_pattern && (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </div>
+                    ) : <span className="text-slate-400">—</span>;
+                  })()}
                 </td>
 
                 {/* Location */}

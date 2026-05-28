@@ -160,15 +160,16 @@ export function StepJobSearch({
       </div>
 
       <div className="space-y-1 w-full sm:w-1/2">
-        <Label>Employment type</Label>
+        <Label>Job type</Label>
         <select
           className="w-full border rounded-md p-2 text-sm"
           value={search.contract_type}
           onChange={(e) => onSearchChange({ ...search, contract_type: e.target.value })}
         >
-          <option value="contract">Contract</option>
           <option value="permanent">Permanent</option>
-          <option value="freelance">Freelance</option>
+          <option value="temporary">Temporary</option>
+          <option value="hybrid">Hybrid</option>
+          <option value="remote">Remote</option>
           <option value="any">Any</option>
         </select>
       </div>

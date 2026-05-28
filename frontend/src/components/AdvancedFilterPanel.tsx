@@ -7,8 +7,7 @@ import type { FilterCounts } from "@/lib/api"
 export interface AdvancedFilters {
   search?: string
   ir35_status?: string
-  employment_type?: string
-  working_pattern?: string
+  job_type?: string
   min_rate?: number
   max_rate?: number
   min_match_score?: number
@@ -22,17 +21,11 @@ interface AdvancedFilterPanelProps {
   hasMatchScores?: boolean
 }
 
-const EMPLOYMENT_TYPES = [
-  { value: "contract", label: "Contract" },
+const JOB_TYPES = [
   { value: "permanent", label: "Permanent" },
-  { value: "fixed_term", label: "Fixed Term" },
-  { value: "part_time", label: "Part Time" },
-]
-
-const WORKING_PATTERNS = [
-  { value: "remote", label: "Remote" },
+  { value: "temporary", label: "Temporary" },
   { value: "hybrid", label: "Hybrid" },
-  { value: "on_site", label: "On-site" },
+  { value: "remote", label: "Remote" },
 ]
 
 const LEGAL_STATUS_OPTIONS = [
@@ -141,26 +134,23 @@ export function AdvancedFilterPanel({
       </div>
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Employment Type */}
+        {/* Job Type */}
         <div>
-          <SectionHeading>Employment Type</SectionHeading>
+          <SectionHeading>Job Type</SectionHeading>
           <div className="space-y-1.5">
-            {EMPLOYMENT_TYPES.map(({ value, label }) => {
-              const count = countFor("employment_type", value)
-              return (
-                <label key={value} className="flex items-center gap-2 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={filters.employment_type === value}
-                    onChange={() => toggleSingleValue("employment_type", value)}
-                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
-                  />
-                  <span className="text-sm text-slate-700 group-hover:text-slate-900">
-                    {labelWithCount(label, count)}
-                  </span>
-                </label>
-              )
-            })}
+            {JOB_TYPES.map(({ value, label }) => (
+              <label key={value} className="flex items-center gap-2 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={filters.job_type === value}
+                  onChange={() => toggleSingleValue("job_type", value)}
+                  className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                />
+                <span className="text-sm text-slate-700 group-hover:text-slate-900">
+                  {label}
+                </span>
+              </label>
+            ))}
           </div>
         </div>
 
@@ -184,29 +174,6 @@ export function AdvancedFilterPanel({
                       isOutside ? "text-emerald-700 font-medium" : "text-slate-700"
                     }`}
                   >
-                    {labelWithCount(label, count)}
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Working Pattern */}
-        <div>
-          <SectionHeading>Working Pattern</SectionHeading>
-          <div className="space-y-1.5">
-            {WORKING_PATTERNS.map(({ value, label }) => {
-              const count = countFor("working_pattern", value)
-              return (
-                <label key={value} className="flex items-center gap-2 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={filters.working_pattern === value}
-                    onChange={() => toggleSingleValue("working_pattern", value)}
-                    className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
-                  />
-                  <span className="text-sm text-slate-700 group-hover:text-slate-900">
                     {labelWithCount(label, count)}
                   </span>
                 </label>
