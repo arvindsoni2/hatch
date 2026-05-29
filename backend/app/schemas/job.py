@@ -36,6 +36,7 @@ class JobPostingCreate(BaseModel):
     match_score: float | None = None
     match_reasons: list[str] | None = None
     red_flags: list[str] | None = None
+    needs_enrichment: bool = False
 
     @field_validator("ir35_status")
     @classmethod
@@ -93,6 +94,10 @@ class JobPostingRead(BaseModel):
     score_reasoning: str | None = None       # LLM explanation or "local-keyword"
     keyword_matches: list[str] | None = None
     keyword_misses: list[str] | None = None
+    needs_enrichment: bool = False               # True when job description needs enrichment
+    fit_reasoning: str | None = None           # LLM holistic rationale paragraph
+    score_strengths: list[str] | None = None   # 2-3 specific strengths
+    score_gaps: list[str] | None = None        # genuine gaps
 
     @field_validator("ghost_signals", mode="before")
     @classmethod

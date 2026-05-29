@@ -18,6 +18,8 @@ VALID_STATUSES = {
     "rejected",
     "withdrawn",
     "declined",
+    "preparing",
+    "ready_to_apply",
 }
 VALID_PRIORITIES = {"low", "normal", "high", "urgent"}
 

@@ -6,7 +6,7 @@ interface ScoreBreakdownProps {
   rateMatch: number | null;
   locationMatch: number | null;
   overallScore: number | null;
-  scoringMethod: "local" | "llm" | null;
+  scoringMethod: "local" | "llm" | "semantic" | null;
   reasoning?: string | null;
   keywordMatches?: string[];
   keywordMisses?: string[];

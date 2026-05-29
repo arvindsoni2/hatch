@@ -65,6 +65,9 @@ class JobPosting(Base):
     times_seen: Mapped[int] = mapped_column(Integer, default=1)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Enrichment flag — True when description was too short to score meaningfully
+    needs_enrichment: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Agentic pipeline fields
     auto_scored: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_tailored: Mapped[bool] = mapped_column(Boolean, default=False)

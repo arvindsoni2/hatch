@@ -338,6 +338,49 @@ async def add_note(
     return await service.add_note(app_id, note_text)
 
 
+@router.post("/{app_id}/prepare")
+async def prepare_application(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Prepare a tailored CV and cover letter for an approved application.
+
+    This endpoint ONLY prepares documents for human review.
+    It does NOT submit anything or automate form filling.
+    Status transitions: approved → preparing → ready_to_apply.
+
+    Args:
+        app_id: UUID of the application to prepare.
+
+    Returns:
+        ApplicationPackage JSON with cv_path, cover_letter_path, job_url, prefill_map.
+
+    Raises:
+        HTTPException 404: If the application is not found.
+    """
+    from ..models.application import Application
+    from ..services.assisted_apply import AssistedApplyService
+
+    app_result = await db.execute(
+        select(Application).where(Application.id == app_id, Application.is_active.is_(True))
+    )
+    app_obj = app_result.scalar_one_or_none()
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+    job_id = app_obj.job_id or app_id  # fallback to app_id if no linked job
+    service = AssistedApplyService()
+    package = await service.prepare_application(job_id=job_id, db=db)
+
+    return {
+        "job_id": package.job_id,
+        "job_url": package.job_url,
+        "cv_path": package.cv_path,
+        "cover_letter_path": package.cover_letter_path,
+        "prefill_map": package.prefill_map,
+    }
+
+
 @router.delete("/{app_id}", status_code=200)
 async def delete_application(
     app_id: str,

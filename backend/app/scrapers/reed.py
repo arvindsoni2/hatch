@@ -93,7 +93,8 @@ class ReedScraper(BaseScraper):
         url = f"https://www.reed.co.uk/jobs/{job_id}"
         company = str(item.get("employerName", "") or "").strip() or None
         location = str(item.get("locationName", "") or "").strip() or None
-        description = str(item.get("jobDescription", "") or "").strip() or None
+        raw_description = str(item.get("jobDescription", "") or "").strip() or None
+        description = raw_description[:5000] if raw_description else None
 
         # Rate / salary from Reed API
         min_salary = item.get("minimumSalary")
@@ -146,6 +147,7 @@ class ReedScraper(BaseScraper):
         employment_type = self.detect_employment_type(combined_text)
         working_pattern = self.detect_working_pattern(combined_text)
         rate_type = self.detect_rate_type(rate_text or "")
+        needs_enrichment = not description or len(description) < 100
 
         return JobPostingCreate(
             title=title,
@@ -165,4 +167,5 @@ class ReedScraper(BaseScraper):
             employment_type=employment_type,
             working_pattern=working_pattern,
             rate_type=rate_type,
+            needs_enrichment=needs_enrichment,
         )

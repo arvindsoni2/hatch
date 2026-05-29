@@ -38,4 +38,8 @@ class JobScore(Base):
     scoring_method: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "local" | "llm"
     keyword_matches: Mapped[list | None] = mapped_column(JSON, nullable=True)
     keyword_misses: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # LLM holistic rationale fields (populated by LLM-judge path)
+    fit_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strengths: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    score_gaps: Mapped[list | None] = mapped_column(JSON, nullable=True)
     scored_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

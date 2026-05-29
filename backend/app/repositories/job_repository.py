@@ -190,6 +190,9 @@ class JobRepository:
                         "score_reasoning": s.reasoning,
                         "keyword_matches": s.keyword_matches or [],
                         "keyword_misses": s.keyword_misses or [],
+                        "fit_reasoning": getattr(s, "fit_reasoning", None),
+                        "score_strengths": getattr(s, "strengths", None),
+                        "score_gaps": getattr(s, "score_gaps", None),
                     }
                 )
             items.append(posting)

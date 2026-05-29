@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { TriggerScrapeButton } from "@/components/TriggerScrapeButton";
+import { AssistedApplyCard } from "@/components/AssistedApplyCard";
 import {
   CheckCircle2,
   ChevronRight,
@@ -188,6 +189,11 @@ export default function ApprovalsPage() {
                 </button>
               </Link>
             </div>
+
+            {/* Assisted apply — shown once status is approved or later */}
+            {(app.status === "approved" || app.status === "preparing" || app.status === "ready_to_apply") && (
+              <AssistedApplyCard application={app} onStatusChange={refresh} />
+            )}
           </div>
         </div>
       ))}

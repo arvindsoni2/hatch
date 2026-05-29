@@ -33,6 +33,12 @@ LINKEDIN_RSS_URL = (
     "&location=United+Kingdom"
 )
 
+# Minimum description length to consider a job sufficiently described
+_MIN_DESCRIPTION_LENGTH = 100
+
+# Maximum description length to store
+_MAX_DESCRIPTION_LENGTH = 5000
+
 
 class LinkedInScraper(BaseScraper):
     """Scrapes LinkedIn public job listings via available RSS/API endpoints.
@@ -102,6 +108,19 @@ class LinkedInScraper(BaseScraper):
 
                 response.raise_for_status()
                 jobs = self._parse_html(response.text)
+                self.logger.info("LinkedIn scrape (cards): %d jobs", len(jobs))
+
+                # Phase 2: fetch detail pages for jobs that need enrichment
+                enriched_jobs: list[JobPostingCreate] = []
+                for job in jobs:
+                    if job.needs_enrichment and job.url:
+                        enriched = await self._fetch_detail_page(client, job)
+                        enriched_jobs.append(enriched)
+                        await self.random_delay()
+                    else:
+                        enriched_jobs.append(job)
+
+                jobs = enriched_jobs
                 self.logger.info("LinkedIn scrape complete: %d jobs", len(jobs))
 
             except httpx.HTTPStatusError as e:
@@ -110,6 +129,92 @@ class LinkedInScraper(BaseScraper):
                 self.logger.error("LinkedIn scraper error: %s", e)
 
         return jobs
+
+    async def _fetch_detail_page(
+        self, client: httpx.AsyncClient, job: JobPostingCreate
+    ) -> JobPostingCreate:
+        """Fetch and parse the full job detail page, updating description.
+
+        Args:
+            client: httpx client to reuse.
+            job: Partially populated JobPostingCreate from card parse.
+
+        Returns:
+            Updated JobPostingCreate with full description if available.
+        """
+        try:
+            self.logger.debug("Fetching LinkedIn detail page: %s", job.url)
+            resp = await client.get(job.url)
+            if resp.status_code != 200:
+                return job
+
+            soup = BeautifulSoup(resp.text, "lxml")
+            desc = self._extract_description_from_soup(soup)
+            if desc:
+                needs_enrichment = len(desc) < _MIN_DESCRIPTION_LENGTH
+                return job.model_copy(update={
+                    "description": desc[:_MAX_DESCRIPTION_LENGTH],
+                    "needs_enrichment": needs_enrichment,
+                })
+        except Exception as e:
+            self.logger.debug("Detail page fetch error for %s: %s", job.url, e)
+
+        return job
+
+    def _extract_description_from_soup(self, soup: object) -> str | None:
+        """Extract job description text from a LinkedIn job detail page soup.
+
+        Tries primary selector (.show-more-less-html__markup), then fallback
+        (.description__text), then largest text block.
+
+        Args:
+            soup: BeautifulSoup parsed job detail page.
+
+        Returns:
+            Extracted description text, truncated to _MAX_DESCRIPTION_LENGTH,
+            or None if nothing found.
+        """
+        from bs4 import BeautifulSoup as _BS, Tag
+
+        if not isinstance(soup, _BS):
+            try:
+                # Accept Tag objects too — just get_text
+                if hasattr(soup, "get_text"):
+                    text = soup.get_text(separator="\n").strip()  # type: ignore[union-attr]
+                    return text[:_MAX_DESCRIPTION_LENGTH] if text else None
+            except Exception:
+                return None
+
+        # Primary selector
+        el = soup.find(class_="show-more-less-html__markup")
+        if el and isinstance(el, Tag):
+            text = el.get_text(separator="\n").strip()
+            if text:
+                return text[:_MAX_DESCRIPTION_LENGTH]
+
+        # Fallback selector
+        el2 = soup.find(class_="description__text")
+        if el2 and isinstance(el2, Tag):
+            text = el2.get_text(separator="\n").strip()
+            if text:
+                return text[:_MAX_DESCRIPTION_LENGTH]
+
+        # Last resort: largest text block in body
+        try:
+            body = soup.find("body")
+            if body and isinstance(body, Tag):
+                candidates = [
+                    t for t in body.find_all(True)
+                    if isinstance(t, Tag) and len(t.get_text(strip=True)) > 200
+                ]
+                if candidates:
+                    largest = max(candidates, key=lambda t: len(t.get_text(strip=True)))
+                    text = largest.get_text(separator="\n").strip()
+                    return text[:_MAX_DESCRIPTION_LENGTH]
+        except Exception:
+            pass
+
+        return None
 
     def _parse_html(self, html: str) -> list[JobPostingCreate]:
         """Parse LinkedIn guest API HTML response into job objects.
@@ -186,6 +291,9 @@ class LinkedInScraper(BaseScraper):
         working_pattern = self.detect_working_pattern(combined_text)
         rate_type = self.detect_rate_type("")
 
+        # Determine if this card has enough description or needs enrichment
+        needs_enrichment = len(full_text.strip()) < _MIN_DESCRIPTION_LENGTH
+
         try:
             from ..agents.tools.profile_loader import load_profile as _lp
             _currency = _lp().compensation.currency or "USD"
@@ -202,7 +310,7 @@ class LinkedInScraper(BaseScraper):
             currency=_currency,
             ir35_status=ir35_status,
             legal_fields={"ir35_status": ir35_status} if ir35_status else {},
-            description=full_text[:1000] if full_text else None,
+            description=full_text[:_MAX_DESCRIPTION_LENGTH] if full_text else None,
             url=href,
             source=self.name,
             posted_at=datetime.utcnow(),
@@ -210,4 +318,5 @@ class LinkedInScraper(BaseScraper):
             employment_type=employment_type,
             working_pattern=working_pattern,
             rate_type=rate_type,
+            needs_enrichment=needs_enrichment,
         )

@@ -44,10 +44,13 @@ export interface Job {
   experience_match: number | null;
   rate_match: number | null;
   location_match: number | null;
-  scoring_method: "local" | "llm" | null;  // "local" = quick estimate, "llm" = AI assessment
+  scoring_method: "local" | "llm" | "semantic" | null;  // "local"=quick estimate, "llm"/"semantic"=AI assessment
   score_reasoning: string | null;
   keyword_matches: string[] | null;
   keyword_misses: string[] | null;
+  fit_reasoning: string | null;
+  score_strengths: string[] | null;
+  score_gaps: string[] | null;
   // Ghost detection fields
   ghost_score: number | null;
   ghost_verdict: string | null;
@@ -182,7 +185,8 @@ export async function deleteJob(id: string): Promise<void> {
 
 export type ApplicationStatus =
   | "discovered" | "shortlisted" | "applied" | "interview"
-  | "offered" | "accepted" | "rejected" | "withdrawn" | "declined";
+  | "offered" | "accepted" | "rejected" | "withdrawn" | "declined"
+  | "preparing" | "ready_to_apply";
 
 export type Priority = "low" | "normal" | "high" | "urgent";
 
@@ -1748,6 +1752,22 @@ export interface ScoringInsights {
 
 export async function fetchScoringInsights(): Promise<ScoringInsights> {
   return apiFetch<ScoringInsights>("/api/v2/scoring/insights");
+}
+
+// ── Assisted Apply ──────────────────────────────────────────────────────────
+
+export interface ApplicationPackage {
+  job_id: string;
+  job_url: string;
+  cv_path: string | null;
+  cover_letter_path: string | null;
+  prefill_map: Record<string, string>;
+}
+
+export async function prepareApplication(applicationId: string): Promise<ApplicationPackage> {
+  return apiFetch<ApplicationPackage>(`/api/applications/${applicationId}/prepare`, {
+    method: "POST",
+  });
 }
 
 export async function downloadInterviewIcs(interviewId: string): Promise<void> {

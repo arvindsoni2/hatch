@@ -284,3 +284,221 @@ class TestScorerAgent:
             result = await scorer.run(db_session)
 
         assert result == {"scored": 0, "skipped": 0, "errors": 0}
+
+    # ── P5: LLM-judge tests ────────────────────────────────────────────────────
+
+    async def test_llm_judge_receives_full_resume_and_jd(self, db_session):
+        """LLM-judge prompt must include the full resume text and job description."""
+        job_id = str(uuid.uuid4())
+        jd_text = "We need an IT Project Manager with 15+ years of experience."
+        resume_text = "AI Project Manager / Technical Delivery Lead, 20 years."
+        job = JobPosting(
+            id=job_id, title="IT Project Manager", company="GovTech", location="London",
+            description=jd_text,
+            url=f"https://example.com/{job_id}", source="test",
+            scraped_at=datetime.utcnow(), is_active=True,
+            sync_status="pending", created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
+        )
+        db_session.add(job)
+        await db_session.commit()
+
+        events = [_make_discovery_event(job_id)]
+        mock_bus = AsyncMock()
+        mock_bus.poll = AsyncMock(return_value=events)
+        mock_bus.emit = AsyncMock(return_value="event-id")
+        mock_bus.mark_processing = AsyncMock()
+        mock_bus.mark_completed = AsyncMock()
+        mock_bus.mark_failed = AsyncMock()
+
+        profile = _make_mock_profile(method="hybrid", top_pct=1.0)  # all jobs go to LLM
+        profile.scoring.shortlist_threshold = 0.0  # force everything into LLM band
+        mock_triage_model, mock_primary_model, triage_llm, primary_llm = _make_mock_llm()
+        mock_limiter = MagicMock()
+        mock_limiter.acquire = AsyncMock()
+        mock_limiter.record_429 = MagicMock()
+
+        captured_prompts: list[str] = []
+
+        async def capture_ainvoke(prompt: str):
+            captured_prompts.append(prompt)
+            return MagicMock(
+                skill_match=0.85, experience_match=0.85, rate_match=0.80, location_match=0.90,
+                overall_score=0.85, reasoning="Strong match",
+                keyword_matches=["PM", "agile"], keyword_misses=[],
+                fit_reasoning="Excellent transferable experience.",
+                strengths=["20 years experience", "PMP certified"],
+                score_gaps=[],
+            )
+
+        primary_llm.ainvoke = capture_ainvoke
+
+        from app.agents.tools.local_scorer import LocalScoreResult
+        from app.agents.tools.semantic_scorer import SemanticScoreResult
+
+        fake_sem_score = SemanticScoreResult(
+            skill_match=0.85, experience_match=0.85, rate_match=0.8, location_match=0.9,
+            overall_score=0.85, semantic_fit=0.85, scoring_method="semantic",
+            keyword_matches=[], keyword_misses=[], deferred=False,
+        )
+
+        from app.agents.tools import semantic_scorer as _sem_mod
+
+        with patch("app.agents.scorer_agent.load_profile", return_value=profile), \
+             patch("app.agents.scorer_agent.get_triage_model", return_value=mock_triage_model), \
+             patch("app.agents.scorer_agent.get_primary_model", return_value=mock_primary_model), \
+             patch("app.agents.scorer_agent.get_limiter", return_value=mock_limiter), \
+             patch("app.agents.scorer_agent._resume_store_module.get_resume_text", return_value=resume_text), \
+             patch.object(_sem_mod, "score_semantic", return_value=fake_sem_score):
+            from app.agents.scorer_agent import ScorerAgent
+            scorer = ScorerAgent()
+            scorer._bus = mock_bus
+            await scorer.run(db_session)
+
+        # Verify at least one prompt contained resume text and JD text
+        assert len(captured_prompts) >= 1, "Expected LLM-judge to be called"
+        combined = " ".join(captured_prompts)
+        assert resume_text in combined or "AI Project Manager" in combined, (
+            f"LLM-judge prompt should include resume text, got: {combined[:200]}"
+        )
+        assert jd_text[:50] in combined or "IT Project Manager" in combined, (
+            f"LLM-judge prompt should include JD text, got: {combined[:200]}"
+        )
+
+    async def test_llm_judge_returns_rationale(self, db_session):
+        """LLM-judge result with fit_reasoning/strengths/score_gaps persists to JobScore."""
+        from app.models.job_score import JobScore
+        from sqlalchemy import select as sa_select
+
+        job_id = str(uuid.uuid4())
+        job = JobPosting(
+            id=job_id, title="IT Project Manager", company="Corp", location="London",
+            description="Senior IT Project Manager role. 15+ years required. Agile. London hybrid.",
+            url=f"https://example.com/{job_id}", source="test",
+            scraped_at=datetime.utcnow(), is_active=True,
+            sync_status="pending", created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
+        )
+        db_session.add(job)
+        await db_session.commit()
+
+        events = [_make_discovery_event(job_id)]
+        mock_bus = AsyncMock()
+        mock_bus.poll = AsyncMock(return_value=events)
+        mock_bus.emit = AsyncMock(return_value="event-id")
+        mock_bus.mark_processing = AsyncMock()
+        mock_bus.mark_completed = AsyncMock()
+        mock_bus.mark_failed = AsyncMock()
+
+        profile = _make_mock_profile(method="hybrid", top_pct=1.0)
+        profile.scoring.shortlist_threshold = 0.0
+
+        mock_triage_model, mock_primary_model, triage_llm, _ = _make_mock_llm()
+        primary_llm_raw = MagicMock()
+        primary_llm_raw.ainvoke = AsyncMock(return_value=MagicMock(
+            skill_match=0.85, experience_match=0.90, rate_match=0.80, location_match=1.0,
+            overall_score=0.87, reasoning="Excellent holistic match",
+            keyword_matches=["agile", "PM"], keyword_misses=[],
+            fit_reasoning="This candidate's 20-year background as AI PM maps directly to IT PM roles.",
+            strengths=["20 years delivery leadership", "PMP certified", "Agile expertise"],
+            score_gaps=["No specific mention of public sector"],
+        ))
+        mock_primary_model.with_structured_output.return_value = primary_llm_raw
+
+        mock_limiter = MagicMock()
+        mock_limiter.acquire = AsyncMock()
+        mock_limiter.record_429 = MagicMock()
+
+        from app.agents.tools.semantic_scorer import SemanticScoreResult
+
+        fake_sem_score = SemanticScoreResult(
+            skill_match=0.85, experience_match=0.9, rate_match=0.8, location_match=1.0,
+            overall_score=0.87, semantic_fit=0.87, scoring_method="semantic",
+            keyword_matches=[], keyword_misses=[], deferred=False,
+        )
+
+        from app.agents.tools import semantic_scorer as _sem_mod2
+
+        with patch("app.agents.scorer_agent.load_profile", return_value=profile), \
+             patch("app.agents.scorer_agent.get_triage_model", return_value=mock_triage_model), \
+             patch("app.agents.scorer_agent.get_primary_model", return_value=mock_primary_model), \
+             patch("app.agents.scorer_agent.get_limiter", return_value=mock_limiter), \
+             patch("app.agents.scorer_agent._resume_store_module.get_resume_text", return_value="resume text here"), \
+             patch.object(_sem_mod2, "score_semantic", return_value=fake_sem_score):
+            from app.agents.scorer_agent import ScorerAgent
+            scorer = ScorerAgent()
+            scorer._bus = mock_bus
+            await scorer.run(db_session)
+
+        score_row = await db_session.execute(sa_select(JobScore).where(JobScore.job_id == job_id))
+        score = score_row.scalar_one_or_none()
+        assert score is not None, "JobScore row should have been persisted"
+        assert score.fit_reasoning is not None and len(score.fit_reasoning) > 10, (
+            f"fit_reasoning should be persisted, got: {score.fit_reasoning!r}"
+        )
+        assert isinstance(score.strengths, list) and len(score.strengths) >= 2, (
+            f"strengths should have 2+ items, got: {score.strengths}"
+        )
+
+    async def test_hybrid_routes_top_semantic_to_llm(self, db_session):
+        """In hybrid mode, top N% + borderline get LLM; clearly-low get semantic only."""
+        from datetime import datetime
+
+        job_ids = [str(uuid.uuid4()) for _ in range(10)]
+        for jid in job_ids:
+            j = JobPosting(
+                id=jid, title="IT PM", company="Corp", location="London",
+                description="IT Project Manager role. London hybrid. PMP preferred.",
+                url=f"https://example.com/{jid}", source="test",
+                scraped_at=datetime.utcnow(), is_active=True,
+                sync_status="pending", created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
+            )
+            db_session.add(j)
+        await db_session.commit()
+
+        events = [_make_discovery_event(jid) for jid in job_ids]
+
+        # Scores: 4 low (<0.60), 6 in-band or above (>= 0.60)
+        local_scores_ordered = [0.40, 0.45, 0.50, 0.55, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
+        score_iter = iter(local_scores_ordered)
+
+        from app.agents.tools.local_scorer import LocalScoreResult
+
+        def fake_score_locally(job, profile):
+            s = next(score_iter)
+            return LocalScoreResult(
+                skill_match=s, experience_match=s, rate_match=s, location_match=s,
+                overall_score=s, keyword_matches=[], keyword_misses=[],
+            )
+
+        mock_bus = AsyncMock()
+        mock_bus.poll = AsyncMock(return_value=events)
+        mock_bus.emit = AsyncMock(return_value="event-id")
+        mock_bus.mark_processing = AsyncMock()
+        mock_bus.mark_completed = AsyncMock()
+        mock_bus.mark_failed = AsyncMock()
+
+        profile = _make_mock_profile(method="hybrid", top_pct=0.20)
+        profile.scoring.shortlist_threshold = 0.75
+        profile.scoring.hybrid_llm_band = 0.15
+
+        mock_triage_model, mock_primary_model, triage_llm, primary_llm = _make_mock_llm()
+        mock_limiter = MagicMock()
+        mock_limiter.acquire = AsyncMock()
+        mock_limiter.record_429 = MagicMock()
+
+        with patch("app.agents.scorer_agent.load_profile", return_value=profile), \
+             patch("app.agents.scorer_agent.get_triage_model", return_value=mock_triage_model), \
+             patch("app.agents.scorer_agent.get_primary_model", return_value=mock_primary_model), \
+             patch("app.agents.scorer_agent.get_limiter", return_value=mock_limiter), \
+             patch("app.agents.scorer_agent.score_locally", side_effect=fake_score_locally), \
+             patch("app.agents.scorer_agent._resume_store_module.get_resume_text", return_value=""), \
+             patch("app.agents.scorer_agent.score_locally", side_effect=fake_score_locally):
+            from app.agents.scorer_agent import ScorerAgent
+            scorer = ScorerAgent()
+            scorer._bus = mock_bus
+            result = await scorer.run(db_session)
+
+        # 6 jobs in band (0.65-0.90) each trigger triage_llm.ainvoke
+        assert triage_llm.ainvoke.call_count == 6, (
+            f"Expected 6 LLM calls for borderline+top jobs, got {triage_llm.ainvoke.call_count}"
+        )
+        assert result["scored"] + result["skipped"] + result["errors"] == 10

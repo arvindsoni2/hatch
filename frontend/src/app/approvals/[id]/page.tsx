@@ -65,9 +65,12 @@ interface ApprovalDetail {
     rate_match: number | null;
     location_match: number | null;
     reasoning: string | null;
-    scoring_method: "local" | "llm" | null;
+    scoring_method: "local" | "llm" | "semantic" | null;
     keyword_matches: string[] | null;
     keyword_misses: string[] | null;
+    fit_reasoning?: string | null;
+    score_strengths?: string[] | null;
+    score_gaps?: string[] | null;
   } | null;
   documents: {
     id: string;
@@ -443,13 +446,15 @@ export default function ApprovalDetailPage() {
               reasoning={score.reasoning}
             />
           </div>
-          <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <ScoreRationale
-              reasoning={score.reasoning}
-              keywordMatches={score.keyword_matches ?? []}
-              keywordMisses={score.keyword_misses ?? []}
-            />
-          </div>
+          <ScoreRationale
+            job={{
+              match_score: score.overall_score,
+              scoring_method: score.scoring_method ?? null,
+              fit_reasoning: score.fit_reasoning ?? null,
+              score_strengths: score.score_strengths ?? null,
+              score_gaps: score.score_gaps ?? null,
+            } as Parameters<typeof ScoreRationale>[0]["job"]}
+          />
         </div>
       )}
 

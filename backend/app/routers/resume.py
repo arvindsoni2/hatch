@@ -278,6 +278,14 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
     }
     _meta_path().write_text(json.dumps(meta))
 
+    # Persist plain resume text for semantic scoring
+    try:
+        from ..services.resume_store import save_resume_text
+        save_resume_text(text)
+    except Exception as _exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning("Could not save resume text for scoring: %s", _exc)
+
     sections_present: dict[str, bool] = {
         "personal": bool(sections.get("header") or sections.get("contact") or sections.get("personal")),
         "summary": bool(sections.get("summary") or sections.get("profile")),
