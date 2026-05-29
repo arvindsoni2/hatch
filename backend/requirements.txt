@@ -49,6 +49,10 @@ langchain-ollama>=0.2.0
 python-docx>=1.1.0
 pypdf>=4.0.0
 
+# ── Semantic scoring (local embeddings — no API cost) ─────────────────────────
+# Pulls in torch (CPU build via --extra-index-url in Dockerfile). ~400 MB.
+sentence-transformers>=3.0,<4.0
+
 # ── Dev / test (also installed in container for make test) ────────────────────
 ruff==0.6.8
 pytest==8.3.3
