@@ -22,10 +22,11 @@ import { cn } from "@/lib/utils";
 import { KanbanCard } from "./KanbanCard";
 import type { ApplicationListItem, ApplicationStatus, KanbanStats } from "@/lib/api";
 
+// Candidate-journey order: Hatch discovers → you apply → employer shortlists → interview → offer
 const ACTIVE_COLUMNS: ApplicationStatus[] = [
   "discovered",
-  "shortlisted",
   "applied",
+  "shortlisted",
   "interview",
   "offered",
 ];
@@ -39,8 +40,8 @@ const ARCHIVE_STATUSES: ApplicationStatus[] = [
 
 const COLUMN_LABELS: Record<string, string> = {
   discovered: "Discovered",
-  shortlisted: "Shortlisted",
   applied: "Applied",
+  shortlisted: "Shortlisted",
   interview: "Interview",
   offered: "Offered",
   accepted: "Accepted",
@@ -51,8 +52,8 @@ const COLUMN_LABELS: Record<string, string> = {
 
 const COLUMN_COLORS: Record<string, string> = {
   discovered: "border-slate-300",
-  shortlisted: "border-purple-300",
   applied: "border-blue-300",
+  shortlisted: "border-purple-300",
   interview: "border-amber-300",
   offered: "border-emerald-300",
   accepted: "border-green-300",
@@ -133,17 +134,17 @@ function StatsRibbon({ stats }: { stats: KanbanStats }) {
   return (
     <div className="flex flex-wrap gap-3 mb-4">
       {[
-        { label: "Active Applications", value: stats.active_count, color: "text-indigo-600" },
-        { label: "Applied", value: stats.applied_count, color: "text-blue-600" },
-        { label: "Response Rate", value: `${stats.response_rate.toFixed(1)}%`, color: "text-emerald-600" },
+        { label: "Active Applications", value: stats.active_count, tokenColor: "var(--accent)" },
+        { label: "Applied", value: stats.applied_count, tokenColor: "var(--accent)" },
+        { label: "Response Rate", value: `${stats.response_rate.toFixed(1)}%`, tokenColor: "var(--success)" },
         {
           label: "Overdue Follow-ups",
           value: stats.overdue_count,
-          color: stats.overdue_count > 0 ? "text-red-600" : "text-slate-500",
+          tokenColor: stats.overdue_count > 0 ? "var(--danger)" : "var(--text-muted)",
         },
-      ].map(({ label, value, color }) => (
+      ].map(({ label, value, tokenColor }) => (
         <div key={label} className="rounded-lg px-4 py-2 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <div className={cn("text-xl font-bold", color)}>{value}</div>
+          <div className="text-xl font-bold" style={{ color: tokenColor }}>{value}</div>
           <div className="text-xs" style={{ color: "var(--text-muted)" }}>{label}</div>
         </div>
       ))}
@@ -257,10 +258,11 @@ export function KanbanBoard({ initialData, stats, overdueIds, onStatusChange, on
       </DndContext>
 
       {/* Archive accordion */}
-      <div className="mt-4 border border-slate-200 rounded-lg overflow-hidden">
+      <div className="mt-4 rounded-lg overflow-hidden" style={{ border: "1px solid var(--border)" }}>
         <button
           onClick={() => setArchiveOpen((o) => !o)}
-          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-sm font-medium text-slate-600"
+          className="w-full flex items-center justify-between px-4 py-3 transition-colors text-sm font-medium"
+          style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}
         >
           <span>Archive ({archiveItems.length})</span>
           {archiveOpen ? (

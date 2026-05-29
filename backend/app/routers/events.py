@@ -40,7 +40,14 @@ class ActivityList(BaseModel):
 # ── Human-readable event message builders ────────────────────────────────────
 
 def _humanise(event: AgentEvent) -> ActivityItem:
-    payload: dict[str, Any] = event.payload or {}
+    raw = event.payload or {}
+    if isinstance(raw, str):
+        import json  # noqa: PLC0415
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    payload: dict[str, Any] = raw
     agent = event.source_agent or "system"
     etype = event.event_type
     job_id: str | None = payload.get("job_id")

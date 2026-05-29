@@ -9,6 +9,7 @@ import {
   PendingApproval,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import { TriggerScrapeButton } from "@/components/TriggerScrapeButton";
 import {
   CheckCircle2,
   ChevronRight,
@@ -115,9 +116,9 @@ export default function ApprovalsPage() {
           </div>
           <p className="text-base font-semibold" style={{ color: "var(--text)" }}>{"You're all caught up"}</p>
           <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>Every AI-sourced application has been reviewed.</p>
-          <button className="mt-5 text-sm font-medium rounded-lg px-4 py-2" style={{ background: "var(--accent-soft)", color: "var(--accent)" }} onClick={refresh}>
-            Run scraper
-          </button>
+          <div className="mt-5">
+            <TriggerScrapeButton variant="primary" />
+          </div>
         </div>
       )}
 

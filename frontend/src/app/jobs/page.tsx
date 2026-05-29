@@ -195,23 +195,26 @@ export default function JobsPage() {
         onScrapeComplete={handleScrapeComplete}
       />
 
-      {/* Score band legend */}
-      {!showAll && (
-        <div className="flex items-center gap-4 text-xs text-slate-500">
-          <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-green-400 inline-block" />
-            ≥{thresholdPct}% auto-shortlisted
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-amber-300 inline-block" />
-            50–{thresholdPct - 1}% parked
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-slate-300 inline-block" />
-            &lt;50% hidden
-          </span>
-        </div>
-      )}
+      {/* Score band legend — all bounds derived from threshold */}
+      {!showAll && (() => {
+        const midPct = Math.max(1, Math.round(thresholdPct / 2));
+        return (
+          <div className="flex items-center gap-4 text-xs" style={{ color: "var(--text-muted)" }}>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "var(--success)" }} />
+              ≥{thresholdPct}% auto-shortlisted
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "var(--warning)" }} />
+              {midPct}–{thresholdPct - 1}% parked
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "var(--border)" }} />
+              &lt;{midPct}% hidden
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Results */}
       {loading ? (

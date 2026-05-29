@@ -1,10 +1,15 @@
-# ── JobPilot v2 — profile.yaml template ──────────────────────────────────────
+# ── Hatch — profile.yaml template ───────────────────────────────────────────
 # Copy this file to data/profile.yaml and fill in your details.
-# Or run `make dev` on first launch to use the onboarding wizard instead.
-# See examples/ directory for complete worked examples (UK contractor, US SWE, EU PM).
+# Or run `./install.sh` — it creates the profile automatically and detects
+# your Ollama model so you can start immediately without any API key.
 #
 # NEVER commit data/profile.yaml — it contains personal information.
 # It is listed in .gitignore by default.
+
+# ─── Locale ──────────────────────────────────────────────────────────────────
+# Controls job boards, currency, and compliance fields.
+# Supported: uk | in | ie | ae
+locale: "uk"
 
 # ─── Identity ────────────────────────────────────────────────────────────────
 candidate:
@@ -18,8 +23,8 @@ search:
   target_roles:                     # Job titles to search for (list)
     - ""                            # e.g. "Delivery Lead", "Senior SWE", "Product Manager"
   locations:
-    - city: ""                      # e.g. "London", "Berlin", "Remote"
-      country: ""                   # e.g. "UK", "DE", "US"
+    - city: ""                      # e.g. "London", "Pune", "Dublin"
+      country: ""                   # ISO country code: GB, IN, IE, AE
       radius_miles: 30
       remote_preference: "any"      # "onsite" | "hybrid" | "remote" | "any"
   contract_type: "any"              # "contract" | "permanent" | "freelance" | "any"
@@ -28,9 +33,9 @@ search:
 compensation:
   min_rate: 0
   max_rate: 0
-  rate_type: "daily"                # "daily" | "hourly" | "annual"
-  currency: "GBP"
-  ir35_preference: "any"            # "outside" | "inside" | "any" (UK contracts)
+  rate_type: "daily"                # "daily" | "hourly" | "annual" | "monthly"
+  currency: ""                      # Set by locale — GBP, INR, EUR, AED, etc.
+  legal_preferences: {}             # Locale-specific fields set by onboarding wizard
 
 # ─── Skills & Experience ─────────────────────────────────────────────────────
 skills:
@@ -48,26 +53,21 @@ domains:
     - ""
 
 # ─── Proof Points ────────────────────────────────────────────────────────────
-# Key achievements that get mapped into tailored CVs and cover letters.
-# The more specific the metrics, the better the tailoring.
+# Key achievements mapped into tailored CVs and cover letters.
 proof_points:
-  - id: "achievement_1"             # Short identifier (no spaces)
+  - id: "achievement_1"
     summary: ""                     # One-line achievement
     context: ""                     # Company / project context
-    metrics: ""                     # Quantified result (e.g. "£500K savings")
-    tags: []                        # Skill tags for JD-to-proof-point matching
+    metrics: ""                     # Quantified result
+    tags: []
 
 # ─── Master CV ───────────────────────────────────────────────────────────────
-master_cv_path: "./data/master_cv.json"  # Created by onboarding CV upload step
+master_cv_path: "./data/master_cv.json"
 
 # ─── Job Boards ──────────────────────────────────────────────────────────────
-job_boards:
-  - name: "reed"
-    enabled: true
-    scraper: "ReedScraper"
-    search_params:
-      keywords: []
-      location: ""
+# The install script populates this from your locale pack automatically.
+# Add/remove boards here or toggle via Settings → Job Boards in the UI.
+job_boards: []
 
 # ─── Scoring ─────────────────────────────────────────────────────────────────
 scoring:
@@ -77,25 +77,27 @@ scoring:
     rate_match: 0.20
     location_match: 0.15
   shortlist_threshold: 0.75         # Jobs above this score get auto-tailored
+  method: "auto"                    # "auto" | "llm" | "local" | "hybrid"
 
 # ─── LLM Provider ────────────────────────────────────────────────────────────
-# See examples/ for per-provider configuration examples.
-# Set the matching API key in .env — NEVER put keys in this file.
+# Default: Ollama (local, free, no API key).
+# The install script detects your installed Ollama model automatically.
+# To use a cloud provider, change provider and set the API key in .env.
 llm:
-  provider: "anthropic"             # "anthropic" | "openai" | "google" | "ollama" | "azure" | "aws_bedrock"
-  triage_model: "claude-haiku-4-5-20251001"
-  primary_model: "claude-sonnet-4-20250514"
-  api_key_env: "ANTHROPIC_API_KEY"  # Name of env var holding the key
-  base_url: null                    # Override for Ollama: "http://localhost:11434"
+  provider: "ollama"                # "ollama" | "anthropic" | "openai" | "google_genai" | "azure_openai"
+  triage_model: ""                  # Populated by install.sh from local Ollama models
+  primary_model: ""                 # Populated by install.sh from local Ollama models
+  base_url: "http://host.containers.internal:11434"  # Ollama endpoint (container → host)
+  api_key_env: ""                   # Env var name for cloud providers (e.g. ANTHROPIC_API_KEY)
   temperature: 0.3
   max_retries: 3
-  track_costs: true
-  monthly_budget: 15.00
-  currency: "GBP"
+  track_costs: false
+  monthly_budget: 0.0
+  currency: ""                      # Set per locale
 
 # ─── Preferences ─────────────────────────────────────────────────────────────
 preferences:
   scrape_interval_hours: 4
   max_tailor_batch: 5
   follow_up_days: [5, 10, 15]
-  locale: "en-GB"
+  archive_after_days: 30

@@ -16,8 +16,25 @@ from .base_agent import BaseAgent
 logger = logging.getLogger("jobpilot.agent.scout")
 
 
+def _sources_from_profile() -> list[str]:
+    """Return the enabled scraper names from profile.yaml job_boards.
+
+    Falls back to all registered scrapers if the profile has no boards configured.
+    This ensures the scout always respects the user's locale and board preferences.
+    """
+    try:
+        from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+        profile = load_profile()
+        enabled = [b.scraper for b in profile.job_boards if b.enabled and b.scraper]
+        if enabled:
+            return enabled
+    except Exception as exc:
+        logger.warning("Could not load profile for scraper selection: %s — using all scrapers", exc)
+    return list(SCRAPER_REGISTRY.keys())
+
+
 class ScoutAgent(BaseAgent):
-    """Iterates all configured scrapers, deduplicates results, emits events.
+    """Iterates configured scrapers (from profile.yaml job_boards), deduplicates, emits events.
 
     LLM usage: None — Scout is purely deterministic.
     """
@@ -26,9 +43,14 @@ class ScoutAgent(BaseAgent):
 
     def __init__(self, sources: list[str] | None = None) -> None:
         super().__init__()
-        # Default: run all registered boards; caller may restrict to a subset
-        self._sources = sources or list(SCRAPER_REGISTRY.keys())
+        # Explicit override takes precedence; otherwise read from profile at runtime
+        self._explicit_sources = sources
         self._dedup = DedupService()
+
+    @property
+    def _sources(self) -> list[str]:
+        """Resolved scraper list — explicit override or live from profile."""
+        return self._explicit_sources if self._explicit_sources is not None else _sources_from_profile()
 
     # ── Main entry point ──────────────────────────────────────────────
 
