@@ -34,7 +34,7 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 
 08:30  You open the dashboard
        → Review: score breakdown, tailored CV preview, cover letter preview
-       → Approve 2, reject 1 (wrong IR35 status)
+       → Approve 2, reject 1 (wrong contract status)
        → Approved applications move to "Ready to Apply"
 
 14:00  You mark "Interview scheduled" on Kanban
@@ -51,10 +51,10 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | Feature | Description |
 |---------|-------------|
 | **Profile-driven** | All user config in `profile.yaml` — roles, location, skills, weights, LLM provider. No code changes per user. |
-| **Locale Pack System** | YAML-driven market packs for 🇬🇧 UK, 🇮🇳 India, 🇺🇸 US, 🇩🇪 Germany. Controls job boards, compensation defaults, and legal/compliance fields. |
+| **Locale Pack System** | YAML-driven market packs for 🇬🇧 UK, 🇮🇳 India, 🇮🇪 Ireland, 🇦🇪 UAE. Controls job boards, compensation defaults, and legal/compliance fields. |
 | **Pluggable AI** | Anthropic, OpenAI, Google, Ollama (free/local), Azure, AWS Bedrock — switch via `profile.yaml` |
 | **Two-tier scoring** | Cheap triage model pre-filters; strong primary model scores on 4 dimensions with configurable weights |
-| **Locale-aware scoring** | IR35, work authorisation, notice period, and other locale-specific signals injected into the `location_match` scoring dimension |
+| **Locale-aware scoring** | Contract status, work authorisation, notice period, and other locale-specific signals injected into the `location_match` scoring dimension |
 | **Human-in-the-loop** | Mandatory approval checkpoint before any application leaves the system — never auto-submits |
 | **Autonomous pipeline** | APScheduler cron → event bus → LangGraph StateGraph routes events to correct agents |
 | **Interview coaching** | Company research, 12 categorised questions, STAR model answers mapped to your proof points |
@@ -93,7 +93,7 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 
 | Component | Status | Description |
 |-----------|--------|-------------|
-| `locales/*.yaml` | **New** | Locale packs — UK, India, US, Germany, `_template` for contributors |
+| `locales/*.yaml` | **New** | Locale packs — UK, India, Ireland, UAE, `_template` for contributors |
 | `services/locale_service.py` | **New** | Loads/caches locale YAML; interpolates `legal_preferences` into scoring context |
 | `scrapers/registry.py` | **New** | Maps locale board IDs → scraper classes; `get_scrapers_for_locale()` |
 | `services/archive_service.py` | **New** | Auto-archives stale jobs; manual unarchive endpoint |
@@ -121,7 +121,7 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | `routers/interviews_ical.py` | **New** | `GET /api/v2/interviews/{id}/ical` — iCalendar `.ics` download for interview rounds |
 | `scrapers/naukri.py` | **New** | Naukri.com job scraper (India) via `jobapi/v3/search` API |
 | `scrapers/indeed_india.py` | **New** | Indeed India scraper (`in.indeed.com`) |
-| `examples/` | **New** | 3 example profiles (UK contractor, US SWE, EU PM) |
+| `examples/` | **New** | Example profiles for each supported locale (UK, India, Ireland, UAE) |
 
 ---
 
@@ -183,8 +183,8 @@ Open `http://localhost:3000`. If `data/profile.yaml` is absent, the dashboard re
 | Step | What you configure |
 |------|--------------------|
 | **Identity** | Name, title, years of experience, professional summary |
-| **Your market** | Locale (🇬🇧 UK · 🇮🇳 India · 🇺🇸 US · 🇩🇪 Germany), target roles, location, remote preference |
-| **Compensation & eligibility** | Rate range, rate type, currency + locale-specific fields (IR35, work authorisation, notice period, etc.) |
+| **Your market** | Locale (🇬🇧 UK · 🇮🇳 India · 🇮🇪 Ireland · 🇦🇪 UAE), target roles, location, remote preference |
+| **Compensation & eligibility** | Rate range, rate type, currency + locale-specific fields (contract status, work authorisation, notice period, etc.) |
 | **Skills & achievements** | Primary/secondary skills, domains, STAR proof points (used by Tailor for CV personalisation) |
 | **AI setup & launch** | LLM provider, live API key test, job board toggles, scrape interval → **Start Hatch** |
 
@@ -196,9 +196,10 @@ cp data/profile.yaml.example data/profile.yaml
 ```
 
 See `examples/` for complete worked profiles:
-- `examples/profile_uk_contractor.yaml` — UK outside-IR35 Delivery Lead
-- `examples/profile_us_swe.yaml` — US Senior Software Engineer (OpenAI)
-- `examples/profile_eu_pm.yaml` — EU Freelance Product Manager (Google AI)
+- `examples/profile_uk_contractor.yaml` — UK Delivery Lead (outside contract)
+- `examples/profile_in_engineer.yaml` — India Senior Software Engineer
+- `examples/profile_ie_pm.yaml` — Ireland Product Manager
+- `examples/profile_ae_architect.yaml` — UAE Solutions Architect
 
 ---
 
@@ -209,13 +210,14 @@ All user-specific configuration lives in `data/profile.yaml`. Agents read it at 
 ### Locale
 
 ```yaml
-locale: "uk"   # uk | in | us | de (controls job boards + compliance fields)
+locale: "uk"   # uk | in | ie | ae (controls job boards + compliance fields)
 ```
 
 The locale pack (`locales/<id>.yaml`) determines:
+
 - Which job boards are available and enabled by default
-- What legal/compliance fields appear in scoring (`IR35` for UK, `work_auth` for US, `notice_period` for India, etc.)
-- Default compensation rate type (daily for UK, annual CTC for India, annual salary for US/DE)
+- What legal/compliance fields appear in scoring (contract status for UK/IE, work authorisation for UAE, notice period for India, etc.)
+- Default compensation currency and rate type (daily for UK/IE, annual CTC for India, monthly for UAE)
 - Locale-specific guidance injected into the `location_match` scoring dimension
 
 ### LLM Providers
@@ -248,7 +250,7 @@ scoring:
     skill_match: 0.35
     experience_match: 0.30
     rate_match: 0.20
-    location_match: 0.15             # locale-aware — includes IR35/work auth signals
+    location_match: 0.15             # locale-aware — includes contract status/work auth signals
 ```
 
 ### Compensation & compliance
@@ -258,10 +260,11 @@ compensation:
   min_rate: 600
   max_rate: 800
   rate_type: "daily"                 # daily | hourly | annual | monthly
-  currency: "GBP"
+  currency: "GBP"                    # set by locale — GBP, INR, EUR, AED, etc.
   legal_preferences:                 # locale-specific — set by onboarding wizard
-    ir35_preference: "outside"       # UK only
-    right_to_work: "citizen"         # UK only
+    contract_status: "outside"       # UK/IE: outside | inside | any
+    work_authorisation: "citizen"    # UAE: citizen | visa | any
+    notice_period_days: 30           # India: notice period in days
 ```
 
 ### Preferences
@@ -287,7 +290,7 @@ preferences:
 - **Trigger:** `job_discovered` events
 - **Does:** Two-tier scoring — triage model pre-filters, primary model scores on 4 dimensions
 - **Weights:** Read from `profile.yaml → scoring.weights` at runtime
-- **Locale context:** IR35, work authorisation, notice period etc. injected into `location_match` prompt from locale pack
+- **Locale context:** Contract status, work authorisation, notice period etc. injected into `location_match` prompt from locale pack
 - **LLM:** Triage model (cheap, fast) + primary model (strong)
 
 ### Tailor
@@ -391,15 +394,15 @@ make status       # Show all agent statuses
 
 ## Cost Estimate (Anthropic default)
 
-| Activity | Volume/month | Cost |
+| Activity | Volume/month | Cost (USD) |
 |----------|-------------|------|
-| Triage pre-filter | 3,600 jobs | £0.36 |
-| Primary scoring | 540 jobs | £1.62 |
-| CV + CL generation | 50 applications | £1.15 |
-| Coach (research + Q&A) | 2 interviews | £0.09 |
-| **Total** | | **~£3.22** |
+| Triage pre-filter | 3,600 jobs | ~$0.45 |
+| Primary scoring | 540 jobs | ~$2.05 |
+| CV + CL generation | 50 applications | ~$1.45 |
+| Coach (research + Q&A) | 2 interviews | ~$0.11 |
+| **Total** | | **~$4.06** |
 
-Well within the default £15/month budget configured in `profile.yaml`. Use Ollama for £0.
+Well within the default monthly budget configured in `profile.yaml`. Use Ollama for $0.
 
 ---
 

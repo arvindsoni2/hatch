@@ -10,12 +10,14 @@ import {
   getUpcomingInterviews,
   fetchFollowUpReminders,
   fetchRateLimitStatus,
+  fetchJobSources,
   type AllAgentStatus,
   type PipelineStats,
   type PendingApproval,
   type RawProfile,
   type FollowUpReminder,
   type RateLimitStatus,
+  type JobSourceCount,
 } from "@/lib/api";
 import { TriggerScrapeButton } from "@/components/TriggerScrapeButton";
 import { ActivityTimeline } from "@/components/ActivityTimeline";
@@ -285,6 +287,74 @@ function FollowUpSection({ reminders }: { reminders: FollowUpReminder[] }) {
   );
 }
 
+// ── Job sources ───────────────────────────────────────────────────────────────
+
+const SOURCE_COLORS: Record<string, string> = {
+  linkedin: "#0a66c2",
+  reed: "#e63946",
+  indeed: "#2557a7",
+  naukri: "#fd5900",
+  contractoruk: "#5b9bff",
+  itjobswatch: "#3ddc97",
+  cwjobs: "#f5b950",
+};
+
+function sourceColor(source: string): string {
+  return SOURCE_COLORS[source.toLowerCase()] ?? "var(--accent)";
+}
+
+function JobSourcesSection({ sources }: { sources: JobSourceCount[] }) {
+  if (sources.length === 0) return null;
+  const total = sources.reduce((s, x) => s + x.total, 0);
+  if (total === 0) return null;
+  const sorted = [...sources].sort((a, b) => b.total - a.total).slice(0, 6);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
+          Where Hatch is finding jobs
+        </h2>
+        <span className="text-xs" style={{ color: "var(--text-muted)" }}>Last 30 days</span>
+      </div>
+      <div
+        className="rounded-xl p-5 space-y-3"
+        style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+      >
+        {sorted.map((s) => {
+          const pct = total > 0 ? (s.total / total) * 100 : 0;
+          const color = sourceColor(s.source);
+          return (
+            <div key={s.source} className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block rounded-sm"
+                    style={{ width: 8, height: 8, background: color, flexShrink: 0 }}
+                  />
+                  <span className="text-sm" style={{ color: "var(--text-dim)" }}>{s.source}</span>
+                </div>
+                <span className="text-sm font-medium font-mono" style={{ color: "var(--text-muted)" }}>
+                  {s.total}
+                </span>
+              </div>
+              <div
+                className="h-1.5 w-full overflow-hidden rounded-full"
+                style={{ background: "var(--surface-2)" }}
+              >
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{ width: `${pct}%`, background: color }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Hero section ──────────────────────────────────────────────────────────────
 
 function HeroSection({
@@ -412,7 +482,7 @@ export default async function DashboardPage() {
     redirect("/onboarding");
   }
 
-  const [rawProfile, agentStatus, pipelineStats, pendingApprovals, upcomingInterviews, followUpReminders, rateLimitStatus] =
+  const [rawProfile, agentStatus, pipelineStats, pendingApprovals, upcomingInterviews, followUpReminders, rateLimitStatus, jobSources] =
     await Promise.all([
       fetchRawProfile().catch((): RawProfile => ({})),
       fetchAllAgentStatus().catch((): AllAgentStatus | null => null),
@@ -421,6 +491,7 @@ export default async function DashboardPage() {
       getUpcomingInterviews(14).catch(() => []),
       fetchFollowUpReminders().catch((): FollowUpReminder[] => []),
       fetchRateLimitStatus().catch((): RateLimitStatus | null => null),
+      fetchJobSources().catch((): JobSourceCount[] => []),
     ]);
 
   const threshold = rawProfile.scoring?.shortlist_threshold ?? 0.75;
@@ -441,7 +512,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       {/* Page header */}
       <div>
-        <h1 className="text-2xl font-bold mb-1" style={{ color: "var(--text)", letterSpacing: "-0.015em" }}>
+        <h1 className="text-[28px] font-semibold mb-1" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>
           Home
         </h1>
         <p className="text-sm" style={{ color: "var(--text-muted)" }}>
@@ -492,14 +563,20 @@ export default async function DashboardPage() {
           {/* Follow-up reminders */}
           <FollowUpSection reminders={followUpReminders} />
 
-          {/* Activity timeline */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
-                Recent activity
-              </h2>
+          {/* Two-column: activity + sources */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Activity timeline */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
+                  Recent activity
+                </h2>
+              </div>
+              <ActivityTimeline />
             </div>
-            <ActivityTimeline />
+
+            {/* Sources */}
+            <JobSourcesSection sources={jobSources} />
           </div>
         </>
       )}

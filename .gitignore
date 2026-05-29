@@ -9,6 +9,7 @@ Job_Pilot_v2/UX_changes.md
 06_UX_Accessibility_Improvements.md
 UX_changes.md
 07_Security_Pipeline_Features.md
+CLAUDE_Phase2.md
 # ──────────────────────── Secrets ────────────────────────
 .env
 .env.example

@@ -34,9 +34,8 @@ class CompensationConfig(BaseModel):
     min_rate: float = 0
     max_rate: float = 0
     rate_type: Literal["daily", "hourly", "annual", "monthly"] = "daily"
-    currency: str = "GBP"
-    ir35_preference: Literal["outside", "inside", "any"] = "any"
-    # Locale-specific legal/compliance preferences (e.g. work_auth, notice_period)
+    currency: str = ""  # set by locale pack (GBP, INR, EUR, AED, …)
+    # Locale-specific legal/compliance preferences (e.g. contract_status, work_auth, notice_period)
     legal_preferences: dict[str, str] = Field(default_factory=dict)
 
 
@@ -104,7 +103,7 @@ class LLMConfig(BaseModel):
     max_retries: int = 3
     track_costs: bool = True
     monthly_budget: float = 15.00
-    currency: str = "GBP"
+    currency: str = "USD"  # currency for budget display; override per locale
 
 
 class PreferencesConfig(BaseModel):

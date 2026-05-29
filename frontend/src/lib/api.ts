@@ -451,6 +451,17 @@ export async function fetchAnalyticsDashboard(): Promise<AnalyticsDashboard> {
   return apiFetch<AnalyticsDashboard>("/api/analytics/dashboard");
 }
 
+export interface JobSourceCount {
+  source: string;
+  total: number;
+  applied: number;
+  interview_rate: number;
+}
+
+export async function fetchJobSources(): Promise<JobSourceCount[]> {
+  return apiFetch<JobSourceCount[]>("/api/analytics/sources");
+}
+
 // ─────────────────── Phase 3 — Tailor Types ───────────────────
 
 export interface ContractDetails {
