@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..agents.tools.profile_loader import load_profile  # noqa: E402 — imported at module level for testability
+
 logger = logging.getLogger(__name__)
 
 # ── Storage paths ──────────────────────────────────────────────────────────────
@@ -92,8 +94,6 @@ def synthesise_from_profile() -> str:
     Returns:
         Multi-line plain-text representation of the profile.
     """
-    from ..agents.tools.profile_loader import load_profile
-
     try:
         profile = load_profile()
     except Exception as exc:
