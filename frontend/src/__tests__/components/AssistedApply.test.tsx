@@ -138,8 +138,7 @@ describe("AssistedApplyCard", () => {
   });
 
   it("calls updateApplicationStatus with 'applied' when Mark as applied clicked", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vi.mocked(updateApplicationStatus).mockResolvedValue({} as any);
+    vi.mocked(updateApplicationStatus).mockResolvedValue({} as never);
 
     const onStatusChange = vi.fn();
     const app = makeApproval({ status: "ready_to_apply" });
