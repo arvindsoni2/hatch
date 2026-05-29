@@ -11,18 +11,17 @@ export function SkillMatchMatrix({ skillMatch }: SkillMatchMatrixProps) {
   const radius = 28;
   const circumference = 2 * Math.PI * radius;
   const dash = (match_pct / 100) * circumference;
-  const gaugeColor = match_pct >= 70 ? "#10b981" : match_pct >= 50 ? "#f59e0b" : "#ef4444";
+  const gaugeColor = match_pct >= 70 ? "var(--success)" : match_pct >= 50 ? "var(--warning)" : "var(--danger)";
 
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-800 p-5">
-      <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
+    <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
         Skill Match
       </h3>
 
       <div className="mb-4 flex items-center gap-5">
-        {/* Mini gauge */}
         <svg width="72" height="72" viewBox="0 0 72 72">
-          <circle cx="36" cy="36" r={radius} fill="none" stroke="#334155" strokeWidth="6" />
+          <circle cx="36" cy="36" r={radius} fill="none" stroke="var(--surface-3)" strokeWidth="6" />
           <circle
             cx="36"
             cy="36"
@@ -34,33 +33,33 @@ export function SkillMatchMatrix({ skillMatch }: SkillMatchMatrixProps) {
             strokeLinecap="round"
             transform="rotate(-90 36 36)"
           />
-          <text x="36" y="40" textAnchor="middle" fill="white" fontSize="13" fontWeight="bold">
+          <text x="36" y="40" textAnchor="middle" fill="var(--text)" fontSize="13" fontWeight="bold">
             {match_pct.toFixed(0)}%
           </text>
         </svg>
 
         <div className="flex-1">
-          <p className="text-sm font-medium text-slate-200">
+          <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
             {matched.length} of {matched.length + missing.length} keywords matched
           </p>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
             Domain match:{" "}
-            <span className={domain_match ? "text-emerald-400" : "text-red-400"}>
+            <span style={{ color: domain_match ? "var(--success)" : "var(--danger)" }}>
               {domain_match ? "Yes" : "No"}
             </span>
           </p>
         </div>
       </div>
 
-      {/* Matched keywords */}
       {matched.length > 0 && (
         <div className="mb-3">
-          <p className="mb-1.5 text-xs font-semibold text-emerald-400">Matched</p>
+          <p className="mb-1.5 text-xs font-semibold" style={{ color: "var(--success)" }}>Matched</p>
           <div className="flex flex-wrap gap-1">
             {matched.slice(0, 12).map((kw) => (
               <span
                 key={kw}
-                className="rounded-full bg-emerald-900/40 px-2 py-0.5 text-xs text-emerald-300"
+                className="rounded-full px-2 py-0.5 text-xs"
+                style={{ background: "var(--success-soft)", color: "var(--success)" }}
               >
                 {kw}
               </span>
@@ -69,15 +68,15 @@ export function SkillMatchMatrix({ skillMatch }: SkillMatchMatrixProps) {
         </div>
       )}
 
-      {/* Missing keywords */}
       {missing.length > 0 && (
         <div className="mb-3">
-          <p className="mb-1.5 text-xs font-semibold text-amber-400">Gap</p>
+          <p className="mb-1.5 text-xs font-semibold" style={{ color: "var(--warning)" }}>Gap</p>
           <div className="flex flex-wrap gap-1">
             {missing.slice(0, 8).map((kw) => (
               <span
                 key={kw}
-                className="rounded-full bg-amber-900/30 px-2 py-0.5 text-xs text-amber-300"
+                className="rounded-full px-2 py-0.5 text-xs"
+                style={{ background: "var(--warning-soft)", color: "var(--warning)" }}
               >
                 {kw}
               </span>
@@ -86,12 +85,11 @@ export function SkillMatchMatrix({ skillMatch }: SkillMatchMatrixProps) {
         </div>
       )}
 
-      {/* Recommendations */}
       {recommendations.length > 0 && (
-        <div className="mt-3 rounded-lg bg-slate-700/50 p-3">
-          <p className="mb-1 text-xs font-semibold text-slate-400">Recommendations</p>
+        <div className="mt-3 rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+          <p className="mb-1 text-xs font-semibold" style={{ color: "var(--text-muted)" }}>Recommendations</p>
           {recommendations.map((rec, i) => (
-            <p key={i} className="text-xs text-slate-400">
+            <p key={i} className="text-xs" style={{ color: "var(--text-dim)" }}>
               • {rec}
             </p>
           ))}

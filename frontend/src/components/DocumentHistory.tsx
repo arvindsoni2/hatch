@@ -8,17 +8,26 @@ interface DocumentHistoryProps {
   documents: GeneratedDocument[];
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  generated: "bg-emerald-900/40 text-emerald-300",
-  generating: "bg-blue-900/40 text-blue-300",
-  failed: "bg-red-900/40 text-red-300",
-};
+function atsColor(score: number): string {
+  if (score >= 80) return "var(--success)";
+  if (score >= 60) return "var(--warning)";
+  return "var(--danger)";
+}
+
+function statusStyle(status: string): { background: string; color: string } {
+  switch (status) {
+    case "generated": return { background: "var(--success-soft)", color: "var(--success)" };
+    case "generating": return { background: "var(--accent-soft)", color: "var(--accent)" };
+    case "failed":    return { background: "var(--danger-soft)", color: "var(--danger)" };
+    default:          return { background: "var(--surface-2)", color: "var(--text-muted)" };
+  }
+}
 
 export function DocumentHistory({ documents }: DocumentHistoryProps) {
   if (documents.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-700 bg-slate-800 p-6 text-center">
-        <p className="text-sm text-slate-500">No documents generated yet.</p>
+      <div className="rounded-xl p-6 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>No documents generated yet.</p>
       </div>
     );
   }
@@ -33,12 +42,12 @@ export function DocumentHistory({ documents }: DocumentHistoryProps) {
   return (
     <div className="space-y-4">
       {Object.entries(grouped).map(([docType, docs]) => (
-        <div key={docType} className="rounded-xl border border-slate-700 bg-slate-800 p-5">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-300">
+        <div key={docType} className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--text)" }}>
             {docType === "cv" ? (
-              <FileText className="h-4 w-4 text-indigo-400" />
+              <FileText className="h-4 w-4" style={{ color: "var(--accent)" }} />
             ) : (
-              <FileCheck className="h-4 w-4 text-emerald-400" />
+              <FileCheck className="h-4 w-4" style={{ color: "var(--success)" }} />
             )}
             {docType === "cv" ? "CV" : "Cover Letter"} Versions
           </h3>
@@ -47,30 +56,30 @@ export function DocumentHistory({ documents }: DocumentHistoryProps) {
             {docs.map((doc) => (
               <div
                 key={doc.id}
-                className="flex items-center justify-between rounded-lg bg-slate-700/50 px-3 py-2"
+                className="flex items-center justify-between rounded-lg px-3 py-2"
+                style={{ background: "var(--surface-2)" }}
               >
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-slate-400">v{doc.version}</span>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>v{doc.version}</span>
                   {doc.variant_label && (
-                    <span className="rounded bg-slate-600 px-1.5 py-0.5 text-xs text-slate-300">
+                    <span className="rounded px-1.5 py-0.5 text-xs" style={{ background: "var(--surface-3)", color: "var(--text-dim)" }}>
                       Variant {doc.variant_label}
                     </span>
                   )}
                   <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[doc.status] ?? "bg-slate-600 text-slate-300"}`}
+                    className="rounded-full px-2 py-0.5 text-xs font-medium"
+                    style={statusStyle(doc.status)}
                   >
                     {doc.status}
                   </span>
                   {doc.ats_score != null && (
-                    <span
-                      className={`text-xs font-semibold ${doc.ats_score >= 80 ? "text-emerald-400" : doc.ats_score >= 60 ? "text-amber-400" : "text-red-400"}`}
-                    >
+                    <span className="text-xs font-semibold" style={{ color: atsColor(doc.ats_score) }}>
                       ATS: {doc.ats_score}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs" style={{ color: "var(--text-muted)" }}>
                     {new Date(doc.created_at).toLocaleDateString("en-GB", {
                       day: "numeric",
                       month: "short",
@@ -81,7 +90,8 @@ export function DocumentHistory({ documents }: DocumentHistoryProps) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 w-7 p-0 text-slate-400 hover:text-white"
+                    className="h-7 w-7 p-0"
+                    style={{ color: "var(--text-dim)" }}
                     onClick={() => downloadDocument(doc.id)}
                   >
                     <Download className="h-3.5 w-3.5" />

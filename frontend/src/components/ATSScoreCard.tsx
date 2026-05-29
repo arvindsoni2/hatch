@@ -7,11 +7,10 @@ interface ATSScoreCardProps {
   details?: ATSScore | null;
 }
 
-// SVG stroke must be inline (Tailwind can't generate dynamic stroke colours)
 const SCORE_COLOR = {
-  good:    "#10b981", // emerald-500
-  warning: "#f59e0b", // amber-400
-  poor:    "#ef4444", // red-500
+  good:    "#3ddc97",
+  warning: "#f5b950",
+  poor:    "#ff6b6b",
 } as const;
 
 function scoreColor(score: number): string {
@@ -34,15 +33,14 @@ export function ATSScoreCard({ score, details }: ATSScoreCardProps) {
   const dash = (score / 100) * circumference;
 
   return (
-    <div className="rounded-xl border border-slate-700 bg-slate-800 p-6">
-      <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-400">
+    <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+      <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
         ATS Score
       </h3>
 
-      {/* Circular gauge */}
       <div className="mb-4 flex items-center gap-6">
         <svg width="96" height="96" viewBox="0 0 96 96">
-          <circle cx="48" cy="48" r={radius} fill="none" stroke="#334155" strokeWidth="8" />
+          <circle cx="48" cy="48" r={radius} fill="none" stroke="var(--surface-3)" strokeWidth="8" />
           <circle
             cx="48"
             cy="48"
@@ -55,7 +53,7 @@ export function ATSScoreCard({ score, details }: ATSScoreCardProps) {
             transform="rotate(-90 48 48)"
             style={{ transition: "stroke-dasharray 0.6s ease" }}
           />
-          <text x="48" y="52" textAnchor="middle" fill="white" fontSize="18" fontWeight="bold">
+          <text x="48" y="52" textAnchor="middle" fill="var(--text)" fontSize="18" fontWeight="bold">
             {score}
           </text>
         </svg>
@@ -65,7 +63,7 @@ export function ATSScoreCard({ score, details }: ATSScoreCardProps) {
             {scoreLabel(score)}
           </p>
           {details?.algorithmic_score != null && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
               Algorithmic: {details.algorithmic_score.toFixed(0)}% · Semantic:{" "}
               {details.semantic_score?.toFixed(0) ?? "—"}%
             </p>
@@ -73,15 +71,15 @@ export function ATSScoreCard({ score, details }: ATSScoreCardProps) {
         </div>
       </div>
 
-      {/* Missing critical keywords */}
       {details?.missing_critical && details.missing_critical.length > 0 && (
         <div className="mb-3">
-          <p className="mb-1 text-xs font-semibold text-red-400">Missing Critical Keywords</p>
+          <p className="mb-1 text-xs font-semibold" style={{ color: "var(--danger)" }}>Missing Critical Keywords</p>
           <div className="flex flex-wrap gap-1">
             {details.missing_critical.map((kw) => (
               <span
                 key={kw}
-                className="rounded-full bg-red-900/40 px-2 py-0.5 text-xs text-red-300"
+                className="rounded-full px-2 py-0.5 text-xs"
+                style={{ background: "var(--danger-soft)", color: "var(--danger)" }}
               >
                 {kw}
               </span>
@@ -90,13 +88,12 @@ export function ATSScoreCard({ score, details }: ATSScoreCardProps) {
         </div>
       )}
 
-      {/* Improvement suggestions */}
       {details?.improvement_suggestions && details.improvement_suggestions.length > 0 && (
         <div>
-          <p className="mb-1 text-xs font-semibold text-slate-400">Suggestions</p>
+          <p className="mb-1 text-xs font-semibold" style={{ color: "var(--text-muted)" }}>Suggestions</p>
           <ul className="space-y-1">
             {details.improvement_suggestions.slice(0, 3).map((s, i) => (
-              <li key={i} className="text-xs text-slate-400">
+              <li key={i} className="text-xs" style={{ color: "var(--text-dim)" }}>
                 • {s}
               </li>
             ))}

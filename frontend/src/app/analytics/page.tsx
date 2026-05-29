@@ -21,10 +21,16 @@ import Link from "next/link";
 
 export const revalidate = 300;
 
-function StatCard({ label, value, color, sub }: { label: string; value: string | number; color: string; sub?: string }) {
+function formatCost(amount: number): string {
+  if (amount === 0) return "£0.00";
+  if (amount < 0.01) return `£${amount.toFixed(4)}`;
+  return `£${amount.toFixed(2)}`;
+}
+
+function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <div className="rounded-xl p-4 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      <div className="text-2xl font-bold" style={{ color: "var(--accent)" }}>{value}</div>
       <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{label}</div>
       {sub && <div className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>{sub}</div>}
     </div>
@@ -74,24 +80,21 @@ export default async function AnalyticsPage() {
 
         {/* Section A: Summary stat cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <StatCard label="Active Applications" value={stats.active_count} color="text-indigo-600" />
-          <StatCard label="Applied" value={stats.applied_count} color="text-blue-600" />
-          <StatCard label="Response Rate" value={`${stats.response_rate.toFixed(1)}%`} color="text-emerald-600" />
+          <StatCard label="Active Applications" value={stats.active_count} />
+          <StatCard label="Applied" value={stats.applied_count} />
+          <StatCard label="Response Rate" value={`${stats.response_rate.toFixed(1)}%`} />
           <StatCard
             label="Avg Days to Interview"
             value={avg_days_to_interview?.toFixed(1) ?? "–"}
-            color="text-amber-600"
           />
           <StatCard
             label="API Cost (month)"
-            value={costsMonthly ? `£${costsMonthly.total.toFixed(2)}` : "–"}
-            color="text-purple-600"
+            value={costsMonthly ? formatCost(costsMonthly.total) : "–"}
             sub={costsMonthly ? `${costsMonthly.budget_pct}% of £${costsMonthly.budget} budget` : undefined}
           />
           <StatCard
             label="Search Quality"
             value={searchQuality ? `${searchQuality.triage_pass_rate}%` : "–"}
-            color="text-cyan-600"
             sub={searchQuality ? `${searchQuality.shortlist_rate}% shortlisted` : undefined}
           />
         </div>
@@ -99,15 +102,15 @@ export default async function AnalyticsPage() {
         {/* Section B: Score Distribution */}
         <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Score Distribution</h2>
-          <p className="text-xs text-slate-400 mb-4">
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
             {scoreDist ? `${scoreDist.total} jobs scored` : "No scored jobs yet"} — green bars are above your shortlist threshold
           </p>
           {scoreDist && scoreDist.total > 0 ? (
             <ScoreDistributionChart buckets={scoreDist.buckets} threshold={scoreDist.threshold} />
           ) : (
-            <p className="text-sm text-slate-400 py-8 text-center">
+            <p className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>
               Run the scorer agent to see the distribution.{" "}
-              <Link href="/" className="text-brand-600 underline">Trigger from Home →</Link>
+              <Link href="/" style={{ color: "var(--accent)" }} className="underline">Trigger from Home →</Link>
             </p>
           )}
         </div>
@@ -122,20 +125,23 @@ export default async function AnalyticsPage() {
         {atsCorrelation && !atsCorrelation.message && atsCorrelation.buckets.length > 0 ? (
           <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>ATS Score → Response Rate</h2>
-            <p className="text-xs text-slate-400 mb-4">
+            <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
               {atsCorrelation.total_scored} CVs scored — does a higher ATS score translate to more responses?
             </p>
             <div className="space-y-3">
               {atsCorrelation.buckets.map((b) => (
                 <div key={b.range} className="flex items-center gap-3">
-                  <span className="w-28 text-xs text-slate-600 shrink-0">{b.label}</span>
-                  <div className="flex-1 bg-slate-100 rounded-full h-3 overflow-hidden">
+                  <span className="w-28 text-xs shrink-0" style={{ color: "var(--text-dim)" }}>{b.label}</span>
+                  <div className="flex-1 rounded-full h-3 overflow-hidden" style={{ background: "var(--surface-2)" }}>
                     <div
-                      className={`h-full rounded-full ${b.response_rate_pct >= 30 ? "bg-green-500" : b.response_rate_pct >= 15 ? "bg-amber-400" : "bg-red-400"}`}
-                      style={{ width: `${Math.min(b.response_rate_pct, 100)}%` }}
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.min(b.response_rate_pct, 100)}%`,
+                        background: b.response_rate_pct >= 30 ? "var(--success)" : b.response_rate_pct >= 15 ? "var(--warning)" : "var(--danger)",
+                      }}
                     />
                   </div>
-                  <div className="text-xs text-slate-500 w-32 text-right shrink-0">
+                  <div className="text-xs w-32 text-right shrink-0" style={{ color: "var(--text-muted)" }}>
                     {b.response_rate_pct}% ({b.responses}/{b.total})
                   </div>
                 </div>
@@ -145,7 +151,7 @@ export default async function AnalyticsPage() {
         ) : (
           <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <h2 className="text-sm font-semibold mb-2" style={{ color: "var(--text)" }}>ATS Score → Response Rate</h2>
-            <p className="text-sm text-slate-400">{atsCorrelation?.message ?? "No data yet."}</p>
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>{atsCorrelation?.message ?? "No applications yet"}</p>
           </div>
         )}
 
@@ -155,12 +161,13 @@ export default async function AnalyticsPage() {
             <div>
               <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>LLM Cost Tracking (30 days)</h2>
               {costsMonthly && (
-                <p className="text-xs text-slate-400 mt-0.5">
-                  This month: <span className="font-medium text-slate-700">£{costsMonthly.total.toFixed(4)}</span>
+                <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  This month:{" "}
+                  <span className="font-medium" style={{ color: "var(--text-dim)" }}>{formatCost(costsMonthly.total)}</span>
                   {" "}/{" "}£{costsMonthly.budget} budget
                   {Object.keys(costsMonthly.by_agent).length > 0 && (
-                    <span className="ml-2">
-                      {Object.entries(costsMonthly.by_agent).map(([a, c]) => `${a}: £${c.toFixed(4)}`).join(" · ")}
+                    <span className="ml-2" style={{ color: "var(--text-muted)" }}>
+                      {Object.entries(costsMonthly.by_agent).map(([a, c]) => `${a}: ${formatCost(c as number)}`).join(" · ")}
                     </span>
                   )}
                 </p>
@@ -170,7 +177,7 @@ export default async function AnalyticsPage() {
           {costsDaily && costsDaily.days.length > 0 ? (
             <DailyCostChart days={costsDaily.days} />
           ) : (
-            <p className="text-sm text-slate-400 py-8 text-center">No cost data yet — costs are tracked when agents run LLM calls.</p>
+            <p className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>No cost data yet — costs are tracked when agents run LLM calls.</p>
           )}
         </div>
 
@@ -181,7 +188,7 @@ export default async function AnalyticsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-slate-500 border-b border-slate-100">
+                  <tr className="text-xs border-b" style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}>
                     <th className="text-left py-2 pr-4 font-medium">Agent</th>
                     <th className="text-right py-2 px-4 font-medium">Today</th>
                     <th className="text-right py-2 px-4 font-medium">This week</th>
@@ -190,21 +197,24 @@ export default async function AnalyticsPage() {
                     <th className="text-left py-2 pl-4 font-medium">Last error</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-50">
+                <tbody>
                   {agentPerf.agents.map((a) => (
-                    <tr key={a.agent} className="text-slate-700">
+                    <tr key={a.agent} style={{ borderBottom: "1px solid var(--border-subtle)", color: "var(--text-dim)" }}>
                       <td className="py-2 pr-4 font-medium capitalize">{a.agent}</td>
                       <td className="py-2 px-4 text-right tabular-nums">{a.runs_today}</td>
                       <td className="py-2 px-4 text-right tabular-nums">{a.runs_this_week}</td>
                       <td className="py-2 px-4 text-right">
-                        <span className={`font-medium ${a.success_rate >= 95 ? "text-green-600" : a.success_rate >= 80 ? "text-amber-600" : "text-red-600"}`}>
+                        <span
+                          className="font-medium"
+                          style={{ color: a.success_rate >= 95 ? "var(--success)" : a.success_rate >= 80 ? "var(--warning)" : "var(--danger)" }}
+                        >
                           {a.success_rate.toFixed(1)}%
                         </span>
                       </td>
-                      <td className="py-2 pl-4 text-xs text-slate-400">
+                      <td className="py-2 pl-4 text-xs" style={{ color: "var(--text-muted)" }}>
                         {a.last_run_at ? new Date(a.last_run_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
                       </td>
-                      <td className="py-2 pl-4 text-xs text-red-500 max-w-xs truncate">
+                      <td className="py-2 pl-4 text-xs max-w-xs truncate" style={{ color: "var(--danger)" }}>
                         {a.last_error ? a.last_error.slice(0, 80) : "—"}
                       </td>
                     </tr>
@@ -213,7 +223,7 @@ export default async function AnalyticsPage() {
               </table>
             </div>
           ) : (
-            <p className="text-sm text-slate-400">No agent activity recorded yet.</p>
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>No agent activity recorded yet.</p>
           )}
         </div>
 
@@ -221,21 +231,21 @@ export default async function AnalyticsPage() {
         {skillFrequency && !skillFrequency.message && skillFrequency.skills.length > 0 && (
           <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Top Skills in Matched Jobs</h2>
-            <p className="text-xs text-slate-400 mb-4">
+            <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
               Keywords appearing most frequently across {skillFrequency.total_jobs_analyzed} scored jobs
             </p>
             <div className="flex flex-wrap gap-2">
-              {skillFrequency.skills.map((s, i) => {
+              {skillFrequency.skills.map((s) => {
                 const maxCount = skillFrequency.skills[0]?.count ?? 1;
                 const opacity = 0.4 + 0.6 * (s.count / maxCount);
                 return (
                   <span
                     key={s.skill}
-                    className="rounded-full px-3 py-1 text-xs font-medium bg-brand-100 text-brand-800"
-                    style={{ opacity }}
+                    className="rounded-full px-3 py-1 text-xs font-medium"
+                    style={{ opacity, background: "var(--accent-soft)", color: "var(--accent)" }}
                   >
                     {s.skill}
-                    <span className="ml-1.5 text-brand-500">{s.count}</span>
+                    <span className="ml-1.5" style={{ color: "var(--accent)", opacity: 0.7 }}>{s.count}</span>
                   </span>
                 );
               })}
@@ -247,7 +257,7 @@ export default async function AnalyticsPage() {
         {skillGaps && !skillGaps.message && skillGaps.skills.length > 0 && (
           <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Skill Gaps to Address</h2>
-            <p className="text-xs text-slate-400 mb-4">
+            <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
               Skills required by matched jobs that aren&apos;t in your profile — consider adding them
             </p>
             <div className="flex flex-wrap gap-2">
@@ -257,11 +267,11 @@ export default async function AnalyticsPage() {
                 return (
                   <span
                     key={s.skill}
-                    className="rounded-full px-3 py-1 text-xs font-medium bg-red-100 text-red-700"
-                    style={{ opacity }}
+                    className="rounded-full px-3 py-1 text-xs font-medium"
+                    style={{ opacity, background: "var(--danger-soft)", color: "var(--danger)" }}
                   >
                     {s.skill}
-                    <span className="ml-1.5 text-red-500">{s.count}</span>
+                    <span className="ml-1.5" style={{ opacity: 0.7 }}>{s.count}</span>
                   </span>
                 );
               })}
@@ -273,38 +283,38 @@ export default async function AnalyticsPage() {
         {rateLimitStatus && (
           <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>LLM Rate Limit Health</h2>
-            <p className="text-xs text-slate-400 mb-4">Current scorer API usage against provider limits</p>
+            <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>Current scorer API usage against provider limits</p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="text-center">
-                <div className={`text-2xl font-bold ${rateLimitStatus.throttled ? "text-amber-600" : "text-green-600"}`}>
+                <div className="text-2xl font-bold" style={{ color: rateLimitStatus.throttled ? "var(--warning)" : "var(--success)" }}>
                   {rateLimitStatus.rpm_used}
                 </div>
-                <div className="text-xs text-slate-500 mt-1">RPM used</div>
-                <div className="text-xs text-slate-400">of {rateLimitStatus.rpm_limit}</div>
+                <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>RPM used</div>
+                <div className="text-xs" style={{ color: "var(--text-muted)" }}>of {rateLimitStatus.rpm_limit}</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-slate-700">{rateLimitStatus.rpm_remaining}</div>
-                <div className="text-xs text-slate-500 mt-1">RPM remaining</div>
+                <div className="text-2xl font-bold" style={{ color: "var(--text)" }}>{rateLimitStatus.rpm_remaining}</div>
+                <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>RPM remaining</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-slate-700">{rateLimitStatus.rpd_used}</div>
-                <div className="text-xs text-slate-500 mt-1">RPD used</div>
-                <div className="text-xs text-slate-400">of {rateLimitStatus.rpd_limit}</div>
+                <div className="text-2xl font-bold" style={{ color: "var(--text)" }}>{rateLimitStatus.rpd_used}</div>
+                <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>RPD used</div>
+                <div className="text-xs" style={{ color: "var(--text-muted)" }}>of {rateLimitStatus.rpd_limit}</div>
               </div>
               <div className="text-center">
-                <div className={`text-2xl font-bold ${rateLimitStatus.last_429_at !== null ? "text-red-600" : "text-green-600"}`}>
+                <div className="text-2xl font-bold" style={{ color: rateLimitStatus.last_429_at !== null ? "var(--danger)" : "var(--success)" }}>
                   {rateLimitStatus.last_429_at !== null ? "429" : "OK"}
                 </div>
-                <div className="text-xs text-slate-500 mt-1">Provider status</div>
+                <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>Provider status</div>
                 {rateLimitStatus.wait_seconds > 0 && (
-                  <div className="text-xs text-amber-600">wait {Math.round(rateLimitStatus.wait_seconds)}s</div>
+                  <div className="text-xs" style={{ color: "var(--warning)" }}>wait {Math.round(rateLimitStatus.wait_seconds)}s</div>
                 )}
               </div>
             </div>
             {rateLimitStatus.throttled && (
-              <div className="mt-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+              <div className="mt-3 rounded-md px-3 py-2 text-xs" style={{ background: "var(--warning-soft)", border: "1px solid var(--warning)", color: "var(--warning)" }}>
                 Scorer is throttled — waiting {Math.round(rateLimitStatus.wait_seconds)}s before next call.
-                Set <code className="bg-amber-100 rounded px-0.5">scoring.method: hybrid</code> or <code className="bg-amber-100 rounded px-0.5">local</code> in profile.yaml to reduce API usage.
+                Set <code className="rounded px-0.5" style={{ background: "var(--surface-2)" }}>scoring.method: hybrid</code> or <code className="rounded px-0.5" style={{ background: "var(--surface-2)" }}>local</code> in profile.yaml to reduce API usage.
               </div>
             )}
           </div>

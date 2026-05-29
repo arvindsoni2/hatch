@@ -13,7 +13,7 @@ import {
   GeneratedDocument,
   TailorProgressEvent,
 } from "@/lib/api";
-import { Loader2, Zap, FileText, Download, ChevronRight } from "lucide-react";
+import { Loader2, Zap, FileText, ChevronRight } from "lucide-react";
 
 type Stage = "idle" | "analysing" | "analysed" | "generating" | "complete" | "error";
 
@@ -22,6 +22,17 @@ interface ProgressStep {
   pct: number;
   message: string;
 }
+
+const inputStyle = {
+  background: "var(--surface-2)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+  color: "var(--text)",
+  fontSize: 13,
+  padding: "8px 12px",
+  width: "100%",
+  outline: "none",
+} as const;
 
 export default function TailorPage() {
   const [jdText, setJdText] = useState("");
@@ -65,7 +76,7 @@ export default function TailorPage() {
     setError(null);
     setProgress({ stage: "starting", pct: 0, message: "Initialising pipeline..." });
 
-    const cleanup = streamTailoringProgress(
+    streamTailoringProgress(
       applicationId,
       jdText,
       variant,
@@ -75,12 +86,11 @@ export default function TailorPage() {
       async () => {
         setStage("complete");
         setActiveTab("history");
-        // Refresh document history
         try {
           const docs = await getDocumentHistory(applicationId);
           setDocuments(docs);
         } catch {
-          // Non-fatal
+          // non-fatal
         }
       },
       (err: Error) => {
@@ -88,8 +98,6 @@ export default function TailorPage() {
         setStage("error");
       },
     );
-
-    return cleanup;
   }, [applicationId, jdText, variant]);
 
   const handleLoadHistory = useCallback(async () => {
@@ -104,271 +112,293 @@ export default function TailorPage() {
   }, [applicationId]);
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100">
-      <div className="mx-auto max-w-7xl px-4 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white">Tailor</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            AI-powered CV and cover letter generation — 3-stage Claude pipeline with ATS optimisation
-          </p>
-        </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>
+          Resume tailoring
+        </h1>
+        <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
+          AI-powered CV and cover letter generation with ATS optimisation
+        </p>
+      </div>
 
-        <div className="grid grid-cols-2 gap-6 lg:grid-cols-2">
-          {/* ── LEFT: Input Panel ── */}
-          <div className="space-y-4">
-            {/* JD Input */}
-            <div className="rounded-xl border border-slate-700 bg-slate-800 p-5">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
-                Job Description
-              </h2>
-              <textarea
-                className="mb-3 w-full rounded-lg border border-slate-600 bg-slate-700 p-3 text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
-                rows={10}
-                placeholder="Paste the full job description here..."
-                value={jdText}
-                onChange={(e) => setJdText(e.target.value)}
-              />
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* ── LEFT: Input Panel ── */}
+        <div className="space-y-4">
+          {/* JD Input */}
+          <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Job Description
+            </h2>
+            <textarea
+              style={{ ...inputStyle, resize: "vertical" }}
+              rows={10}
+              placeholder="Paste the full job description here..."
+              value={jdText}
+              onChange={(e) => setJdText(e.target.value)}
+            />
+            <input
+              type="url"
+              style={{ ...inputStyle, marginTop: 8 }}
+              placeholder="Or paste a job URL (optional)"
+              value={jobUrl}
+              onChange={(e) => setJobUrl(e.target.value)}
+            />
+            <Button
+              onClick={handleAnalyse}
+              disabled={stage === "analysing" || (!jdText.trim() && !jobUrl.trim())}
+              className="mt-3 w-full"
+              style={{ background: "var(--accent)", color: "var(--on-accent)", minHeight: 40 }}
+            >
+              {stage === "analysing" ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analysing...</>
+              ) : (
+                <>Analyse JD <ChevronRight className="ml-1 h-4 w-4" /></>
+              )}
+            </Button>
+          </div>
+
+          {/* Generation Controls */}
+          <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Generate Documents
+            </h2>
+            <div className="space-y-2 mb-3">
               <input
-                type="url"
-                className="mb-3 w-full rounded-lg border border-slate-600 bg-slate-700 p-2 text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
-                placeholder="Or paste a job URL (optional)"
-                value={jobUrl}
-                onChange={(e) => setJobUrl(e.target.value)}
+                type="text"
+                style={inputStyle}
+                placeholder="Application ID (from Pipeline)"
+                value={applicationId}
+                onChange={(e) => setApplicationId(e.target.value)}
               />
+              <div className="flex gap-2">
+                {(["A", "B"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setVariant(v)}
+                    className="flex-1 rounded-lg py-2 text-sm font-medium transition-colors"
+                    style={{
+                      border: variant === v ? "1px solid var(--accent)" : "1px solid var(--border)",
+                      background: variant === v ? "var(--accent-soft)" : "var(--surface-2)",
+                      color: variant === v ? "var(--accent)" : "var(--text-dim)",
+                    }}
+                  >
+                    Variant {v}
+                    <span className="ml-1 text-xs opacity-60">
+                      {v === "A" ? "(formal)" : "(conversational)"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
               <Button
-                onClick={handleAnalyse}
-                disabled={stage === "analysing" || (!jdText.trim() && !jobUrl.trim())}
-                className="w-full bg-indigo-600 hover:bg-indigo-700"
+                onClick={handleGenerate}
+                disabled={stage === "generating" || !jdText.trim()}
+                className="flex-1"
+                style={{ background: "var(--success)", color: "#fff", minHeight: 40 }}
               >
-                {stage === "analysing" ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analysing...</>
+                {stage === "generating" ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
                 ) : (
-                  <>Analyse JD <ChevronRight className="ml-1 h-4 w-4" /></>
+                  <><Zap className="mr-2 h-4 w-4" /> Generate All</>
                 )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleLoadHistory}
+                disabled={!applicationId.trim()}
+                style={{ borderColor: "var(--border)", color: "var(--text-dim)", minHeight: 40 }}
+                title="Load document history"
+              >
+                <FileText className="h-4 w-4" />
               </Button>
             </div>
 
-            {/* Generation Controls */}
-            <div className="rounded-xl border border-slate-700 bg-slate-800 p-5">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
-                Generate Documents
-              </h2>
-              <div className="mb-3 space-y-2">
-                <input
-                  type="text"
-                  className="w-full rounded-lg border border-slate-600 bg-slate-700 p-2 text-sm text-slate-100 placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
-                  placeholder="Application ID (from Tracker)"
-                  value={applicationId}
-                  onChange={(e) => setApplicationId(e.target.value)}
-                />
-                <div className="flex gap-2">
-                  {(["A", "B"] as const).map((v) => (
-                    <button
-                      key={v}
-                      onClick={() => setVariant(v)}
-                      className={`flex-1 rounded-lg border py-1.5 text-sm font-medium transition-colors ${
-                        variant === v
-                          ? "border-indigo-500 bg-indigo-600 text-white"
-                          : "border-slate-600 bg-slate-700 text-slate-400 hover:border-slate-500"
-                      }`}
-                    >
-                      Variant {v}
-                      <span className="ml-1 text-xs opacity-60">
-                        {v === "A" ? "(formal)" : "(conversational)"}
-                      </span>
-                    </button>
-                  ))}
+            {/* SSE Progress */}
+            {stage === "generating" && progress && (
+              <div className="mt-4">
+                <div className="mb-2 flex justify-between text-xs" style={{ color: "var(--text-muted)" }}>
+                  <span>{progress.message}</span>
+                  <span>{progress.pct}%</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: "var(--surface-2)" }}>
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{ width: `${progress.pct}%`, background: "var(--accent)" }}
+                  />
                 </div>
               </div>
+            )}
 
-              <div className="flex gap-2">
-                <Button
-                  onClick={handleGenerate}
-                  disabled={stage === "generating" || !jdText.trim()}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700"
-                >
-                  {stage === "generating" ? (
-                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
-                  ) : (
-                    <><Zap className="mr-2 h-4 w-4" /> Generate All</>
-                  )}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleLoadHistory}
-                  disabled={!applicationId.trim()}
-                  className="border-slate-600 text-slate-300"
-                >
-                  <FileText className="h-4 w-4" />
-                </Button>
-              </div>
-
-              {/* SSE Progress */}
-              {stage === "generating" && progress && (
-                <div className="mt-4">
-                  <div className="mb-2 flex justify-between text-xs text-slate-400">
-                    <span>{progress.message}</span>
-                    <span>{progress.pct}%</span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-700">
-                    <div
-                      className="h-full rounded-full bg-indigo-500 transition-all duration-500"
-                      style={{ width: `${progress.pct}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {stage === "complete" && (
-                <div className="mt-3 rounded-lg bg-emerald-900/30 p-3 text-center text-sm text-emerald-400">
-                  ✓ Documents generated successfully
-                </div>
-              )}
-            </div>
-
-            {/* Error */}
-            {error && (
-              <div className="rounded-lg border border-red-700 bg-red-900/20 p-3 text-sm text-red-300">
-                {error}
+            {stage === "complete" && (
+              <div className="mt-3 rounded-lg p-3 text-center text-sm" style={{ background: "var(--success-soft)", color: "var(--success)" }}>
+                ✓ Documents generated successfully
               </div>
             )}
           </div>
 
-          {/* ── RIGHT: Results Panel ── */}
-          <div className="space-y-4">
-            {/* Tabs */}
-            <div className="flex rounded-lg border border-slate-700 bg-slate-800 p-1">
-              {(["analysis", "history"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`flex-1 rounded-md py-1.5 text-sm font-medium capitalize transition-colors ${
-                    activeTab === tab
-                      ? "bg-indigo-600 text-white"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  {tab === "analysis" ? "JD Analysis" : "Documents"}
-                </button>
-              ))}
+          {/* Error */}
+          {error && (
+            <div className="rounded-lg p-3 text-sm" style={{ background: "var(--danger-soft)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
+              {error}
             </div>
+          )}
+        </div>
 
-            {/* Analysis Tab */}
-            {activeTab === "analysis" && analysis && (
-              <div className="space-y-4">
-                {/* Role info */}
-                <div className="rounded-xl border border-slate-700 bg-slate-800 p-5">
-                  <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
-                    Role Overview
-                  </h3>
-                  <p className="text-lg font-bold text-white">{analysis.analysis.role_title}</p>
-                  {analysis.analysis.seniority_level && (
-                    <p className="text-sm text-slate-400">{analysis.analysis.seniority_level}</p>
-                  )}
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    {analysis.analysis.contract_details.rate_range && (
-                      <div className="rounded-lg bg-slate-700/50 p-2">
-                        <p className="text-xs text-slate-500">Rate</p>
-                        <p className="text-sm font-medium text-emerald-400">
-                          {analysis.analysis.contract_details.rate_range}
-                        </p>
-                      </div>
-                    )}
-                    {analysis.analysis.contract_details.ir35_status && (
-                      <div className="rounded-lg bg-slate-700/50 p-2">
-                        <p className="text-xs text-slate-500">Contract status</p>
-                        <p className="text-sm font-medium text-slate-200">
-                          {analysis.analysis.contract_details.ir35_status}
-                        </p>
-                      </div>
-                    )}
-                    {analysis.analysis.contract_details.location && (
-                      <div className="rounded-lg bg-slate-700/50 p-2">
-                        <p className="text-xs text-slate-500">Location</p>
-                        <p className="text-sm font-medium text-slate-200">
-                          {analysis.analysis.contract_details.location}
-                        </p>
-                      </div>
-                    )}
-                    {analysis.analysis.contract_details.duration && (
-                      <div className="rounded-lg bg-slate-700/50 p-2">
-                        <p className="text-xs text-slate-500">Duration</p>
-                        <p className="text-sm font-medium text-slate-200">
-                          {analysis.analysis.contract_details.duration}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+        {/* ── RIGHT: Results Panel ── */}
+        <div className="space-y-4">
+          {/* Tabs */}
+          <div className="flex rounded-lg p-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            {(["analysis", "history"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="flex-1 rounded-md py-1.5 text-sm font-medium capitalize transition-colors"
+                style={{
+                  background: activeTab === tab ? "var(--accent)" : "transparent",
+                  color: activeTab === tab ? "var(--on-accent)" : "var(--text-dim)",
+                }}
+              >
+                {tab === "analysis" ? "JD Analysis" : "Documents"}
+              </button>
+            ))}
+          </div>
 
-                {/* Skill match */}
-                {analysis.skill_match && (
-                  <SkillMatchMatrix skillMatch={analysis.skill_match} />
+          {/* Analysis Tab */}
+          {activeTab === "analysis" && analysis && (
+            <div className="space-y-4">
+              {/* Role overview */}
+              <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                  Role Overview
+                </h3>
+                <p className="text-lg font-bold" style={{ color: "var(--text)" }}>{analysis.analysis.role_title}</p>
+                {analysis.analysis.seniority_level && (
+                  <p className="text-sm mt-0.5" style={{ color: "var(--text-dim)" }}>{analysis.analysis.seniority_level}</p>
                 )}
-
-                {/* Must-have requirements */}
-                {analysis.analysis.requirements.must_have.length > 0 && (
-                  <div className="rounded-xl border border-slate-700 bg-slate-800 p-5">
-                    <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
-                      Must-Have Requirements
-                    </h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {analysis.analysis.requirements.must_have.map((req) => (
-                        <span
-                          key={req}
-                          className="rounded-full border border-indigo-700 bg-indigo-900/30 px-2.5 py-0.5 text-xs text-indigo-300"
-                        >
-                          {req}
-                        </span>
-                      ))}
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  {analysis.analysis.contract_details.rate_range && (
+                    <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>Rate</p>
+                      <p className="text-sm font-medium" style={{ color: "var(--success)" }}>
+                        {analysis.analysis.contract_details.rate_range}
+                      </p>
                     </div>
-                  </div>
-                )}
-
-                {/* ATS Keywords */}
-                <div className="rounded-xl border border-slate-700 bg-slate-800 p-5">
-                  <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-400">
-                    ATS Keywords
-                  </h3>
-                  {(["technical", "methodologies", "domain", "certifications"] as const).map((cat) => {
-                    const kws = analysis.analysis.ats_keywords[cat];
-                    if (!kws.length) return null;
-                    return (
-                      <div key={cat} className="mb-2">
-                        <p className="mb-1 text-xs capitalize text-slate-500">{cat}</p>
-                        <div className="flex flex-wrap gap-1">
-                          {kws.map((kw) => (
-                            <span
-                              key={kw}
-                              className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-300"
-                            >
-                              {kw}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  )}
+                  {analysis.analysis.contract_details.ir35_status && (
+                    <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>Contract status</p>
+                      <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
+                        {analysis.analysis.contract_details.ir35_status}
+                      </p>
+                    </div>
+                  )}
+                  {analysis.analysis.contract_details.location && (
+                    <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>Location</p>
+                      <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
+                        {analysis.analysis.contract_details.location}
+                      </p>
+                    </div>
+                  )}
+                  {analysis.analysis.contract_details.duration && (
+                    <div className="rounded-lg p-2" style={{ background: "var(--surface-2)" }}>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>Duration</p>
+                      <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
+                        {analysis.analysis.contract_details.duration}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
 
-            {/* History Tab */}
-            {activeTab === "history" && (
-              <DocumentHistory documents={documents} />
-            )}
+              {/* Skill match */}
+              {analysis.skill_match && (
+                <SkillMatchMatrix skillMatch={analysis.skill_match} />
+              )}
 
-            {/* Empty state */}
-            {activeTab === "analysis" && !analysis && stage !== "analysing" && (
-              <div className="rounded-xl border border-slate-700 bg-slate-800 p-12 text-center">
-                <FileText className="mx-auto mb-3 h-10 w-10 text-slate-600" />
-                <p className="text-sm text-slate-500">
-                  Paste a job description and click Analyse JD to get started.
-                </p>
+              {/* Must-have requirements */}
+              {analysis.analysis.requirements.must_have.length > 0 && (
+                <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                    Must-Have Requirements
+                  </h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {analysis.analysis.requirements.must_have.map((req) => (
+                      <span
+                        key={req}
+                        className="rounded-full px-2.5 py-0.5 text-xs"
+                        style={{ background: "var(--accent-soft)", color: "var(--accent)", border: "1px solid var(--accent-soft-strong)" }}
+                      >
+                        {req}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* ATS Keywords */}
+              <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+                  ATS Keywords
+                </h3>
+                {(["technical", "methodologies", "domain", "certifications"] as const).map((cat) => {
+                  const kws = analysis.analysis.ats_keywords[cat];
+                  if (!kws.length) return null;
+                  return (
+                    <div key={cat} className="mb-3">
+                      <p className="mb-1.5 text-xs capitalize" style={{ color: "var(--text-muted)" }}>{cat}</p>
+                      <div className="flex flex-wrap gap-1">
+                        {kws.map((kw) => (
+                          <span
+                            key={kw}
+                            className="rounded px-2 py-0.5 text-xs"
+                            style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}
+                          >
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* History Tab */}
+          {activeTab === "history" && (
+            <DocumentHistory documents={documents} />
+          )}
+
+          {/* Empty state */}
+          {activeTab === "analysis" && !analysis && stage !== "analysing" && (
+            <div className="rounded-xl p-12 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <FileText className="mx-auto mb-3 h-10 w-10" style={{ color: "var(--border-strong)" }} />
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                Paste a job description and click Analyse JD to get started.
+              </p>
+            </div>
+          )}
+
+          {/* Analysing spinner */}
+          {activeTab === "analysis" && stage === "analysing" && (
+            <div className="rounded-xl p-12 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+              <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin" style={{ color: "var(--accent)" }} />
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>Analysing job description…</p>
+            </div>
+          )}
+
+          {/* ATS score card — shown after generation completes */}
+          {stage === "complete" && documents.length > 0 && (() => {
+            const cv = documents.find((d) => d.document_type === "cv");
+            return cv?.ats_score != null ? (
+              <ATSScoreCard score={cv.ats_score} />
+            ) : null;
+          })()}
         </div>
       </div>
     </div>

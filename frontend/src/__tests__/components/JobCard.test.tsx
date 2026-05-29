@@ -41,6 +41,11 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     ghost_verdict: null,
     ghost_signals: null,
     ghost_analysed_at: null,
+    scoring_method: null,
+    score_reasoning: null,
+    keyword_matches: null,
+    keyword_misses: null,
+    legal_fields: {},
     ...overrides,
   };
 }

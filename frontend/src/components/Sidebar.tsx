@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   BarChart3,
   BookOpen,
+  FileEdit,
   Settings,
   Sun,
   Moon,
@@ -36,6 +37,7 @@ const NAV_GROUPS = [
   {
     label: "Prepare",
     items: [
+      { href: "/tailor", label: "Resume tailoring", icon: FileEdit },
       { href: "/coach", label: "Interview prep", icon: BookOpen },
     ],
   },
