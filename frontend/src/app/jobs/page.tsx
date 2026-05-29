@@ -4,9 +4,11 @@ import { useState, useEffect, useCallback } from "react";
 import {
   fetchJobs,
   fetchRawProfile,
+  fetchScoringInsights,
   runArchive,
   type Job,
   type ScrapeResult,
+  type ScoringInsights,
 } from "@/lib/api";
 import { JobCard } from "@/components/JobCard";
 import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
@@ -38,6 +40,7 @@ export default function JobsPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [insights, setInsights] = useState<ScoringInsights | null>(null);
 
   // Load threshold from profile once
   useEffect(() => {
@@ -73,6 +76,13 @@ export default function JobsPage() {
       setLoading(false);
     }
   }, [filters, page, threshold, showAll, showArchived]);
+
+  // Load scoring insights when not in archive/show-all mode
+  useEffect(() => {
+    if (!showAll && !showArchived) {
+      fetchScoringInsights().then(setInsights).catch(() => {});
+    }
+  }, [showAll, showArchived]);
 
   useEffect(() => {
     if (thresholdLoaded) void loadJobs();
@@ -223,15 +233,30 @@ export default function JobsPage() {
           ) : showAll ? (
             <p style={{ color: "var(--text-muted)" }}>No jobs found. Try adjusting your filters or trigger a scrape.</p>
           ) : (
-            <div className="space-y-2">
-              <p className="text-slate-700 font-medium">No high-match jobs right now.</p>
-              <p className="text-sm text-slate-500">
-                Your threshold is {thresholdPct}%. Try{" "}
-                <button onClick={() => setShowAll(true)} className="text-brand-600 underline">
-                  showing all jobs
-                </button>{" "}
-                or broaden your search in Settings.
-              </p>
+            <div className="space-y-3 max-w-md mx-auto">
+              <p className="font-medium" style={{ color: "var(--text)" }}>No high-match jobs right now.</p>
+              {insights?.recommendation ? (
+                <div className="rounded-lg px-4 py-3 text-sm text-left" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                  <p style={{ color: "var(--text-dim)" }}>{insights.recommendation}</p>
+                  {insights.in_band_below > 0 && (
+                    <button
+                      onClick={() => setShowAll(true)}
+                      className="mt-2 text-sm font-medium underline"
+                      style={{ color: "var(--accent)" }}
+                    >
+                      Show {insights.in_band_below} near-match job{insights.in_band_below !== 1 ? "s" : ""}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                  Your threshold is {thresholdPct}%. Try{" "}
+                  <button onClick={() => setShowAll(true)} className="underline" style={{ color: "var(--accent)" }}>
+                    showing all jobs
+                  </button>{" "}
+                  or trigger a scrape to get fresh results.
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -149,9 +149,22 @@ class ScorerAgent(BaseAgent):
             return 0, 0, 0
 
         # Phase 2 — determine which jobs get LLM refinement
+        # Strategy: send borderline jobs (within ±llm_band of threshold) to LLM,
+        # plus always include the top top_pct.  Skip clearly-low jobs (< threshold-band).
+        threshold = getattr(profile.scoring, "shortlist_threshold", 0.75)
+        llm_band = getattr(profile.scoring, "hybrid_llm_band", 0.15)
+        band_low = threshold - llm_band
+        band_high = threshold + llm_band
+
         local_results.sort(key=lambda x: x[2].overall_score, reverse=True)
         llm_count = max(1, round(len(local_results) * top_pct))
-        for_llm = set(id(r[0]) for r in local_results[:llm_count])
+
+        for_llm: set[int] = set()
+        for i, (event, job, ls) in enumerate(local_results):
+            in_top_n = i < llm_count
+            in_band = band_low <= ls.overall_score <= band_high
+            if in_top_n or in_band:
+                for_llm.add(id(event))
 
         # Phase 3 — process each job
         for event, job, local_score in local_results:
@@ -383,6 +396,9 @@ class ScorerAgent(BaseAgent):
             "location_match": score.location_match,
             "overall_score": score.overall_score,
             "reasoning": score.reasoning,
+            "scoring_method": (m if isinstance(m := getattr(score, "scoring_method", None), str) else "llm"),
+            "keyword_matches": list(v if isinstance(v := getattr(score, "keyword_matches", None), (list, tuple)) else []),
+            "keyword_misses": list(v if isinstance(v := getattr(score, "keyword_misses", None), (list, tuple)) else []),
         }
         if row is None:
             db.add(JobScore(id=str(uuid.uuid4()), job_id=job_id, **score_data))

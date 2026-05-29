@@ -84,11 +84,15 @@ class JobPostingRead(BaseModel):
     ghost_verdict: str | None = None
     ghost_signals: list[list] | None = None
     ghost_analysed_at: datetime | None = None
-    # Per-dimension scores (joined from job_scores table)
+    # Per-dimension scores + transparency data (joined from job_scores table)
     skill_match: float | None = None
     experience_match: float | None = None
     rate_match: float | None = None
     location_match: float | None = None
+    scoring_method: str | None = None        # "local" (quick estimate) | "llm" (AI assessment)
+    score_reasoning: str | None = None       # LLM explanation or "local-keyword"
+    keyword_matches: list[str] | None = None
+    keyword_misses: list[str] | None = None
 
     @field_validator("ghost_signals", mode="before")
     @classmethod

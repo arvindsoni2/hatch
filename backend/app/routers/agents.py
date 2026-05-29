@@ -222,6 +222,9 @@ async def get_approval_detail(
             "rate_match": score.rate_match if score else None,
             "location_match": score.location_match if score else None,
             "reasoning": score.reasoning if score else None,
+            "scoring_method": score.scoring_method if score else None,
+            "keyword_matches": score.keyword_matches if score else [],
+            "keyword_misses": score.keyword_misses if score else [],
         } if score else None,
         "documents": [
             {

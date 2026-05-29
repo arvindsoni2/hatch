@@ -16,6 +16,8 @@ import {
   MapPin, RefreshCw, XCircle, ChevronDown, ChevronUp,
   AlertTriangle, Save,
 } from "lucide-react";
+import { ScoreBreakdown } from "@/components/ScoreBreakdown";
+import { ScoreRationale } from "@/components/ScoreRationale";
 
 interface AtsDetails {
   overall_score?: number;
@@ -63,6 +65,9 @@ interface ApprovalDetail {
     rate_match: number | null;
     location_match: number | null;
     reasoning: string | null;
+    scoring_method: "local" | "llm" | null;
+    keyword_matches: string[] | null;
+    keyword_misses: string[] | null;
   } | null;
   documents: {
     id: string;
@@ -424,26 +429,28 @@ export default function ApprovalDetailPage() {
         )}
       </Card>
 
-      {/* Score breakdown */}
+      {/* Score breakdown + rationale */}
       {score && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Score Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <ScoreRadar
-              skill={score.skill_match}
-              experience={score.experience_match}
-              rate={score.rate_match}
-              location={score.location_match}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <ScoreBreakdown
+              skillMatch={score.skill_match}
+              experienceMatch={score.experience_match}
+              rateMatch={score.rate_match}
+              locationMatch={score.location_match}
+              overallScore={score.overall_score}
+              scoringMethod={score.scoring_method}
+              reasoning={score.reasoning}
             />
-            {score.reasoning && (
-              <p className="text-sm text-slate-600 bg-slate-50 rounded p-3 mt-2">
-                {score.reasoning}
-              </p>
-            )}
-          </CardContent>
-        </Card>
+          </div>
+          <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+            <ScoreRationale
+              reasoning={score.reasoning}
+              keywordMatches={score.keyword_matches ?? []}
+              keywordMisses={score.keyword_misses ?? []}
+            />
+          </div>
+        </div>
       )}
 
       {/* Documents with ATS rubric */}

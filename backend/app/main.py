@@ -31,6 +31,7 @@ from .routers.coach import router as coach_router
 from .routers.settings import router as settings_router
 from .routers.tailor import router as tailor_router
 from .routers.gap_analysis import router as gap_analysis_router
+from .routers.scoring import router as scoring_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
 from .services.claude_client import ClaudeClient
@@ -164,6 +165,7 @@ def create_app() -> FastAPI:
     app.include_router(locales_router)
     app.include_router(resume_router)
     app.include_router(settings_router)
+    app.include_router(scoring_router)
 
     return app
 

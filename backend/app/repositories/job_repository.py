@@ -186,6 +186,10 @@ class JobRepository:
                         "experience_match": s.experience_match,
                         "rate_match": s.rate_match,
                         "location_match": s.location_match,
+                        "scoring_method": s.scoring_method,
+                        "score_reasoning": s.reasoning,
+                        "keyword_matches": s.keyword_matches or [],
+                        "keyword_misses": s.keyword_misses or [],
                     }
                 )
             items.append(posting)

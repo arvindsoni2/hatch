@@ -39,11 +39,15 @@ export interface Job {
   working_pattern: string | null;
   match_score: number | null;
   match_reasons: string[] | null;
-  // Per-dimension scores (from job_scores join)
+  // Per-dimension scores + transparency (from job_scores join)
   skill_match: number | null;
   experience_match: number | null;
   rate_match: number | null;
   location_match: number | null;
+  scoring_method: "local" | "llm" | null;  // "local" = quick estimate, "llm" = AI assessment
+  score_reasoning: string | null;
+  keyword_matches: string[] | null;
+  keyword_misses: string[] | null;
   // Ghost detection fields
   ghost_score: number | null;
   ghost_verdict: string | null;
@@ -1713,6 +1717,27 @@ export async function fetchGapAnalysis(jobId: string): Promise<GapAnalysis> {
 }
 
 // ── Interview .ics export ─────────────────────────────────────────────
+
+// ── Scoring insights ───────────────────────────────────────────────────
+
+export interface ScoreBucket {
+  bucket: string;
+  count: number;
+}
+
+export interface ScoringInsights {
+  threshold: number;
+  scored_last_7d: number;
+  above_threshold: number;
+  in_band_below: number;
+  avg_score: number | null;
+  distribution: ScoreBucket[];
+  recommendation: string | null;
+}
+
+export async function fetchScoringInsights(): Promise<ScoringInsights> {
+  return apiFetch<ScoringInsights>("/api/v2/scoring/insights");
+}
 
 export async function downloadInterviewIcs(interviewId: string): Promise<void> {
   const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";

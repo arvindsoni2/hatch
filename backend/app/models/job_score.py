@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Index, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..database import Base
@@ -35,4 +35,7 @@ class JobScore(Base):
     rate_match: Mapped[float | None] = mapped_column(Float, nullable=True)
     location_match: Mapped[float | None] = mapped_column(Float, nullable=True)
     reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)    # LLM explanation
+    scoring_method: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "local" | "llm"
+    keyword_matches: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    keyword_misses: Mapped[list | None] = mapped_column(JSON, nullable=True)
     scored_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
