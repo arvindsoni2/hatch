@@ -1,7 +1,6 @@
 """Scout Agent — wraps existing scrapers, deduplicates, emits job_discovered events."""
 from __future__ import annotations
 
-import importlib
 import logging
 from typing import Any
 
@@ -9,7 +8,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..repositories.job_repository import JobRepository
-from ..scrapers.scheduler import SCRAPER_REGISTRY
+# Use the class-based registry (keyed by class name, e.g. "NaukriScraper")
+# which matches what profile.yaml job_boards[].scraper stores.
+from ..scrapers.registry import SCRAPER_REGISTRY
 from ..services.dedup import DedupService
 from .base_agent import BaseAgent
 
@@ -17,15 +18,18 @@ logger = logging.getLogger("jobpilot.agent.scout")
 
 
 def _sources_from_profile() -> list[str]:
-    """Return the enabled scraper names from profile.yaml job_boards.
+    """Return the enabled scraper class names from profile.yaml job_boards.
 
     Falls back to all registered scrapers if the profile has no boards configured.
-    This ensures the scout always respects the user's locale and board preferences.
+    Only returns names that exist in SCRAPER_REGISTRY so unknown entries are ignored.
     """
     try:
         from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
         profile = load_profile()
-        enabled = [b.scraper for b in profile.job_boards if b.enabled and b.scraper]
+        enabled = [
+            b.scraper for b in profile.job_boards
+            if b.enabled and b.scraper and b.scraper in SCRAPER_REGISTRY
+        ]
         if enabled:
             return enabled
     except Exception as exc:
@@ -101,15 +105,12 @@ class ScoutAgent(BaseAgent):
         errors: list[dict[str, str]] = []
         self._log.info("Scraping source: %s", source)
 
-        dotted_path = SCRAPER_REGISTRY.get(source)
-        if not dotted_path:
+        scraper_cls = SCRAPER_REGISTRY.get(source)
+        if scraper_cls is None:
             self._log.warning("Unknown source '%s' — skipping.", source)
             return 0, 0, [{"source": source, "error": "unknown source"}]
 
         try:
-            module_path, class_name = dotted_path.rsplit(".", 1)
-            mod = importlib.import_module(module_path)
-            scraper_cls = getattr(mod, class_name)
             scraper = scraper_cls()
             raw_jobs = await scraper.scrape()
         except Exception as exc:
