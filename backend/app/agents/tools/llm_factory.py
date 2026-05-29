@@ -108,6 +108,12 @@ def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
 
 def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     """Instantiate a LangChain chat model from profile LLM config."""
+    if not model_name:
+        raise ValueError(
+            f"LLM model name is empty for provider '{llm_cfg.provider}'. "
+            "Set triage_model / primary_model in profile.yaml → llm section."
+        )
+
     provider = llm_cfg.provider
 
     kwargs: dict[str, Any] = {
