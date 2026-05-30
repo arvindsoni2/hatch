@@ -5,7 +5,7 @@ import { Search, Loader2, Zap } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import { triggerScrape, type ScrapeResult } from "@/lib/api";
+import { API_BASE, type ScrapeResult } from "@/lib/api";
 
 export interface FilterValues {
   search: string;
@@ -55,16 +55,17 @@ export function FilterPanel({
     setScrapeMessage(null);
     startScrapeTransition(async () => {
       try {
-        const source = filters.source || undefined;
-        const results = await triggerScrape(source);
-        const totalNew = results.reduce((acc, r) => acc + r.jobs_new, 0);
-        const totalErrors = results.reduce((acc, r) => acc + r.errors, 0);
-        const message =
-          totalErrors > 0
-            ? `Done — ${totalNew} new jobs (${totalErrors} errors)`
-            : `Done — ${totalNew} new jobs found`;
+        // Use the scout agent trigger — it respects profile job_boards and is DB-safe
+        const res = await fetch(`${API_BASE}/api/agents/scout/trigger`, { method: "POST" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json() as { result: { jobs_found: number; jobs_new: number; errors: Array<unknown> } };
+        const r = data.result;
+        const message = r.errors.length > 0
+          ? `Done — ${r.jobs_new} new jobs (${r.errors.length} source errors)`
+          : `Done — ${r.jobs_new} new jobs found`;
         setScrapeMessage(message);
-        onScrapeComplete?.(results);
+        // Notify parent so it can refresh the job list
+        onScrapeComplete?.([{ source: "scout", jobs_found: r.jobs_found, jobs_new: r.jobs_new, errors: r.errors.length, duration_seconds: 0 }]);
       } catch {
         setScrapeMessage("Scrape failed — is the backend running?");
       }

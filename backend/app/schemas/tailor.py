@@ -30,7 +30,7 @@ class CompanyContext(BaseModel):
 class Requirements(BaseModel):
     must_have: list[str] = Field(default_factory=list)
     nice_to_have: list[str] = Field(default_factory=list)
-    years_experience: str | None = None
+    years_experience: int | str | None = None
 
 
 class ATSKeywords(BaseModel):
