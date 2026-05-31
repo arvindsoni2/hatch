@@ -16,7 +16,7 @@ import {
   Moon,
   Bell,
 } from "lucide-react";
-import { fetchPendingApprovals, fetchRawProfile } from "@/lib/api";
+import { fetchPendingApprovals, fetchRawProfile, fetchAllAgentStatus, type AllAgentStatus } from "@/lib/api";
 
 const NAV_GROUPS = [
   {
@@ -79,18 +79,24 @@ export function Sidebar() {
   const [approvalCount, setApprovalCount] = useState(0);
   const [profileName, setProfileName] = useState<string | null>(null);
   const [profileTitle, setProfileTitle] = useState<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<AllAgentStatus | null>(null);
+  const [notifOpen, setNotifOpen] = useState(false);
 
   useEffect(() => {
-    async function loadCount() {
+    async function loadData() {
       try {
-        const approvals = await fetchPendingApprovals();
+        const [approvals, status] = await Promise.all([
+          fetchPendingApprovals(),
+          fetchAllAgentStatus().catch(() => null),
+        ]);
         setApprovalCount(approvals.length);
+        setAgentStatus(status);
       } catch {
         // Non-critical
       }
     }
-    void loadCount();
-    const interval = setInterval(() => void loadCount(), 30_000);
+    void loadData();
+    const interval = setInterval(() => void loadData(), 30_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -254,19 +260,121 @@ export function Sidebar() {
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
 
-        <button
-          className="flex items-center justify-center rounded-lg transition-colors"
-          style={{
-            width: 32,
-            height: 32,
-            color: "var(--text-dim)",
-            borderRadius: "var(--radius-sm)",
-          }}
-          title="Notifications"
-          aria-label="Notifications"
-        >
-          <Bell size={16} />
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setNotifOpen((o) => !o)}
+            className="flex items-center justify-center rounded-lg transition-colors relative"
+            style={{
+              width: 32,
+              height: 32,
+              color: "var(--text-dim)",
+              borderRadius: "var(--radius-sm)",
+            }}
+            title="Notifications"
+            aria-label="Notifications"
+          >
+            <Bell size={16} />
+            {/* Badge: pending approvals + agent errors */}
+            {(() => {
+              const errorAgents = agentStatus?.agents.filter((a) => a.status === "error").length ?? 0;
+              const total = approvalCount + errorAgents;
+              return total > 0 ? (
+                <span
+                  className="absolute -top-1 -right-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full text-[10px] font-bold leading-none text-white"
+                  style={{ background: "var(--danger)", padding: "0 3px" }}
+                >
+                  {total > 9 ? "9+" : total}
+                </span>
+              ) : null;
+            })()}
+          </button>
+
+          {notifOpen && (
+            <>
+              {/* Backdrop */}
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setNotifOpen(false)}
+              />
+              {/* Panel */}
+              <div
+                className="absolute bottom-10 left-0 z-50 w-72 rounded-xl shadow-xl overflow-hidden"
+                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+              >
+                <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: "var(--border)" }}>
+                  <span className="text-sm font-semibold" style={{ color: "var(--text)" }}>Notifications</span>
+                  <button
+                    onClick={() => setNotifOpen(false)}
+                    className="text-xs"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="max-h-72 overflow-y-auto">
+                  {approvalCount > 0 && (
+                    <Link
+                      href="/approvals"
+                      onClick={() => setNotifOpen(false)}
+                      className="flex items-start gap-3 px-4 py-3 hover:bg-slate-100 transition-colors border-b"
+                      style={{ borderColor: "var(--border-subtle)" }}
+                    >
+                      <span
+                        className="mt-0.5 h-2 w-2 rounded-full shrink-0"
+                        style={{ background: "var(--accent)" }}
+                      />
+                      <div>
+                        <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
+                          {approvalCount} application{approvalCount !== 1 ? "s" : ""} awaiting approval
+                        </p>
+                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>Review in Approved queue</p>
+                      </div>
+                    </Link>
+                  )}
+
+                  {agentStatus?.agents.filter((a) => a.status === "error").map((a) => (
+                    <Link
+                      key={a.agent_name}
+                      href="/analytics"
+                      onClick={() => setNotifOpen(false)}
+                      className="flex items-start gap-3 px-4 py-3 hover:bg-slate-100 transition-colors border-b"
+                      style={{ borderColor: "var(--border-subtle)" }}
+                    >
+                      <span
+                        className="mt-0.5 h-2 w-2 rounded-full shrink-0"
+                        style={{ background: "var(--danger)" }}
+                      />
+                      <div>
+                        <p className="text-sm font-medium capitalize" style={{ color: "var(--text)" }}>
+                          {a.agent_name} agent error
+                        </p>
+                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>View in Analytics</p>
+                      </div>
+                    </Link>
+                  ))}
+
+                  {approvalCount === 0 && (agentStatus?.agents.filter((a) => a.status === "error").length ?? 0) === 0 && (
+                    <div className="px-4 py-6 text-center">
+                      <p className="text-sm" style={{ color: "var(--text-muted)" }}>All clear — no pending notifications</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="px-4 py-2 border-t" style={{ borderColor: "var(--border)" }}>
+                  <Link
+                    href="/analytics"
+                    onClick={() => setNotifOpen(false)}
+                    className="text-xs"
+                    style={{ color: "var(--accent)" }}
+                  >
+                    View agent log →
+                  </Link>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </aside>
   );

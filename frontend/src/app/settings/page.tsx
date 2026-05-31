@@ -395,8 +395,8 @@ function JobBoardsTab({ data }: { data: ProfileData | null }) {
     <div className="space-y-6">
       <SectionCard title="Active Boards">
         <p className="text-sm text-slate-500 mb-4">
-          Boards are filtered by locale <Badge variant="slate">{locale}</Badge>. Enable/disable by editing{" "}
-          <code className="bg-slate-100 rounded px-1">job_boards</code> in profile.yaml.
+          Boards are automatically determined by your locale <Badge variant="slate">{locale}</Badge>.
+          Change the <code className="bg-slate-100 rounded px-1">locale</code> key in profile.yaml to switch regions.
         </p>
         {boards.length > 0 ? (
           <div className="divide-y divide-slate-100">

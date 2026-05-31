@@ -26,10 +26,26 @@ router = APIRouter(prefix="/api/v2/profile", tags=["profile"])
 
 @router.get("", response_model=dict[str, Any])
 async def get_profile() -> dict[str, Any]:
-    """Return the current profile.yaml as a raw dict."""
+    """Return the current profile.yaml as a raw dict, with job_boards derived from locale."""
     if not profile_exists():
         return {}
-    return load_profile_raw()
+    data = load_profile_raw()
+    locale_id = data.get("locale", "uk")
+    try:
+        from ..services.locale_service import get_job_boards as _get_boards
+        locale_boards = _get_boards(locale_id, enabled_only=False)
+        data["job_boards"] = [
+            {
+                "name": b["name"],
+                "enabled": b.get("enabled", True),
+                "scraper": b.get("scraper", ""),
+                "search_params": b.get("search_params", {}),
+            }
+            for b in locale_boards
+        ]
+    except Exception:
+        pass
+    return data
 
 
 @router.get("/validated", response_model=Profile)
