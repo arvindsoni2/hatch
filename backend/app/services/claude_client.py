@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -70,10 +71,18 @@ class ClaudeClient:
             try:
                 text = await self.complete(system + _JSON_INSTRUCTION, user, max_tokens)
                 cleaned = text.strip()
+                # Strip markdown code fences
                 if cleaned.startswith("```"):
                     lines = cleaned.split("\n")
                     cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-                return json.loads(cleaned)
+                try:
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    # Local models (Gemma, Llama) often wrap JSON in prose — extract it
+                    match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+                    if match:
+                        return json.loads(match.group())
+                    raise
             except (json.JSONDecodeError, ValueError) as exc:
                 last_error = exc
                 logger.warning("JSON parse failed (attempt %d/3): %s", attempt + 1, exc)

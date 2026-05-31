@@ -50,7 +50,10 @@ async def analyse_jd_text(
     svc: TailorService = Depends(get_tailor_service),
 ) -> JDAnalysisResponse:
     """Analyse a raw job description text (not tied to a saved job posting)."""
-    return await svc.analyse_jd_text(job_description, job_url)
+    try:
+        return await svc.analyse_jd_text(job_description, job_url)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=f"JD analysis failed — the LLM did not return a valid response. Try again or check the Agents page. ({exc!s:.200}")
 
 
 # ---------------------------------------------------------------------------

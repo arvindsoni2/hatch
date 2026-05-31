@@ -8,7 +8,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import BaseModel
-from sqlalchemy import select
+import json as _json
+
+from sqlalchemy import func, select
 
 from ..database import get_db
 from ..models.agent_event import AgentEvent
@@ -354,10 +356,10 @@ async def get_job_decisions(
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
 
-    # Fetch all events for this job
+    # Fetch all events for this job (payload is TEXT, use json_extract for SQLite)
     events_result = await db.execute(
         select(AgentEvent)
-        .where(AgentEvent.payload["job_id"].as_string() == job_id)
+        .where(func.json_extract(AgentEvent.payload, '$.job_id') == job_id)
         .order_by(AgentEvent.created_at.asc())
     )
     events = events_result.scalars().all()
@@ -385,7 +387,7 @@ async def get_job_decisions(
 
     # Build steps from events
     for event in events:
-        payload: dict = event.payload or {}
+        payload: dict = _json.loads(event.payload) if event.payload else {}
         etype = event.event_type
 
         if etype == "job_scored":
@@ -454,4 +456,3 @@ async def get_job_decisions(
         steps=steps,
         total_cost_usd=round(total_cost, 6),
     )
-    return {"status": "unarchived", "id": job_id}
