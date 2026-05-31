@@ -22,6 +22,7 @@ function makeApproval(overrides: Partial<PendingApproval> = {}): PendingApproval
     job_title: "Test Engineer",
     company: "Acme",
     rate_text: "£500/day",
+    job_url: null,
     overall_score: 0.85,
     skill_match: 0.9,
     experience_match: 0.8,

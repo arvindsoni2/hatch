@@ -5,6 +5,7 @@ import {
   ScoreDistributionChart,
   DailyCostChart,
 } from "@/components/AnalyticsCharts";
+import { AgentPerformanceTable } from "@/components/AgentPerformanceTable";
 import {
   fetchAnalyticsDashboard,
   fetchAtsCorrelation,
@@ -19,7 +20,7 @@ import {
 } from "@/lib/api";
 import Link from "next/link";
 
-export const revalidate = 300;
+export const revalidate = 60;
 
 function formatCost(amount: number): string {
   if (amount === 0) return "£0.00";
@@ -181,50 +182,9 @@ export default async function AnalyticsPage() {
           )}
         </div>
 
-        {/* Section F: Agent Performance */}
+        {/* Section F: Agent Performance — client component, polls every 30s */}
         <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <h2 className="text-sm font-semibold mb-4" style={{ color: "var(--text)" }}>Agent Performance</h2>
-          {agentPerf && agentPerf.agents.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs border-b" style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}>
-                    <th className="text-left py-2 pr-4 font-medium">Agent</th>
-                    <th className="text-right py-2 px-4 font-medium">Today</th>
-                    <th className="text-right py-2 px-4 font-medium">This week</th>
-                    <th className="text-right py-2 px-4 font-medium">Success rate</th>
-                    <th className="text-left py-2 pl-4 font-medium">Last run</th>
-                    <th className="text-left py-2 pl-4 font-medium">Last error</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agentPerf.agents.map((a) => (
-                    <tr key={a.agent} style={{ borderBottom: "1px solid var(--border-subtle)", color: "var(--text-dim)" }}>
-                      <td className="py-2 pr-4 font-medium capitalize">{a.agent}</td>
-                      <td className="py-2 px-4 text-right tabular-nums">{a.runs_today}</td>
-                      <td className="py-2 px-4 text-right tabular-nums">{a.runs_this_week}</td>
-                      <td className="py-2 px-4 text-right">
-                        <span
-                          className="font-medium"
-                          style={{ color: a.success_rate >= 95 ? "var(--success)" : a.success_rate >= 80 ? "var(--warning)" : "var(--danger)" }}
-                        >
-                          {a.success_rate.toFixed(1)}%
-                        </span>
-                      </td>
-                      <td className="py-2 pl-4 text-xs" style={{ color: "var(--text-muted)" }}>
-                        {a.last_run_at ? new Date(a.last_run_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}
-                      </td>
-                      <td className="py-2 pl-4 text-xs max-w-xs truncate" style={{ color: "var(--danger)" }}>
-                        {a.last_error ? a.last_error.slice(0, 80) : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-sm" style={{ color: "var(--text-muted)" }}>No agent activity recorded yet.</p>
-          )}
+          <AgentPerformanceTable initialData={agentPerf} />
         </div>
 
         {/* Section G: Skills */}

@@ -26,6 +26,8 @@ CLAUDE_Phase2.md
 *.key
 secrets/
 env-v2-additions.txt
+backend/data/api_keys.env
+data/generated/
 # ──────────────────────── Python ────────────────────────
 __pycache__/
 *.py[cod]

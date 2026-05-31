@@ -1191,6 +1191,7 @@ export interface PendingApproval {
   job_title: string | null
   company: string | null
   rate_text: string | null
+  job_url: string | null
   overall_score: number | null
   skill_match: number | null
   experience_match: number | null

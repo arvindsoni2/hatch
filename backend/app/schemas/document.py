@@ -16,6 +16,7 @@ class GeneratedDocumentRead(BaseModel):
     file_path: str | None = None
     file_size_bytes: int | None = None
     ats_score: int | None = None
+    ats_details: str | None = None    # JSON string stored in DB Text column
     variant_label: str | None = None
     status: str
     created_at: datetime

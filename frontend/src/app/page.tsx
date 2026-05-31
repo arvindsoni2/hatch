@@ -21,6 +21,7 @@ import {
 } from "@/lib/api";
 import { TriggerScrapeButton } from "@/components/TriggerScrapeButton";
 import { ActivityTimeline } from "@/components/ActivityTimeline";
+import { TimeGreeting } from "@/components/TimeGreeting";
 import {
   Inbox,
   Send,
@@ -362,11 +363,13 @@ function HeroSection({
   pipelineStats,
   agentStatus,
   scrapeIntervalHours,
+  profileName,
 }: {
   reviewCount: number;
   pipelineStats: PipelineStats | null;
   agentStatus: AllAgentStatus | null;
   scrapeIntervalHours: number;
+  profileName?: string | null;
 }) {
   const health = getSystemHealth(agentStatus);
   const scout = agentStatus?.agents.find((a) => a.agent_name === "scout");
@@ -380,7 +383,7 @@ function HeroSection({
         style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
       >
         <h2 className="text-xl font-semibold mb-2" style={{ color: "var(--text)", letterSpacing: "-0.015em" }}>
-          Good morning.
+          <TimeGreeting name={profileName} />
         </h2>
         <p className="text-sm mb-5" style={{ color: "var(--text-dim)", lineHeight: 1.6 }}>
           {reviewCount > 0 ? (
@@ -534,6 +537,7 @@ export default async function DashboardPage() {
             pipelineStats={pipelineStats}
             agentStatus={agentStatus}
             scrapeIntervalHours={scrapeIntervalHours}
+            profileName={rawProfile.candidate?.name}
           />
 
           {/* KPI strip */}

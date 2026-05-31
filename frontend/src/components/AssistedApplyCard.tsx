@@ -52,9 +52,11 @@ export function AssistedApplyCard({
   };
 
   const handleOpenApplication = () => {
-    const url = pkg?.job_url ?? (application as unknown as Record<string, string>).job_url;
+    const url = pkg?.job_url ?? application.job_url;
     if (url) {
       window.open(url, "_blank", "noopener,noreferrer");
+    } else {
+      alert("No application URL available for this job.");
     }
   };
 

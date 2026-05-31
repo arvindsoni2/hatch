@@ -48,6 +48,7 @@ export default function ApprovalsPage() {
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<Record<string, "approving" | "rejecting">>({});
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -66,9 +67,12 @@ export default function ApprovalsPage() {
 
   const handleApprove = async (id: string) => {
     setActing((a) => ({ ...a, [id]: "approving" }));
+    setActionError(null);
     try {
       await approveApplication(id);
       setApprovals((prev) => prev.filter((a) => a.application_id !== id));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to approve. The database may be busy — please try again in a moment.");
     } finally {
       setActing((a) => { const n = { ...a }; delete n[id]; return n; });
     }
@@ -76,9 +80,12 @@ export default function ApprovalsPage() {
 
   const handleReject = async (id: string) => {
     setActing((a) => ({ ...a, [id]: "rejecting" }));
+    setActionError(null);
     try {
       await rejectApplication(id);
       setApprovals((prev) => prev.filter((a) => a.application_id !== id));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to reject. Please try again.");
     } finally {
       setActing((a) => { const n = { ...a }; delete n[id]; return n; });
     }
@@ -109,6 +116,14 @@ export default function ApprovalsPage() {
           <RefreshCw className="h-4 w-4" /> Refresh
         </button>
       </div>
+
+      {actionError && (
+        <div className="flex items-center gap-2 rounded-xl px-4 py-3 text-sm" style={{ background: "var(--danger-soft)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
+          <XCircle className="h-4 w-4 shrink-0" />
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="ml-auto text-xs underline">Dismiss</button>
+        </div>
+      )}
 
       {approvals.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-xl py-14 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>

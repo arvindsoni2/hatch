@@ -183,42 +183,13 @@ def create_scheduler(
     full_trigger = IntervalTrigger(hours=settings.FULL_SCRAPE_INTERVAL_HOURS)
     quick_trigger = IntervalTrigger(hours=settings.QUICK_SCRAPE_INTERVAL_HOURS)
 
-    for source_name, dotted_path in SCRAPER_REGISTRY.items():
-        try:
-            scraper_cls = _import_scraper(dotted_path)
-            # Quick-scrape boards also get a high-frequency trigger
-            if source_name in QUICK_SCRAPE_BOARDS:
-                scheduler.add_job(
-                    run_scraper,
-                    trigger=quick_trigger,
-                    args=[scraper_cls, job_service],
-                    id=f"scraper_quick_{source_name}",
-                    name=f"Quick scrape {source_name}",
-                    replace_existing=True,
-                    misfire_grace_time=300,
-                )
-                logger.info(
-                    "Scheduled quick scraper: %s (every %d hours)",
-                    source_name,
-                    settings.QUICK_SCRAPE_INTERVAL_HOURS,
-                )
-            # All boards get the full (less frequent) scrape
-            scheduler.add_job(
-                run_scraper,
-                trigger=full_trigger,
-                args=[scraper_cls, job_service],
-                id=f"scraper_{source_name}",
-                name=f"Full scrape {source_name}",
-                replace_existing=True,
-                misfire_grace_time=300,
-            )
-            logger.info(
-                "Scheduled full scraper: %s (every %d hours)",
-                source_name,
-                settings.FULL_SCRAPE_INTERVAL_HOURS,
-            )
-        except Exception as e:
-            logger.error("Failed to register scraper '%s': %s", source_name, e)
+    # Scraping is now delegated entirely to ScoutAgent (via the agent orchestrator).
+    # ScoutAgent reads job_boards from profile.yaml, uses the class-based registry,
+    # and manages its own DB sessions — avoiding the write-lock contention that
+    # running many individual scrapers in parallel caused. The old per-scraper jobs
+    # are intentionally removed here; the orchestrator's APScheduler cron triggers
+    # ScoutAgent on the profile's scrape_interval_hours.
+    logger.info("Scraper scheduling delegated to ScoutAgent via agent orchestrator.")
 
     if reminder_service is not None:
         scheduler.add_job(
