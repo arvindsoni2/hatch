@@ -1,6 +1,11 @@
 # ──────────────────────── Docs / specs (internal only) ───────────────────────
 docs/
 # ──────────────────────── Assignment / internal docs ─────────────────────────
+CLAUDE_Phase2.md
+CLAUDE_Phase2_Tests.md
+design-gap-analysis.md
+scoring-audit.md
+semantic-scoring-assisted-apply.md
 01_PRD_JobPilot_v2.md
 02_Design_JobPilot_v2.md
 jobpilot-agentic-handoff-spec.md
