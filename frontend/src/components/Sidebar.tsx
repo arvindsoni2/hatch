@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -81,6 +82,8 @@ export function Sidebar() {
   const [profileTitle, setProfileTitle] = useState<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<AllAgentStatus | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [popPos, setPopPos] = useState<{ left: number; bottom: number } | null>(null);
+  const bellRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -108,6 +111,32 @@ export function Sidebar() {
       })
       .catch(() => {});
   }, []);
+
+  const computePos = useCallback(() => {
+    if (!bellRef.current) return;
+    const r = bellRef.current.getBoundingClientRect();
+    const W = 312, M = 8;
+    let left = r.right + 8;
+    left = Math.min(left, window.innerWidth - W - M);
+    left = Math.max(M, left);
+    let bottom = window.innerHeight - r.top + 8;
+    bottom = Math.min(bottom, window.innerHeight - M);
+    setPopPos({ left, bottom });
+  }, []);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    computePos();
+    window.addEventListener("resize", computePos);
+    window.addEventListener("scroll", computePos, true);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setNotifOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("resize", computePos);
+      window.removeEventListener("scroll", computePos, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [notifOpen, computePos]);
 
   return (
     <aside
@@ -262,6 +291,7 @@ export function Sidebar() {
 
         <div className="relative">
           <button
+            ref={bellRef}
             onClick={() => setNotifOpen((o) => !o)}
             className="flex items-center justify-center rounded-lg transition-colors relative"
             style={{
@@ -274,7 +304,6 @@ export function Sidebar() {
             aria-label="Notifications"
           >
             <Bell size={16} />
-            {/* Badge: pending approvals + agent errors */}
             {(() => {
               const errorAgents = agentStatus?.agents.filter((a) => a.status === "error").length ?? 0;
               const total = approvalCount + errorAgents;
@@ -289,17 +318,23 @@ export function Sidebar() {
             })()}
           </button>
 
-          {notifOpen && (
+          {notifOpen && popPos && typeof document !== "undefined" && createPortal(
             <>
               {/* Backdrop */}
               <div
-                className="fixed inset-0 z-40"
+                className="fixed inset-0 z-[59]"
                 onClick={() => setNotifOpen(false)}
               />
-              {/* Panel */}
+              {/* Panel — portalled to body, fixed-positioned, clamped to viewport */}
               <div
-                className="absolute bottom-10 left-0 z-50 w-72 rounded-xl shadow-xl overflow-hidden"
-                style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+                className="fixed z-[60] w-[312px] rounded-xl shadow-xl overflow-hidden"
+                style={{
+                  left: popPos.left,
+                  bottom: popPos.bottom,
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                  animation: "notifRise .14s ease-out",
+                }}
               >
                 <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: "var(--border)" }}>
                   <span className="text-sm font-semibold" style={{ color: "var(--text)" }}>Notifications</span>
@@ -372,7 +407,8 @@ export function Sidebar() {
                   </Link>
                 </div>
               </div>
-            </>
+            </>,
+            document.body
           )}
         </div>
       </div>

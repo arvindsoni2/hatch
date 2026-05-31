@@ -205,3 +205,8 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+@keyframes notifRise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
