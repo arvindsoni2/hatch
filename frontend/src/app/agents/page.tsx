@@ -263,11 +263,11 @@ export default function AgentDashboardPage() {
         </Card>
       </div>
 
-      {/* Approval queue shortcut */}
+      {/* Shortlist shortcut */}
       <Card className="border-amber-200 bg-amber-50">
         <CardContent className="py-4 flex items-center justify-between">
           <div>
-            <p className="font-semibold text-amber-800">Human Approval Queue</p>
+            <p className="font-semibold text-amber-800">Shortlist</p>
             <p className="text-sm text-amber-600 mt-0.5">
               Review AI-generated CVs before they go out
             </p>

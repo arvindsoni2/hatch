@@ -106,10 +106,12 @@ export default function ApprovalsPage() {
         <div>
           <h1 className="text-[28px] font-semibold flex items-center gap-2" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>
             <Sparkles className="h-6 w-6" style={{ color: "var(--accent)" }} />
-            Approval queue
+            Shortlist
           </h1>
           <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>
-            {approvals.length} application{approvals.length !== 1 ? "s" : ""} awaiting your review
+            {approvals.length > 0
+              ? `${approvals.length} application${approvals.length !== 1 ? "s" : ""} ready to review and approve`
+              : "Jobs you approve from Inbox appear here"}
           </p>
         </div>
         <button onClick={refresh} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium min-h-[44px] sm:min-h-0" style={{ background: "var(--surface-2)", color: "var(--text-dim)", border: "1px solid var(--border)" }}>

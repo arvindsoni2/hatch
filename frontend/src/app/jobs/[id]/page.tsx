@@ -238,8 +238,17 @@ export default async function JobDetailPage({ params }: { params: { id: string }
       )}
 
       {(!decisions || decisions.steps.length === 0) && (
-        <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
-          No agent decisions recorded for this job yet.
+        <div className="rounded-xl border border-dashed p-8 text-center space-y-2" style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
+          {job.match_score == null ? (
+            <>
+              <p className="text-sm font-medium" style={{ color: "var(--text)" }}>Awaiting scoring</p>
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+                This job was stored before the scoring pipeline ran. Go to Inbox → Show all → Score now to queue it, or wait for the next scheduled scrape.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>No agent decisions recorded for this job yet.</p>
+          )}
         </div>
       )}
     </div>

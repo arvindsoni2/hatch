@@ -24,8 +24,8 @@ const NAV_GROUPS = [
     label: "Discover",
     items: [
       { href: "/", label: "Home", icon: Home, exact: true },
-      { href: "/jobs", label: "Approval queue", icon: Inbox, badge: "approvals", badgeAccent: true },
-      { href: "/approvals", label: "Approved", icon: CheckCircle },
+      { href: "/jobs", label: "Inbox", icon: Inbox, badge: "approvals", badgeAccent: true },
+      { href: "/approvals", label: "Shortlist", icon: CheckCircle },
     ],
   },
   {
@@ -167,16 +167,6 @@ export function Sidebar() {
           style={{ fontSize: 15, letterSpacing: "-0.015em", color: "var(--text)" }}
         >
           Hatch
-        </span>
-        <span
-          className="ml-auto font-mono text-xs px-1.5 py-0.5 rounded"
-          style={{
-            color: "var(--text-muted)",
-            border: "1px solid var(--border)",
-            fontSize: 11,
-          }}
-        >
-          beta
         </span>
       </div>
 

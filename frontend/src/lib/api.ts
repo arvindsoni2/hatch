@@ -1483,6 +1483,10 @@ export async function unarchiveJob(jobId: string): Promise<{ status: string; id:
   return apiFetch<{ status: string; id: string }>(`/api/jobs/${jobId}/unarchive`, { method: "POST" });
 }
 
+export async function rescoreUnscored(): Promise<{ queued: number }> {
+  return apiFetch<{ queued: number }>("/api/jobs/rescore-unscored", { method: "POST" });
+}
+
 // ──────────────────────── Activity Timeline ────────────────────────
 
 export interface ActivityItem {

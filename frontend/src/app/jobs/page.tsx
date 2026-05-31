@@ -6,6 +6,7 @@ import {
   fetchRawProfile,
   fetchScoringInsights,
   runArchive,
+  rescoreUnscored,
   type Job,
   type ScrapeResult,
   type ScoringInsights,
@@ -14,7 +15,7 @@ import { JobCard } from "@/components/JobCard";
 import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, Loader2, Eye, Archive } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Eye, Archive, Zap } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
@@ -26,6 +27,8 @@ export default function JobsPage() {
   const [archiving, setArchiving] = useState(false);
   const [archiveResult, setArchiveResult] = useState<{ archived: number } | null>(null);
   const [scraperError, setScraperError] = useState<string | null>(null);
+  const [rescoring, setRescoring] = useState(false);
+  const [rescoreResult, setRescoreResult] = useState<{ queued: number } | null>(null);
 
   const [filters, setFilters] = useState<FilterValues>({
     search: "",
@@ -103,6 +106,20 @@ export default function JobsPage() {
     void loadJobs();
   }
 
+  async function handleRescore() {
+    setRescoring(true);
+    setRescoreResult(null);
+    try {
+      const result = await rescoreUnscored();
+      setRescoreResult(result);
+      void loadJobs();
+    } catch {
+      // non-critical
+    } finally {
+      setRescoring(false);
+    }
+  }
+
   async function handleRunArchive() {
     setArchiving(true);
     try {
@@ -126,7 +143,7 @@ export default function JobsPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Approval queue</h1>
+          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Inbox</h1>
           <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
             {showArchived
               ? `Archived jobs — ${total.toLocaleString()} total`
@@ -187,6 +204,38 @@ export default function JobsPage() {
           <button onClick={() => setArchiveResult(null)} className="ml-auto text-xs underline">Dismiss</button>
         </div>
       )}
+
+      {/* Rescore result notice */}
+      {rescoreResult && (
+        <div className="flex items-center gap-2 text-sm rounded-lg px-4 py-2.5" style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}>
+          <Zap className="h-4 w-4" style={{ color: "var(--accent)" }} />
+          {rescoreResult.queued > 0
+            ? `${rescoreResult.queued} job${rescoreResult.queued !== 1 ? "s" : ""} queued for scoring — results will appear within the next scrape cycle.`
+            : "All jobs are already scored."}
+          <button onClick={() => setRescoreResult(null)} className="ml-auto text-xs underline">Dismiss</button>
+        </div>
+      )}
+
+      {/* Unscored jobs banner (visible in Show All mode) */}
+      {showAll && !loading && (() => {
+        const unscoredCount = jobs.filter((j) => j.match_score == null).length;
+        if (unscoredCount === 0) return null;
+        return (
+          <div className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm" style={{ background: "var(--warning-soft, #fef3c7)", border: "1px solid var(--warning, #f59e0b)", color: "var(--text-dim)" }}>
+            <Zap className="h-4 w-4 shrink-0" style={{ color: "var(--warning, #f59e0b)" }} />
+            <span><strong>{unscoredCount}</strong> job{unscoredCount !== 1 ? "s" : ""} {unscoredCount !== 1 ? "haven't" : "hasn't"} been scored yet — they were stored before the scoring pipeline ran.</span>
+            <button
+              onClick={() => void handleRescore()}
+              disabled={rescoring}
+              className="ml-auto shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold"
+              style={{ background: "var(--warning, #f59e0b)", color: "#fff" }}
+            >
+              {rescoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+              {rescoring ? "Queuing…" : "Score now"}
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Filter panel */}
       <FilterPanel

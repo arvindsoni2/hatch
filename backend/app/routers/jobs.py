@@ -269,6 +269,40 @@ async def delete_job(
     return {"status": "deleted", "id": job_id}
 
 
+# ──────────────────────── Rescore Unscored ───────────────────────────────────
+
+@router.post("/rescore-unscored", response_model=dict[str, int])
+async def rescore_unscored(
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Re-emit job_discovered events for any active jobs that have no match score.
+
+    Legacy jobs stored before the scoring pipeline was set up never received a
+    job_discovered event, so the scorer never processed them. This endpoint
+    re-queues them so the next scorer run will pick them up.
+    Returns {queued: N}.
+    """
+    from ..agents.tools.event_bus import EventBus  # noqa: PLC0415
+    bus = EventBus.instance()
+    repo = JobRepository(db)
+    unscored = await repo.get_unclassified(limit=200)
+    queued = 0
+    for job in unscored:
+        await bus.emit(
+            "job_discovered",
+            {
+                "job_id": job.id,
+                "title": job.title,
+                "company": job.company,
+                "rate_text": job.rate_text,
+                "source": getattr(job, "source", "unknown"),
+            },
+            db,
+        )
+        queued += 1
+    return {"queued": queued}
+
+
 # ──────────────────────── Archive Endpoints ────────────────────────
 
 @router.post("/archive/run", response_model=dict[str, int])
