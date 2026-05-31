@@ -112,6 +112,7 @@ class PreferencesConfig(BaseModel):
     follow_up_days: list[int] = Field(default_factory=lambda: [5, 10, 15])
     locale: str = "en-GB"  # display/date locale (BCP-47)
     archive_after_days: int = 30  # auto-archive jobs older than this
+    max_job_age_days: int = 60  # hide jobs older than this from the approval queue
 
 
 class Profile(BaseModel):

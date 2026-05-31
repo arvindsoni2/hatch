@@ -1,6 +1,7 @@
 """Abstract base class for all JobPilot agents."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -8,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.agent_state import AgentState
@@ -78,7 +80,16 @@ class BaseAgent(ABC):
             row.last_run_at = now
             self._started_at = None
 
-        await db.commit()
+        for attempt in range(3):
+            try:
+                await db.commit()
+                break
+            except OperationalError as exc:
+                if "database is locked" in str(exc) and attempt < 2:
+                    await db.rollback()
+                    await asyncio.sleep(0.3 * (attempt + 1))
+                else:
+                    raise
         self._log.debug("State → %s", status)
 
     # ── Health check ──────────────────────────────────────────────────

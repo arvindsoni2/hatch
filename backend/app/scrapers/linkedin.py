@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from urllib.parse import quote
 
 import httpx
@@ -240,6 +241,35 @@ class LinkedInScraper(BaseScraper):
 
         return jobs
 
+    def _parse_posted_at(self, card: object) -> tuple[datetime, bool]:
+        """Extract the posting date from a LinkedIn job card.
+
+        Returns (posted_at, date_unknown). date_unknown=True means we fell back
+        to scrape time and the job should be flagged needs_enrichment=True.
+        """
+        from bs4 import Tag
+
+        if isinstance(card, Tag):
+            time_el = card.find("time")
+            if time_el and isinstance(time_el, Tag):
+                attr = time_el.get("datetime", "")
+                if attr:
+                    try:
+                        dt = datetime.fromisoformat(str(attr).replace("Z", "+00:00"))
+                        return dt.replace(tzinfo=None), False
+                    except ValueError:
+                        pass
+
+            text = card.get_text(separator=" ")
+            m = re.search(r"(\d+)\s+(day|week|month|year)s?\s+ago", text, re.IGNORECASE)
+            if m:
+                value = int(m.group(1))
+                unit = m.group(2).lower()
+                multiplier = {"day": 1, "week": 7, "month": 30, "year": 365}[unit]
+                return datetime.utcnow() - timedelta(days=value * multiplier), False
+
+        return datetime.utcnow(), True
+
     def _parse_card(self, card: object) -> JobPostingCreate | None:
         """Parse a single LinkedIn job card.
 
@@ -294,6 +324,9 @@ class LinkedInScraper(BaseScraper):
         # Determine if this card has enough description or needs enrichment
         needs_enrichment = len(full_text.strip()) < _MIN_DESCRIPTION_LENGTH
 
+        posted_at, date_unknown = self._parse_posted_at(card)
+        needs_enrichment = needs_enrichment or date_unknown
+
         try:
             from ..agents.tools.profile_loader import load_profile as _lp
             _currency = _lp().compensation.currency or "USD"
@@ -313,7 +346,7 @@ class LinkedInScraper(BaseScraper):
             description=full_text[:_MAX_DESCRIPTION_LENGTH] if full_text else None,
             url=href,
             source=self.name,
-            posted_at=datetime.utcnow(),
+            posted_at=posted_at,
             skills=skills or None,
             employment_type=employment_type,
             working_pattern=working_pattern,

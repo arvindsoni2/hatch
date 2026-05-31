@@ -1,10 +1,13 @@
 """FastAPI router for agent management and approval flow endpoints."""
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import datetime
 from typing import Any
+
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, update
@@ -130,11 +133,20 @@ async def resume_agent(
 async def list_pending_approvals(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    """Return applications awaiting human approval."""
+    """Return applications awaiting human approval, filtered to max_job_age_days."""
+    try:
+        from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+        max_age = load_profile().preferences.max_job_age_days
+    except Exception:
+        max_age = 60
+    cutoff = datetime.utcnow() - timedelta(days=max_age)
+
     result = await db.execute(
         select(Application)
+        .join(JobPosting, Application.job_id == JobPosting.id)
         .where(Application.agent_created == True)
         .where(Application.approval_status == "pending")
+        .where(JobPosting.posted_at >= cutoff)
         .order_by(Application.created_at.desc())
     )
     apps = result.scalars().all()
@@ -157,6 +169,7 @@ async def list_pending_approvals(
             "job_title": job.title if job else None,
             "company": job.company if job else None,
             "rate_text": job.rate_text if job else None,
+            "job_url": job.url if job else None,
             "overall_score": score.overall_score if score else None,
             "skill_match": score.skill_match if score else None,
             "experience_match": score.experience_match if score else None,
@@ -259,17 +272,28 @@ async def approve_application(
     if app.approval_status != "pending":
         raise HTTPException(status_code=409, detail=f"Application is already '{app.approval_status}'")
 
-    await db.execute(
-        update(Application)
-        .where(Application.id == application_id)
-        .values(
-            approval_status="approved",
-            status="applied",
-            applied_date=datetime.utcnow(),
-        )
-    )
-    await db.commit()
-    return {"application_id": application_id, "status": "approved"}
+    # Retry up to 5 times on SQLite busy/locked errors — the scheduler may hold
+    # a write lock briefly while running background scrapers.
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+    for attempt in range(5):
+        try:
+            await db.execute(
+                update(Application)
+                .where(Application.id == application_id)
+                .values(
+                    approval_status="approved",
+                    status="applied",
+                    applied_date=datetime.utcnow(),
+                )
+            )
+            await db.commit()
+            return {"application_id": application_id, "status": "approved"}
+        except OperationalError as exc:
+            if "database is locked" in str(exc) and attempt < 4:
+                await db.rollback()
+                await asyncio.sleep(0.5 * (attempt + 1))
+            else:
+                raise
 
 
 @router.post("/approvals/{application_id}/reject")
@@ -285,13 +309,22 @@ async def reject_application(
     if app is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    await db.execute(
-        update(Application)
-        .where(Application.id == application_id)
-        .values(approval_status="rejected", status="not_applying")
-    )
-    await db.commit()
-    return {"application_id": application_id, "status": "rejected"}
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+    for attempt in range(5):
+        try:
+            await db.execute(
+                update(Application)
+                .where(Application.id == application_id)
+                .values(approval_status="rejected", status="not_applying")
+            )
+            await db.commit()
+            return {"application_id": application_id, "status": "rejected"}
+        except OperationalError as exc:
+            if "database is locked" in str(exc) and attempt < 4:
+                await db.rollback()
+                await asyncio.sleep(0.5 * (attempt + 1))
+            else:
+                raise
 
 
 @router.patch("/approvals/{application_id}/notes")
