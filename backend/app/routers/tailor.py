@@ -54,6 +54,8 @@ async def analyse_jd_text(
         return await svc.analyse_jd_text(job_description, job_url)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=503, detail=f"JD analysis failed — the LLM did not return a valid response. Try again or check the Agents page. ({exc!s:.200}")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"JD analysis failed — could not reach the LLM. Check your provider settings. ({type(exc).__name__}: {exc!s:.200}")
 
 
 # ---------------------------------------------------------------------------
