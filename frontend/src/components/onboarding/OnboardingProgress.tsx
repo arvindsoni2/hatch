@@ -1,39 +1,41 @@
 "use client";
 
-import { CheckCircle2 } from "lucide-react";
-
-const STEP_LABELS = ["About you", "Job search", "Skills", "AI provider", "Review"];
+const STEP_LABELS = [
+  "About you",
+  "Your market",
+  "Location & pay",
+  "Eligibility",
+  "Skills",
+  "AI & launch",
+];
 
 interface OnboardingProgressProps {
-  current: number;
+  formStep: number;  // 1–6 for form steps; 0 = no progress shown (Welcome/Success)
 }
 
-export function OnboardingProgress({ current }: OnboardingProgressProps) {
+export function OnboardingProgress({ formStep }: OnboardingProgressProps) {
+  if (formStep === 0) return null;
+
+  const label = STEP_LABELS[formStep - 1] ?? "";
+
   return (
-    <div className="flex items-center gap-1 mb-8 overflow-x-auto" role="progressbar" aria-valuenow={current} aria-valuemax={STEP_LABELS.length}>
-      {STEP_LABELS.map((label, i) => (
-        <div key={i} className="flex items-center min-w-0">
-          <div className="flex flex-col items-center gap-1">
-            <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-                i + 1 < current
-                  ? "bg-green-500 text-white"
-                  : i + 1 === current
-                  ? "bg-brand-600 text-white"
-                  : "bg-slate-200 text-slate-500"
-              }`}
-            >
-              {i + 1 < current ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
-            </div>
-            <span className={`text-xs whitespace-nowrap ${i + 1 === current ? "text-brand-700 font-medium" : "text-slate-400"}`}>
-              {label}
-            </span>
-          </div>
-          {i < STEP_LABELS.length - 1 && (
-            <div className={`w-8 h-0.5 mx-1 mb-4 flex-shrink-0 ${i + 1 < current ? "bg-green-500" : "bg-slate-200"}`} />
-          )}
-        </div>
-      ))}
+    <div
+      className="flex items-baseline gap-2 px-5 pt-3.5 pb-1.5"
+      role="progressbar"
+      aria-valuenow={formStep}
+      aria-valuemax={6}
+      aria-label={`Step ${formStep} of 6: ${label}`}
+    >
+      <span
+        className="text-[40px] leading-[0.9] font-[500] tracking-[-0.015em] text-[var(--text)]"
+        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
+      >
+        {String(formStep).padStart(2, "0")}
+      </span>
+      <span className="text-[15px] text-[var(--text-muted)]">/ 06</span>
+      <span className="ml-auto text-[12px] text-[var(--text-dim)] uppercase tracking-[0.08em]">
+        {label}
+      </span>
     </div>
   );
 }
