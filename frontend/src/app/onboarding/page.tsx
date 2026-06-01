@@ -2,48 +2,54 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { ChevronRight, ChevronLeft } from "lucide-react";
 import {
   fetchLocales, fetchLocaleLegalFields, fetchLocaleBoards,
   testLLMConnection, saveProfile, saveApiKey, triggerAgent,
   type LocaleSummary, type LocaleLegalField, type LocaleBoard,
 } from "@/lib/api";
 import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
+import { ScreenWelcome } from "@/components/onboarding/ScreenWelcome";
+import { ScreenSuccess } from "@/components/onboarding/ScreenSuccess";
 import { StepAboutYou, type CandidateData } from "@/components/onboarding/StepAboutYou";
-import { StepJobSearch, type SearchData, type LocationData, type CompensationData } from "@/components/onboarding/StepJobSearch";
+import { StepMarket } from "@/components/onboarding/StepMarket";
+import { StepPay } from "@/components/onboarding/StepPay";
+import { StepEligibility } from "@/components/onboarding/StepEligibility";
 import { StepSkills, type SkillsData, type DomainsData, type ProofPoint } from "@/components/onboarding/StepSkills";
-import { StepAIProvider, type LLMData } from "@/components/onboarding/StepAIProvider";
-import { StepReview } from "@/components/onboarding/StepReview";
+import { StepAIProvider, LLM_PROVIDERS, type LLMData } from "@/components/onboarding/StepAIProvider";
+import type { SearchData, LocationData, CompensationData } from "@/components/onboarding/StepJobSearch";
+import { ChevronLeft } from "lucide-react";
 
-const TOTAL_STEPS = 5;
+const FORM_STEPS = 6;
+const WELCOME = 0;
+const SUCCESS = 7;
+const STORAGE_KEY = "hatch_onboarding_v1";
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(WELCOME);
+  const [hasSaved, setHasSaved] = useState(false);
+  const [tried, setTried] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [triedStep1, setTriedStep1] = useState(false);
 
   // Step 1 — About you
   const [candidate, setCandidate] = useState<CandidateData>({ name: "", title: "", years_experience: 0, summary: "" });
 
-  // Step 2 — Job search + compensation
+  // Steps 2–4 — Market, Pay, Eligibility
   const [selectedLocale, setSelectedLocale] = useState("uk");
   const [locales, setLocales] = useState<LocaleSummary[]>([]);
   const [loadingLocales, setLoadingLocales] = useState(true);
   const [search, setSearch] = useState<SearchData>({ target_roles: [], contract_type: "contract" });
   const [locations, setLocations] = useState<LocationData[]>([{ city: "", country: "", radius_miles: 30, remote_preference: "hybrid" }]);
-  const [compensation, setCompensation] = useState<CompensationData>({ min_rate: 0, max_rate: 0, rate_type: "daily", currency: "", legal_preferences: {} });
+  const [compensation, setCompensation] = useState<CompensationData>({ min_rate: 0, max_rate: 0, rate_type: "daily", currency: "GBP", legal_preferences: {} });
   const [legalFields, setLegalFields] = useState<LocaleLegalField[]>([]);
 
-  // Step 3 — Skills
+  // Step 5 — Skills
   const [skills, setSkills] = useState<SkillsData>({ primary: [], secondary: [], certifications: [] });
   const [domains, setDomains] = useState<DomainsData>({ preferred: [], excluded: [] });
   const [proofPoints, setProofPoints] = useState<ProofPoint[]>([]);
 
-  // Step 4 — AI provider
+  // Step 6 — AI provider
   const [llm, setLlm] = useState<LLMData>({
     provider: "google", triage_model: "gemini-2.5-flash-lite", primary_model: "gemini-2.5-flash",
     api_key_env: "GOOGLE_API_KEY", base_url: null, temperature: 0.3, max_retries: 3,
@@ -56,6 +62,40 @@ export default function OnboardingPage() {
   const [enabledBoards, setEnabledBoards] = useState<Set<string>>(new Set());
   const [scrapeIntervalHours, setScrapeIntervalHours] = useState(4);
 
+  // ── Restore from localStorage ────────────────────────────────────────────
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.candidate) setCandidate(parsed.candidate);
+        if (parsed.search) setSearch(parsed.search);
+        if (parsed.locations) setLocations(parsed.locations);
+        if (parsed.compensation) setCompensation(parsed.compensation);
+        if (parsed.skills) setSkills(parsed.skills);
+        if (parsed.domains) setDomains(parsed.domains);
+        if (parsed.proofPoints) setProofPoints(parsed.proofPoints);
+        if (parsed.selectedLocale) setSelectedLocale(parsed.selectedLocale);
+        if (parsed.llm) setLlm(parsed.llm);
+        if (typeof parsed.step === "number" && parsed.step > 0 && parsed.step < SUCCESS) {
+          setStep(parsed.step);
+        }
+        setHasSaved(true);
+      }
+    } catch {}
+  }, []);
+
+  // ── Persist to localStorage on every change ──────────────────────────────
+  useEffect(() => {
+    if (step === SUCCESS) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        step, candidate, search, locations, compensation, skills, domains, proofPoints, selectedLocale, llm,
+      }));
+    } catch {}
+  }, [step, candidate, search, locations, compensation, skills, domains, proofPoints, selectedLocale, llm]);
+
+  // ── Fetch locales ─────────────────────────────────────────────────────────
   useEffect(() => {
     fetchLocales()
       .then((ls) => setLocales(ls))
@@ -63,6 +103,7 @@ export default function OnboardingPage() {
       .finally(() => setLoadingLocales(false));
   }, []);
 
+  // ── Fetch legal fields + boards + auto-derive currency when locale changes ─
   useEffect(() => {
     fetchLocaleLegalFields(selectedLocale)
       .then((fields) => {
@@ -79,14 +120,43 @@ export default function OnboardingPage() {
         setEnabledBoards(new Set(bs.filter((b) => b.enabled).map((b) => b.id)));
       })
       .catch(() => setBoards([]));
-  }, [selectedLocale]);
+
+    const localePack = locales.find((l) => l.id === selectedLocale);
+    if (localePack) {
+      setCompensation((prev) => ({
+        ...prev,
+        currency: localePack.currency || prev.currency,
+        rate_type: localePack.default_rate_type || prev.rate_type,
+      }));
+    }
+  }, [selectedLocale, locales]);
+
+  // ── Validation per step ──────────────────────────────────────────────────
+  const isStepValid = (s: number): boolean => {
+    switch (s) {
+      case 1: return !!candidate.name.trim() && !!candidate.title.trim();
+      case 2: return search.target_roles.length > 0;
+      case 3: return !!locations[0].city.trim() && compensation.min_rate > 0;
+      default: return true;
+    }
+  };
+
+  const advance = () => {
+    if (step > WELCOME && step < SUCCESS && !isStepValid(step)) {
+      setTried(true);
+      return;
+    }
+    setTried(false);
+    setStep((s) => s + 1);
+  };
+
+  const back = () => { setTried(false); setStep((s) => Math.max(WELCOME, s - 1)); };
 
   const handleTestConnection = async () => {
     setTestingConnection(true);
     setConnectionResult(null);
     const result = await testLLMConnection(llm.provider, testApiKey).catch((e: unknown) => ({
-      ok: false,
-      error: e instanceof Error ? e.message : "Unknown error",
+      ok: false, error: e instanceof Error ? e.message : "Unknown error",
     }));
     setConnectionResult(result);
     setTestingConnection(false);
@@ -101,10 +171,18 @@ export default function OnboardingPage() {
     domains,
     proof_points: proofPoints.filter((p) => p.summary.trim()),
     master_cv_path: "./data/master_cv.json",
-    job_boards: boards.map((b) => ({ name: b.name, enabled: enabledBoards.has(b.id), scraper: b.scraper, search_params: {} })),
-    scoring: { weights: { skill_match: 0.35, experience_match: 0.30, rate_match: 0.20, location_match: 0.15 }, shortlist_threshold: 0.75 },
+    job_boards: boards.map((b) => ({
+      name: b.name, enabled: enabledBoards.has(b.id), scraper: b.scraper, search_params: {},
+    })),
+    scoring: {
+      weights: { skill_match: 0.35, experience_match: 0.30, rate_match: 0.20, location_match: 0.15 },
+      shortlist_threshold: 0.75,
+    },
     llm,
-    preferences: { scrape_interval_hours: scrapeIntervalHours, max_tailor_batch: 5, follow_up_days: [5, 10, 15], locale: "en-GB", archive_after_days: 30 },
+    preferences: {
+      scrape_interval_hours: scrapeIntervalHours, max_tailor_batch: 5,
+      follow_up_days: [5, 10, 15], locale: "en-GB", archive_after_days: 30,
+    },
   });
 
   const handleFinish = async () => {
@@ -116,121 +194,135 @@ export default function OnboardingPage() {
         await saveApiKey(llm.api_key_env, testApiKey).catch(() => {});
       }
       await triggerAgent("scout").catch(() => {});
-      router.push("/?firstRun=true");
+      try { localStorage.removeItem(STORAGE_KEY); } catch {}
+      setStep(SUCCESS);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setSaving(false);
     }
   };
 
-  const localeName = locales.find((l) => l.id === selectedLocale)?.name ?? selectedLocale;
-
-  const stepValidation: Record<number, string> = {
-    1: !candidate.name.trim() || !candidate.title.trim() ? "Name and title are required." : "",
-    2: search.target_roles.length === 0 ? "Add at least one target job title to continue."
-      : !locations[0].city.trim() ? "City is required."
-      : compensation.min_rate <= 0 ? "Minimum rate must be greater than 0."
-      : "",
-    3: "",
-    4: "",
-  };
-
-  const blockMsg = stepValidation[step] ?? "";
+  const currentLocale = locales.find((l) => l.id === selectedLocale);
+  const formStep = step === WELCOME || step === SUCCESS ? 0 : step;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl">
-        <div className="mb-6 text-center">
-          <h1 className="text-3xl font-bold text-slate-900">Welcome to Hatch</h1>
-          <p className="mt-2 text-slate-500">Set up your profile and launch your autonomous job search.</p>
+    <div
+      data-onboarding="true"
+      className="fixed inset-0 z-50 overflow-y-auto"
+      style={{ background: "var(--bg)", color: "var(--text)" }}
+    >
+      <div className="w-full max-w-lg mx-auto min-h-screen flex flex-col">
+        {/* Header row */}
+        <div className="flex items-center justify-between px-5 pt-4">
+          <div className="flex items-center gap-2">
+            <div
+              className="w-6 h-6 rounded-[7px] grid place-items-center font-[800] text-[13px] text-[var(--bg)]"
+              style={{ background: "var(--text)" }}
+            >
+              H
+            </div>
+            <span className="text-[14px] font-[650] tracking-[-0.02em] text-[var(--text)]">Hatch</span>
+          </div>
+          {step > WELCOME && step < SUCCESS && (
+            <span className="text-[12px] text-[var(--text-muted)] tabular-nums">
+              <strong className="text-[var(--text)]">{formStep}</strong> of {FORM_STEPS}
+            </span>
+          )}
         </div>
 
-        <OnboardingProgress current={step} />
+        {/* Numeral progress */}
+        <OnboardingProgress formStep={formStep} />
 
-        <Card>
-          <CardContent className="pt-6">
-            {step === 1 && (
-              <StepAboutYou candidate={candidate} onChange={setCandidate} tried={triedStep1} />
-            )}
-            {step === 2 && (
-              <StepJobSearch
-                selectedLocale={selectedLocale}
-                locales={locales}
-                loadingLocales={loadingLocales}
-                onLocaleChange={setSelectedLocale}
-                search={search}
-                onSearchChange={setSearch}
-                locations={locations}
-                onLocationsChange={setLocations}
-                compensation={compensation}
-                onCompensationChange={setCompensation}
-                legalFields={legalFields}
-                localeName={localeName}
-              />
-            )}
-            {step === 3 && (
-              <StepSkills
-                skills={skills}
-                onSkillsChange={setSkills}
-                domains={domains}
-                onDomainsChange={setDomains}
-                proofPoints={proofPoints}
-                onProofPointsChange={setProofPoints}
-              />
-            )}
-            {step === 4 && (
-              <StepAIProvider
-                llm={llm}
-                onLlmChange={setLlm}
-                testApiKey={testApiKey}
-                onTestApiKeyChange={(k) => { setTestApiKey(k); setConnectionResult(null); }}
-                testingConnection={testingConnection}
-                connectionResult={connectionResult}
-                onTestConnection={handleTestConnection}
-                boards={boards}
-                enabledBoards={enabledBoards}
-                onEnabledBoardsChange={setEnabledBoards}
-                scrapeIntervalHours={scrapeIntervalHours}
-                onScrapeIntervalChange={setScrapeIntervalHours}
-              />
-            )}
-            {step === 5 && (
-              <StepReview
-                candidate={candidate}
-                selectedLocale={selectedLocale}
-                locales={locales}
-                search={search}
-                compensation={compensation}
-                skills={skills}
-                llm={llm}
-                enabledBoardsCount={enabledBoards.size}
-                totalBoardsCount={boards.length}
-                error={error}
-                saving={saving}
-                onFinish={handleFinish}
-              />
-            )}
+        {/* Screen content */}
+        <div className="flex-1 overflow-y-auto">
+          {step === WELCOME && <ScreenWelcome hasSaved={hasSaved} onStart={advance} />}
+          {step === 1 && <StepAboutYou candidate={candidate} onChange={setCandidate} tried={tried} />}
+          {step === 2 && (
+            <StepMarket
+              selectedLocale={selectedLocale} locales={locales} loadingLocales={loadingLocales}
+              onLocaleChange={setSelectedLocale} search={search} onSearchChange={setSearch} tried={tried}
+            />
+          )}
+          {step === 3 && (
+            <StepPay
+              locale={currentLocale} locations={locations} onLocationsChange={setLocations}
+              compensation={compensation} onCompensationChange={setCompensation} tried={tried}
+            />
+          )}
+          {step === 4 && (
+            <StepEligibility
+              locale={currentLocale} legalFields={legalFields}
+              compensation={compensation} onCompensationChange={setCompensation}
+            />
+          )}
+          {step === 5 && (
+            <StepSkills
+              skills={skills} onSkillsChange={setSkills}
+              domains={domains} onDomainsChange={setDomains}
+              proofPoints={proofPoints} onProofPointsChange={setProofPoints}
+            />
+          )}
+          {step === 6 && (
+            <StepAIProvider
+              llm={llm} onLlmChange={setLlm}
+              testApiKey={testApiKey} onTestApiKeyChange={(k) => { setTestApiKey(k); setConnectionResult(null); }}
+              testingConnection={testingConnection} connectionResult={connectionResult} onTestConnection={handleTestConnection}
+              boards={boards} enabledBoards={enabledBoards} onEnabledBoardsChange={setEnabledBoards}
+              scrapeIntervalHours={scrapeIntervalHours} onScrapeIntervalChange={setScrapeIntervalHours}
+            />
+          )}
+          {step === SUCCESS && (
+            <ScreenSuccess
+              candidate={candidate} selectedLocale={selectedLocale} locales={locales}
+              targetRolesCount={search.target_roles.length} minRate={compensation.min_rate}
+              providerName={LLM_PROVIDERS.find((p) => p.id === llm.provider)?.label ?? llm.provider}
+              enabledBoardsCount={enabledBoards.size}
+              onDashboard={() => router.push("/?firstRun=true")}
+            />
+          )}
+        </div>
 
-            {/* Navigation */}
-            <div className="mt-8 pt-4 border-t space-y-3">
-              {blockMsg && (
-                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                  {blockMsg}
-                </p>
-              )}
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(step - 1)} disabled={step === 1}>
-                  <ChevronLeft className="w-4 h-4 mr-1" /> Back
-                </Button>
-                {step < TOTAL_STEPS && (
-                  <Button onClick={() => { if (step === 1) setTriedStep1(true); if (!blockMsg) setStep(step + 1); }} disabled={!!blockMsg}>
-                    Continue <ChevronRight className="w-4 h-4 ml-1" />
-                  </Button>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Footer navigation */}
+        {step > WELCOME && step < SUCCESS && (
+          <div
+            className="flex-shrink-0 flex gap-2.5 px-5 py-3.5 border-t border-[var(--border)]"
+            style={{ background: "var(--bg)", paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 14px)" }}
+          >
+            <button
+              type="button" onClick={back}
+              className="px-3.5 py-3 text-[14px] font-[600] text-[var(--text-dim)] hover:text-[var(--text)] transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4 inline mr-0.5" /> Back
+            </button>
+            {step < FORM_STEPS ? (
+              <button
+                type="button" onClick={advance}
+                className="flex-1 py-3 rounded-[var(--r-btn,8px)] text-[14px] font-[600] text-[var(--on-accent)] transition-colors hover:opacity-90"
+                style={{ background: "var(--accent)" }}
+              >
+                Continue →
+              </button>
+            ) : (
+              <button
+                type="button" onClick={handleFinish} disabled={saving}
+                className="flex-1 py-3 rounded-[var(--r-btn,8px)] text-[14px] font-[600] text-[var(--on-accent)] disabled:opacity-50 transition-colors hover:opacity-90"
+                style={{ background: "var(--accent)" }}
+              >
+                {saving ? "Saving…" : "Start Hatch →"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Inline error (step 6 only) */}
+        {error && step === FORM_STEPS && (
+          <p
+            className="mx-5 mb-3 text-sm text-[var(--danger)] px-3 py-2 rounded border border-[var(--danger-soft)]"
+            style={{ background: "var(--danger-soft)" }}
+          >
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );
