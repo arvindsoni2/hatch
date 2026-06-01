@@ -24,6 +24,7 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [triedStep1, setTriedStep1] = useState(false);
 
   // Step 1 — About you
   const [candidate, setCandidate] = useState<CandidateData>({ name: "", title: "", years_experience: 0, summary: "" });
@@ -149,7 +150,7 @@ export default function OnboardingPage() {
         <Card>
           <CardContent className="pt-6">
             {step === 1 && (
-              <StepAboutYou candidate={candidate} onChange={setCandidate} />
+              <StepAboutYou candidate={candidate} onChange={setCandidate} tried={triedStep1} />
             )}
             {step === 2 && (
               <StepJobSearch
@@ -222,7 +223,7 @@ export default function OnboardingPage() {
                   <ChevronLeft className="w-4 h-4 mr-1" /> Back
                 </Button>
                 {step < TOTAL_STEPS && (
-                  <Button onClick={() => setStep(step + 1)} disabled={!!blockMsg}>
+                  <Button onClick={() => { if (step === 1) setTriedStep1(true); if (!blockMsg) setStep(step + 1); }} disabled={!!blockMsg}>
                     Continue <ChevronRight className="w-4 h-4 ml-1" />
                   </Button>
                 )}

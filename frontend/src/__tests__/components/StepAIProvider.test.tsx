@@ -56,7 +56,7 @@ describe("StepAIProvider", () => {
         onScrapeIntervalChange={vi.fn()}
       />
     );
-    expect(screen.getByPlaceholderText(/paste key to test/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/GOOGLE_API_KEY/i)).toBeInTheDocument();
   });
 
   it("hides API key input for ollama provider", () => {
@@ -76,7 +76,7 @@ describe("StepAIProvider", () => {
         onScrapeIntervalChange={vi.fn()}
       />
     );
-    expect(screen.queryByPlaceholderText(/paste key to test/i)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/GOOGLE_API_KEY/i)).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText(/http:\/\/localhost/i)).toBeInTheDocument();
   });
 
