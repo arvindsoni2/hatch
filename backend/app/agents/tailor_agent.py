@@ -92,7 +92,7 @@ class TailorAgent(BaseAgent):
         application = Application(
             id=app_id,
             job_id=job_id,
-            status="ready_to_apply",
+            status="discovered",
             agent_created=True,
             approval_status="pending",
         )
