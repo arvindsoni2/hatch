@@ -1,17 +1,15 @@
 "use client";
 
-import { Cpu, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
-import { CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Field, Choice, ToggleRow, Seg } from "./OnboardingPrimitives";
 import type { LocaleBoard } from "@/lib/api";
 
 export const LLM_PROVIDERS = [
-  { id: "anthropic", label: "Anthropic (Claude)", keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
-  { id: "openai", label: "OpenAI (GPT)", keyEnv: "OPENAI_API_KEY", triageDefault: "gpt-4o-mini", primaryDefault: "gpt-4o" },
-  { id: "google", label: "Google (Gemini) — free tier", keyEnv: "GOOGLE_API_KEY", triageDefault: "gemini-2.5-flash-lite", primaryDefault: "gemini-2.5-flash" },
-  { id: "ollama", label: "Ollama (local — free)", keyEnv: "", triageDefault: "gemma3:4b", primaryDefault: "qwen3:14b" },
+  { id: "google",    label: "Google Gemini",   sub: "Free tier available — great default",  keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
+  { id: "anthropic", label: "Anthropic Claude", sub: "Strongest tailoring quality",          keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
+  { id: "openai",    label: "OpenAI",           sub: "GPT-4o family",                        keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
+  { id: "ollama",    label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "gemma3:4b",                 primaryDefault: "qwen3:14b" },
 ];
 
 export interface LLMData {
@@ -57,109 +55,115 @@ export function StepAIProvider({
     }
   };
 
+  const needsKey = llm.provider !== "ollama";
+
   return (
-    <div className="space-y-5">
-      <CardHeader className="px-0 pt-0">
-        <div className="flex items-center gap-2">
-          <Cpu className="w-5 h-5 text-brand-600" />
-          <CardTitle>AI provider</CardTitle>
+    <div className="ob-fadein px-5 pb-4">
+      <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
+        Step 6 · AI &amp; launch
+      </p>
+      <h1
+        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
+        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
+      >
+        Pick the engine.
+      </h1>
+      <p className="text-[14px] leading-[1.5] text-[var(--text-dim)] mb-4">
+        Hatch uses your own AI provider, so you control cost and privacy. Switch anytime in Settings.
+      </p>
+
+      <Field label="AI provider" req>
+        <div className="grid grid-cols-1 gap-2">
+          {LLM_PROVIDERS.map((p) => (
+            <Choice
+              key={p.id}
+              on={llm.provider === p.id}
+              onClick={() => handleProviderChange(p.id)}
+              title={p.label}
+              sub={p.sub}
+            />
+          ))}
         </div>
-        <CardDescription>Choose your LLM provider and enable job boards.</CardDescription>
-      </CardHeader>
+      </Field>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {LLM_PROVIDERS.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => handleProviderChange(p.id)}
-            className={`p-4 border-2 rounded-lg text-left transition-colors ${
-              llm.provider === p.id ? "border-brand-600 bg-brand-50" : "border-slate-200 hover:border-slate-300"
-            }`}
-          >
-            <div className="font-medium text-sm">{p.label}</div>
-            {p.id === "google" && <div className="text-xs text-green-600 mt-1">Recommended — free tier available</div>}
-            {p.id === "ollama" && <div className="text-xs text-green-600 mt-1">No API key needed</div>}
-          </button>
-        ))}
-      </div>
-
-      {llm.provider !== "ollama" && (
-        <div className="space-y-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-          <p className="text-sm font-medium text-amber-800">API key setup</p>
-          <p className="text-xs text-amber-700">
-            Set <code className="bg-amber-100 px-1 rounded">{llm.api_key_env}</code> in your{" "}
-            <code className="bg-amber-100 px-1 rounded">.env</code> file. Your key is never stored in profile.yaml.
-          </p>
+      {needsKey && (
+        <Field
+          label="API key"
+          req
+          hint="Validated live, then saved to your local machine only — never committed to the repo."
+        >
           <div className="flex gap-2">
             <Input
               type="password"
-              className="flex-1 text-sm"
-              placeholder="Paste key to test (will be saved to .env)"
+              className="flex-1 font-mono text-[12.5px]"
+              placeholder={llm.api_key_env}
               value={testApiKey}
               onChange={(e) => { onTestApiKeyChange(e.target.value); }}
             />
-            <Button
-              variant="outline"
-              size="sm"
+            <button
+              type="button"
               onClick={onTestConnection}
               disabled={!testApiKey || testingConnection}
+              className="flex-shrink-0 px-4 rounded-[var(--r-field,8px)] border border-[var(--border-strong)] text-[13px] font-[550] text-[var(--text)] disabled:opacity-40 transition-colors hover:bg-[var(--surface-3)]"
+              style={{ background: "var(--surface-2)" }}
             >
               {testingConnection ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-            </Button>
+            </button>
           </div>
           {connectionResult && (
-            <div className={`flex items-center gap-2 text-sm ${connectionResult.ok ? "text-green-700" : "text-red-700"}`}>
+            <div
+              className={`flex items-center gap-2 mt-2 text-sm px-3 py-2 rounded-[var(--r-field,8px)] ${
+                connectionResult.ok ? "text-[var(--success)]" : "text-[var(--danger)]"
+              }`}
+              style={{ background: connectionResult.ok ? "var(--success-soft)" : "var(--danger-soft)" }}
+            >
               {connectionResult.ok
-                ? <><CheckCircle className="h-4 w-4" /> Connection successful</>
+                ? <><CheckCircle className="h-4 w-4" /> Connected — key works.</>
                 : <><XCircle className="h-4 w-4" /> {connectionResult.error ?? "Connection failed"}</>}
             </div>
           )}
-        </div>
+        </Field>
       )}
 
       {llm.provider === "ollama" && (
-        <div className="space-y-1">
-          <Label>Ollama base URL</Label>
+        <Field label="Ollama base URL" hint="Default: http://localhost:11434 — change only if Ollama runs on a custom port.">
           <Input
             value={llm.base_url || ""}
             onChange={(e) => onLlmChange({ ...llm, base_url: e.target.value || null })}
             placeholder="http://localhost:11434"
           />
-        </div>
+        </Field>
       )}
 
       {boards.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-slate-700">Job boards to scrape</p>
-          <div className="grid grid-cols-2 gap-2">
-            {boards.map((b) => (
-              <label key={b.id} className="flex items-center gap-2 p-2 border rounded-md cursor-pointer hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  checked={enabledBoards.has(b.id)}
-                  onChange={() => {
-                    const next = new Set(enabledBoards);
-                    if (next.has(b.id)) next.delete(b.id); else next.add(b.id);
-                    onEnabledBoardsChange(next);
-                  }}
-                />
-                <span className="text-sm">{b.name}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <Field label="Job boards" hint="Boards for your selected market, enabled by default. Toggle off any you don't want scraped.">
+          {boards.map((b) => (
+            <ToggleRow
+              key={b.id}
+              on={enabledBoards.has(b.id)}
+              title={b.name}
+              sub={enabledBoards.has(b.id) ? "Active" : "Disabled"}
+              onToggle={() => {
+                const next = new Set(enabledBoards);
+                if (next.has(b.id)) next.delete(b.id); else next.add(b.id);
+                onEnabledBoardsChange(next);
+              }}
+            />
+          ))}
+        </Field>
       )}
 
-      <div className="space-y-1 w-full sm:w-1/3">
-        <Label>Scrape interval (hours)</Label>
-        <Input
-          type="number"
-          min={1}
-          max={24}
-          value={scrapeIntervalHours}
-          onChange={(e) => onScrapeIntervalChange(parseInt(e.target.value) || 4)}
+      <Field label="How often should Scout run?" hint="More frequent = fresher matches, slightly higher cost. You can change this later.">
+        <Seg
+          value={String(scrapeIntervalHours)}
+          onChange={(v) => onScrapeIntervalChange(Number(v))}
+          options={[
+            { v: "2", l: "Every 2h" },
+            { v: "4", l: "Every 4h" },
+            { v: "8", l: "Every 8h" },
+          ]}
         />
-      </div>
+      </Field>
     </div>
   );
 }
