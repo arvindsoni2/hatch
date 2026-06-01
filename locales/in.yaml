@@ -17,6 +17,7 @@ rate_types:
 legal_fields:
   - id: "notice_period"
     label: "Notice period"
+    help: "Recruiters filter on availability — this is matched against job requirements during scoring."
     type: "select"
     options:
       - value: "immediate"
@@ -32,6 +33,7 @@ legal_fields:
     default: "30_days"
   - id: "work_preference"
     label: "Work preference"
+    help: "Filters matches to the arrangement you actually want, avoiding roles that can't accommodate your preference."
     type: "select"
     options:
       - value: "remote"

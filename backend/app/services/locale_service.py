@@ -64,9 +64,16 @@ def get_locale(locale_id: str) -> dict[str, Any]:
 
 
 def list_locales() -> list[dict[str, Any]]:
-    """Return a summary list of all available locales (id, name, flag)."""
+    """Return a summary list of all available locales (id, name, flag, currency, default_rate_type)."""
     return [
-        {"id": pack["id"], "name": pack["name"], "flag": pack.get("flag", "")}
+        {
+            "id": pack["id"],
+            "name": pack["name"],
+            "flag": pack.get("flag", ""),
+            "currency": pack.get("currency", ""),
+            "currency_symbol": pack.get("currency_symbol", ""),
+            "default_rate_type": pack.get("default_rate_type", "annual"),
+        }
         for pack in _load_all().values()
     ]
 

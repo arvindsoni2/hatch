@@ -20,6 +20,7 @@ rate_types:
 legal_fields:
   - id: "work_permit"
     label: "Work permit"
+    help: "German employers must confirm your right to work in the EU — used to avoid surfacing roles you legally can't take."
     type: "select"
     options:
       - value: "eu_citizen"
@@ -33,6 +34,7 @@ legal_fields:
     default: "eu_citizen"
   - id: "language"
     label: "German language level"
+    help: "Most German employers require at least B2 German even for tech roles — this filters jobs where language would block you."
     type: "select"
     options:
       - value: "native"

@@ -20,6 +20,7 @@ rate_types:
 legal_fields:
   - id: "work_auth"
     label: "Work authorisation"
+    help: "US employers typically cannot hire candidates who require sponsorship unless the role explicitly offers it — used to filter mismatches early."
     type: "select"
     options:
       - value: "us_citizen"
@@ -35,6 +36,7 @@ legal_fields:
     default: "us_citizen"
   - id: "clearance"
     label: "Security clearance"
+    help: "Many US federal and defence roles require a clearance — this avoids surfacing roles you're not eligible for."
     type: "select"
     options:
       - value: "none"

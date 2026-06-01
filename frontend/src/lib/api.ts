@@ -1443,11 +1443,15 @@ export interface LocaleSummary {
   id: string;
   name: string;
   flag: string;
+  currency: string;
+  currency_symbol: string;
+  default_rate_type: string;
 }
 
 export interface LocaleLegalField {
   id: string;
   label: string;
+  help?: string;
   type: "select" | "text";
   options?: Array<{ value: string; label: string }>;
   default: string;

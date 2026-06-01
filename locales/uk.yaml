@@ -20,6 +20,7 @@ rate_types:
 legal_fields:
   - id: "ir35_preference"
     label: "IR35 preference"
+    help: "Determines whether roles are inside or outside IR35 — affects your take-home pay and which roles you'll see."
     type: "select"
     options:
       - value: "outside"
@@ -31,6 +32,7 @@ legal_fields:
     default: "any"
   - id: "right_to_work"
     label: "UK right to work"
+    help: "UK employers must verify your right to work — this filters out roles that can't sponsor you."
     type: "select"
     options:
       - value: "citizen"

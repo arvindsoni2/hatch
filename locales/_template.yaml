@@ -25,6 +25,7 @@ rate_types:
 legal_fields:
   - id: "work_auth"
     label: "Work authorisation"
+    help: "Describes why this field matters and how it affects job matching."
     type: "select"
     options:
       - value: "citizen"
