@@ -3,7 +3,7 @@
 
 .PHONY: dev dev-back dev-front scrape scrape-one test test-back test-front \
         test-be test-fe migrate migrate-new docker-up docker-down docker-build docker-logs \
-        docker-restart lint seed clean help ci \
+        docker-restart lint seed clean reset-user help ci \
         ghost-analyse ghost-stats email-pending email-generate
 
 # ──────────────────────── Development ────────────────────────
@@ -102,6 +102,9 @@ format: ## Format code
 	cd frontend && npx prettier --write "src/**/*.{ts,tsx}"
 
 # ──────────────────────── Utilities ──────────────────────────
+
+reset-user: ## Wipe all job/application data to start fresh as a new user
+	@bash reset-user-data.sh
 
 clean: ## Remove generated files and caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
