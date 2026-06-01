@@ -213,3 +213,58 @@
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: none; }
 }
+
+/* ── Editorial onboarding token scope ─────────────────────────────────────────
+   Scoped to [data-onboarding="true"] — never bleeds into the app shell.
+   ──────────────────────────────────────────────────────────────────────────── */
+[data-onboarding="true"] {
+  --bg:               #08090b;
+  --bg-elevated:      #0d0f13;
+  --bg-elev:          #0d0f13;
+  --surface:          #111318;
+  --surface-2:        #181b22;
+  --surface-3:        #20242c;
+  --border:           #20242c;
+  --border-strong:    #2d323d;
+  --text:             #f5f7fa;
+  --text-dim:         #aab2bf;
+  --text-muted:       #6f7886;
+  --accent:           #7c83ff;
+  --accent-hover:     #969cff;
+  --accent-soft:      rgba(124, 131, 255, 0.14);
+  --accent-soft-strong: rgba(124, 131, 255, 0.24);
+  --on-accent:        #0a0a1a;
+  --success:          #45d6a4;
+  --success-soft:     rgba(69, 214, 164, 0.13);
+  --danger:           #ff6f7d;
+  --danger-soft:      rgba(255, 111, 125, 0.13);
+  --warning:          #f4bd55;
+  --warning-soft:     rgba(244, 189, 85, 0.13);
+  --font-hero:        'Newsreader', Georgia, serif;
+  --r-field:          8px;
+  --r-card:           10px;
+  --r-btn:            8px;
+  --r-chip:           6px;
+  color-scheme: dark;
+}
+
+/* Fade-in animation used by onboarding screens */
+@keyframes ob-fadein {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.ob-fadein { animation: ob-fadein 0.3s ease both; }
+
+/* Pulse animation used by success screen */
+@keyframes ob-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--success-soft); }
+  50%       { box-shadow: 0 0 0 12px transparent; }
+}
+.ob-pulse { animation: ob-pulse 2s ease infinite; }
+
+/* Blink animation for live dot */
+@keyframes ob-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+.ob-blink { animation: ob-blink 1.4s ease-in-out infinite; }
