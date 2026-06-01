@@ -54,7 +54,7 @@ test("sidebar contains required navigation links", async ({ page }) => {
   // Use sidebar-specific locators to avoid strict-mode violations
   const sidebar = page.locator("aside");
   await expect(sidebar.getByText("Home").first()).toBeVisible();
-  await expect(sidebar.getByText("Approval queue")).toBeVisible();
+  await expect(sidebar.getByText("Inbox")).toBeVisible();
   await expect(sidebar.getByText("Pipeline")).toBeVisible();
   await expect(sidebar.getByText("Analytics")).toBeVisible();
 });
