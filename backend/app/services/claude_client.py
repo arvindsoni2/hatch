@@ -15,7 +15,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..agents.tools.llm_factory import get_primary_model
+from ..agents.tools.llm_factory import get_json_model, get_primary_model
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,16 @@ class ClaudeClient:
         """Send a completion request and parse the response as JSON.
 
         Retries up to 3 times if the response is not valid JSON.
+        Uses get_json_model() to pass format="json" to Ollama for token-level
+        JSON constraint.
         """
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                text = await self.complete(system + _JSON_INSTRUCTION, user, max_tokens)
+                llm = get_json_model()
+                messages = [SystemMessage(content=system + _JSON_INSTRUCTION), HumanMessage(content=user)]
+                response = await llm.ainvoke(messages)
+                text = response.content if isinstance(response.content, str) else str(response.content)
                 cleaned = text.strip()
                 # Strip markdown code fences
                 if cleaned.startswith("```"):
