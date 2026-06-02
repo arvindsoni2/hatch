@@ -582,25 +582,25 @@ export interface TailorProgressEvent {
 
 // ─────────────────── Phase 3 — API Functions ───────────────────
 
-export async function analyseJob(jobId: string): Promise<JDAnalysisResponse> {
-  return apiFetch<JDAnalysisResponse>(`/api/tailor/analyse/${jobId}`, { method: "POST" });
+export async function analyseJob(jobId: string): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/tailor/analyse/${jobId}`, { method: "POST" });
 }
 
 export async function analyseJdText(
   jobDescription: string,
   jobUrl?: string,
-): Promise<JDAnalysisResponse> {
+): Promise<AsyncJobRef> {
   const params = new URLSearchParams({ job_description: jobDescription });
   if (jobUrl) params.set("job_url", jobUrl);
-  return apiFetch<JDAnalysisResponse>(`/api/tailor/analyse?${params}`, { method: "POST" });
+  return apiFetch<AsyncJobRef>(`/api/tailor/analyse?${params}`, { method: "POST" });
 }
 
 export async function generateAll(
   applicationId: string,
   jdText: string,
   variant = "A",
-): Promise<TailorResultBundle> {
-  return apiFetch<TailorResultBundle>(`/api/tailor/generate`, {
+): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/tailor/generate`, {
     method: "POST",
     body: JSON.stringify({ application_id: applicationId, variant, jd_text: jdText }),
   });
@@ -611,8 +611,8 @@ export async function generateCV(
   jdText: string,
   variant = "A",
   customInstructions?: string,
-): Promise<GeneratedDocument> {
-  return apiFetch<GeneratedDocument>(`/api/tailor/generate-cv`, {
+): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/tailor/generate-cv`, {
     method: "POST",
     body: JSON.stringify({
       application_id: applicationId,
@@ -627,8 +627,8 @@ export async function generateCL(
   applicationId: string,
   jdText: string,
   variant = "A",
-): Promise<GeneratedDocument> {
-  return apiFetch<GeneratedDocument>(`/api/tailor/generate-cl`, {
+): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/tailor/generate-cl`, {
     method: "POST",
     body: JSON.stringify({ application_id: applicationId, variant, jd_text: jdText }),
   });
@@ -832,8 +832,8 @@ export interface CompanyResearchResponse {
 
 export async function createSession(
   request: CreateSessionRequest
-): Promise<SessionResponse> {
-  return apiFetch<SessionResponse>("/api/coach/sessions", {
+): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>("/api/coach/sessions", {
     method: "POST",
     body: JSON.stringify(request),
   });
@@ -851,8 +851,8 @@ export async function getSession(id: string): Promise<SessionResponse> {
   return apiFetch<SessionResponse>(`/api/coach/sessions/${id}`);
 }
 
-export async function endSession(id: string): Promise<SessionFeedbackReport> {
-  return apiFetch<SessionFeedbackReport>(`/api/coach/sessions/${id}/end`, {
+export async function endSession(id: string): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/coach/sessions/${id}/end`, {
     method: "POST",
   });
 }
@@ -878,8 +878,8 @@ export async function submitAnswer(
   durationMs: number,
   speechMetrics?: SpeechMetrics,
   videoMetrics?: VideoMetrics
-): Promise<AnswerEvaluation> {
-  return apiFetch<AnswerEvaluation>(
+): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(
     `/api/coach/sessions/${sessionId}/submit-answer?question_id=${questionId}`,
     {
       method: "POST",
@@ -1069,8 +1069,8 @@ export async function fetchEmailById(emailId: string): Promise<FollowUpEmailRead
 export async function generateEmail(
   applicationId: string,
   emailType: string
-): Promise<FollowUpEmailRead> {
-  return apiFetch<FollowUpEmailRead>(`/api/emails/generate/${applicationId}`, {
+): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/emails/generate/${applicationId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email_type: emailType }),
@@ -1143,8 +1143,8 @@ export async function fetchFlaggedJobs(minScore = 50, limit = 50): Promise<Job[]
   return apiFetch<Job[]>(`/api/ghost/flagged?min_score=${minScore}&limit=${limit}`)
 }
 
-export async function analyseGhostJob(jobId: string): Promise<GhostScore> {
-  return apiFetch<GhostScore>(`/api/ghost/analyse/${jobId}`, { method: 'POST' })
+export async function analyseGhostJob(jobId: string): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/ghost/analyse/${jobId}`, { method: 'POST' })
 }
 
 export async function overrideGhostVerdict(jobId: string, verdict: string): Promise<Job> {
@@ -1153,6 +1153,37 @@ export async function overrideGhostVerdict(jobId: string, verdict: string): Prom
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ override_verdict: verdict }),
   })
+}
+
+// ──────────────────────── Async Jobs ────────────────────────
+
+export interface AsyncJobRef {
+  job_id: string
+  status: "pending"
+  type: string
+}
+
+export interface AsyncJobResponse<T = unknown> {
+  id: string
+  type: string
+  status: "pending" | "running" | "done" | "failed"
+  result: T | null
+  error: string | null
+  created_at: string
+}
+
+export async function getAsyncJob<T = unknown>(
+  jobId: string
+): Promise<AsyncJobResponse<T>> {
+  return apiFetch<AsyncJobResponse<T>>(`/api/async-jobs/${jobId}`)
+}
+
+export async function listCompletedJobs(
+  since: string,
+  limit = 20
+): Promise<AsyncJobResponse[]> {
+  const params = buildQueryString({ status: "done", since, limit })
+  return apiFetch<AsyncJobResponse[]>(`/api/async-jobs${params}`)
 }
 
 // ── Agentic pipeline ────────────────────────────────────────
