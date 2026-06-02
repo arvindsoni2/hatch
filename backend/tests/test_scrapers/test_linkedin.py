@@ -127,6 +127,7 @@ class TestLinkedInScraper:
           <h3>Senior PM</h3>
           <h4>MegaCorp</h4>
           <a href="https://www.linkedin.com/jobs/view/777">Apply</a>
+          <time datetime="2026-05-01">1 month ago</time>
           <p>{long_text}</p>
         </li>
         """
