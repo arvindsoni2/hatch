@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Settings } from "lucide-react";
 import { fetchPendingApprovals } from "@/lib/api";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { NotificationBell } from "@/components/NotificationBell";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home", exact: true },
@@ -85,6 +86,7 @@ export function Navigation() {
           >
             <Settings className="h-4 w-4" />
           </Link>
+          <NotificationBell />
           <ThemeToggle />
         </nav>
       </div>
