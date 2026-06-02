@@ -75,6 +75,8 @@ class ClaudeClient:
                 messages = [SystemMessage(content=system + _JSON_INSTRUCTION), HumanMessage(content=user)]
                 response = await llm.ainvoke(messages)
                 text = response.content if isinstance(response.content, str) else str(response.content)
+                # Strip Qwen3 / DeepSeek reasoning blocks before JSON parsing
+                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
                 cleaned = text.strip()
                 # Strip markdown code fences
                 if cleaned.startswith("```"):

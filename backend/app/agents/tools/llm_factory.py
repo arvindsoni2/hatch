@@ -114,6 +114,17 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
             "Set triage_model / primary_model in profile.yaml → llm section."
         )
 
+    # llamacpp exposes an OpenAI-compatible API — use ChatOpenAI directly
+    if llm_cfg.provider == "llamacpp":
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        return ChatOpenAI(
+            model=model_name,
+            openai_api_base=llm_cfg.base_url,
+            openai_api_key="not-required",
+            temperature=llm_cfg.temperature,
+            max_retries=llm_cfg.max_retries,
+        )
+
     provider = llm_cfg.provider
 
     kwargs: dict[str, Any] = {
@@ -185,5 +196,15 @@ def get_json_model() -> BaseChatModel:
             model=llm_cfg.primary_model,
             model_provider="ollama",
             **kwargs,
+        )
+    if llm_cfg.provider == "llamacpp":
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        return ChatOpenAI(
+            model=llm_cfg.primary_model,
+            openai_api_base=llm_cfg.base_url,
+            openai_api_key="not-required",
+            temperature=llm_cfg.temperature,
+            max_retries=llm_cfg.max_retries,
+            model_kwargs={"response_format": {"type": "json_object"}},
         )
     return _build_model(llm_cfg.primary_model, llm_cfg)

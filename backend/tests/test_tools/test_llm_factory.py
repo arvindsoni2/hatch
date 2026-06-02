@@ -126,3 +126,80 @@ class TestLlmFactory:
             from app.agents.tools.llm_factory import get_json_model
             with pytest.raises(ValueError, match="model name is empty"):
                 get_json_model()
+
+
+def _make_llm_cfg(provider: str, base_url: str = "http://llamacpp:8080/v1") -> MagicMock:
+    cfg = MagicMock()
+    cfg.provider = provider
+    cfg.primary_model = "Qwen3-14B-Instruct"
+    cfg.triage_model = "Qwen3-14B-Instruct"
+    cfg.temperature = 0.3
+    cfg.max_retries = 2
+    cfg.base_url = base_url
+    cfg.api_key_env = ""
+    return cfg
+
+
+def _make_profile(provider: str) -> MagicMock:
+    profile = MagicMock()
+    profile.llm = _make_llm_cfg(provider)
+    return profile
+
+
+class TestLlamaCppProvider:
+    def test_build_model_llamacpp_returns_chat_openai(self):
+        """_build_model with provider=llamacpp returns a ChatOpenAI instance."""
+        from langchain_openai import ChatOpenAI
+        from app.agents.tools.llm_factory import _build_model
+
+        cfg = _make_llm_cfg("llamacpp")
+        model = _build_model("Qwen3-14B-Instruct", cfg)
+
+        assert isinstance(model, ChatOpenAI)
+
+    def test_get_primary_model_llamacpp_uses_base_url(self):
+        """get_primary_model for llamacpp passes openai_api_base."""
+        from langchain_openai import ChatOpenAI
+        from app.agents.tools.llm_factory import get_primary_model
+
+        with patch("app.agents.tools.llm_factory.load_profile", return_value=_make_profile("llamacpp")):
+            model = get_primary_model()
+
+        assert isinstance(model, ChatOpenAI)
+        assert model.openai_api_base == "http://llamacpp:8080/v1"
+
+    def test_get_json_model_llamacpp_sets_response_format(self):
+        """get_json_model for llamacpp sets response_format=json_object in model_kwargs."""
+        from langchain_openai import ChatOpenAI
+        from app.agents.tools.llm_factory import get_json_model
+
+        with patch("app.agents.tools.llm_factory.load_profile", return_value=_make_profile("llamacpp")):
+            model = get_json_model()
+
+        assert isinstance(model, ChatOpenAI)
+        assert model.model_kwargs.get("response_format") == {"type": "json_object"}
+
+
+class TestThinkBlockStripping:
+    def test_complete_json_strips_think_blocks(self):
+        """complete_json strips <think>…</think> before JSON parsing."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from app.services.claude_client import ClaudeClient
+
+        raw = '<think>Let me think about this carefully.</think>\n{"key": "value"}'
+        mock_response = MagicMock()
+        mock_response.content = raw
+
+        async def run():
+            client = ClaudeClient()
+            with patch(
+                "app.services.claude_client.get_json_model",
+                return_value=MagicMock(ainvoke=AsyncMock(return_value=mock_response)),
+            ):
+                result = await client.complete_json("system", "user")
+            return result
+
+        result = asyncio.run(run())
+        assert result == {"key": "value"}
