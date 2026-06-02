@@ -9,10 +9,11 @@ import {
   analyseJdText,
   streamTailoringProgress,
   getDocumentHistory,
-  JDAnalysisResponse,
+  type JDAnalysisResponse,
   GeneratedDocument,
   TailorProgressEvent,
 } from "@/lib/api";
+import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { Loader2, Zap, FileText, ChevronRight } from "lucide-react";
 
 type Stage = "idle" | "analysing" | "analysed" | "generating" | "complete" | "error";
@@ -47,21 +48,28 @@ export default function TailorPage() {
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
   const [activeTab, setActiveTab] = useState<"analysis" | "history">("analysis");
 
-  const handleAnalyse = useCallback(async () => {
-    if (!jdText.trim() && !jobUrl.trim()) return;
-    setStage("analysing");
-    setError(null);
-    setAnalysis(null);
-    try {
-      const result = await analyseJdText(jdText, jobUrl || undefined);
+  const {
+    state: analyseState,
+    submit: submitAnalyse,
+  } = useAsyncJob<JDAnalysisResponse>({
+    onComplete: (result) => {
       setAnalysis(result);
       setStage("analysed");
       setActiveTab("analysis");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
+    },
+    onError: (err) => {
+      setError(err);
       setStage("error");
-    }
-  }, [jdText, jobUrl]);
+    },
+  });
+
+  const handleAnalyse = useCallback(async () => {
+    if (!jdText.trim() && !jobUrl.trim()) return;
+    setError(null);
+    setAnalysis(null);
+    setStage("analysing");
+    await submitAnalyse(() => analyseJdText(jdText, jobUrl || undefined));
+  }, [jdText, jobUrl, submitAnalyse]);
 
   const handleGenerate = useCallback(() => {
     if (!applicationId.trim()) {
@@ -145,18 +153,23 @@ export default function TailorPage() {
               value={jobUrl}
               onChange={(e) => setJobUrl(e.target.value)}
             />
-            <Button
-              onClick={handleAnalyse}
-              disabled={stage === "analysing" || (!jdText.trim() && !jobUrl.trim())}
-              className="mt-3 w-full"
-              style={{ background: "var(--accent)", color: "var(--on-accent)", minHeight: 40 }}
-            >
-              {stage === "analysing" ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analysing...</>
-              ) : (
-                <>Analyse JD <ChevronRight className="ml-1 h-4 w-4" /></>
-              )}
-            </Button>
+            {(() => {
+              const isAnalysing = stage === "analysing" || analyseState.status === "pending" || analyseState.status === "running";
+              return (
+                <Button
+                  onClick={handleAnalyse}
+                  disabled={isAnalysing || (!jdText.trim() && !jobUrl.trim())}
+                  className="mt-3 w-full"
+                  style={{ background: "var(--accent)", color: "var(--on-accent)", minHeight: 40 }}
+                >
+                  {isAnalysing ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analysing...</>
+                  ) : (
+                    <>Analyse JD <ChevronRight className="ml-1 h-4 w-4" /></>
+                  )}
+                </Button>
+              );
+            })()}
           </div>
 
           {/* Generation Controls */}
@@ -389,6 +402,11 @@ export default function TailorPage() {
             <div className="rounded-xl p-12 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin" style={{ color: "var(--accent)" }} />
               <p className="text-sm" style={{ color: "var(--text-muted)" }}>Analysing job description…</p>
+              {(analyseState.status === "pending" || analyseState.status === "running") && (
+                <p className="mt-1 text-xs text-slate-400">
+                  {analyseState.status === "pending" ? "Queuing analysis…" : "Analysing job description…"}
+                </p>
+              )}
             </div>
           )}
 

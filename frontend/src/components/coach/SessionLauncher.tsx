@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { createSession, CreateSessionRequest, SessionResponse } from "@/lib/api";
+import { createSession, CreateSessionRequest, type SessionResponse } from "@/lib/api";
+import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { Button } from "@/components/ui/button";
 
 interface SessionLauncherProps {
@@ -18,8 +19,18 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
   const [questionCount, setQuestionCount] = useState(10);
   const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">("medium");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { state: sessionState, submit: submitSession } = useAsyncJob<SessionResponse>({
+    onComplete: (session) => {
+      onSessionCreated(session);
+    },
+    onError: (err) => {
+      setError(err);
+    },
+  });
+
+  const loading = sessionState.status === "pending" || sessionState.status === "running";
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories((prev) =>
@@ -29,27 +40,19 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
 
   const handleStart = async () => {
     if (!companyName.trim() || !roleTitle.trim()) return;
-    setLoading(true);
     setError(null);
-    try {
-      const request: CreateSessionRequest = {
-        company_name: companyName,
-        role_title: roleTitle,
-        jd_text: jdText || null,
-        config: {
-          question_count: questionCount,
-          categories: selectedCategories,
-          difficulty,
-          recording_mode: "text",
-        },
-      };
-      const session = await createSession(request);
-      onSessionCreated(session);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create session");
-    } finally {
-      setLoading(false);
-    }
+    const request: CreateSessionRequest = {
+      company_name: companyName,
+      role_title: roleTitle,
+      jd_text: jdText || null,
+      config: {
+        question_count: questionCount,
+        categories: selectedCategories,
+        difficulty,
+        recording_mode: "text",
+      },
+    };
+    await submitSession(() => createSession(request));
   };
 
   const inputCls = "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
@@ -200,6 +203,12 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
               {loading ? "Generating questions…" : "Start Session"}
             </Button>
           </div>
+          {sessionState.status === "pending" && (
+            <p className="mt-2 text-center text-xs text-slate-400">Queuing…</p>
+          )}
+          {sessionState.status === "running" && (
+            <p className="mt-2 text-center text-xs text-slate-400">Preparing questions — this takes 1–2 min…</p>
+          )}
         </div>
       )}
     </div>
