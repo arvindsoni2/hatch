@@ -82,56 +82,44 @@ SAMPLE_RESEARCH = CompanyResearchResponse(
 
 
 @pytest.mark.asyncio
-async def test_create_session_returns_201() -> None:
-    """POST /api/coach/sessions creates a session and returns 201."""
-    with patch("app.routers.coach.CoachService") as MockSvc:
-        instance = MockSvc.return_value
-        instance.create_session = AsyncMock(return_value=SAMPLE_SESSION_RESPONSE)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/api/coach/sessions",
-                json={
-                    "company_name": "Accenture",
-                    "role_title": "Solutions Architect",
-                    "config": {"question_count": 5},
-                },
-            )
-    assert response.status_code == 201
+async def test_create_session_returns_202(client) -> None:
+    """POST /api/coach/sessions returns 202 with job_id (async pattern)."""
+    response = await client.post(
+        "/api/coach/sessions",
+        json={
+            "company_name": "Accenture",
+            "role_title": "Solutions Architect",
+            "config": {"question_count": 5},
+        },
+    )
+    assert response.status_code == 202
     data = response.json()
-    assert data["company_name"] == "Accenture"
-    assert data["status"] == "active"
+    assert "job_id" in data
+    assert data["type"] == "coach_session"
 
 
 @pytest.mark.asyncio
-async def test_submit_answer_returns_200() -> None:
-    """POST /api/coach/sessions/{id}/submit-answer returns 200 with AnswerEvaluation."""
-    with patch("app.routers.coach.CoachService") as MockSvc:
-        instance = MockSvc.return_value
-        instance.submit_answer = AsyncMock(return_value=SAMPLE_EVALUATION)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                "/api/coach/sessions/session-uuid-001/submit-answer",
-                params={"question_id": "q-uuid-001"},
-                json={"transcript": "In my previous role at a FTSE 100 company...", "duration_ms": 60000},
-            )
-    assert response.status_code == 200
+async def test_submit_answer_returns_202(client) -> None:
+    """POST /api/coach/sessions/{id}/submit-answer returns 202 with job_id (async pattern)."""
+    response = await client.post(
+        "/api/coach/sessions/session-uuid-001/submit-answer",
+        params={"question_id": "q-uuid-001"},
+        json={"transcript": "In my previous role at a FTSE 100 company...", "duration_ms": 60000},
+    )
+    assert response.status_code == 202
     data = response.json()
-    assert "overall" in data
-    assert data["overall"] == 7.5
+    assert "job_id" in data
+    assert data["type"] == "submit_answer"
 
 
 @pytest.mark.asyncio
-async def test_end_session_returns_200() -> None:
-    """POST /api/coach/sessions/{id}/end returns 200 with SessionFeedbackReport."""
-    with patch("app.routers.coach.CoachService") as MockSvc:
-        instance = MockSvc.return_value
-        instance.end_session = AsyncMock(return_value=SAMPLE_REPORT)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post("/api/coach/sessions/session-uuid-001/end")
-    assert response.status_code == 200
+async def test_end_session_returns_202(client) -> None:
+    """POST /api/coach/sessions/{id}/end returns 202 with job_id (async pattern)."""
+    response = await client.post("/api/coach/sessions/session-uuid-001/end")
+    assert response.status_code == 202
     data = response.json()
-    assert data["overall_score"] == 7.5
-    assert "executive_summary" in data
+    assert "job_id" in data
+    assert data["type"] == "end_session"
 
 
 @pytest.mark.asyncio

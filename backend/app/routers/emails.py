@@ -22,6 +22,7 @@ from ..schemas.email import (
     FollowUpEmailListItem,
     FollowUpEmailRead,
 )
+from ..services.async_job_service import AsyncJobService
 from ..services.claude_client import ClaudeClient
 from ..services.email_generator import EmailGenerator
 from ..services.email_sender import EmailRateLimitError, EmailSender
@@ -263,73 +264,97 @@ async def update_email(
     return await _enrich(email, db)
 
 
-@router.post("/generate/{application_id}", response_model=FollowUpEmailRead)
+@router.post("/generate/{application_id}", status_code=202)
 async def generate_email(
     application_id: str,
     body: EmailGenerateRequest,
     db: AsyncSession = Depends(get_db),
     generator: EmailGenerator = Depends(_get_email_generator),
-) -> FollowUpEmailRead:
-    """Manually trigger email generation for an application.
-
-    Useful for generating emails outside the automatic reminder cycle.
-    """
-    app_result = await db.execute(
-        select(Application).where(Application.id == application_id)
-    )
-    application = app_result.scalars().first()
-    if not application:
-        raise HTTPException(status_code=404, detail="Application not found")
-    if not application.job_id:
-        raise HTTPException(status_code=400, detail="Application has no linked job")
-
-    job_result = await db.execute(
-        select(JobPosting).where(JobPosting.id == application.job_id)
-    )
-    job = job_result.scalars().first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    now = datetime.utcnow()
-    days_since_applied = (
-        (now - application.applied_date).days if application.applied_date
-        else (now - application.created_at).days
-    )
-
-    try:
-        if body.email_type == "post_application":
-            generated = await generator.generate_post_application(application, job, days_since_applied)
-        elif body.email_type == "post_interview_thankyou":
-            interview_result = await db.execute(
-                select(InterviewRound)
-                .where(
-                    InterviewRound.application_id == application_id,
-                    InterviewRound.status == "completed",
-                )
-                .order_by(InterviewRound.updated_at.desc())
-            )
-            interview = interview_result.scalars().first()
-            if interview:
-                generated = await generator.generate_post_interview_thankyou(application, job, interview)
-            else:
-                generated = await generator.generate_warm_reengagement(application, job, days_since_applied)
-        elif body.email_type == "warm_reengagement":
-            generated = await generator.generate_warm_reengagement(application, job, days_since_applied)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown email_type: {body.email_type}")
-    except Exception as exc:
-        logger.error("Email generation failed for application %s: %s", application_id, exc)
-        raise HTTPException(status_code=503, detail=f"Email generation failed: {exc}") from exc
-
-    draft = generator.save_draft(
-        email=generated,
-        application=application,
-        generation_params={"email_type": body.email_type, "triggered_by": "manual"},
-    )
-    db.add(draft)
+) -> dict:
+    """Kick off email generation. Poll /api/async-jobs/{job_id} for the draft."""
+    async_job = await AsyncJobService.create(db, "email_generate")
     await db.commit()
-    await db.refresh(draft)
-    return await _enrich(draft, db)
+
+    email_type = body.email_type
+
+    async def _work() -> None:
+        from ..database import AsyncSessionLocal  # noqa: PLC0415
+        from ..models.application import Application, InterviewRound  # noqa: PLC0415
+        from ..models.job import JobPosting  # noqa: PLC0415
+        from datetime import datetime as dt  # noqa: PLC0415
+        from sqlalchemy import select as sa_select  # noqa: PLC0415
+
+        try:
+            async with AsyncSessionLocal() as own_db:
+                app_result = await own_db.execute(
+                    sa_select(Application).where(Application.id == application_id)
+                )
+                application = app_result.scalars().first()
+                if not application:
+                    await AsyncJobService._finish(async_job.id, None, "Application not found")
+                    return
+                if not application.job_id:
+                    await AsyncJobService._finish(async_job.id, None, "Application has no linked job")
+                    return
+
+                job_result = await own_db.execute(
+                    sa_select(JobPosting).where(JobPosting.id == application.job_id)
+                )
+                job = job_result.scalars().first()
+                if not job:
+                    await AsyncJobService._finish(async_job.id, None, "Job not found")
+                    return
+
+                now = dt.utcnow()
+                days_since = (
+                    (now - application.applied_date).days if application.applied_date
+                    else (now - application.created_at).days
+                )
+
+                if email_type == "post_application":
+                    generated = await generator.generate_post_application(application, job, days_since)
+                elif email_type == "post_interview_thankyou":
+                    iv_result = await own_db.execute(
+                        sa_select(InterviewRound)
+                        .where(
+                            InterviewRound.application_id == application_id,
+                            InterviewRound.status == "completed",
+                        )
+                        .order_by(InterviewRound.updated_at.desc())
+                    )
+                    interview = iv_result.scalars().first()
+                    if interview:
+                        generated = await generator.generate_post_interview_thankyou(
+                            application, job, interview
+                        )
+                    else:
+                        generated = await generator.generate_warm_reengagement(
+                            application, job, days_since
+                        )
+                elif email_type == "warm_reengagement":
+                    generated = await generator.generate_warm_reengagement(application, job, days_since)
+                else:
+                    await AsyncJobService._finish(async_job.id, None, f"Unknown email_type: {email_type}")
+                    return
+
+                draft = generator.save_draft(
+                    email=generated,
+                    application=application,
+                    generation_params={"email_type": email_type, "triggered_by": "manual"},
+                )
+                own_db.add(draft)
+                await own_db.commit()
+                await own_db.refresh(draft)
+
+                enriched = await _enrich(draft, own_db)
+                await AsyncJobService._finish(async_job.id, enriched.model_dump_json(), None)
+
+        except Exception as exc:
+            logger.error("email_generate job %s failed: %s", async_job.id, exc)
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "email_generate"}
 
 
 @router.post("/{email_id}/send", response_model=EmailSendResponse)

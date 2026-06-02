@@ -10,6 +10,7 @@ from ..database import get_db
 from ..repositories.job_repository import JobRepository
 from ..schemas.ghost import GhostOverrideRequest, GhostScore, GhostStats
 from ..schemas.job import JobPostingRead
+from ..services.async_job_service import AsyncJobService
 from ..services.ghost_detector import GhostDetector
 
 router = APIRouter(prefix="/api/ghost", tags=["ghost"])
@@ -54,24 +55,40 @@ async def get_job_ghost_score(
     return await detector.analyse_job(job, db)
 
 
-@router.post("/analyse/{job_id}", response_model=GhostScore)
-async def analyse_job(job_id: str, db: AsyncSession = Depends(get_db)) -> GhostScore:
-    """Force re-analysis of a single job posting."""
-    from sqlalchemy import select
-
-    from ..models.job import JobPosting
-
-    result = await db.execute(
-        select(JobPosting).where(JobPosting.id == job_id, JobPosting.is_active == True)
-    )
-    job = result.scalar_one_or_none()
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    score = await detector.analyse_job(job, db)
-    await detector._persist_score(job, score, db)
+@router.post("/analyse/{job_id}", status_code=202)
+async def analyse_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Kick off ghost detection. Poll /api/async-jobs/{async_job_id} for result."""
+    async_job = await AsyncJobService.create(db, "ghost_analyse")
     await db.commit()
-    return score
+
+    async def _work() -> None:
+        from ..database import AsyncSessionLocal  # noqa: PLC0415
+        from sqlalchemy import select as sa_select  # noqa: PLC0415
+        from ..models.job import JobPosting  # noqa: PLC0415
+
+        try:
+            async with AsyncSessionLocal() as own_db:
+                result = await own_db.execute(
+                    sa_select(JobPosting).where(
+                        JobPosting.id == job_id,
+                        JobPosting.is_active == True,  # noqa: E712
+                    )
+                )
+                job = result.scalar_one_or_none()
+                if job is None:
+                    await AsyncJobService._finish(async_job.id, None, "Job not found")
+                    return
+                score = await detector.analyse_job(job, own_db)
+                await AsyncJobService._finish(async_job.id, score.model_dump_json(), None)
+        except Exception as exc:
+            logger.error("ghost_analyse job %s failed: %s", async_job.id, exc)
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "ghost_analyse"}
 
 
 @router.post("/analyse-all")

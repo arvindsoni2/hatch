@@ -19,6 +19,7 @@ from ..schemas.coach import (
     SessionResponse,
     SubmitAnswerRequest,
 )
+from ..services.async_job_service import AsyncJobService
 from ..services.coach_service import CoachService
 
 logger = logging.getLogger(__name__)
@@ -79,18 +80,26 @@ async def get_company_research(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/sessions", response_model=SessionResponse, status_code=201)
+@router.post("/sessions", status_code=202)
 async def create_session(
     request: CreateSessionRequest,
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
-) -> SessionResponse:
-    """Create a new mock interview session. Pre-generates all questions and model answers."""
-    try:
-        return await svc.create_session(request, db)
-    except Exception as exc:
-        logger.error("create_session failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+) -> dict:
+    """Kick off session creation (question generation). Poll /api/async-jobs/{job_id}."""
+    async_job = await AsyncJobService.create(db, "coach_session")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.create_session(request, db)
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            logger.error("create_session job %s failed: %s", async_job.id, exc)
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "coach_session"}
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
@@ -177,20 +186,28 @@ async def skip_question(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/sessions/{session_id}/submit-answer", response_model=AnswerEvaluation)
+@router.post("/sessions/{session_id}/submit-answer", status_code=202)
 async def submit_answer(
     session_id: str,
-    question_id: str = Query(..., description="ID of the question being answered"),
+    question_id: str = Query(...),
     request: SubmitAnswerRequest = ...,
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
-) -> AnswerEvaluation:
-    """Submit a transcript for evaluation. Returns STAR-rubric scores and coaching feedback."""
-    try:
-        return await svc.submit_answer(session_id, question_id, request, db)
-    except Exception as exc:
-        logger.error("submit_answer failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+) -> dict:
+    """Kick off answer evaluation. Poll /api/async-jobs/{job_id} for scores + feedback."""
+    async_job = await AsyncJobService.create(db, "submit_answer")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.submit_answer(session_id, question_id, request, db)
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            logger.error("submit_answer job %s failed: %s", async_job.id, exc)
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "submit_answer"}
 
 
 # ---------------------------------------------------------------------------
@@ -198,18 +215,26 @@ async def submit_answer(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/sessions/{session_id}/end", response_model=SessionFeedbackReport)
+@router.post("/sessions/{session_id}/end", status_code=202)
 async def end_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
-) -> SessionFeedbackReport:
-    """End a session and generate the comprehensive feedback report."""
-    try:
-        return await svc.end_session(session_id, db)
-    except Exception as exc:
-        logger.error("end_session failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+) -> dict:
+    """Kick off feedback report generation. Poll /api/async-jobs/{job_id} for report."""
+    async_job = await AsyncJobService.create(db, "end_session")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.end_session(session_id, db)
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            logger.error("end_session job %s failed: %s", async_job.id, exc)
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "end_session"}
 
 
 @router.get("/sessions/{session_id}/report", response_model=SessionFeedbackReport)
