@@ -65,7 +65,7 @@ services:
       - jobpilot
 
   llamacpp:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    image: ghcr.io/ggerganov/llama.cpp:server-b5347
     container_name: jobpilot-llamacpp
     volumes:
       - ./models:/models:z
@@ -80,6 +80,12 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
     networks:
       - jobpilot
 

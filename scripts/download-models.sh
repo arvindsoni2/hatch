@@ -15,9 +15,13 @@ if [[ -f "${MODEL_FILE}" ]]; then
   exit 0
 fi
 
+MODEL_TMP="${MODEL_FILE}.tmp"
+trap 'rm -f "${MODEL_TMP}"' EXIT
+
 echo "Downloading Qwen3-14B-Q4_K_M.gguf (~8.5 GB) from HuggingFace…"
 echo "URL: ${MODEL_URL}"
-curl -L --progress-bar -o "${MODEL_FILE}" "${MODEL_URL}"
+curl -L --progress-bar -o "${MODEL_TMP}" "${MODEL_URL}"
+mv "${MODEL_TMP}" "${MODEL_FILE}"
 
 echo ""
 echo "Done. Run 'podman-compose up' to start all services."
