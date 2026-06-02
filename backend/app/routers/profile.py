@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from langchain.chat_models import init_chat_model
 from pydantic import ValidationError
 
 from ..agents.tools.profile_loader import invalidate_cache
-from ..agents.tools.llm_factory import get_triage_model
 from ..schemas.profile import Profile
 from ..services.locale_service import list_locales
 from ..services.profile_service import (
@@ -103,33 +102,34 @@ async def profile_status() -> dict[str, Any]:
 async def test_llm_connection(data: dict[str, Any]) -> dict[str, Any]:
     """Test that the LLM API key / provider in the submitted profile config is valid.
 
-    Temporarily sets the relevant env var, makes a minimal LLM call, then
-    restores the env. Returns {ok: bool, error?: str}.
+    Builds the LLM client with the submitted api_key directly — never mutates
+    os.environ, eliminating the global-state race condition in async context.
+    Returns {ok: bool, error?: str}.
     """
     provider: str = data.get("provider", "anthropic")
     api_key: str = data.get("api_key", "")
-    env_var_map = {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "google": "GOOGLE_API_KEY",
-        "azure": "AZURE_OPENAI_API_KEY",
+    model_map = {
+        "anthropic": "claude-haiku-4-5-20251001",
+        "openai": "gpt-4o-mini",
+        "google": "gemini-2.0-flash",
+        "azure": "gpt-4o-mini",
+        "ollama": "phi3:mini",
     }
-    env_var = env_var_map.get(provider)
-    original: str | None = None
+    model_name = model_map.get(provider, "claude-haiku-4-5-20251001")
 
     try:
-        if env_var and api_key:
-            original = os.environ.get(env_var)
-            os.environ[env_var] = api_key
-
-        llm = get_triage_model()
+        kwargs: dict[str, Any] = {"temperature": 0.0, "max_retries": 1}
+        if api_key and provider != "ollama":
+            kwargs["api_key"] = api_key
+        if provider == "ollama":
+            from ..agents.tools.profile_loader import load_profile as _lp
+            try:
+                kwargs["base_url"] = _lp().llm.base_url or "http://localhost:11434"
+            except Exception:
+                kwargs["base_url"] = "http://localhost:11434"
+        llm = init_chat_model(model=model_name, model_provider=provider, **kwargs)
         await llm.ainvoke("Reply with the single word OK.")
         return {"ok": True}
     except Exception as exc:
         logger.debug("LLM connection test failed: %s", exc)
         return {"ok": False, "error": str(exc)}
-    finally:
-        if env_var and original is not None:
-            os.environ[env_var] = original
-        elif env_var and api_key:
-            os.environ.pop(env_var, None)

@@ -61,3 +61,24 @@ class TestProfileRouter:
 
         response = await client.post("/api/v2/profile/validate", json=minimal_profile)
         assert response.status_code in (200, 422)
+
+    @pytest.mark.asyncio
+    async def test_test_connection_does_not_mutate_os_environ(self, client) -> None:
+        """test-connection must not write to os.environ."""
+        import os
+        from unittest.mock import AsyncMock, MagicMock
+
+        sentinel = os.environ.get("ANTHROPIC_API_KEY", "ORIGINAL_SENTINEL")
+
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="OK"))
+
+        with patch("app.routers.profile.init_chat_model", return_value=mock_llm):
+            resp = await client.post(
+                "/api/v2/profile/test-connection",
+                json={"provider": "anthropic", "api_key": "sk-test-key-12345"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert os.environ.get("ANTHROPIC_API_KEY", "ORIGINAL_SENTINEL") == sentinel
