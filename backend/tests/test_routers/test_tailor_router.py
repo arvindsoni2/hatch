@@ -97,20 +97,21 @@ async def client(db_session):
 
 
 @pytest.mark.asyncio
-async def test_analyse_job_200(client):
+async def test_analyse_job_202(client):
     resp = await client.post("/api/tailor/analyse/test-job-123")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["job_id"] == "test-job-123"
-    assert data["analysis"]["role_title"] == "Solutions Architect"
+    assert "job_id" in data
+    assert data["status"] == "pending"
+    assert data["type"] == "tailor_analyse"
 
 
 @pytest.mark.asyncio
-async def test_analyse_job_returns_skill_match(client):
+async def test_analyse_job_returns_async_job(client):
     resp = await client.post("/api/tailor/analyse/test-job-123")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["skill_match"]["match_pct"] == 75.0
+    assert "job_id" in data
 
 
 @pytest.mark.asyncio
@@ -145,15 +146,17 @@ async def test_ats_score_endpoint(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_analyse_jd_text_200(client):
-    """POST /api/tailor/analyse returns 200 for raw JD text via mock service."""
+async def test_analyse_jd_text_202(client):
+    """POST /api/tailor/analyse returns 202 for raw JD text (async job pattern)."""
     resp = await client.post(
         "/api/tailor/analyse",
         params={"job_description": "We are looking for a Solutions Architect with AWS experience."},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["job_id"] == "test-job-123"
+    assert "job_id" in data
+    assert data["status"] == "pending"
+    assert data["type"] == "tailor_analyse"
 
 
 @pytest.mark.asyncio
@@ -172,16 +175,16 @@ async def test_generate_stream_returns_200(client):
 
 
 @pytest.mark.asyncio
-async def test_analyse_jd_text_returns_skill_match(client):
-    """POST /api/tailor/analyse returns skill_match alongside analysis."""
+async def test_analyse_jd_text_returns_async_job(client):
+    """POST /api/tailor/analyse returns async job envelope (202 pattern)."""
     resp = await client.post(
         "/api/tailor/analyse",
         params={"job_description": "Senior AWS Solutions Architect with Terraform skills."},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert "skill_match" in data
-    assert data["skill_match"]["match_pct"] == 75.0
+    assert "job_id" in data
+    assert data["type"] == "tailor_analyse"
 
 
 @pytest.mark.asyncio

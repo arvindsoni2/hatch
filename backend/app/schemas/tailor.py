@@ -140,6 +140,7 @@ class TailorRequest(BaseModel):
     generate_cv: bool = True
     generate_cover_letter: bool = True
     custom_instructions: str | None = None
+    jd_text: str | None = None
 
 
 class JDAnalysisResponse(BaseModel):

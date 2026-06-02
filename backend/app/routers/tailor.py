@@ -16,6 +16,7 @@ from ..schemas.tailor import (
     TailorRequest,
     TailorResultBundle,
 )
+from ..services.async_job_service import AsyncJobService
 from ..services.tailor_service import TailorService
 
 logger = logging.getLogger(__name__)
@@ -33,29 +34,47 @@ def get_tailor_service() -> TailorService:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/analyse/{job_id}", response_model=JDAnalysisResponse)
+@router.post("/analyse/{job_id}", status_code=202)
 async def analyse_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),
     svc: TailorService = Depends(get_tailor_service),
-) -> JDAnalysisResponse:
-    """Analyse a saved job posting by ID and compute skill match."""
-    return await svc.analyse_job(job_id, db)
+) -> dict:
+    """Kick off JD analysis for a saved job posting. Poll /api/async-jobs/{job_id} for result."""
+    async_job = await AsyncJobService.create(db, "tailor_analyse")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.analyse_job(job_id, db)
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "tailor_analyse"}
 
 
-@router.post("/analyse", response_model=JDAnalysisResponse)
+@router.post("/analyse", status_code=202)
 async def analyse_jd_text(
     job_description: str = Query(..., description="Raw JD text to analyse"),
     job_url: Optional[str] = Query(None, description="Optional URL to fetch JD from"),
+    db: AsyncSession = Depends(get_db),
     svc: TailorService = Depends(get_tailor_service),
-) -> JDAnalysisResponse:
-    """Analyse a raw job description text (not tied to a saved job posting)."""
-    try:
-        return await svc.analyse_jd_text(job_description, job_url)
-    except (ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=503, detail=f"JD analysis failed — the LLM did not return a valid response. Try again or check the Agents page. ({exc!s:.200}")
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"JD analysis failed — could not reach the LLM. Check your provider settings. ({type(exc).__name__}: {exc!s:.200}")
+) -> dict:
+    """Kick off JD analysis as a background job. Poll /api/async-jobs/{job_id} for result."""
+    async_job = await AsyncJobService.create(db, "tailor_analyse")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.analyse_jd_text(job_description, job_url)
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "tailor_analyse"}
 
 
 # ---------------------------------------------------------------------------
@@ -63,50 +82,80 @@ async def analyse_jd_text(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/generate-cv", response_model=GeneratedDocumentRead)
+@router.post("/generate-cv", status_code=202)
 async def generate_cv(
     request: TailorRequest,
     db: AsyncSession = Depends(get_db),
     svc: TailorService = Depends(get_tailor_service),
-) -> GeneratedDocumentRead:
-    """Generate a tailored CV .docx for an application."""
-    if not hasattr(request, "jd_text") or not request.model_extra.get("jd_text"):
+) -> dict:
+    """Kick off CV generation. Poll /api/async-jobs/{job_id} for result."""
+    jd_text = request.jd_text or ""
+    if not jd_text:
         raise HTTPException(status_code=422, detail="jd_text is required")
-    jd_text = request.model_extra.get("jd_text", "")
-    return await svc.generate_cv(
-        request.application_id,
-        request.variant,
-        jd_text,
-        db,
-        request.custom_instructions,
-    )
+
+    async_job = await AsyncJobService.create(db, "tailor_generate_cv")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.generate_cv(
+                request.application_id, request.variant, jd_text, db, request.custom_instructions
+            )
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "tailor_generate_cv"}
 
 
-@router.post("/generate-cl", response_model=GeneratedDocumentRead)
+@router.post("/generate-cl", status_code=202)
 async def generate_cover_letter(
     request: TailorRequest,
     db: AsyncSession = Depends(get_db),
     svc: TailorService = Depends(get_tailor_service),
-) -> GeneratedDocumentRead:
-    """Generate a tailored cover letter .docx for an application."""
-    jd_text = request.model_extra.get("jd_text", "")
-    return await svc.generate_cover_letter(
-        request.application_id, request.variant, jd_text, db
-    )
+) -> dict:
+    """Kick off cover letter generation. Poll /api/async-jobs/{job_id} for result."""
+    jd_text = request.jd_text or ""
+    async_job = await AsyncJobService.create(db, "tailor_generate_cl")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.generate_cover_letter(
+                request.application_id, request.variant, jd_text, db
+            )
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "tailor_generate_cl"}
 
 
-@router.post("/generate", response_model=TailorResultBundle)
+@router.post("/generate", status_code=202)
 async def generate_all(
     request: TailorRequest,
     generate_variants: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     svc: TailorService = Depends(get_tailor_service),
-) -> TailorResultBundle:
-    """Run the full pipeline (JD analysis + CV + cover letter) for an application."""
-    jd_text = request.model_extra.get("jd_text", "")
-    return await svc.generate_all(
-        request.application_id, request.variant, jd_text, db, generate_variants
-    )
+) -> dict:
+    """Kick off full pipeline (JD + CV + CL). Poll /api/async-jobs/{job_id} for result."""
+    jd_text = request.jd_text or ""
+    async_job = await AsyncJobService.create(db, "tailor_generate")
+    await db.commit()
+
+    async def _work() -> None:
+        try:
+            result = await svc.generate_all(
+                request.application_id, request.variant, jd_text, db, generate_variants
+            )
+            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+        except Exception as exc:
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "tailor_generate"}
 
 
 # ---------------------------------------------------------------------------
