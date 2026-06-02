@@ -156,3 +156,34 @@ def get_primary_model() -> BaseChatModel:
     """
     profile = load_profile()
     return _build_model(profile.llm.primary_model, profile.llm)
+
+
+def get_json_model() -> BaseChatModel:
+    """Return the primary model configured for JSON-constrained output.
+
+    For Ollama providers, passes format='json' to enable constrained token
+    sampling — only valid JSON tokens are sampled at the model level.
+    For all other providers, delegates to get_primary_model() (JSON is
+    enforced via system-prompt instructions instead).
+    """
+    profile = load_profile()
+    llm_cfg = profile.llm
+    if llm_cfg.provider == "ollama":
+        if not llm_cfg.primary_model:
+            raise ValueError(
+                f"LLM model name is empty for provider '{llm_cfg.provider}'. "
+                "Set primary_model in profile.yaml → llm section."
+            )
+        kwargs: dict[str, Any] = {
+            "temperature": llm_cfg.temperature,
+            "max_retries": llm_cfg.max_retries,
+            "format": "json",
+        }
+        if llm_cfg.base_url:
+            kwargs["base_url"] = llm_cfg.base_url
+        return init_chat_model(
+            model=llm_cfg.primary_model,
+            model_provider="ollama",
+            **kwargs,
+        )
+    return _build_model(llm_cfg.primary_model, llm_cfg)
