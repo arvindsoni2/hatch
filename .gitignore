@@ -142,3 +142,7 @@ candidate_profile.json
 candidate_profile_template.json
 master_cv.json
 master_cv_schema.json
+
+# LLM model files — large binaries, download separately
+models/*.gguf
+models/*.bin

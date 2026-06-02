@@ -64,6 +64,25 @@ services:
     networks:
       - jobpilot
 
+  llamacpp:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: jobpilot-llamacpp
+    volumes:
+      - ./models:/models:z
+    command: >
+      --model /models/Qwen3-14B-Q4_K_M.gguf
+      --port 8080
+      --host 0.0.0.0
+      --ctx-size 8192
+      --threads 4
+      --chat-template qwen3
+      --parallel 1
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    networks:
+      - jobpilot
+
 networks:
   jobpilot:
     driver: bridge
