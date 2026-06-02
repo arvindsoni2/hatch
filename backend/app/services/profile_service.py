@@ -15,7 +15,31 @@ from pydantic import ValidationError
 
 from ..schemas.profile import Profile
 
-_DEFAULT_PROFILE_PATH = Path(os.getenv("PROFILE_PATH", "./data/profile.yaml"))
+def _find_default_profile_path() -> Path:
+    """Resolve the default profile path without depending on CWD.
+
+    Walks up from this module file looking for the first ``data/profile.yaml``
+    that exists, checking up to 5 levels.  This works for both:
+
+    * Docker (WORKDIR=/app, module at /app/app/services/…, data at /app/data/)
+    * Local dev (module at backend/app/services/…, data at project-root/data/)
+
+    The ``PROFILE_PATH`` env var always wins when set.
+    """
+    if env_path := os.getenv("PROFILE_PATH"):
+        return Path(env_path)
+
+    here = Path(__file__).resolve()
+    for ancestor in here.parents:
+        candidate = ancestor / "data" / "profile.yaml"
+        if candidate.exists():
+            return candidate
+
+    # Fallback: sibling data/ of the package root (3 levels up from this file)
+    return here.parent.parent.parent / "data" / "profile.yaml"
+
+
+_DEFAULT_PROFILE_PATH = _find_default_profile_path()
 
 
 def get_profile_path() -> Path:
