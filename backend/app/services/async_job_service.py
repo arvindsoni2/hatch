@@ -99,6 +99,19 @@ class AsyncJobService:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def list_by_status(
+        db: AsyncSession, status: str, since: datetime, limit: int = 20
+    ) -> list[AsyncJob]:
+        """Return jobs with the given status created after `since`, newest first."""
+        result = await db.execute(
+            select(AsyncJob)
+            .where(AsyncJob.status == status, AsyncJob.created_at >= since)
+            .order_by(AsyncJob.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_completed_since(
         db: AsyncSession, since: datetime, limit: int = 20
     ) -> list[AsyncJob]:

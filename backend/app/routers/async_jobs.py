@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -22,7 +22,7 @@ class AsyncJobRead(BaseModel):
     id: str
     type: str
     status: str
-    result: Optional[Any] = None
+    result: Any = None
     error: Optional[str] = None
     created_at: datetime
 
@@ -67,7 +67,7 @@ async def list_async_jobs(
     if since:
         since_dt = datetime.fromisoformat(since)
     else:
-        since_dt = datetime.utcnow() - timedelta(hours=24)
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    jobs = await AsyncJobService.list_completed_since(db, since_dt, limit=limit)
+    jobs = await AsyncJobService.list_by_status(db, status, since_dt, limit=limit)
     return [_to_read(j) for j in jobs]
