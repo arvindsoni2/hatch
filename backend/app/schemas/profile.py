@@ -94,7 +94,7 @@ class ScoringConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock"] = "anthropic"
+    provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp"] = "anthropic"
     triage_model: str = "claude-haiku-4-5-20251001"
     primary_model: str = "claude-sonnet-4-6"
     api_key_env: str = "ANTHROPIC_API_KEY"

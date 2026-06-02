@@ -108,6 +108,7 @@ class ClaudeClient:
             + _JSON_INSTRUCTION
         )
         text = await self.complete(augmented_system, user)
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
         cleaned = text.strip()
         if cleaned.startswith("```"):
             lines = cleaned.split("\n")

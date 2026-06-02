@@ -116,10 +116,15 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
 
     # llamacpp exposes an OpenAI-compatible API — use ChatOpenAI directly
     if llm_cfg.provider == "llamacpp":
+        if not llm_cfg.base_url:
+            raise ValueError(
+                "provider='llamacpp' requires base_url to be set in profile.yaml → llm.base_url "
+                "(e.g. 'http://llamacpp:8080/v1')"
+            )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
         return ChatOpenAI(
             model=model_name,
-            openai_api_base=llm_cfg.base_url,
+            base_url=llm_cfg.base_url,
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
@@ -198,10 +203,15 @@ def get_json_model() -> BaseChatModel:
             **kwargs,
         )
     if llm_cfg.provider == "llamacpp":
+        if not llm_cfg.base_url:
+            raise ValueError(
+                "provider='llamacpp' requires base_url to be set in profile.yaml → llm.base_url "
+                "(e.g. 'http://llamacpp:8080/v1')"
+            )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
         return ChatOpenAI(
             model=llm_cfg.primary_model,
-            openai_api_base=llm_cfg.base_url,
+            base_url=llm_cfg.base_url,
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
