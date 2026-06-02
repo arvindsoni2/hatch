@@ -76,6 +76,9 @@ def _make_mock_llm(triage_relevant: bool = True, score: float = 0.85):
         skill_match=score, experience_match=score, rate_match=score, location_match=score,
         overall_score=score, reasoning="good match",
         keyword_matches=["cloud", "aws"], keyword_misses=[],
+        fit_reasoning="Strong match based on skills and experience.",
+        strengths=["Cloud expertise", "Architecture experience"],
+        score_gaps=[],
     )
     # ainvoke is the actual method called by the scorer — configure it explicitly
     triage_llm = MagicMock()
