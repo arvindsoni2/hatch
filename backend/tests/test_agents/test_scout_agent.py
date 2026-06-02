@@ -33,12 +33,8 @@ class TestScoutAgent:
 
         with patch("app.agents.base_agent.EventBus") as MockEB, \
              patch("app.agents.scout_agent.DedupService", return_value=mock_dedup), \
-             patch("app.agents.scout_agent.SCRAPER_REGISTRY", {"test_source": "fake.module.FakeScraper"}), \
-             patch("importlib.import_module") as mock_import:
+             patch("app.agents.scout_agent.SCRAPER_REGISTRY", {"test_source": mock_scraper_cls}):
             MockEB.instance.return_value = mock_bus
-            mock_module = MagicMock()
-            mock_module.FakeScraper = mock_scraper_cls
-            mock_import.return_value = mock_module
 
             from app.agents.scout_agent import ScoutAgent
             scout = ScoutAgent(sources=["test_source"])
@@ -73,12 +69,8 @@ class TestScoutAgent:
 
         with patch("app.agents.base_agent.EventBus") as MockEB, \
              patch("app.agents.scout_agent.DedupService", return_value=mock_dedup), \
-             patch("app.agents.scout_agent.SCRAPER_REGISTRY", {"test_source": "fake.module.FakeScraper"}), \
-             patch("importlib.import_module") as mock_import:
+             patch("app.agents.scout_agent.SCRAPER_REGISTRY", {"test_source": mock_scraper_cls}):
             MockEB.instance.return_value = mock_bus
-            mock_module = MagicMock()
-            mock_module.FakeScraper = mock_scraper_cls
-            mock_import.return_value = mock_module
 
             from app.agents.scout_agent import ScoutAgent
             scout = ScoutAgent(sources=["test_source"])
@@ -106,12 +98,8 @@ class TestScoutAgent:
 
         with patch("app.agents.base_agent.EventBus") as MockEB, \
              patch("app.agents.scout_agent.DedupService", return_value=mock_dedup), \
-             patch("app.agents.scout_agent.SCRAPER_REGISTRY", {"bad_source": "fake.module.BadScraper"}), \
-             patch("importlib.import_module") as mock_import:
+             patch("app.agents.scout_agent.SCRAPER_REGISTRY", {"bad_source": mock_scraper_cls}):
             MockEB.instance.return_value = mock_bus
-            mock_module = MagicMock()
-            mock_module.BadScraper = mock_scraper_cls
-            mock_import.return_value = mock_module
 
             from app.agents.scout_agent import ScoutAgent
             scout = ScoutAgent(sources=["bad_source"])
