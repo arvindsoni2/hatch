@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from httpx import AsyncClient
 from unittest.mock import MagicMock, patch
 
 
@@ -82,3 +83,12 @@ class TestProfileRouter:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
         assert os.environ.get("ANTHROPIC_API_KEY", "ORIGINAL_SENTINEL") == sentinel
+
+
+@pytest.mark.asyncio
+async def test_security_headers_present_on_every_response(client: AsyncClient) -> None:
+    """Every API response must include X-Content-Type-Options, X-Frame-Options, Referrer-Policy."""
+    resp = await client.get("/api/health")
+    assert resp.headers.get("x-content-type-options") == "nosniff"
+    assert resp.headers.get("x-frame-options") == "DENY"
+    assert resp.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
