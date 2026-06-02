@@ -104,13 +104,13 @@ scoring:
   method: auto
   hybrid_llm_top_pct: 0.2
 llm:
-  provider: ollama
-  triage_model: phi3:mini
-  primary_model: phi3:mini
+  provider: llamacpp
+  base_url: http://llamacpp:8080/v1
+  primary_model: Qwen3-14B-Instruct
+  triage_model: Qwen3-14B-Instruct
   api_key_env: ''
-  base_url: http://host.containers.internal:11434
   temperature: 0.3
-  max_retries: 3
+  max_retries: 2
   track_costs: true
   monthly_budget: 15.0
   currency: USD
