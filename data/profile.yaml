@@ -1,0 +1,126 @@
+locale: uk
+candidate:
+  name: Arvind Soni
+  title: Delivery Lead
+  years_experience: 20
+  summary: 'Technical Project Manager with 20+ years of experience delivering critical
+    programmes across the Public Sector (Energy and Utilities),
+
+    Financial Services, and Travel & Transportation. Proven ability to navigate complex
+    stakeholder landscapes while managing multidisciplinary teams and adapting delivery
+    approaches to meet evolving client needs. Deep expertise in Agile at scale (Scrum,
+    Kanban), DevOps operating models, and translating technical concepts into business-focused
+    outcomes for C-suite stakeholders.'
+search:
+  target_roles:
+  - Delivery Lead
+  - Scrum Master
+  - Agile Coach
+  - Programme Manager
+  - Project Manager
+  locations:
+  - city: Newcastle upon tyne
+    country: ''
+    radius_miles: 30
+    remote_preference: hybrid
+  contract_type: any
+compensation:
+  min_rate: 50.0
+  max_rate: 800.0
+  rate_type: daily
+  currency: GBP
+  legal_preferences:
+    ir35_preference: any
+    right_to_work: visa
+skills:
+  primary:
+  - Agile delivery
+  - Stakeholder management
+  - Budget ownership
+  - Risk management
+  - Roadmapping
+  secondary:
+  - Python,
+  - AWS
+  - Terraform
+  - GenAI
+  certifications:
+  - PMP
+  - PMI-ACP
+  - AIF-C01
+  - PSM-1
+  - PSPO-1
+domains:
+  preferred:
+  - Utilities
+  - Banking and Finance
+  - Supply Chain
+  - Airlines
+  excluded: []
+proof_points:
+- id: pp_1780342456083
+  summary: 'Successfully delivered £900K+ in measurable value through metrics-driven
+    improvements and continuous delivery optimisation across regulated environments. '
+  context: ''
+  metrics: '£900K '
+  tags: []
+master_cv_path: ./data/master_cv.json
+job_boards:
+- name: Reed
+  enabled: true
+  scraper: ReedScraper
+  search_params: {}
+- name: CWJobs
+  enabled: true
+  scraper: CWJobsScraper
+  search_params: {}
+- name: ContractorUK
+  enabled: true
+  scraper: ContractorUKScraper
+  search_params: {}
+- name: JobServe
+  enabled: true
+  scraper: JobServeScraper
+  search_params: {}
+- name: Adzuna
+  enabled: true
+  scraper: AdzunaScraper
+  search_params: {}
+- name: IT Jobs Watch
+  enabled: false
+  scraper: ITJobsWatchScraper
+  search_params: {}
+- name: LinkedIn
+  enabled: false
+  scraper: LinkedInScraper
+  search_params: {}
+scoring:
+  weights:
+    skill_match: 0.35
+    experience_match: 0.3
+    rate_match: 0.2
+    location_match: 0.15
+  shortlist_threshold: 0.5
+  method: auto
+  hybrid_llm_top_pct: 0.2
+llm:
+  provider: ollama
+  triage_model: phi3:mini
+  primary_model: phi3:mini
+  api_key_env: ''
+  base_url: http://host.containers.internal:11434
+  temperature: 0.3
+  max_retries: 3
+  track_costs: true
+  monthly_budget: 15.0
+  currency: USD
+preferences:
+  scrape_interval_hours: 8
+  max_tailor_batch: 5
+  follow_up_days:
+  - 5
+  - 10
+  - 15
+  locale: en-GB
+  archive_after_days: 30
+  max_job_age_days: 60
