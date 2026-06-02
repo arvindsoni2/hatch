@@ -78,6 +78,7 @@ async def init_db() -> None:
     from .models import recruiter as _recruiter_models  # noqa: F401
     from .models import follow_up_email as _email_models  # noqa: F401
     from .models import agency_reputation as _agency_models  # noqa: F401
+    from .models import async_job as _async_job_models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

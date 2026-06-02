@@ -13,6 +13,7 @@ from .agent_state import AgentState  # noqa: F401
 from .job_score import JobScore  # noqa: F401
 from .story import Story, StoryUsage  # noqa: F401
 from .cost_tracking import CostTracking  # noqa: F401
+from .async_job import AsyncJob  # noqa: F401
 
 __all__ = [
     "JobPosting", "ScrapeLog", "Application", "InterviewRound", "FollowUp",
@@ -21,4 +22,5 @@ __all__ = [
     "ApplicationAttempt", "RecruiterContact", "FollowUpEmail", "AgencyReputation",
     "AgentEvent", "AgentState", "JobScore",
     "Story", "StoryUsage", "CostTracking",
+    "AsyncJob",
 ]
