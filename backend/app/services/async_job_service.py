@@ -34,15 +34,15 @@ class AsyncJobService:
         """Fire-and-forget: set status=running then await the coroutine."""
 
         async def _run_and_track() -> None:
-            from ..database import AsyncSessionLocal  # noqa: PLC0415
-            async with AsyncSessionLocal() as db:
-                await db.execute(
-                    update(AsyncJob)
-                    .where(AsyncJob.id == job_id)
-                    .values(status="running", updated_at=datetime.utcnow())
-                )
-                await db.commit()
             try:
+                from ..database import AsyncSessionLocal  # noqa: PLC0415
+                async with AsyncSessionLocal() as db:
+                    await db.execute(
+                        update(AsyncJob)
+                        .where(AsyncJob.id == job_id)
+                        .values(status="running", updated_at=datetime.utcnow())
+                    )
+                    await db.commit()
                 await coro
             except Exception as exc:
                 logger.exception("Unhandled error in async job %s: %s", job_id, exc)
