@@ -142,3 +142,61 @@ async def test_document_history_endpoint(client):
 async def test_ats_score_endpoint(client, db_session):
     resp = await client.get("/api/tailor/ats-score/non-existent-id")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_analyse_jd_text_200(client):
+    """POST /api/tailor/analyse returns 200 for raw JD text via mock service."""
+    resp = await client.post(
+        "/api/tailor/analyse",
+        params={"job_description": "We are looking for a Solutions Architect with AWS experience."},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["job_id"] == "test-job-123"
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_returns_200(client):
+    """GET /api/tailor/generate/stream returns a streaming response."""
+    resp = await client.get(
+        "/api/tailor/generate/stream",
+        params={
+            "application_id": "app-uuid-001",
+            "variant": "A",
+            "jd_text": "We are looking for an AWS architect.",
+        },
+    )
+    # Streaming response — server may yield nothing but should not 500
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_analyse_jd_text_returns_skill_match(client):
+    """POST /api/tailor/analyse returns skill_match alongside analysis."""
+    resp = await client.post(
+        "/api/tailor/analyse",
+        params={"job_description": "Senior AWS Solutions Architect with Terraform skills."},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "skill_match" in data
+    assert data["skill_match"]["match_pct"] == 75.0
+
+
+@pytest.mark.asyncio
+async def test_document_history_with_doc_type_filter(client):
+    """GET /api/tailor/history/{app_id}?doc_type=cv filters by document type."""
+    resp = await client.get("/api/tailor/history/app-uuid-001?doc_type=cv")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_ats_optimise_404_for_unknown_document(client):
+    """POST /api/tailor/ats-optimise/{id} returns 404 when document doesn't exist."""
+    resp = await client.post(
+        "/api/tailor/ats-optimise/non-existent-doc-id",
+        params={"jd_text": "We need an AWS architect with Terraform skills."},
+    )
+    assert resp.status_code == 404

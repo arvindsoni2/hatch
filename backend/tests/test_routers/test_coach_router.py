@@ -173,3 +173,64 @@ async def test_list_sessions_returns_200() -> None:
             response = await client.get("/api/coach/sessions")
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_get_research_not_found_returns_404(client: AsyncClient) -> None:
+    """GET /api/coach/research/{company_name} returns 404 when no cached research exists."""
+    response = await client.get("/api/coach/research/UnknownCompanyXYZ")
+    assert response.status_code == 404
+    assert "No cached research" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_session_not_found_returns_404(client: AsyncClient) -> None:
+    """DELETE /api/coach/sessions/{id} returns 404 for a non-existent session."""
+    response = await client.delete("/api/coach/sessions/nonexistent-session-id")
+    assert response.status_code == 404
+    assert "Session not found" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_next_question_with_mock_service() -> None:
+    """GET /api/coach/sessions/{id}/next-question returns 200 (null) with mocked service."""
+    with patch("app.routers.coach.CoachService") as MockSvc:
+        instance = MockSvc.return_value
+        instance.get_next_question = AsyncMock(return_value=None)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/coach/sessions/session-uuid-001/next-question")
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_get_session_report_with_mock_service() -> None:
+    """GET /api/coach/sessions/{id}/report returns 200 with a SessionFeedbackReport."""
+    with patch("app.routers.coach.CoachService") as MockSvc:
+        instance = MockSvc.return_value
+        instance.get_report = AsyncMock(return_value=SAMPLE_REPORT)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/coach/sessions/session-uuid-001/report")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == "session-uuid-001"
+    assert data["overall_score"] == 7.5
+
+
+@pytest.mark.asyncio
+async def test_get_application_progress_returns_empty_list(client: AsyncClient) -> None:
+    """GET /api/coach/progress/{application_id} returns empty list on fresh DB."""
+    response = await client.get("/api/coach/progress/no-such-application-id")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_skip_question_not_found_returns_404(client: AsyncClient) -> None:
+    """POST /api/coach/sessions/{id}/skip returns 404 when question doesn't exist."""
+    response = await client.post(
+        "/api/coach/sessions/session-uuid-001/skip",
+        params={"question_id": "nonexistent-question-id"},
+    )
+    assert response.status_code == 404
+    assert "Question not found" in response.json()["detail"]
