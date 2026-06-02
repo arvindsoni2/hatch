@@ -195,3 +195,42 @@ def test_parse_jd_analysis_handles_missing_fields():
     assert result.role_title == "Engineer"
     assert result.ats_keywords.technical == []
     assert result.requirements.must_have == []
+
+
+# ---------------------------------------------------------------------------
+# SSRF validation tests
+# ---------------------------------------------------------------------------
+
+class TestFetchJdUrlValidation:
+
+    async def test_private_ip_is_blocked(self):
+        """_fetch_jd() raises ValueError for URLs resolving to private IPs."""
+        from app.services.jd_analyser import JDAnalyser
+        analyser = JDAnalyser.__new__(JDAnalyser)
+
+        with pytest.raises(ValueError, match="SSRF blocked"):
+            await analyser._fetch_jd("http://192.168.1.1/secret")
+
+    async def test_loopback_is_blocked(self):
+        """_fetch_jd() raises ValueError for loopback URLs."""
+        from app.services.jd_analyser import JDAnalyser
+        analyser = JDAnalyser.__new__(JDAnalyser)
+
+        with pytest.raises(ValueError, match="SSRF blocked|private"):
+            await analyser._fetch_jd("http://127.0.0.1:8080/admin")
+
+    async def test_non_http_scheme_is_blocked(self):
+        """_fetch_jd() raises ValueError for non-http/https schemes."""
+        from app.services.jd_analyser import JDAnalyser
+        analyser = JDAnalyser.__new__(JDAnalyser)
+
+        with pytest.raises(ValueError, match="Only http/https"):
+            await analyser._fetch_jd("file:///etc/passwd")
+
+    async def test_ftp_scheme_is_blocked(self):
+        """_fetch_jd() raises ValueError for ftp:// scheme."""
+        from app.services.jd_analyser import JDAnalyser
+        analyser = JDAnalyser.__new__(JDAnalyser)
+
+        with pytest.raises(ValueError, match="Only http/https"):
+            await analyser._fetch_jd("ftp://example.com/jobs.txt")

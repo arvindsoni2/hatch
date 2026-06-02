@@ -1,8 +1,11 @@
 """JD Analyser — parses job descriptions and computes skill match against the master CV."""
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +31,34 @@ _TAG_TAXONOMY: dict[str, list[str]] = {
 
 def _text_to_lower(text: str) -> str:
     return text.lower()
+
+
+def _validate_url(url: str) -> None:
+    """Validate that a URL is safe to fetch — blocks SSRF attack vectors.
+
+    Raises ValueError for non-http/https schemes and for hostnames that
+    resolve to private, loopback, or link-local addresses.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Only http/https URLs are allowed, got scheme: '{parsed.scheme}'")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL has no hostname")
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve hostname '{hostname}': {exc}") from exc
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            raise ValueError(
+                f"SSRF blocked: '{hostname}' resolves to private/reserved IP {ip}"
+            )
 
 
 class JDAnalyser:
@@ -144,6 +175,7 @@ class JDAnalyser:
         Returns:
             Extracted plain text content.
         """
+        _validate_url(url)  # raises ValueError on SSRF attempt — must not be caught below
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(url, follow_redirects=True)
@@ -154,6 +186,8 @@ class JDAnalyser:
                 for tag in soup(["script", "style", "nav", "footer"]):
                     tag.decompose()
                 return soup.get_text(separator="\n", strip=True)[:8000]
+        except ValueError:
+            raise  # re-raise SSRF validation errors
         except Exception as exc:
             logger.warning("Failed to fetch JD from %s: %s", url, exc)
             return ""
