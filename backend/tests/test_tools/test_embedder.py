@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("sentence_transformers", reason="sentence-transformers not installed")
+
 
 class TestEmbedder:
 

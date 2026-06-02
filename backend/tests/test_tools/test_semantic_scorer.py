@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("sentence_transformers", reason="sentence-transformers not installed")
+
 
 # ── Shared fixtures ────────────────────────────────────────────────────────────
 
