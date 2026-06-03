@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { CheckCircle, Loader2, UploadCloud, XCircle } from "lucide-react";
+import { uploadResume } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Field, TagInput } from "./OnboardingPrimitives";
 
@@ -24,6 +26,126 @@ export interface ProofPoint {
 }
 
 const SKILL_SUGGESTIONS = ["Agile delivery", "Stakeholder management", "Budget ownership", "Risk management", "Roadmapping"];
+
+type UploadState = "idle" | "uploading" | "done" | "error";
+
+function CvUploadCard() {
+  const [state, setState] = useState<UploadState>("idle");
+  const [filename, setFilename] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext !== "pdf" && ext !== "docx") {
+      setErrorMsg("Only PDF and DOCX files are supported.");
+      setState("error");
+      return;
+    }
+    setState("uploading");
+    setErrorMsg(null);
+    try {
+      const result = await uploadResume(file);
+      setFilename(result.filename ?? file.name);
+      setState("done");
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Upload failed — try again.");
+      setState("error");
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) void handleFile(file);
+  };
+
+  return (
+    <div className="mb-5">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-sm font-[550] text-[var(--text)]">
+          Master CV{" "}
+          <span className="text-[11px] font-[500] text-[var(--text-muted)] ml-1">Optional</span>
+        </p>
+        {state === "done" && (
+          <button
+            type="button"
+            onClick={() => { setState("idle"); setFilename(null); }}
+            className="text-xs text-[var(--text-muted)] hover:text-[var(--text)]"
+          >
+            Replace
+          </button>
+        )}
+      </div>
+
+      {state === "done" ? (
+        <div className="flex items-center gap-2.5 rounded-[var(--r-field,8px)] border border-[var(--border)] px-3 py-3"
+          style={{ background: "var(--surface-2)" }}>
+          <CheckCircle className="h-4 w-4 shrink-0 text-emerald-500" />
+          <p className="text-sm text-[var(--text)] truncate">{filename}</p>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          disabled={state === "uploading"}
+          className={[
+            "w-full rounded-[var(--r-field,8px)] border-2 border-dashed px-4 py-6 flex flex-col items-center gap-2 transition-colors",
+            dragging ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)]",
+            state === "uploading" ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:border-[var(--accent)] hover:bg-[var(--surface-2)]",
+          ].join(" ")}
+          style={{ background: dragging ? undefined : "var(--surface)" }}
+        >
+          {state === "uploading" ? (
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--text-muted)]" />
+          ) : state === "error" ? (
+            <XCircle className="h-5 w-5 text-[var(--danger)]" />
+          ) : (
+            <UploadCloud className="h-5 w-5 text-[var(--text-muted)]" />
+          )}
+          <p className="text-sm text-[var(--text-dim)]">
+            {state === "uploading"
+              ? "Uploading…"
+              : state === "error"
+              ? errorMsg
+              : "Drop PDF or DOCX here, or click to browse"}
+          </p>
+          {state !== "uploading" && state !== "error" && (
+            <p className="text-[11px] text-[var(--text-muted)]">
+              Hatch uses this to generate tailored CVs and cover letters
+            </p>
+          )}
+          {state === "error" && (
+            <p className="text-[11px] text-[var(--accent)]">Click to try again</p>
+          )}
+        </button>
+      )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.docx"
+        className="sr-only"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleFile(file);
+          e.target.value = "";
+        }}
+      />
+
+      {state !== "done" && (
+        <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">
+          You can upload or replace your CV at any time in Settings → Resume.
+        </p>
+      )}
+    </div>
+  );
+}
 
 interface StepSkillsProps {
   skills: SkillsData;
@@ -113,6 +235,8 @@ export function StepSkills({ skills, onSkillsChange, domains, onDomainsChange, p
       <p className="text-[14px] leading-[1.5] text-[var(--text-dim)] mb-4">
         Skills drive scoring. Proof points power the tailoring — and the interview coach later.
       </p>
+
+      <CvUploadCard />
 
       <Field label="Core skills" req hint="Your strongest, most-relevant skills. These carry the most weight in scoring.">
         <TagInput
