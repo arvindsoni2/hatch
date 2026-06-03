@@ -64,30 +64,11 @@ services:
     networks:
       - jobpilot
 
-  llamacpp:
-    image: ghcr.io/ggerganov/llama.cpp:server-bfe7dafc9cf96b9a09ead347fed9a547930fc631
-    container_name: jobpilot-llamacpp
-    volumes:
-      - ./models:/models:z
-    command: >
-      --model /models/Qwen3-14B-Q4_K_M.gguf
-      --port 8080
-      --host 0.0.0.0
-      --ctx-size 8192
-      --threads 4
-      --chat-template chatml
-      --parallel 1
-    ports:
-      - "127.0.0.1:8080:8080"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    networks:
-      - jobpilot
+  # llamacpp service removed — Ollama (host) is used instead.
+  # The GHCR llama.cpp images available are 2024 builds that predate Qwen3 support.
+  # Model file is kept in ./models/Qwen3-14B-Q4_K_M.gguf for future use.
+  # To re-enable: pull a 2025+ llama.cpp image that supports qwen3 architecture,
+  # restore this block, and set profile.yaml llm.provider = llamacpp.
 
 networks:
   jobpilot:
