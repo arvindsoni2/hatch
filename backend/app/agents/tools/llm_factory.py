@@ -143,9 +143,13 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
         if api_key:
             kwargs["api_key"] = api_key
 
-    # base_url is used for Ollama and Azure endpoints
-    if llm_cfg.base_url:
-        kwargs["base_url"] = llm_cfg.base_url
+    # base_url is used for Ollama and Azure endpoints.
+    # Ollama falls back to host.containers.internal so it works from inside containers
+    # even when profile.yaml was saved without an explicit base_url.
+    _ollama_default = "http://host.containers.internal:11434"
+    effective_base_url = llm_cfg.base_url or (_ollama_default if llm_cfg.provider == "ollama" else None)
+    if effective_base_url:
+        kwargs["base_url"] = effective_base_url
 
     return init_chat_model(
         model=model_name,
@@ -194,9 +198,8 @@ def get_json_model() -> BaseChatModel:
             "temperature": llm_cfg.temperature,
             "max_retries": llm_cfg.max_retries,
             "format": "json",
+            "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
         }
-        if llm_cfg.base_url:
-            kwargs["base_url"] = llm_cfg.base_url
         return init_chat_model(
             model=llm_cfg.primary_model,
             model_provider="ollama",

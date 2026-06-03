@@ -9,7 +9,7 @@ export const LLM_PROVIDERS = [
   { id: "google_genai", label: "Google Gemini",   sub: "Free tier available — great default",  keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
   { id: "anthropic",    label: "Anthropic Claude", sub: "Strongest tailoring quality",          keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
   { id: "openai",       label: "OpenAI",           sub: "GPT-4o family",                        keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
-  { id: "ollama",       label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "gemma3:4b",                 primaryDefault: "qwen3:14b" },
+  { id: "ollama",       label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "phi3:mini",                 primaryDefault: "qwen3:14b" },
 ];
 
 export interface LLMData {
@@ -50,7 +50,14 @@ export function StepAIProvider({
   const handleProviderChange = (providerId: string) => {
     const p = LLM_PROVIDERS.find((x) => x.id === providerId);
     if (p) {
-      onLlmChange({ ...llm, provider: providerId, triage_model: p.triageDefault, primary_model: p.primaryDefault, api_key_env: p.keyEnv });
+      onLlmChange({
+        ...llm,
+        provider: providerId,
+        triage_model: p.triageDefault,
+        primary_model: p.primaryDefault,
+        api_key_env: p.keyEnv,
+        base_url: providerId === "ollama" ? "http://host.containers.internal:11434" : null,
+      });
       onTestApiKeyChange("");
     }
   };
@@ -126,11 +133,11 @@ export function StepAIProvider({
       )}
 
       {llm.provider === "ollama" && (
-        <Field label="Ollama base URL" hint="Default: http://localhost:11434 — change only if Ollama runs on a custom port.">
+        <Field label="Ollama base URL" hint="Container deployment: use http://host.containers.internal:11434. Direct host install: http://localhost:11434.">
           <Input
             value={llm.base_url || ""}
-            onChange={(e) => onLlmChange({ ...llm, base_url: e.target.value || null })}
-            placeholder="http://localhost:11434"
+            onChange={(e) => onLlmChange({ ...llm, base_url: e.target.value || "http://host.containers.internal:11434" })}
+            placeholder="http://host.containers.internal:11434"
           />
         </Field>
       )}
