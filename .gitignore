@@ -94,6 +94,13 @@ data/logs/
 !data/.gitkeep
 data/master_cv.meta.json
 data/api_keys.env
+data/master_resume.txt
+data/master_resume.pdf
+data/master_resume.docx
+
+# ──────────────────────── Next.js generated (PWA / service worker) ───────────
+frontend/public/sw.js
+frontend/public/workbox-*.js
 
 # ──────────────────────── Docker ────────────────────────
 .dockerignore
