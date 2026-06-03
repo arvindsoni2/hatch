@@ -6,10 +6,10 @@ import { Field, Choice, ToggleRow, Seg } from "./OnboardingPrimitives";
 import type { LocaleBoard } from "@/lib/api";
 
 export const LLM_PROVIDERS = [
-  { id: "google",    label: "Google Gemini",   sub: "Free tier available — great default",  keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
-  { id: "anthropic", label: "Anthropic Claude", sub: "Strongest tailoring quality",          keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
-  { id: "openai",    label: "OpenAI",           sub: "GPT-4o family",                        keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
-  { id: "ollama",    label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "gemma3:4b",                 primaryDefault: "qwen3:14b" },
+  { id: "google_genai", label: "Google Gemini",   sub: "Free tier available — great default",  keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
+  { id: "anthropic",    label: "Anthropic Claude", sub: "Strongest tailoring quality",          keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
+  { id: "openai",       label: "OpenAI",           sub: "GPT-4o family",                        keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
+  { id: "ollama",       label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "gemma3:4b",                 primaryDefault: "qwen3:14b" },
 ];
 
 export interface LLMData {

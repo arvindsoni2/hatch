@@ -11,25 +11,54 @@ interface StepEligibilityProps {
   onCompensationChange: (compensation: CompensationData) => void;
 }
 
+const WORK_AUTH_OPTIONS = [
+  { value: "permanent_resident", label: "Citizen / permanent resident" },
+  { value: "visa_holder",        label: "Visa holder — currently eligible to work" },
+  { value: "other",              label: "Other / prefer not to say" },
+];
+
 export function StepEligibility({
   locale, legalFields, compensation, onCompensationChange,
 }: StepEligibilityProps) {
-  if (legalFields.length === 0) {
-    return (
-      <div className="ob-fadein px-5 pb-4">
-        <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
-          Step 4 · Eligibility
-        </p>
-        <h1
-          className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
-          style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-        >
-          No eligibility questions for this market.
-        </h1>
-        <p className="text-sm text-[var(--text-dim)]">Continue to the next step.</p>
-      </div>
-    );
-  }
+  const workAuth = compensation.legal_preferences["work_authorization"] ?? "permanent_resident";
+
+  const header = (
+    <div className="ob-fadein px-5 pb-4">
+      <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
+        Step 4 · Eligibility
+      </p>
+      <h1
+        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
+        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
+      >
+        {legalFields.length > 0 ? `A couple of ${locale?.name ?? ""} specifics.` : "Eligibility"}
+      </h1>
+      <Why>
+        <b>These are used as hard filters.</b>{" "}
+        Hatch uses them to avoid surfacing roles you cannot take.
+      </Why>
+
+      <Field label="Visa / work authorisation" hint="Your current right to work — used to filter roles that require sponsorship.">
+        <div className="grid grid-cols-1 gap-2">
+          {WORK_AUTH_OPTIONS.map((opt) => (
+            <Choice
+              key={opt.value}
+              on={workAuth === opt.value}
+              title={opt.label}
+              onClick={() =>
+                onCompensationChange({
+                  ...compensation,
+                  legal_preferences: { ...compensation.legal_preferences, work_authorization: opt.value },
+                })
+              }
+            />
+          ))}
+        </div>
+      </Field>
+    </div>
+  );
+
+  if (legalFields.length === 0) return header;
 
   return (
     <div className="ob-fadein px-5 pb-4">
@@ -48,6 +77,24 @@ export function StepEligibility({
         {locale?.flag} {locale?.name} employers screen on them first, so Hatch uses them to avoid
         wasting your time on roles you can&apos;t take.
       </Why>
+
+      <Field label="Visa / work authorisation" hint="Your current right to work.">
+        <div className="grid grid-cols-1 gap-2">
+          {WORK_AUTH_OPTIONS.map((opt) => (
+            <Choice
+              key={opt.value}
+              on={workAuth === opt.value}
+              title={opt.label}
+              onClick={() =>
+                onCompensationChange({
+                  ...compensation,
+                  legal_preferences: { ...compensation.legal_preferences, work_authorization: opt.value },
+                })
+              }
+            />
+          ))}
+        </div>
+      </Field>
 
       {legalFields.map((field) => (
         <Field

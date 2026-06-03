@@ -51,7 +51,7 @@ export default function OnboardingPage() {
 
   // Step 6 — AI provider
   const [llm, setLlm] = useState<LLMData>({
-    provider: "google", triage_model: "gemini-2.5-flash-lite", primary_model: "gemini-2.5-flash",
+    provider: "google_genai", triage_model: "gemini-2.5-flash-lite", primary_model: "gemini-2.5-flash",
     api_key_env: "GOOGLE_API_KEY", base_url: null, temperature: 0.3, max_retries: 3,
     track_costs: true, monthly_budget: 15, currency: "USD",
   });
@@ -68,7 +68,8 @@ export default function OnboardingPage() {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.candidate) setCandidate(parsed.candidate);
+        // Restore preferences but NOT personal identity fields (name/title)
+        // so the form always starts blank for those fields
         if (parsed.search) setSearch(parsed.search);
         if (parsed.locations) setLocations(parsed.locations);
         if (parsed.compensation) setCompensation(parsed.compensation);

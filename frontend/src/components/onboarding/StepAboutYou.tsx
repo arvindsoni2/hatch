@@ -43,7 +43,7 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
             id="name"
             value={candidate.name}
             onChange={(e) => onChange({ ...candidate, name: e.target.value })}
-            placeholder="Arvind Soni"
+            placeholder="Alex Kim"
             className={tried && !candidate.name.trim() ? "border-[var(--danger)]" : ""}
           />
         </Field>
@@ -58,7 +58,7 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
             id="title"
             value={candidate.title}
             onChange={(e) => onChange({ ...candidate, title: e.target.value })}
-            placeholder="Delivery Lead"
+            placeholder="Senior Programme Manager"
             className={tried && !candidate.title.trim() ? "border-[var(--danger)]" : ""}
           />
         </Field>
@@ -71,7 +71,7 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
           min={0}
           value={candidate.years_experience || ""}
           onChange={(e) => onChange({ ...candidate, years_experience: parseInt(e.target.value) || 0 })}
-          placeholder="12"
+          placeholder="8"
         />
       </Field>
 
@@ -81,7 +81,7 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
           rows={3}
           value={candidate.summary}
           onChange={(e) => onChange({ ...candidate, summary: e.target.value })}
-          placeholder="Senior delivery lead with 12 years running complex transformation programmes across financial services…"
+          placeholder="Results-driven technologist with 8 years delivering complex programmes across financial services and the public sector…"
           className="flex w-full rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] resize-none leading-[1.5]"
         />
       </Field>
