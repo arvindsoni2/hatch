@@ -7,6 +7,7 @@ import {
   submitAnswer,
   endSession,
   researchCompany,
+  getAsyncJob,
   SessionResponse,
   SessionQuestion,
   AnswerEvaluation,
@@ -64,13 +65,21 @@ export default function SessionPage() {
       setSubmitting(true);
       setSessionState("submitted");
       try {
-        const eval_ = await submitAnswer(
+        const jobRef = await submitAnswer(
           session.id,
           currentQuestion.id,
           transcript,
           durationMs,
           metrics
         );
+        // Poll until the evaluation job completes
+        let eval_: AnswerEvaluation | null = null;
+        while (!eval_) {
+          const job = await getAsyncJob<AnswerEvaluation>(jobRef.job_id);
+          if (job.status === "done" && job.result) { eval_ = job.result; break; }
+          if (job.status === "failed") throw new Error(job.error ?? "Evaluation failed");
+          await new Promise((r) => setTimeout(r, 2000));
+        }
         setEvaluation(eval_);
         setAnsweredIds((prev) => { const next = new Set(prev); next.add(currentQuestion.id); return next; });
         setSessionState("evaluated");
@@ -104,7 +113,14 @@ export default function SessionPage() {
     if (!session) return;
     setEnding(true);
     try {
-      await endSession(session.id);
+      const jobRef = await endSession(session.id);
+      // Poll until the report generation job completes
+      while (true) {
+        const job = await getAsyncJob(jobRef.job_id);
+        if (job.status === "done") break;
+        if (job.status === "failed") throw new Error(job.error ?? "Failed to generate report");
+        await new Promise((r) => setTimeout(r, 2000));
+      }
       router.push(`/coach/report/${session.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to end session");

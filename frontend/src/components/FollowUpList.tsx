@@ -8,6 +8,7 @@ import type { FollowUp } from "@/lib/api";
 import {
   fetchEmailById,
   generateEmail,
+  getAsyncJob,
   type FollowUpEmailRead,
 } from "@/lib/api";
 import { EmailPreviewModal } from "./EmailPreviewModal";
@@ -62,8 +63,16 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
     setGeneratingFor(followUp.id);
     try {
       const emailType = EMAIL_TYPE_MAP[followUp.type] ?? "post_application";
-      const email = await generateEmail(applicationId, emailType);
-      setEmailIds((prev) => ({ ...prev, [followUp.id]: email.id }));
+      const jobRef = await generateEmail(applicationId, emailType);
+      // Poll until the email generation job completes
+      let email: FollowUpEmailRead | null = null;
+      while (!email) {
+        const job = await getAsyncJob<FollowUpEmailRead>(jobRef.job_id);
+        if (job.status === "done" && job.result) { email = job.result; break; }
+        if (job.status === "failed") throw new Error(job.error ?? "Email generation failed");
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      setEmailIds((prev) => ({ ...prev, [followUp.id]: email!.id }));
       setEmailModal(email);
     } catch {
       // ignore
