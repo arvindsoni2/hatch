@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL_DIR="${SCRIPT_DIR}/../models"
 MODEL_FILE="${MODEL_DIR}/Qwen3-14B-Q4_K_M.gguf"
-MODEL_URL="https://huggingface.co/bartowski/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf"
+MODEL_URL="https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf"
 
 mkdir -p "${MODEL_DIR}"
 

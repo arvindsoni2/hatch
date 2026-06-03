@@ -75,7 +75,7 @@ services:
       --host 0.0.0.0
       --ctx-size 8192
       --threads 4
-      --chat-template qwen3
+      --chat-template chatml
       --parallel 1
     ports:
       - "127.0.0.1:8080:8080"
