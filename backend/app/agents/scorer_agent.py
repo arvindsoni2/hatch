@@ -34,6 +34,12 @@ from .tools.profile_loader import load_profile
 from .tools.rate_limiter import get_limiter
 from ..services import resume_store as _resume_store_module
 
+_semantic_module = None
+try:
+    from .tools import semantic_scorer as _semantic_module  # type: ignore[assignment]
+except ImportError:
+    pass
+
 logger = logging.getLogger("jobpilot.agent.scorer")
 
 _BATCH_SIZE = 5
@@ -145,12 +151,6 @@ class ScorerAgent(BaseAgent):
 
         # Phase 1 — semantic pre-score (no LLM calls)
         # Skip jobs that need enrichment first
-        _semantic_module = None
-        try:
-            from .tools import semantic_scorer as _semantic_module  # type: ignore[assignment]
-        except ImportError:
-            pass
-
         local_results: list[tuple[dict, Any | None, LocalScoreResult]] = []
         for event in pending:
             payload = event["payload"]
@@ -544,7 +544,10 @@ class ScorerAgent(BaseAgent):
             row.scored_at = datetime.utcnow()
 
         await db.execute(
-            update(JobPosting).where(JobPosting.id == job_id).values(auto_scored=True)
+            update(JobPosting).where(JobPosting.id == job_id).values(
+                auto_scored=True,
+                match_score=score.overall_score,
+            )
         )
         await db.commit()
 

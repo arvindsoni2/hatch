@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.models.job import JobPosting
 
 
-def _insert_job(db_session, job_id: str, description: str = "Senior cloud architect role remote") -> JobPosting:
+def _insert_job(db_session, job_id: str, description: str = "Senior cloud architect role required for large-scale remote infrastructure project with AWS experience and Agile delivery background.") -> JobPosting:
     job = JobPosting(
         id=job_id,
         title="Cloud Architect",
@@ -97,7 +97,13 @@ def _make_mock_llm(triage_relevant: bool = True, score: float = 0.85):
 class TestScorerAgent:
 
     async def test_hybrid_scores_all_locally_then_llm_top_pct(self, db_session):
-        """Hybrid mode: local-scores 5 jobs, LLM called only for top 20% (1 job)."""
+        """Hybrid mode: local-scores 5 jobs, LLM called only for top 20% (1 job).
+
+        All 5 jobs score 0.30 (below band_low=0.60) so only the top-1 by rank goes
+        to LLM via the top_pct rule — none qualify via the band rule.
+        """
+        from app.agents.tools.local_scorer import LocalScoreResult
+
         job_ids = [str(uuid.uuid4()) for _ in range(5)]
         for jid in job_ids:
             db_session.add(_insert_job(db_session, jid))
@@ -117,10 +123,19 @@ class TestScorerAgent:
         mock_limiter.acquire = AsyncMock()
         mock_limiter.record_429 = MagicMock()
 
+        def low_score_locally(job, profile):
+            return LocalScoreResult(
+                skill_match=0.30, experience_match=0.30, rate_match=0.30,
+                location_match=0.30, overall_score=0.30,
+                keyword_matches=[], keyword_misses=[],
+            )
+
         with patch("app.agents.scorer_agent.load_profile", return_value=profile), \
              patch("app.agents.scorer_agent.get_triage_model", return_value=mock_triage_model), \
              patch("app.agents.scorer_agent.get_primary_model", return_value=mock_primary_model), \
-             patch("app.agents.scorer_agent.get_limiter", return_value=mock_limiter):
+             patch("app.agents.scorer_agent.get_limiter", return_value=mock_limiter), \
+             patch("app.agents.scorer_agent.score_locally", side_effect=low_score_locally), \
+             patch("app.agents.scorer_agent._semantic_module", None):
             from app.agents.scorer_agent import ScorerAgent
             scorer = ScorerAgent()
             scorer._bus = mock_bus
@@ -256,7 +271,8 @@ class TestScorerAgent:
              patch("app.agents.scorer_agent.get_triage_model", return_value=mock_triage_model), \
              patch("app.agents.scorer_agent.get_primary_model", return_value=mock_primary_model), \
              patch("app.agents.scorer_agent.get_limiter", return_value=mock_limiter), \
-             patch("app.agents.scorer_agent.score_locally", side_effect=fake_score_locally):
+             patch("app.agents.scorer_agent.score_locally", side_effect=fake_score_locally), \
+             patch("app.agents.scorer_agent._semantic_module", None):
             from app.agents.scorer_agent import ScorerAgent
             scorer = ScorerAgent()
             scorer._bus = mock_bus
