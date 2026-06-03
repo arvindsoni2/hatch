@@ -65,7 +65,7 @@ services:
       - jobpilot
 
   llamacpp:
-    image: ghcr.io/ggerganov/llama.cpp:server-b5347
+    image: ghcr.io/ggerganov/llama.cpp:server-bfe7dafc9cf96b9a09ead347fed9a547930fc631
     container_name: jobpilot-llamacpp
     volumes:
       - ./models:/models:z
