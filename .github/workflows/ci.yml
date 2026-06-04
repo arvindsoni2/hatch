@@ -18,6 +18,9 @@ jobs:
         run: pip install -r backend/requirements.txt -r backend/requirements-test.txt
       - name: Run backend tests
         run: cd backend && pytest --cov=app --cov-report=xml -q
+      - name: Audit Python dependencies
+        # Non-blocking until the current tree is fully clean; remove || true to enforce
+        run: pip install pip-audit && pip-audit -r backend/requirements.txt || true
 
   frontend:
     runs-on: ubuntu-latest
@@ -30,3 +33,6 @@ jobs:
         run: cd frontend && npm ci
       - name: Run frontend tests
         run: cd frontend && npx vitest run
+      - name: Audit npm dependencies
+        # Non-blocking until the current tree is fully clean; remove || true to enforce
+        run: cd frontend && npm audit --audit-level=high || true

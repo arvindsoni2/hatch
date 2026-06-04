@@ -230,6 +230,9 @@ async def get_resume_status() -> ResumeStatus:
     )
 
 
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
 @router.post("/upload", response_model=ResumeStatus)
 async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
     """Upload a .docx or .pdf CV. Parses into structured JSON and stores at data/master_cv.json."""
@@ -238,10 +241,17 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
     if suffix not in (".docx", ".pdf"):
         raise HTTPException(status_code=422, detail="Only .docx and .pdf files are supported.")
 
+    # Read up to MAX+1 bytes so we can detect oversized files without OOM
+    content = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(content) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Maximum upload size is 10 MB.")
+    if not content:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty.")
+
     _data_dir().mkdir(parents=True, exist_ok=True)
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(await file.read())
+        tmp.write(content)
         tmp_path = tmp.name
 
     try:
