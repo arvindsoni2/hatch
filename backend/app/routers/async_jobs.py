@@ -59,13 +59,15 @@ async def get_async_job(
 @router.get("", response_model=list[AsyncJobRead])
 async def list_async_jobs(
     status: list[str] = Query(default=["done"]),
+    job_type: Optional[str] = Query(None, alias="type", description="Filter by job type, e.g. tailor_analyse or coach_session"),
     since: Optional[str] = Query(None, description="ISO-8601 datetime; defaults to 24h ago"),
     limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> list[AsyncJobRead]:
-    """List background jobs filtered by status. Used by the notification bell.
+    """List background jobs filtered by status and optionally by type.
 
     Pass status multiple times (e.g. ?status=done&status=failed) to include both.
+    Use the 'type' alias to filter by job type (e.g. ?type=tailor_analyse).
     """
     from sqlalchemy import select, or_  # noqa: PLC0415
     from ..models.async_job import AsyncJob  # noqa: PLC0415
@@ -75,13 +77,18 @@ async def list_async_jobs(
     else:
         since_dt = datetime.now(timezone.utc) - timedelta(hours=24)
 
+    status_filter = (
+        or_(*[AsyncJob.status == s for s in status])
+        if len(status) > 1
+        else AsyncJob.status == status[0]
+    )
+    conditions = [AsyncJob.created_at >= since_dt, status_filter]
+    if job_type:
+        conditions.append(AsyncJob.type == job_type)
+
     result = await db.execute(
         select(AsyncJob)
-        .where(
-            AsyncJob.created_at >= since_dt,
-            or_(*[AsyncJob.status == s for s in status]) if len(status) > 1
-            else AsyncJob.status == status[0],
-        )
+        .where(*conditions)
         .order_by(AsyncJob.created_at.desc())
         .limit(limit)
     )

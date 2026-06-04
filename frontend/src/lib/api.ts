@@ -1186,6 +1186,14 @@ export async function listCompletedJobs(
   return apiFetch<AsyncJobResponse[]>(`/api/async-jobs${qs}`)
 }
 
+export async function listTailorHistory(
+  limit = 10
+): Promise<AsyncJobResponse<JDAnalysisResponse>[]> {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const qs = `?type=tailor_analyse&status=done&status=failed&status=pending&status=running&since=${encodeURIComponent(since)}&limit=${limit}`
+  return apiFetch<AsyncJobResponse<JDAnalysisResponse>[]>(`/api/async-jobs${qs}`)
+}
+
 // ── Agentic pipeline ────────────────────────────────────────
 
 export interface AgentStatusSummary {
