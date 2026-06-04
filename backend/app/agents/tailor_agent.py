@@ -98,6 +98,7 @@ class TailorAgent(BaseAgent):
         )
         db.add(application)
         await db.flush()
+        await db.commit()  # release write lock before slow LLM calls
 
         # Run tailor pipeline
         bundle = await self._tailor.generate_all(
