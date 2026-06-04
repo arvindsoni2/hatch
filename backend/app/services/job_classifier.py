@@ -131,11 +131,11 @@ class JobClassifier:
                         update(JobPosting)
                         .where(JobPosting.id == job.id)
                         .values(
-                            employment_type=classification.get("employment_type", "unknown"),
-                            ir35_status=classification.get("ir35_status", "unknown"),
-                            working_pattern=classification.get("working_pattern", "unknown"),
+                            employment_type=classification.get("employment_type") or "unknown",
+                            ir35_status=classification.get("ir35_status") or "unknown",
+                            working_pattern=classification.get("working_pattern") or "unknown",
                             seniority=classification.get("seniority"),
-                            match_score=float(classification.get("match_score", 0)),
+                            match_score=float(classification.get("match_score", 0)) / 100.0,
                             match_reasons=classification.get("match_reasons", []),
                             red_flags=classification.get("red_flags", []),
                         )

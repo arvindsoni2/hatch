@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -94,15 +97,24 @@ async def agent_status(
 
 # ── Manual controls ───────────────────────────────────────────────────────────
 
+async def _run_trigger_in_background(orch: Any, name: str) -> None:
+    try:
+        result = await orch.trigger(name)
+        logger.info("Background trigger for %s completed: %s", name, result)
+    except Exception as exc:
+        logger.warning("Background trigger for %s failed: %s", name, exc)
+
+
 @router.post("/{name}/trigger")
 async def trigger_agent(
     name: str,
     request: Request,
+    background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
-    """Manually trigger an agent run."""
+    """Manually trigger an agent run (fire-and-forget)."""
     orch = _get_orchestrator(request)
-    result = await orch.trigger(name)
-    return {"agent": name, "result": result}
+    background_tasks.add_task(_run_trigger_in_background, orch, name)
+    return {"agent": name, "status": "started"}
 
 
 @router.post("/{name}/pause")
