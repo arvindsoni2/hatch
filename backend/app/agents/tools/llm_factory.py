@@ -9,12 +9,17 @@ in agent code. Always go through this module.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import time
+import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
@@ -231,13 +236,42 @@ def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     return 0.0
 
 
+def _detect_ollama_model(llm_cfg: Any) -> str:
+    """Query running Ollama instance and return the name of the first available model.
+
+    Tries the configured base_url first, then falls back to the container-internal
+    address. Raises ValueError with a helpful message if Ollama is unreachable or
+    has no models pulled.
+    """
+    base = (llm_cfg.base_url or "http://host.containers.internal:11434").rstrip("/")
+    candidates = list({base, "http://host.containers.internal:11434", "http://localhost:11434"})
+    for url in candidates:
+        try:
+            req = urllib.request.urlopen(f"{url}/api/tags", timeout=3)
+            models = json.loads(req.read()).get("models", [])
+            if models:
+                name = models[0]["name"]
+                logger.info("Auto-detected Ollama model '%s' from %s", name, url)
+                return name
+        except Exception:
+            continue
+    raise ValueError(
+        "No model configured (triage_model / primary_model in profile.yaml is empty) "
+        "and no Ollama models found. Pull a model first: 'ollama pull phi3:mini', "
+        "then select it in Settings → AI Provider."
+    )
+
+
 def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     """Instantiate a LangChain chat model from profile LLM config."""
     if not model_name:
-        raise ValueError(
-            f"LLM model name is empty for provider '{llm_cfg.provider}'. "
-            "Set triage_model / primary_model in profile.yaml → llm section."
-        )
+        if llm_cfg.provider == "ollama":
+            model_name = _detect_ollama_model(llm_cfg)
+        else:
+            raise ValueError(
+                f"LLM model name is empty for provider '{llm_cfg.provider}'. "
+                "Set triage_model / primary_model in profile.yaml → llm section."
+            )
 
     # llamacpp exposes an OpenAI-compatible API — use ChatOpenAI directly
     if llm_cfg.provider == "llamacpp":
@@ -320,11 +354,7 @@ def get_json_model() -> BaseChatModel:
     profile = load_profile()
     llm_cfg = profile.llm
     if llm_cfg.provider == "ollama":
-        if not llm_cfg.primary_model:
-            raise ValueError(
-                f"LLM model name is empty for provider '{llm_cfg.provider}'. "
-                "Set primary_model in profile.yaml → llm section."
-            )
+        model_name = llm_cfg.primary_model or _detect_ollama_model(llm_cfg)
         kwargs: dict[str, Any] = {
             "temperature": llm_cfg.temperature,
             "max_retries": llm_cfg.max_retries,
@@ -333,10 +363,10 @@ def get_json_model() -> BaseChatModel:
             "reasoning": False,
         }
         return _attach_tracer(init_chat_model(
-            model=llm_cfg.primary_model,
+            model=model_name,
             model_provider="ollama",
             **kwargs,
-        ), llm_cfg.primary_model)
+        ), model_name)
     if llm_cfg.provider == "llamacpp":
         if not llm_cfg.base_url:
             raise ValueError(

@@ -86,20 +86,45 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
 ) -> dict:
-    """Kick off session creation (question generation). Poll /api/async-jobs/{job_id}."""
+    """Kick off session creation (question generation). Poll /api/async-jobs/{job_id}.
+
+    A stub session record (status='setup') is written to the DB immediately so the
+    coach session list shows it as 'Generating…' while the async job runs.  The
+    async job uses its own DB session (not the request session) to avoid accessing
+    a closed connection after the HTTP response has been sent.
+    """
+    from ..repositories.session_repository import SessionRepository
+    session_repo = SessionRepository(db)
+    stub = await session_repo.create_session(
+        application_id=request.application_id,
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config=request.config.model_dump(),
+    )
+    session_id = stub.id
+
     async_job = await AsyncJobService.create(db, "coach_session")
     await db.commit()
 
     async def _work() -> None:
-        try:
-            result = await svc.create_session(request, db)
-            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
-        except Exception as exc:
-            logger.error("create_session job %s failed: %s", async_job.id, exc)
-            await AsyncJobService._finish(async_job.id, None, str(exc))
+        from ..database import AsyncSessionLocal  # noqa: PLC0415
+        async with AsyncSessionLocal() as job_db:
+            try:
+                result = await svc.create_session(request, job_db, session_id=session_id)
+                await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+            except Exception as exc:
+                logger.error("create_session job %s failed: %s", async_job.id, exc)
+                # Mark stub session as abandoned so user sees failure in the list
+                from ..repositories.session_repository import SessionRepository as _SR  # noqa: PLC0415
+                try:
+                    await _SR(job_db).update_session_status(session_id, "abandoned")
+                    await job_db.commit()
+                except Exception:
+                    pass
+                await AsyncJobService._finish(async_job.id, None, str(exc))
 
     AsyncJobService.run(async_job.id, _work())
-    return {"job_id": async_job.id, "status": "pending", "type": "coach_session"}
+    return {"job_id": async_job.id, "status": "pending", "type": "coach_session", "session_id": session_id}
 
 
 @router.get("/sessions", response_model=list[SessionListItem])

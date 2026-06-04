@@ -94,15 +94,15 @@ class ScoringConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp"] = "anthropic"
-    triage_model: str = "claude-haiku-4-5-20251001"
-    primary_model: str = "claude-sonnet-4-6"
-    api_key_env: str = "ANTHROPIC_API_KEY"
+    provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp"] = "ollama"
+    triage_model: str = ""
+    primary_model: str = ""
+    api_key_env: str = ""
     base_url: str | None = None
     temperature: float = 0.3
     max_retries: int = 3
-    track_costs: bool = True
-    monthly_budget: float = 15.00
+    track_costs: bool = False
+    monthly_budget: float = 0.0
     currency: str = "USD"  # currency for budget display; override per locale
 
 

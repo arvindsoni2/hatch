@@ -5,14 +5,21 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { listSessions, SessionListItem, SessionResponse } from "@/lib/api";
 import { SessionLauncher } from "@/components/coach/SessionLauncher";
-import { Brain, BookOpen, ChevronRight, Plus, X } from "lucide-react";
+import { Brain, BookOpen, ChevronRight, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-blue-100 text-blue-700",
   completed: "bg-emerald-100 text-emerald-700",
-  setup: "bg-slate-100 text-slate-600",
+  setup: "bg-amber-100 text-amber-700",
   abandoned: "bg-red-100 text-red-700",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  setup: "Generating…",
+  active: "In progress",
+  completed: "Completed",
+  abandoned: "Failed",
 };
 
 export default function CoachPage() {
@@ -21,12 +28,23 @@ export default function CoachPage() {
   const [loading, setLoading] = useState(true);
   const [showLauncher, setShowLauncher] = useState(false);
 
-  useEffect(() => {
+  const fetchSessions = () =>
     listSessions(20)
       .then(setSessions)
       .catch(console.error)
       .finally(() => setLoading(false));
+
+  useEffect(() => {
+    fetchSessions();
   }, []);
+
+  // Poll while any session is still generating so the list auto-updates
+  useEffect(() => {
+    const hasGenerating = sessions.some((s) => s.status === "setup");
+    if (!hasGenerating) return;
+    const id = setInterval(fetchSessions, 10_000);
+    return () => clearInterval(id);
+  }, [sessions]);
 
   const handleSessionCreated = (session: SessionResponse) => {
     router.push(`/coach/session/${session.id}`);
@@ -100,41 +118,61 @@ export default function CoachPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {sessions.map((session) => (
-            <div
-              key={session.id}
-              className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-indigo-200 hover:shadow-sm shadow-sm"
-              onClick={() =>
-                session.status === "completed"
-                  ? router.push(`/coach/report/${session.id}`)
-                  : router.push(`/coach/session/${session.id}`)
-              }
-            >
-              <div className="flex flex-col gap-0.5">
-                <p className="font-medium text-slate-900">
-                  {session.role_title} — {session.company_name}
-                </p>
-                <p className="text-xs text-slate-400">
-                  {new Date(session.created_at).toLocaleDateString("en-GB", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[session.status] ?? "bg-slate-100 text-slate-600"}`}>
-                  {session.status}
-                </span>
-                {session.overall_score != null && (
-                  <span className={`text-sm font-bold ${session.overall_score >= 8 ? "text-emerald-600" : session.overall_score >= 6 ? "text-amber-600" : "text-red-600"}`}>
-                    {session.overall_score.toFixed(1)}/10
+          {sessions.map((session) => {
+            const isGenerating = session.status === "setup";
+            const isFailed = session.status === "abandoned";
+            return (
+              <div
+                key={session.id}
+                className={`flex items-center justify-between rounded-xl border bg-white px-4 py-3 shadow-sm transition-colors ${
+                  isGenerating
+                    ? "border-amber-200 cursor-default"
+                    : isFailed
+                    ? "border-red-200 cursor-default opacity-70"
+                    : "border-slate-200 cursor-pointer hover:border-indigo-200 hover:shadow-sm"
+                }`}
+                onClick={() => {
+                  if (isGenerating || isFailed) return;
+                  session.status === "completed"
+                    ? router.push(`/coach/report/${session.id}`)
+                    : router.push(`/coach/session/${session.id}`);
+                }}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  {isGenerating && (
+                    <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-amber-500" />
+                  )}
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <p className="font-medium text-slate-900 truncate">
+                      {session.role_title} — {session.company_name}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {isGenerating
+                        ? "Questions being generated — check the notification bell when ready"
+                        : new Date(session.created_at).toLocaleDateString("en-GB", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-3">
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[session.status] ?? "bg-slate-100 text-slate-600"}`}>
+                    {STATUS_LABELS[session.status] ?? session.status}
                   </span>
-                )}
-                <ChevronRight className="h-4 w-4 text-slate-400" />
+                  {session.overall_score != null && (
+                    <span className={`text-sm font-bold ${session.overall_score >= 8 ? "text-emerald-600" : session.overall_score >= 6 ? "text-amber-600" : "text-red-600"}`}>
+                      {session.overall_score.toFixed(1)}/10
+                    </span>
+                  )}
+                  {!isGenerating && !isFailed && (
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </main>

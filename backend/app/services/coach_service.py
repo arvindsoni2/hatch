@@ -91,13 +91,16 @@ class CoachService:
         return result
 
     async def create_session(
-        self, request: CreateSessionRequest, db: AsyncSession
+        self, request: CreateSessionRequest, db: AsyncSession, session_id: str | None = None
     ) -> SessionResponse:
         """Create a new interview session with pre-generated questions.
 
         Args:
             request: Session creation request with company, role, and config.
             db: Active DB session.
+            session_id: If provided, update this existing stub session instead of
+                creating a new one. The router creates the stub upfront so users
+                see 'setup' status in the list while questions are generated.
 
         Returns:
             SessionResponse with session ID and all generated questions.
@@ -123,13 +126,18 @@ class CoachService:
             jd_text=request.jd_text,
         )
 
-        # Persist session
-        session = await session_repo.create_session(
-            application_id=request.application_id,
-            company_name=request.company_name,
-            role_title=request.role_title,
-            config=request.config.model_dump(),
-        )
+        # Use the stub session created upfront by the router, or create fresh
+        if session_id:
+            session = await session_repo.get_session(session_id)
+            if not session:
+                raise ValueError(f"Stub session {session_id} not found — cannot populate questions")
+        else:
+            session = await session_repo.create_session(
+                application_id=request.application_id,
+                company_name=request.company_name,
+                role_title=request.role_title,
+                config=request.config.model_dump(),
+            )
 
         # Generate model answers and persist questions
         candidate_summary = _load_candidate_summary()
