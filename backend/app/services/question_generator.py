@@ -89,6 +89,12 @@ class QuestionGeneratorService:
         raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=8000)
         questions_raw: list[dict[str, Any]] = raw if isinstance(raw, list) else raw.get("questions", [])
 
+        if not questions_raw:
+            raise ValueError(
+                f"LLM returned no questions for {company_name}/{role_title}. "
+                "The model may be unavailable or returned an empty response."
+            )
+
         return _parse_questions(questions_raw, config.question_count)
 
 

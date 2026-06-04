@@ -7,22 +7,15 @@ import { SkillMatchMatrix } from "@/components/SkillMatchMatrix";
 import { DocumentHistory } from "@/components/DocumentHistory";
 import {
   analyseJdText,
-  streamTailoringProgress,
+  generateAll,
   getDocumentHistory,
   type JDAnalysisResponse,
   GeneratedDocument,
-  TailorProgressEvent,
 } from "@/lib/api";
 import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { Loader2, Zap, FileText, ChevronRight } from "lucide-react";
 
 type Stage = "idle" | "analysing" | "analysed" | "generating" | "complete" | "error";
-
-interface ProgressStep {
-  stage: string;
-  pct: number;
-  message: string;
-}
 
 const inputStyle = {
   background: "var(--surface-2)",
@@ -44,7 +37,6 @@ export default function TailorPage() {
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<JDAnalysisResponse | null>(null);
-  const [progress, setProgress] = useState<ProgressStep | null>(null);
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
   const [activeTab, setActiveTab] = useState<"analysis" | "history">("analysis");
 
@@ -63,6 +55,26 @@ export default function TailorPage() {
     },
   });
 
+  const {
+    state: generateState,
+    submit: submitGenerate,
+  } = useAsyncJob({
+    onComplete: async () => {
+      setStage("complete");
+      setActiveTab("history");
+      try {
+        const docs = await getDocumentHistory(applicationId);
+        setDocuments(docs);
+      } catch {
+        // non-fatal
+      }
+    },
+    onError: (err) => {
+      setError(err);
+      setStage("error");
+    },
+  });
+
   const handleAnalyse = useCallback(async () => {
     if (!jdText.trim() && !jobUrl.trim()) return;
     setError(null);
@@ -71,7 +83,7 @@ export default function TailorPage() {
     await submitAnalyse(() => analyseJdText(jdText, jobUrl || undefined));
   }, [jdText, jobUrl, submitAnalyse]);
 
-  const handleGenerate = useCallback(() => {
+  const handleGenerate = useCallback(async () => {
     if (!applicationId.trim()) {
       setError("Please enter an Application ID to save documents to.");
       return;
@@ -82,31 +94,8 @@ export default function TailorPage() {
     }
     setStage("generating");
     setError(null);
-    setProgress({ stage: "starting", pct: 0, message: "Initialising pipeline..." });
-
-    streamTailoringProgress(
-      applicationId,
-      jdText,
-      variant,
-      (event: TailorProgressEvent) => {
-        setProgress({ stage: event.stage, pct: event.pct, message: event.message });
-      },
-      async () => {
-        setStage("complete");
-        setActiveTab("history");
-        try {
-          const docs = await getDocumentHistory(applicationId);
-          setDocuments(docs);
-        } catch {
-          // non-fatal
-        }
-      },
-      (err: Error) => {
-        setError(err.message);
-        setStage("error");
-      },
-    );
-  }, [applicationId, jdText, variant]);
+    await submitGenerate(() => generateAll(applicationId, jdText, variant));
+  }, [applicationId, jdText, variant, submitGenerate]);
 
   const handleLoadHistory = useCallback(async () => {
     if (!applicationId.trim()) return;
@@ -230,19 +219,15 @@ export default function TailorPage() {
               </Button>
             </div>
 
-            {/* SSE Progress */}
-            {stage === "generating" && progress && (
-              <div className="mt-4">
-                <div className="mb-2 flex justify-between text-xs" style={{ color: "var(--text-muted)" }}>
-                  <span>{progress.message}</span>
-                  <span>{progress.pct}%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: "var(--surface-2)" }}>
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${progress.pct}%`, background: "var(--accent)" }}
-                  />
-                </div>
+            {/* Async job progress */}
+            {stage === "generating" && (
+              <div className="mt-3 rounded-lg border p-3" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+                <p className="text-xs text-center" style={{ color: "var(--text)" }}>
+                  Generating your documents — this can take a few minutes.
+                </p>
+                <p className="mt-1 text-xs text-center" style={{ color: "var(--text-muted)" }}>
+                  {generateState.status === "pending" ? "Queuing…" : "Running pipeline…"} You can navigate away and check the <span className="font-medium">notification bell</span> when ready.
+                </p>
               </div>
             )}
 

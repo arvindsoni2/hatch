@@ -36,7 +36,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-2.5-flash-lite",
     ],
     "azure_openai": ["gpt-4o-mini", "gpt-4o"],
-    "ollama": ["llama3.2", "mistral", "phi4", "qwen2.5"],
+    "ollama": ["gemma4:e4b", "phi3:mini", "llama3.2", "mistral", "phi4", "qwen2.5", "qwen3:14b"],
 }
 
 _FREE_TIER_PROVIDERS = {"google_genai", "ollama"}

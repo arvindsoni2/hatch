@@ -203,11 +203,15 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
               {loading ? "Generating questions…" : "Start Session"}
             </Button>
           </div>
-          {sessionState.status === "pending" && (
-            <p className="mt-2 text-center text-xs text-slate-400">Queuing…</p>
-          )}
-          {sessionState.status === "running" && (
-            <p className="mt-2 text-center text-xs text-slate-400">Preparing questions — this takes 1–2 min…</p>
+          {(sessionState.status === "pending" || sessionState.status === "running") && (
+            <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-center">
+              <p className="text-xs text-slate-600">
+                {sessionState.status === "pending" ? "Queuing your session…" : "Generating your questions — this can take a few minutes."}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                You can navigate away and check the <span className="font-medium text-slate-500">notification bell</span> when your session is ready.
+              </p>
+            </div>
           )}
         </div>
       )}
