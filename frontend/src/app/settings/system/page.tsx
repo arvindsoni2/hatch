@@ -1,14 +1,25 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft, RefreshCw, Download, RotateCcw, CheckCircle2,
-  AlertTriangle, Clock, Loader2,
+  AlertTriangle, Clock, Loader2, Trash2, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { API_BASE } from "@/lib/api";
+
+interface LLMTrace {
+  id: number;
+  ts: string;
+  model: string;
+  duration_ms: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  response_preview: string;
+}
 
 interface AgentEvent {
   id: string;
@@ -54,6 +65,9 @@ export default function SystemLogPage() {
   const [filter, setFilter] = useState({ agent: "", status: "", type: "" });
   const [costs, setCosts] = useState<CostSummary | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [traces, setTraces] = useState<LLMTrace[]>([]);
+  const [expandedTrace, setExpandedTrace] = useState<number | null>(null);
+  const traceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const LIMIT = 50;
 
   const load = useCallback(async () => {
@@ -84,8 +98,28 @@ export default function SystemLogPage() {
     }
   }, []);
 
+  const loadTraces = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/debug/llm-traces`);
+      if (res.ok) setTraces(await res.json());
+    } catch {
+      // non-critical
+    }
+  }, []);
+
+  const clearTraces = async () => {
+    await fetch(`${API_BASE}/api/debug/llm-traces`, { method: "DELETE" });
+    setTraces([]);
+    setExpandedTrace(null);
+  };
+
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadCosts(); }, [loadCosts]);
+  useEffect(() => {
+    void loadTraces();
+    traceTimerRef.current = setInterval(() => { void loadTraces(); }, 10_000);
+    return () => { if (traceTimerRef.current) clearInterval(traceTimerRef.current); };
+  }, [loadTraces]);
 
   const retryEvent = async (id: string) => {
     setRetrying(id);
@@ -153,6 +187,100 @@ export default function SystemLogPage() {
           ))}
         </div>
       )}
+
+      {/* LLM Traces */}
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-amber-500" />
+            <h2 className="text-sm font-semibold text-slate-700">LLM Call Traces</h2>
+            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">
+              last {traces.length} / 100 · auto-refreshes every 10s
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => void loadTraces()}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void clearTraces()} disabled={traces.length === 0}>
+              <Trash2 className="h-3.5 w-3.5 mr-1" /> Clear
+            </Button>
+          </div>
+        </div>
+
+        {traces.length === 0 ? (
+          <p className="py-10 text-center text-sm text-slate-400">
+            No traces yet — LLM calls will appear here as agents run.
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100 text-xs text-slate-500">
+                <th className="px-4 py-2 text-left font-medium">Time</th>
+                <th className="px-4 py-2 text-left font-medium">Model</th>
+                <th className="px-4 py-2 text-right font-medium">Latency</th>
+                <th className="px-4 py-2 text-right font-medium">Tokens in</th>
+                <th className="px-4 py-2 text-right font-medium">Tokens out</th>
+                <th className="px-4 py-2 text-right font-medium">Cost</th>
+                <th className="px-4 py-2 text-left font-medium">Preview</th>
+              </tr>
+            </thead>
+            <tbody>
+              {traces.map((t) => {
+                const latencyBadge =
+                  t.duration_ms < 2_000
+                    ? "bg-green-100 text-green-700"
+                    : t.duration_ms < 10_000
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-red-100 text-red-700";
+                const isExpanded = expandedTrace === t.id;
+                return (
+                  <tr key={t.id} className="border-b border-slate-50 hover:bg-slate-50/60">
+                    <td className="px-4 py-2 text-xs text-slate-400 whitespace-nowrap">
+                      {formatDistanceToNow(new Date(t.ts), { addSuffix: true })}
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700">
+                        {t.model}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums ${latencyBadge}`}>
+                        {t.duration_ms >= 1_000
+                          ? `${(t.duration_ms / 1_000).toFixed(1)}s`
+                          : `${t.duration_ms}ms`}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs tabular-nums text-slate-500">
+                      {t.tokens_in.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs tabular-nums text-slate-500">
+                      {t.tokens_out.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2 text-right text-xs tabular-nums text-slate-400">
+                      {t.cost_usd > 0 ? `$${t.cost_usd.toFixed(5)}` : "—"}
+                    </td>
+                    <td className="px-4 py-2 max-w-xs">
+                      {t.response_preview ? (
+                        <button
+                          onClick={() => setExpandedTrace(isExpanded ? null : t.id)}
+                          className="text-left text-xs text-slate-500 hover:text-slate-700"
+                        >
+                          {isExpanded
+                            ? t.response_preview
+                            : t.response_preview.slice(0, 80) + (t.response_preview.length > 80 ? "…" : "")}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-300">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">

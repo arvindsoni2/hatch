@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from langchain.chat_models import init_chat_model
@@ -23,6 +26,22 @@ try:
     from langchain_core.callbacks import BaseCallbackHandler as _BaseCallbackHandler
 except ImportError:
     _BaseCallbackHandler = object  # type: ignore[assignment,misc]
+
+# ── In-memory LLM trace ring buffer ──────────────────────────────────────────
+
+@dataclass
+class _LLMTrace:
+    id: int
+    ts: str
+    model: str
+    duration_ms: int
+    tokens_in: int
+    tokens_out: int
+    cost_usd: float
+    response_preview: str
+
+_trace_counter: int = 0
+_trace_buffer: deque[_LLMTrace] = deque(maxlen=100)
 
 # Per-million-token pricing (USD) for common models — approximate estimates
 _COST_TABLE: dict[str, tuple[float, float]] = {
@@ -89,6 +108,91 @@ class CostTrackingCallback(_BaseCallbackHandler):  # type: ignore[misc]
         self._pending.clear()
 
 
+class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
+    """Always-on callback attached to every model to record latency + response preview."""
+
+    def __init__(self, model_name: str) -> None:
+        super().__init__()
+        self._model = model_name
+        self._t0: float = 0.0
+
+    def on_chat_model_start(self, serialized: dict, messages: list, **kwargs: Any) -> None:
+        self._t0 = time.monotonic()
+
+    def on_llm_start(self, serialized: dict, prompts: list, **kwargs: Any) -> None:
+        self._t0 = time.monotonic()
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        global _trace_counter
+        duration_ms = int((time.monotonic() - self._t0) * 1000) if self._t0 else 0
+
+        usage = (response.llm_output or {}).get("token_usage", {})
+        tokens_in = usage.get("prompt_tokens") or usage.get("input_token_count") or 0
+        tokens_out = usage.get("completion_tokens") or usage.get("generated_token_count") or 0
+
+        preview = ""
+        for gen_list in response.generations:
+            for gen in gen_list:
+                text = getattr(gen, "text", None) or ""
+                if not text:
+                    msg = getattr(gen, "message", None)
+                    if msg:
+                        content = getattr(msg, "content", "")
+                        text = content if isinstance(content, str) else str(content)
+                if text:
+                    preview = text[:300]
+                    break
+            if preview:
+                break
+
+        if not tokens_out:
+            tokens_out = estimate_tokens(preview)
+
+        _trace_counter += 1
+        _trace_buffer.append(_LLMTrace(
+            id=_trace_counter,
+            ts=datetime.now(timezone.utc).isoformat(),
+            model=self._model,
+            duration_ms=duration_ms,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=estimate_cost(self._model, tokens_in, tokens_out),
+            response_preview=preview,
+        ))
+
+
+def get_llm_traces() -> list[dict[str, Any]]:
+    """Return the last 100 LLM traces in reverse-chronological order."""
+    return [
+        {
+            "id": t.id,
+            "ts": t.ts,
+            "model": t.model,
+            "duration_ms": t.duration_ms,
+            "tokens_in": t.tokens_in,
+            "tokens_out": t.tokens_out,
+            "cost_usd": t.cost_usd,
+            "response_preview": t.response_preview,
+        }
+        for t in reversed(_trace_buffer)
+    ]
+
+
+def clear_llm_traces() -> None:
+    """Wipe the in-memory trace buffer."""
+    _trace_buffer.clear()
+
+
+def _attach_tracer(model: BaseChatModel, model_name: str) -> BaseChatModel:
+    """Attach the latency callback to a model instance."""
+    try:
+        existing = list(model.callbacks or [])
+        model.callbacks = existing + [_LatencyCallback(model_name)]
+    except Exception:
+        pass
+    return model
+
+
 def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 characters per token."""
     return max(1, len(text) // 4)
@@ -122,13 +226,13 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
                 "(e.g. 'http://llamacpp:8080/v1')"
             )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
-        return ChatOpenAI(
+        return _attach_tracer(ChatOpenAI(
             model=model_name,
             base_url=llm_cfg.base_url,
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
-        )
+        ), model_name)
 
     provider = llm_cfg.provider
 
@@ -151,11 +255,11 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     if effective_base_url:
         kwargs["base_url"] = effective_base_url
 
-    return init_chat_model(
+    return _attach_tracer(init_chat_model(
         model=model_name,
         model_provider=provider,
         **kwargs,
-    )
+    ), model_name)
 
 
 def get_triage_model() -> BaseChatModel:
@@ -200,11 +304,11 @@ def get_json_model() -> BaseChatModel:
             "format": "json",
             "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
         }
-        return init_chat_model(
+        return _attach_tracer(init_chat_model(
             model=llm_cfg.primary_model,
             model_provider="ollama",
             **kwargs,
-        )
+        ), llm_cfg.primary_model)
     if llm_cfg.provider == "llamacpp":
         if not llm_cfg.base_url:
             raise ValueError(
@@ -212,12 +316,12 @@ def get_json_model() -> BaseChatModel:
                 "(e.g. 'http://llamacpp:8080/v1')"
             )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
-        return ChatOpenAI(
+        return _attach_tracer(ChatOpenAI(
             model=llm_cfg.primary_model,
             base_url=llm_cfg.base_url,
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
             model_kwargs={"response_format": {"type": "json_object"}},
-        )
+        ), llm_cfg.primary_model)
     return _build_model(llm_cfg.primary_model, llm_cfg)
