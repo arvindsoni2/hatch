@@ -1,48 +1,42 @@
 SYSTEM:
-You are an expert technical interviewer with 20+ years experience hiring Solutions Architects, Delivery Managers, and senior technology leaders at FTSE 100 companies. Generate realistic, probing interview questions that an interviewer at this company would actually ask for this role. Each question must have a detailed model answer based on the candidate's CV. Return ONLY valid JSON.
+You are an expert technical interviewer. Generate realistic interview questions for the role and company below. Return ONLY valid JSON, no explanation.
 
 USER:
-Generate {{ question_count }} interview questions for the following role and candidate.
+Generate {{ question_count }} interview questions for this role.
 
 Role: {{ role_title }}
 Company: {{ company_name }}
 {% if company_research %}
-Company Context:
-- Description: {{ company_research.get('description', '') }}
-- Sector: {{ company_research.get('sector', '') }}
-- Tech Stack: {{ company_research.get('tech_stack_signals', []) | join(', ') }}
-- Recent News: {{ company_research.get('recent_news', []) | join('; ') }}
+Company: {{ company_research.get('description', '') | truncate(300) }}
+Sector: {{ company_research.get('sector', '') }}
 {% endif %}
 
 {% if jd_text %}
-Job Description (excerpt):
-{{ jd_text | truncate(2000) }}
+Job Description:
+{{ jd_text | truncate(1000) }}
 {% endif %}
 
-Candidate Summary:
-{{ candidate_summary | truncate(2000) }}
+Candidate: {{ candidate_summary | truncate(800) }}
 
-Question Category Weights:
-- Technical: 30% ({{ (question_count * 0.3) | round | int }} questions)
-- Behavioural: 25% ({{ (question_count * 0.25) | round | int }} questions)
-- Situational: 15% ({{ (question_count * 0.15) | round | int }} questions)
-- Domain: 10% ({{ (question_count * 0.10) | round | int }} questions)
-- Culture: 10% ({{ (question_count * 0.10) | round | int }} questions)
-- Commercial: 10% ({{ (question_count * 0.10) | round | int }} questions)
+Category distribution ({{ question_count }} total):
+- Behavioural: {{ (question_count * 0.25) | round | int }} questions ("Tell me about a time..." or "Describe a situation where...")
+- Technical: {{ (question_count * 0.3) | round | int }} questions (probe depth of expertise)
+- Situational: {{ (question_count * 0.15) | round | int }} questions (hypothetical scenarios)
+- Domain/Culture/Commercial: remaining questions
 
 Difficulty: {{ difficulty }}
 
-Return a JSON array of exactly {{ question_count }} questions:
-[
-  {
-    "question_num": 1,
-    "text": "The full interview question text",
-    "category": "Technical|Behavioural|Situational|Domain|Culture|Commercial",
-    "difficulty": "easy|medium|hard",
-    "context": "Brief context or why this question is being asked (1 sentence)",
-    "model_answer": "A strong STAR-structured model answer referencing the candidate's actual experience. Should be 150-200 words covering Situation, Task, Action, Result with specific metrics from their CV.",
-    "order_in_session": 1
-  }
-]
+Return JSON object with a "questions" array of exactly {{ question_count }} items:
+{
+  "questions": [
+    {
+      "text": "Full interview question text",
+      "category": "Behavioural",
+      "difficulty": "{{ difficulty }}",
+      "context": "One sentence: why this question is relevant",
+      "order_in_session": 1
+    }
+  ]
+}
 
-Make questions specific to the company and role. Behavioural questions should start with "Tell me about a time..." or "Describe a situation where...". Technical questions should probe depth of expertise. Commercial questions should relate to business outcomes and ROI.
+Each question must be specific to the company and role. Do not include model answers.

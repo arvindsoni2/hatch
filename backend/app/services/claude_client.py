@@ -96,10 +96,15 @@ class ClaudeClient:
                 try:
                     return json.loads(cleaned)
                 except json.JSONDecodeError:
-                    # Local models (Gemma, Llama) often wrap JSON in prose — extract it
-                    match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-                    if match:
-                        return json.loads(match.group())
+                    # Local models often wrap JSON in prose — try to extract it.
+                    # Try object first, then array (Ollama format=json forces objects).
+                    for pattern in (r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', r'\[.*\]', r'\{.*\}'):
+                        match = re.search(pattern, cleaned, re.DOTALL)
+                        if match:
+                            try:
+                                return json.loads(match.group())
+                            except json.JSONDecodeError:
+                                continue
                     raise
             except (json.JSONDecodeError, ValueError) as exc:
                 last_error = exc

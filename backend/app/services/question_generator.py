@@ -86,13 +86,32 @@ class QuestionGeneratorService:
             )
         )
 
-        raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=8000)
-        questions_raw: list[dict[str, Any]] = raw if isinstance(raw, list) else raw.get("questions", [])
+        raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=4096)
+
+        # Handle both bare array and {"questions": [...]} wrapper
+        if isinstance(raw, list):
+            questions_raw: list[dict[str, Any]] = raw
+        elif isinstance(raw, dict):
+            # Try common wrapper keys
+            for key in ("questions", "items", "data", "interview_questions"):
+                if key in raw and isinstance(raw[key], list):
+                    questions_raw = raw[key]
+                    break
+            else:
+                # Last resort: take the first list value found
+                questions_raw = next((v for v in raw.values() if isinstance(v, list)), [])
+        else:
+            questions_raw = []
 
         if not questions_raw:
+            logger.error(
+                "No questions extracted for %s/%s — raw response keys: %s",
+                company_name, role_title,
+                list(raw.keys()) if isinstance(raw, dict) else type(raw).__name__,
+            )
             raise ValueError(
                 f"LLM returned no questions for {company_name}/{role_title}. "
-                "The model may be unavailable or returned an empty response."
+                "The model may be unavailable or returned an unexpected JSON structure."
             )
 
         return _parse_questions(questions_raw, config.question_count)
