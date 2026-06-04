@@ -184,13 +184,11 @@ def clear_llm_traces() -> None:
 
 
 def _attach_tracer(model: BaseChatModel, model_name: str) -> BaseChatModel:
-    """Attach the latency callback to a model instance."""
+    """Attach the latency callback via with_config (Runnable-level, Pydantic-safe)."""
     try:
-        existing = list(model.callbacks or [])
-        model.callbacks = existing + [_LatencyCallback(model_name)]
+        return model.with_config({"callbacks": [_LatencyCallback(model_name)]})  # type: ignore[return-value]
     except Exception:
-        pass
-    return model
+        return model
 
 
 def estimate_tokens(text: str) -> int:
