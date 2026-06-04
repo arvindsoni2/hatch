@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell } from "lucide-react";
+import { Bell, AlertCircle, CheckCircle2 } from "lucide-react";
 import { listCompletedJobs, AsyncJobResponse } from "@/lib/api";
 
 const JOB_LABELS: Record<string, string> = {
@@ -70,7 +70,7 @@ export function NotificationBell() {
         {jobs.length > 0 && (
           <span
             data-testid="bell-badge"
-            className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[10px] font-bold text-white"
+            className={`absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white ${jobs.some(j => j.status === "failed") ? "bg-red-500" : "bg-indigo-600"}`}
           >
             {jobs.length > 9 ? "9+" : String(jobs.length)}
           </span>
@@ -99,12 +99,25 @@ export function NotificationBell() {
             <ul className="max-h-64 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
               {jobs.map((job) => (
                 <li key={job.id} className="px-4 py-3">
-                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
-                    {JOB_LABELS[job.type] ?? job.type}
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    {new Date(job.created_at).toLocaleTimeString()}
-                  </p>
+                  <div className="flex items-start gap-2">
+                    {job.status === "failed"
+                      ? <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" />
+                      : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-500" />
+                    }
+                    <div className="min-w-0">
+                      <p className={`text-sm font-medium ${job.status === "failed" ? "text-red-700 dark:text-red-400" : "text-slate-800 dark:text-slate-100"}`}>
+                        {job.status === "failed"
+                          ? `Failed: ${JOB_LABELS[job.type] ?? job.type}`
+                          : (JOB_LABELS[job.type] ?? job.type)}
+                      </p>
+                      {job.status === "failed" && job.error && (
+                        <p className="mt-0.5 truncate text-xs text-red-500">{job.error}</p>
+                      )}
+                      <p className="text-xs text-slate-400">
+                        {new Date(job.created_at).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>

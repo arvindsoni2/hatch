@@ -22,6 +22,8 @@ Discover → Score → Tailor → Track → Coach — fully automated, human-in-
 
 ## What is Hatch?
 
+> **Status:** Active development — core pipeline (Scout → Score → Tailor → Coach) is functional. Tailor and Coach run as async background jobs with real-time notification bell.
+
 Hatch is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
 
 ```text
@@ -53,12 +55,15 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | **Profile-driven** | All user config in `profile.yaml` — roles, location, skills, weights, LLM provider. No code changes per user. |
 | **Locale Pack System** | YAML-driven market packs for 🇬🇧 UK, 🇮🇳 India, 🇮🇪 Ireland, 🇦🇪 UAE. Controls job boards, compensation defaults, and legal/compliance fields. |
 | **Pluggable AI** | Anthropic, OpenAI, Google, Ollama (free/local), Azure, AWS Bedrock — switch via `profile.yaml` |
+| **Dynamic model picker** | Settings page auto-discovers models from your running Ollama instance — no manual config needed |
 | **Two-tier scoring** | Cheap triage model pre-filters; strong primary model scores on 4 dimensions with configurable weights |
 | **Locale-aware scoring** | Contract status, work authorisation, notice period, and other locale-specific signals injected into the `location_match` scoring dimension |
 | **Human-in-the-loop** | Mandatory approval checkpoint before any application leaves the system — never auto-submits |
 | **Autonomous pipeline** | APScheduler cron → event bus → LangGraph StateGraph routes events to correct agents |
+| **Async notification bell** | Tailor and Coach run in the background; a persistent notification bell fires when jobs complete or fail |
 | **Interview coaching** | Company research, 12 categorised questions, STAR model answers mapped to your proof points |
 | **JD gap analysis** | Per-job skill gap card: matched skills, missing skills, JD-only keywords, match %, actionable recommendations |
+| **LLM trace panel** | Per-call latency, token counts, and response preview — visible in the debug panel for local troubleshooting |
 | **Calendar export** | Download any interview round as an `.ics` file — one click to add to Google Calendar, Outlook, or Apple Calendar |
 | **Job archiving** | Configurable auto-archive for stale listings; archived jobs stay in DB for history |
 | **Self-hosted** | Docker Compose on any laptop. SQLite + ChromaDB — no external services required |
@@ -227,7 +232,7 @@ The locale pack (`locales/<id>.yaml`) determines:
 | Anthropic | `anthropic` | `claude-haiku-4-5-20251001` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
 | OpenAI | `openai` | `gpt-4o-mini` | `gpt-4o` | `OPENAI_API_KEY` |
 | Google | `google` | `gemini-2.0-flash` | `gemini-2.5-pro` | `GOOGLE_API_KEY` |
-| Ollama (free) | `ollama` | `gemma3:4b` | `qwen3:14b` | — (set `base_url`) |
+| Ollama (free) | `ollama` | `phi3:mini` | `phi3:mini` or `gemma3:9b` | — (set `base_url`) |
 | Azure OpenAI | `azure` | deployment name | deployment name | `AZURE_OPENAI_API_KEY` |
 | AWS Bedrock | `aws_bedrock` | model ID | model ID | AWS credentials |
 
@@ -235,11 +240,13 @@ The locale pack (`locales/<id>.yaml`) determines:
 # profile.yaml — switch to Ollama for zero API cost
 llm:
   provider: "ollama"
-  triage_model: "gemma3:4b"
-  primary_model: "qwen3:14b"
-  base_url: "http://localhost:11434"
+  triage_model: "phi3:mini"   # 3.8B — fast pre-filter, ~2.3 GB download
+  primary_model: "phi3:mini"  # upgrade to gemma3:9b or qwen3:14b for better quality
+  base_url: "http://host.containers.internal:11434"  # use localhost if running outside Docker
   track_costs: false
 ```
+
+> **Ollama model tip:** `phi3:mini` is the default — it runs on any machine with 4 GB RAM and has no thinking-mode latency. `gemma3:9b` or `qwen3:14b` give noticeably better CV tailoring and coaching quality but require 8–16 GB RAM. The Settings page auto-discovers all locally-pulled models so you can switch without editing YAML.
 
 ### Scoring
 
@@ -412,7 +419,7 @@ Well within the default monthly budget configured in `profile.yaml`. Use Ollama 
 LangGraph's explicit state machine maps cleanly to the application lifecycle; `interrupt()` gives clean human-in-the-loop; `SqliteSaver` matches the existing SQLite stack. CrewAI is great for fast prototyping but lacks built-in checkpointing.
 
 **Can I use a local model?**
-Yes — set `provider: ollama` in `profile.yaml` and point `base_url` at your Ollama instance. `qwen3:14b` or `llama3.1:8b` are reasonable choices for `primary_model`.
+Yes — Ollama is the default. `phi3:mini` is pulled automatically by the installer if no models are present (~2.3 GB). For better tailoring and coaching quality, `ollama pull gemma3:9b` or `ollama pull qwen3:14b` and select them in Settings. Note: models with built-in thinking/reasoning mode (e.g. `gemma4:e4b`) are supported — Hatch automatically disables their thinking mode to avoid multi-minute response times.
 
 **Is my data safe?**
 All data stays local. The only external calls are to your configured LLM provider's API. `profile.yaml` and `master_cv.json` are gitignored — never committed.

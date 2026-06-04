@@ -58,16 +58,31 @@ async def get_async_job(
 
 @router.get("", response_model=list[AsyncJobRead])
 async def list_async_jobs(
-    status: str = Query("done"),
+    status: list[str] = Query(default=["done"]),
     since: Optional[str] = Query(None, description="ISO-8601 datetime; defaults to 24h ago"),
     limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> list[AsyncJobRead]:
-    """List background jobs filtered by status. Used by the notification bell."""
+    """List background jobs filtered by status. Used by the notification bell.
+
+    Pass status multiple times (e.g. ?status=done&status=failed) to include both.
+    """
+    from sqlalchemy import select, or_  # noqa: PLC0415
+    from ..models.async_job import AsyncJob  # noqa: PLC0415
+
     if since:
         since_dt = datetime.fromisoformat(since)
     else:
         since_dt = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    jobs = await AsyncJobService.list_by_status(db, status, since_dt, limit=limit)
-    return [_to_read(j) for j in jobs]
+    result = await db.execute(
+        select(AsyncJob)
+        .where(
+            AsyncJob.created_at >= since_dt,
+            or_(*[AsyncJob.status == s for s in status]) if len(status) > 1
+            else AsyncJob.status == status[0],
+        )
+        .order_by(AsyncJob.created_at.desc())
+        .limit(limit)
+    )
+    return [_to_read(j) for j in result.scalars().all()]

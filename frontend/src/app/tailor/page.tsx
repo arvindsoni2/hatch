@@ -145,18 +145,26 @@ export default function TailorPage() {
             {(() => {
               const isAnalysing = stage === "analysing" || analyseState.status === "pending" || analyseState.status === "running";
               return (
-                <Button
-                  onClick={handleAnalyse}
-                  disabled={isAnalysing || (!jdText.trim() && !jobUrl.trim())}
-                  className="mt-3 w-full"
-                  style={{ background: "var(--accent)", color: "var(--on-accent)", minHeight: 40 }}
-                >
-                  {isAnalysing ? (
-                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analysing...</>
-                  ) : (
-                    <>Analyse JD <ChevronRight className="ml-1 h-4 w-4" /></>
+                <>
+                  <Button
+                    onClick={handleAnalyse}
+                    disabled={isAnalysing || (!jdText.trim() && !jobUrl.trim())}
+                    className="mt-3 w-full"
+                    style={{ background: "var(--accent)", color: "var(--on-accent)", minHeight: 40 }}
+                  >
+                    {isAnalysing ? (
+                      <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analysing...</>
+                    ) : (
+                      <>Analyse JD <ChevronRight className="ml-1 h-4 w-4" /></>
+                    )}
+                  </Button>
+                  {isAnalysing && (
+                    <p className="mt-2 text-xs text-center" style={{ color: "var(--text-muted)" }}>
+                      Extracting requirements with local AI — takes 1–3 minutes.
+                      You can navigate away; the <span className="font-medium" style={{ color: "var(--text)" }}>notification bell</span> will fire when done.
+                    </p>
                   )}
-                </Button>
+                </>
               );
             })()}
           </div>

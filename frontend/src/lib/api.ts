@@ -1182,8 +1182,8 @@ export async function listCompletedJobs(
   since: string,
   limit = 20
 ): Promise<AsyncJobResponse[]> {
-  const params = buildQueryString({ status: "done", since, limit })
-  return apiFetch<AsyncJobResponse[]>(`/api/async-jobs${params}`)
+  const qs = `?status=done&status=failed&since=${encodeURIComponent(since)}&limit=${limit}`
+  return apiFetch<AsyncJobResponse[]>(`/api/async-jobs${qs}`)
 }
 
 // ── Agentic pipeline ────────────────────────────────────────

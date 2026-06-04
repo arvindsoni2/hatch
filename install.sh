@@ -66,9 +66,10 @@ cd "$INSTALL_DIR"
 
 # ── Ollama (default LLM — free, local, no API key) ─────────────────
 
-# Default model to pull if none are installed. Gemma 3 9B is capable and
-# runs on ~8 GB RAM. Override by setting HATCH_OLLAMA_MODEL before running.
-DEFAULT_OLLAMA_MODEL="${HATCH_OLLAMA_MODEL:-gemma3:latest}"
+# Default model to pull if none are installed. phi3:mini (3.8B) is a safe
+# starting point — runs on ~4 GB RAM, no GPU required, no thinking-mode latency.
+# Override by setting HATCH_OLLAMA_MODEL before running.
+DEFAULT_OLLAMA_MODEL="${HATCH_OLLAMA_MODEL:-phi3:mini}"
 
 setup_ollama() {
   # 1. Install Ollama if missing
@@ -136,8 +137,9 @@ setup_ollama() {
 
   if [ "$model_count" -eq 0 ]; then
     info "No Ollama models found — pulling ${DEFAULT_OLLAMA_MODEL}…"
-    warn "This is a one-time download (~5 GB). It may take several minutes."
+    warn "This is a one-time download (~2.3 GB). It may take a few minutes."
     warn "Set HATCH_OLLAMA_MODEL=<name> before running this script to choose a different model."
+    warn "Larger models (gemma3:9b, qwen3:14b) give better results but require 8+ GB RAM."
     ollama pull "$DEFAULT_OLLAMA_MODEL"
     ok "Model ${DEFAULT_OLLAMA_MODEL} ready."
   else

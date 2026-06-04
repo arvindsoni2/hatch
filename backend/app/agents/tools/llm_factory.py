@@ -276,6 +276,12 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     if effective_base_url:
         kwargs["base_url"] = effective_base_url
 
+    # Disable thinking/reasoning mode for Ollama — models like gemma4 default to thinking
+    # mode which generates thousands of internal tokens before responding, causing 14+ minute
+    # response times and breaking JSON parsing.
+    if llm_cfg.provider == "ollama":
+        kwargs["reasoning"] = False
+
     return _attach_tracer(init_chat_model(
         model=model_name,
         model_provider=provider,
@@ -324,6 +330,7 @@ def get_json_model() -> BaseChatModel:
             "max_retries": llm_cfg.max_retries,
             "format": "json",
             "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
+            "reasoning": False,
         }
         return _attach_tracer(init_chat_model(
             model=llm_cfg.primary_model,

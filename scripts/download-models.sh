@@ -1,27 +1,32 @@
 #!/usr/bin/env bash
-# Downloads Qwen3 14B Q4_K_M GGUF into ./models/
-# Run once before first podman-compose up.
+# Pull the default Ollama model used by Hatch.
+# Run once before 'podman compose up' if Ollama has no models yet.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODEL_DIR="${SCRIPT_DIR}/../models"
-MODEL_FILE="${MODEL_DIR}/Qwen3-14B-Q4_K_M.gguf"
-MODEL_URL="https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf"
+MODEL="${HATCH_OLLAMA_MODEL:-phi3:mini}"
 
-mkdir -p "${MODEL_DIR}"
+if ! command -v ollama &>/dev/null; then
+  echo "[hatch] ollama not found — install from https://ollama.com/install before running this script."
+  exit 1
+fi
 
-if [[ -f "${MODEL_FILE}" ]]; then
-  echo "Model already present at ${MODEL_FILE} — skipping download."
+# Start Ollama if not already running
+if ! curl -s --max-time 3 http://localhost:11434/api/tags &>/dev/null; then
+  echo "[hatch] Starting Ollama…"
+  nohup ollama serve > /tmp/ollama.log 2>&1 &
+  sleep 3
+fi
+
+# Check if the model is already present
+EXISTING=$(curl -s --max-time 3 http://localhost:11434/api/tags \
+  | python3 -c "import sys,json; m=json.load(sys.stdin).get('models',[]); print(' '.join(x['name'] for x in m))" 2>/dev/null || echo "")
+
+if echo "$EXISTING" | grep -qF "$MODEL"; then
+  echo "[hatch] Model '$MODEL' already present — skipping download."
   exit 0
 fi
 
-MODEL_TMP="${MODEL_FILE}.tmp"
-trap 'rm -f "${MODEL_TMP}"' EXIT
-
-echo "Downloading Qwen3-14B-Q4_K_M.gguf (~8.5 GB) from HuggingFace…"
-echo "URL: ${MODEL_URL}"
-curl -L --progress-bar -o "${MODEL_TMP}" "${MODEL_URL}"
-mv "${MODEL_TMP}" "${MODEL_FILE}"
-
-echo ""
-echo "Done. Run 'podman-compose up' to start all services."
+echo "[hatch] Pulling '$MODEL' via Ollama (~2.3 GB for phi3:mini)…"
+echo "[hatch] Set HATCH_OLLAMA_MODEL=<name> to pull a different model."
+ollama pull "$MODEL"
+echo "[hatch] Done. Run 'podman compose up -d' to start Hatch."
