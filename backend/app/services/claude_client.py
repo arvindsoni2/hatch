@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..agents.tools.llm_factory import get_json_model, get_primary_model
+from ..agents.tools.llm_factory import get_json_model, get_primary_model, record_trace
+from ..agents.tools.profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,16 @@ class ClaudeClient:
         temperature: float | None = None,
     ) -> str:
         """Send a completion request and return the text response."""
+        model_name = load_profile().llm.primary_model
         llm = get_primary_model()
         messages = [SystemMessage(content=system), HumanMessage(content=user)]
+        t0 = time.monotonic()
         response = await llm.ainvoke(messages)
+        duration_ms = int((time.monotonic() - t0) * 1000)
         content = response.content
-        return content if isinstance(content, str) else str(content)
+        text = content if isinstance(content, str) else str(content)
+        record_trace(model_name, duration_ms, text)
+        return text
 
     async def complete_json(
         self,
@@ -68,13 +75,17 @@ class ClaudeClient:
         Uses get_json_model() to pass format="json" to Ollama for token-level
         JSON constraint.
         """
+        model_name = load_profile().llm.primary_model
         last_error: Exception | None = None
         for attempt in range(3):
             try:
                 llm = get_json_model()
                 messages = [SystemMessage(content=system + _JSON_INSTRUCTION), HumanMessage(content=user)]
+                t0 = time.monotonic()
                 response = await llm.ainvoke(messages)
+                duration_ms = int((time.monotonic() - t0) * 1000)
                 text = response.content if isinstance(response.content, str) else str(response.content)
+                record_trace(model_name, duration_ms, text)
                 # Strip Qwen3 / DeepSeek reasoning blocks before JSON parsing
                 text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
                 cleaned = text.strip()

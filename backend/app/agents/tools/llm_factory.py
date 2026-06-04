@@ -161,6 +161,29 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
         ))
 
 
+def record_trace(
+    model_name: str,
+    duration_ms: int,
+    content: str,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+) -> None:
+    """Record a completed LLM call to the trace buffer."""
+    global _trace_counter
+    tokens_out = tokens_out or estimate_tokens(content)
+    _trace_counter += 1
+    _trace_buffer.append(_LLMTrace(
+        id=_trace_counter,
+        ts=datetime.now(timezone.utc).isoformat(),
+        model=model_name,
+        duration_ms=duration_ms,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_usd=estimate_cost(model_name, tokens_in, tokens_out),
+        response_preview=content[:300],
+    ))
+
+
 def get_llm_traces() -> list[dict[str, Any]]:
     """Return the last 100 LLM traces in reverse-chronological order."""
     return [
