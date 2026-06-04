@@ -7,9 +7,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException
 
-from ..agents.tools.profile_loader import invalidate_cache
+from ..agents.tools.profile_loader import invalidate_cache, load_profile
 from ..services.profile_service import load_profile_raw, save_profile_raw
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-2.5-flash-lite",
     ],
     "azure_openai": ["gpt-4o-mini", "gpt-4o"],
-    "ollama": ["gemma4:e4b", "phi3:mini", "llama3.2", "mistral", "phi4", "qwen2.5", "qwen3:14b"],
+    "ollama": [],  # dynamically populated from /api/v2/settings/ollama-models
 }
 
 _FREE_TIER_PROVIDERS = {"google_genai", "ollama"}
@@ -195,3 +196,51 @@ async def get_env_status() -> dict[str, Any]:
         "current_provider": current_provider,
         "tier": current_tier,
     }
+
+
+@router.get("/ollama-models")
+async def list_ollama_models() -> dict[str, Any]:
+    """Return models currently installed in Ollama by querying its /api/tags endpoint.
+
+    Falls back gracefully if Ollama is unreachable (returns empty list + error).
+    """
+    base_url = "http://host.containers.internal:11434"
+    try:
+        profile = load_profile()
+        base_url = profile.llm.base_url or base_url
+    except Exception:
+        pass
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base_url}/api/tags")
+            r.raise_for_status()
+            data = r.json()
+            models = [m["name"] for m in data.get("models", [])]
+            return {"models": models, "base_url": base_url}
+    except Exception as exc:
+        logger.warning("Could not reach Ollama at %s: %s", base_url, exc)
+        return {"models": [], "base_url": base_url, "error": str(exc)}
+
+
+@router.put("/ollama-model")
+async def set_ollama_model(data: dict[str, Any]) -> dict[str, Any]:
+    """Persist primary_model (and optionally triage_model) for Ollama in profile.yaml."""
+    primary = (data.get("primary_model") or "").strip()
+    triage = (data.get("triage_model") or "").strip()
+    if not primary:
+        raise HTTPException(status_code=400, detail="primary_model is required")
+    try:
+        raw = load_profile_raw()
+        if "llm" not in raw:
+            raw["llm"] = {}
+        raw["llm"]["primary_model"] = primary
+        if triage:
+            raw["llm"]["triage_model"] = triage
+        save_profile_raw(raw)
+        invalidate_cache()
+        saved_triage = triage or raw["llm"].get("triage_model", "")
+        return {"saved": True, "primary_model": primary, "triage_model": saved_triage}
+    except Exception as exc:
+        logger.error("Failed to save Ollama model: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))

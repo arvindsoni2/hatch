@@ -1739,6 +1739,24 @@ export async function saveApiKey(keyName: string, keyValue: string): Promise<Sav
   });
 }
 
+export interface OllamaModelsResult {
+  models: string[];
+  base_url: string;
+  error?: string;
+}
+
+export async function fetchOllamaModels(): Promise<OllamaModelsResult> {
+  return apiFetch<OllamaModelsResult>('/api/v2/settings/ollama-models');
+}
+
+export async function saveOllamaModel(primaryModel: string, triageModel?: string): Promise<{ saved: boolean; primary_model: string; triage_model: string }> {
+  return apiFetch('/api/v2/settings/ollama-model', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ primary_model: primaryModel, triage_model: triageModel ?? '' }),
+  });
+}
+
 // ── Rate limit status ────────────────────────────────────────────────
 
 export interface RateLimitStatus {

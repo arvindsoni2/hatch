@@ -11,6 +11,8 @@ import {
   fetchEnvStatus,
   saveApiKey,
   EnvStatus,
+  fetchOllamaModels,
+  saveOllamaModel,
 } from "../../lib/api"
 import { DigestPreview } from "../../components/DigestPreview"
 
@@ -217,7 +219,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: "Ollama (local, free)",
 }
 
-function AiProviderTab({ currentProvider }: { currentProvider?: string }) {
+function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageModel }: { currentProvider?: string; currentPrimaryModel?: string; currentTriageModel?: string }) {
   const [envStatus, setEnvStatus] = useState<EnvStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const [selectedKeyName, setSelectedKeyName] = useState("GOOGLE_API_KEY")
@@ -225,6 +227,15 @@ function AiProviderTab({ currentProvider }: { currentProvider?: string }) {
   const [saving, setSaving] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Ollama model state
+  const [ollamaModels, setOllamaModels] = useState<string[]>([])
+  const [ollamaLoading, setOllamaLoading] = useState(false)
+  const [ollamaError, setOllamaError] = useState<string | null>(null)
+  const [selectedPrimary, setSelectedPrimary] = useState("")
+  const [selectedTriage, setSelectedTriage] = useState("")
+  const [savingModel, setSavingModel] = useState(false)
+  const [modelResult, setModelResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   const loadStatus = async () => {
     setLoadingStatus(true)
@@ -239,6 +250,38 @@ function AiProviderTab({ currentProvider }: { currentProvider?: string }) {
   }
 
   useEffect(() => { void loadStatus() }, [])
+
+  useEffect(() => {
+    if (currentProvider !== "ollama") return
+    setOllamaLoading(true)
+    setOllamaError(null)
+    fetchOllamaModels().then((r) => {
+      setOllamaModels(r.models)
+      if (r.error) setOllamaError("Ollama unreachable — is it running?")
+      if (r.models.length > 0) {
+        // Pre-populate from current profile values if they exist in the model list,
+        // otherwise default to first available model
+        setSelectedPrimary(currentPrimaryModel && r.models.includes(currentPrimaryModel) ? currentPrimaryModel : r.models[0])
+        setSelectedTriage(currentTriageModel && r.models.includes(currentTriageModel) ? currentTriageModel : (r.models.length > 1 ? r.models[1] : r.models[0]))
+      }
+    }).catch(() => setOllamaError("Could not fetch Ollama models"))
+      .finally(() => setOllamaLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProvider])
+
+  const handleSaveModel = async () => {
+    if (!selectedPrimary) return
+    setSavingModel(true)
+    setModelResult(null)
+    try {
+      await saveOllamaModel(selectedPrimary, selectedTriage)
+      setModelResult({ ok: true, message: `Saved — primary: ${selectedPrimary}, triage: ${selectedTriage}` })
+    } catch (err) {
+      setModelResult({ ok: false, message: err instanceof Error ? err.message : "Save failed" })
+    } finally {
+      setSavingModel(false)
+    }
+  }
 
   const handleSave = async () => {
     if (!keyValue.trim()) return
@@ -356,6 +399,58 @@ function AiProviderTab({ currentProvider }: { currentProvider?: string }) {
           </p>
         </div>
       </SectionCard>
+
+      {/* Ollama model picker — only shown when provider is ollama */}
+      {currentProvider === "ollama" && (
+        <SectionCard title="Ollama Models">
+          {ollamaLoading ? (
+            <div className="flex items-center gap-2 text-sm text-slate-500 py-2"><Spinner /> Fetching installed models…</div>
+          ) : ollamaError ? (
+            <p className="text-sm text-red-600 py-2">{ollamaError}</p>
+          ) : ollamaModels.length === 0 ? (
+            <p className="text-sm text-slate-400 py-2">No models found — pull a model with <code className="bg-slate-100 rounded px-1">ollama pull &lt;model&gt;</code> first.</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Primary model <span className="text-slate-400 font-normal">(tailoring, coach, analysis)</span></label>
+                  <select
+                    value={selectedPrimary}
+                    onChange={(e) => setSelectedPrimary(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Triage model <span className="text-slate-400 font-normal">(fast pre-filtering)</span></label>
+                  <select
+                    value={selectedTriage}
+                    onChange={(e) => setSelectedTriage(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => void handleSaveModel()}
+                  disabled={savingModel || !selectedPrimary}
+                  className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
+                >
+                  {savingModel ? <><Spinner /> Saving…</> : "Save Models"}
+                </button>
+                {modelResult && (
+                  <p className={`text-sm font-medium ${modelResult.ok ? "text-green-700" : "text-red-600"}`}>
+                    {modelResult.ok ? "✓ " : "✗ "}{modelResult.message}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </SectionCard>
+      )}
 
       {/* Scoring strategy */}
       <SectionCard title="Scoring Strategy">
@@ -668,7 +763,7 @@ export default function SettingsPage() {
       {/* Tab content */}
       {activeTab === "Profile" && <ProfileTab data={profileData} />}
       {activeTab === "Resume" && <ResumeTab />}
-      {activeTab === "AI Provider" && <AiProviderTab currentProvider={profileData?.llm?.provider} />}
+      {activeTab === "AI Provider" && <AiProviderTab currentProvider={profileData?.llm?.provider} currentPrimaryModel={profileData?.llm?.primary_model} currentTriageModel={profileData?.llm?.triage_model} />}
       {activeTab === "Job Boards" && <JobBoardsTab data={profileData} />}
       {activeTab === "System" && <SystemTab profileData={profileData} />}
     </div>

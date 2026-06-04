@@ -1,15 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Field, Choice, ToggleRow, Seg } from "./OnboardingPrimitives";
 import type { LocaleBoard } from "@/lib/api";
+import { fetchOllamaModels } from "@/lib/api";
 
 export const LLM_PROVIDERS = [
   { id: "google_genai", label: "Google Gemini",   sub: "Free tier available — great default",  keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
   { id: "anthropic",    label: "Anthropic Claude", sub: "Strongest tailoring quality",          keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
   { id: "openai",       label: "OpenAI",           sub: "GPT-4o family",                        keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
-  { id: "ollama",       label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "phi3:mini",                 primaryDefault: "qwen3:14b" },
+  { id: "ollama",       label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "",                          primaryDefault: "" },
 ];
 
 export interface LLMData {
@@ -47,20 +49,53 @@ export function StepAIProvider({
   boards, enabledBoards, onEnabledBoardsChange,
   scrapeIntervalHours, onScrapeIntervalChange,
 }: StepAIProviderProps) {
-  const handleProviderChange = (providerId: string) => {
-    const p = LLM_PROVIDERS.find((x) => x.id === providerId);
-    if (p) {
-      onLlmChange({
-        ...llm,
-        provider: providerId,
-        triage_model: p.triageDefault,
-        primary_model: p.primaryDefault,
-        api_key_env: p.keyEnv,
-        base_url: providerId === "ollama" ? "http://host.containers.internal:11434" : null,
-      });
-      onTestApiKeyChange("");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaLoading, setOllamaLoading] = useState(false);
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
+
+  const loadOllamaModels = async () => {
+    setOllamaLoading(true);
+    setOllamaError(null);
+    try {
+      const result = await fetchOllamaModels();
+      setOllamaModels(result.models);
+      if (result.error) setOllamaError("Ollama unreachable — is it running?");
+      return result.models;
+    } catch {
+      setOllamaError("Could not fetch Ollama models");
+      return [];
+    } finally {
+      setOllamaLoading(false);
     }
   };
+
+  const handleProviderChange = async (providerId: string) => {
+    const p = LLM_PROVIDERS.find((x) => x.id === providerId);
+    if (!p) return;
+    let primary = p.primaryDefault;
+    let triage = p.triageDefault;
+    if (providerId === "ollama") {
+      const models = await loadOllamaModels();
+      primary = models[0] ?? "";
+      triage = models.length > 1 ? models[1] : (models[0] ?? "");
+    }
+    onLlmChange({
+      ...llm,
+      provider: providerId,
+      triage_model: triage,
+      primary_model: primary,
+      api_key_env: p.keyEnv,
+      base_url: providerId === "ollama" ? "http://host.containers.internal:11434" : null,
+    });
+    onTestApiKeyChange("");
+  };
+
+  useEffect(() => {
+    if (llm.provider === "ollama" && ollamaModels.length === 0) {
+      void loadOllamaModels();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const needsKey = llm.provider !== "ollama";
 
@@ -85,7 +120,7 @@ export function StepAIProvider({
             <Choice
               key={p.id}
               on={llm.provider === p.id}
-              onClick={() => handleProviderChange(p.id)}
+              onClick={() => void handleProviderChange(p.id)}
               title={p.label}
               sub={p.sub}
             />
@@ -133,13 +168,47 @@ export function StepAIProvider({
       )}
 
       {llm.provider === "ollama" && (
-        <Field label="Ollama base URL" hint="Container deployment: use http://host.containers.internal:11434. Direct host install: http://localhost:11434.">
-          <Input
-            value={llm.base_url || ""}
-            onChange={(e) => onLlmChange({ ...llm, base_url: e.target.value || "http://host.containers.internal:11434" })}
-            placeholder="http://host.containers.internal:11434"
-          />
-        </Field>
+        <>
+          <Field label="Ollama base URL" hint="Container deployment: use http://host.containers.internal:11434. Direct host install: http://localhost:11434.">
+            <Input
+              value={llm.base_url || ""}
+              onChange={(e) => onLlmChange({ ...llm, base_url: e.target.value || "http://host.containers.internal:11434" })}
+              placeholder="http://host.containers.internal:11434"
+            />
+          </Field>
+
+          <Field label="Primary model" hint="Used for tailoring, coaching, and detailed analysis.">
+            {ollamaLoading ? (
+              <div className="flex items-center gap-2 text-sm text-[var(--text-dim)]">
+                <Loader2 className="h-4 w-4 animate-spin" /> Fetching installed models…
+              </div>
+            ) : ollamaError ? (
+              <p className="text-sm text-[var(--danger)]">{ollamaError}</p>
+            ) : ollamaModels.length === 0 ? (
+              <p className="text-sm text-[var(--text-dim)]">No models found — pull a model with <code>ollama pull &lt;model&gt;</code> first.</p>
+            ) : (
+              <select
+                value={llm.primary_model}
+                onChange={(e) => onLlmChange({ ...llm, primary_model: e.target.value })}
+                className="w-full rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            )}
+          </Field>
+
+          <Field label="Triage model" hint="Fast model for quick relevance filtering (can be the same as primary).">
+            {!ollamaLoading && ollamaModels.length > 0 && (
+              <select
+                value={llm.triage_model}
+                onChange={(e) => onLlmChange({ ...llm, triage_model: e.target.value })}
+                className="w-full rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              >
+                {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            )}
+          </Field>
+        </>
       )}
 
       {boards.length > 0 && (
