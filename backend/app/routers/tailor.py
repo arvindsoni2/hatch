@@ -1,6 +1,7 @@
 """FastAPI router for the Tailor module — CV & cover letter generation pipeline."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -155,16 +156,30 @@ async def generate_all(
         exc_str: str | None = None
         try:
             async with AsyncSessionLocal() as job_db:
-                result = await svc.generate_all(
-                    application_id=request.application_id,
-                    variant=request.variant,
-                    jd_text=jd_text,
-                    db=job_db,
-                    generate_variants=generate_variants,
-                    job_title=request.job_title,
-                    company_name=request.company_name,
-                    job_url=request.job_url,
+                # Hard 20-minute ceiling: Ollama queues requests internally so
+                # request_timeout=300 only fires after the response starts flowing.
+                # If the classifier monopolises Ollama the JD analysis would wait
+                # forever without this outer asyncio timeout.
+                result = await asyncio.wait_for(
+                    svc.generate_all(
+                        application_id=request.application_id,
+                        variant=request.variant,
+                        jd_text=jd_text,
+                        db=job_db,
+                        generate_variants=generate_variants,
+                        job_title=request.job_title,
+                        company_name=request.company_name,
+                        job_url=request.job_url,
+                    ),
+                    timeout=1200,  # 20 minutes max
                 )
+        except asyncio.TimeoutError:
+            logger.error(
+                "generate_all timed out after 20 min for async job %s — "
+                "Ollama may be busy with background classifier",
+                async_job.id,
+            )
+            exc_str = "Pipeline timed out after 20 minutes. Ollama may be busy — retry in a few minutes."
         except Exception as exc:
             logger.exception("generate_all failed for async job %s: %s", async_job.id, exc)
             exc_str = str(exc)

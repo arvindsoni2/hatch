@@ -80,6 +80,9 @@ class JobClassifier:
                 cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
             result = json.loads(cleaned)
+            # LLM may return {"jobs": [...]} or directly [...]
+            if isinstance(result, list):
+                return result
             return result.get("jobs", [])
         except Exception as exc:
             logger.error("Batch classify failed (%d jobs): %s", len(jobs), exc)

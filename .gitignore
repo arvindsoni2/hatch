@@ -153,3 +153,7 @@ master_cv_schema.json
 # LLM model files — large binaries, download separately
 models/*.gguf
 models/*.bin
+
+# Agent skills — installed locally, not part of the project
+.agents/
+.claude/skills/
