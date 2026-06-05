@@ -310,12 +310,15 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     if effective_base_url:
         kwargs["base_url"] = effective_base_url
 
-    # Disable thinking/reasoning mode for Ollama — models like gemma4 default to thinking
-    # mode which generates thousands of internal tokens before responding, causing 14+ minute
-    # response times and breaking JSON parsing.
+    # Ollama-specific tuning for long-context models like gemma4:
+    # - reasoning=False: disable visible thinking tokens in the response
+    # - request_timeout: hard ceiling to prevent silent hangs on slow CPU inference
+    # - num_ctx: Ollama defaults to 4096 for gemma4 but CV/CL prompts are ~4K tokens
+    #   input alone, leaving no room for output. Force 16 K for all primary-model calls.
     if llm_cfg.provider == "ollama":
         kwargs["reasoning"] = False
         kwargs["request_timeout"] = 300  # 5-minute hard ceiling; prevents silent hangs
+        kwargs["num_ctx"] = 16384
 
     return _attach_tracer(init_chat_model(
         model=model_name,
@@ -363,6 +366,10 @@ def get_json_model() -> BaseChatModel:
             "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
             "reasoning": False,
             "request_timeout": 300,  # 5-minute hard ceiling; prevents silent hangs
+            # Ollama defaults to 4096 context for gemma4 but CV/CL prompts consume
+            # ~4000 tokens of input, leaving no room for output. Force 16 K so there's
+            # always headroom for thinking tokens + the full generated JSON.
+            "num_ctx": 16384,
         }
         return _attach_tracer(init_chat_model(
             model=model_name,
