@@ -15,7 +15,7 @@ import {
   GeneratedDocument,
 } from "@/lib/api";
 import { useAsyncJob } from "@/hooks/useAsyncJob";
-import { CheckCircle2, ChevronRight, Clock, FileText, Loader2, XCircle, Zap } from "lucide-react";
+import { CheckCircle2, ChevronRight, Clock, ExternalLink, FileText, Loader2, XCircle, Zap } from "lucide-react";
 
 type Stage = "idle" | "analysing" | "analysed" | "generating" | "complete" | "error";
 
@@ -56,13 +56,13 @@ const LS_JD_PREFIX = "tailor_jd_";
 export default function TailorPage() {
   const [jdText, setJdText] = useState("");
   const [jobUrl, setJobUrl] = useState("");
-  const [applicationId, setApplicationId] = useState("");
   const [variant, setVariant] = useState<"A" | "B">("A");
 
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<JDAnalysisResponse | null>(null);
   const [synthJdText, setSynthJdText] = useState("");
+  const [autoApplicationId, setAutoApplicationId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
   const [activeTab, setActiveTab] = useState<"analysis" | "history">("analysis");
   const [analysisHistory, setAnalysisHistory] = useState<AsyncJobResponse<JDAnalysisResponse>[]>([]);
@@ -99,15 +99,19 @@ export default function TailorPage() {
   const {
     state: generateState,
     submit: submitGenerate,
-  } = useAsyncJob({
-    onComplete: async () => {
+  } = useAsyncJob<{ application_id: string }>({
+    onComplete: async (result) => {
+      const appId = result?.application_id ?? null;
+      setAutoApplicationId(appId);
       setStage("complete");
       setActiveTab("history");
-      try {
-        const docs = await getDocumentHistory(applicationId);
-        setDocuments(docs);
-      } catch {
-        // non-fatal
+      if (appId) {
+        try {
+          const docs = await getDocumentHistory(appId);
+          setDocuments(docs);
+        } catch {
+          // non-fatal
+        }
       }
     },
     onError: (err) => {
@@ -121,10 +125,10 @@ export default function TailorPage() {
     setError(null);
     setAnalysis(null);
     setSynthJdText("");
+    setAutoApplicationId(null);
     setStage("analysing");
     await submitAnalyse(async () => {
       const ref = await analyseJdText(jdText, jobUrl || undefined);
-      // Persist the raw JD text keyed by job ID so history can restore it
       try {
         localStorage.setItem(
           `${LS_JD_PREFIX}${ref.job_id}`,
@@ -138,30 +142,33 @@ export default function TailorPage() {
   }, [jdText, jobUrl, submitAnalyse]);
 
   const handleGenerate = useCallback(async () => {
-    if (!applicationId.trim()) {
-      setError("Please enter an Application ID to save documents to.");
-      return;
-    }
     const effectiveJd = jdText.trim() || synthJdText;
     if (!effectiveJd) {
-      setError("Job description is required for generation.");
+      setError("Run a JD analysis first before generating documents.");
       return;
     }
     setStage("generating");
     setError(null);
-    await submitGenerate(() => generateAll(applicationId, effectiveJd, variant));
-  }, [applicationId, jdText, synthJdText, variant, submitGenerate]);
+    await submitGenerate(() =>
+      generateAll(effectiveJd, variant, {
+        jobTitle: analysis?.analysis?.role_title ?? undefined,
+        companyName: undefined,
+        jobUrl: jobUrl || undefined,
+      })
+    );
+  }, [jdText, jobUrl, synthJdText, variant, analysis, submitGenerate]);
 
   const handleLoadHistory = useCallback(async () => {
-    if (!applicationId.trim()) return;
+    const appId = autoApplicationId;
+    if (!appId) return;
     try {
-      const docs = await getDocumentHistory(applicationId);
+      const docs = await getDocumentHistory(appId);
       setDocuments(docs);
       setActiveTab("history");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load history");
     }
-  }, [applicationId]);
+  }, [autoApplicationId]);
 
   const restoreAnalysis = useCallback((job: AsyncJobResponse<JDAnalysisResponse>) => {
     if (!job.result) return;
@@ -244,36 +251,27 @@ export default function TailorPage() {
             </h2>
             {!canGenerate && stage === "idle" && (
               <p className="mb-3 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-                Run a JD analysis above first to enable document generation.
+                Analyse a JD above first — documents will be saved to your Pipeline automatically.
               </p>
             )}
-            <div className="space-y-2 mb-3">
-              <input
-                type="text"
-                style={inputStyle}
-                placeholder="Application ID (from Pipeline)"
-                value={applicationId}
-                onChange={(e) => setApplicationId(e.target.value)}
-              />
-              <div className="flex gap-2">
-                {(["A", "B"] as const).map((v) => (
-                  <button
-                    key={v}
-                    onClick={() => setVariant(v)}
-                    className="flex-1 rounded-lg py-2 text-sm font-medium transition-colors"
-                    style={{
-                      border: variant === v ? "1px solid var(--accent)" : "1px solid var(--border)",
-                      background: variant === v ? "var(--accent-soft)" : "var(--surface-2)",
-                      color: variant === v ? "var(--accent)" : "var(--text-dim)",
-                    }}
-                  >
-                    Variant {v}
-                    <span className="ml-1 text-xs opacity-60">
-                      {v === "A" ? "(formal)" : "(conversational)"}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            <div className="mb-3 flex gap-2">
+              {(["A", "B"] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setVariant(v)}
+                  className="flex-1 rounded-lg py-2 text-sm font-medium transition-colors"
+                  style={{
+                    border: variant === v ? "1px solid var(--accent)" : "1px solid var(--border)",
+                    background: variant === v ? "var(--accent-soft)" : "var(--surface-2)",
+                    color: variant === v ? "var(--accent)" : "var(--text-dim)",
+                  }}
+                >
+                  Variant {v}
+                  <span className="ml-1 text-xs opacity-60">
+                    {v === "A" ? "(formal)" : "(conversational)"}
+                  </span>
+                </button>
+              ))}
             </div>
 
             <div className="flex gap-2">
@@ -289,21 +287,22 @@ export default function TailorPage() {
                   <><Zap className="mr-2 h-4 w-4" /> Generate All</>
                 )}
               </Button>
-              <Button
-                variant="outline"
-                onClick={handleLoadHistory}
-                disabled={!applicationId.trim()}
-                style={{ borderColor: "var(--border)", color: "var(--text-dim)", minHeight: 40 }}
-                title="Load document history"
-              >
-                <FileText className="h-4 w-4" />
-              </Button>
+              {autoApplicationId && (
+                <Button
+                  variant="outline"
+                  onClick={handleLoadHistory}
+                  style={{ borderColor: "var(--border)", color: "var(--text-dim)", minHeight: 40 }}
+                  title="Load document history"
+                >
+                  <FileText className="h-4 w-4" />
+                </Button>
+              )}
             </div>
 
             {stage === "generating" && (
               <div className="mt-3 rounded-lg border p-3" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
                 <p className="text-xs text-center" style={{ color: "var(--text)" }}>
-                  Generating your documents — this can take a few minutes.
+                  Generating your CV and cover letter — this takes a few minutes.
                 </p>
                 <p className="mt-1 text-xs text-center" style={{ color: "var(--text-muted)" }}>
                   {generateState.status === "pending" ? "Queuing…" : "Running pipeline…"}{" "}
@@ -312,9 +311,19 @@ export default function TailorPage() {
               </div>
             )}
 
-            {stage === "complete" && (
-              <div className="mt-3 rounded-lg p-3 text-center text-sm" style={{ background: "var(--success-soft)", color: "var(--success)" }}>
-                ✓ Documents generated successfully
+            {stage === "complete" && autoApplicationId && (
+              <div className="mt-3 rounded-lg p-3" style={{ background: "var(--success-soft)", border: "1px solid var(--success)", color: "var(--success)" }}>
+                <p className="text-sm font-medium text-center">✓ Documents generated</p>
+                <p className="mt-1 text-xs text-center" style={{ color: "var(--text-muted)" }}>
+                  Saved to your Pipeline.{" "}
+                  <a
+                    href={`/pipeline`}
+                    className="inline-flex items-center gap-0.5 font-medium underline"
+                    style={{ color: "var(--accent)" }}
+                  >
+                    View application <ExternalLink className="h-3 w-3" />
+                  </a>
+                </p>
               </div>
             )}
           </div>

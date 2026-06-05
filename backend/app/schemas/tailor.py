@@ -135,12 +135,16 @@ class ATSScoreResult(BaseModel):
 
 
 class TailorRequest(BaseModel):
-    application_id: str
+    application_id: str | None = None   # None = auto-create from job metadata
     variant: str = "A"
     generate_cv: bool = True
     generate_cover_letter: bool = True
     custom_instructions: str | None = None
     jd_text: str | None = None
+    # Used when application_id is None to create a pipeline entry automatically
+    job_title: str | None = None
+    company_name: str | None = None
+    job_url: str | None = None
 
 
 class JDAnalysisResponse(BaseModel):

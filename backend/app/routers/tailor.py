@@ -140,19 +140,32 @@ async def generate_all(
     db: AsyncSession = Depends(get_db),
     svc: TailorService = Depends(get_tailor_service),
 ) -> dict:
-    """Kick off full pipeline (JD + CV + CL). Poll /api/async-jobs/{job_id} for result."""
+    """Kick off full pipeline (JD + CV + CL). Poll /api/async-jobs/{job_id} for result.
+
+    When application_id is omitted, a JobPosting + Application are created
+    automatically in the pipeline so documents are always tracked.
+    """
     jd_text = request.jd_text or ""
     async_job = await AsyncJobService.create(db, "tailor_generate")
     await db.commit()
 
     async def _work() -> None:
-        try:
-            result = await svc.generate_all(
-                request.application_id, request.variant, jd_text, db, generate_variants
-            )
-            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
-        except Exception as exc:
-            await AsyncJobService._finish(async_job.id, None, str(exc))
+        from ..database import AsyncSessionLocal  # noqa: PLC0415
+        async with AsyncSessionLocal() as job_db:
+            try:
+                result = await svc.generate_all(
+                    application_id=request.application_id,
+                    variant=request.variant,
+                    jd_text=jd_text,
+                    db=job_db,
+                    generate_variants=generate_variants,
+                    job_title=request.job_title,
+                    company_name=request.company_name,
+                    job_url=request.job_url,
+                )
+                await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
+            except Exception as exc:
+                await AsyncJobService._finish(async_job.id, None, str(exc))
 
     AsyncJobService.run(async_job.id, _work())
     return {"job_id": async_job.id, "status": "pending", "type": "tailor_generate"}

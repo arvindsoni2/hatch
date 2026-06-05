@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -209,26 +210,95 @@ class TailorService:
         await db.commit()
         return doc
 
+    async def _create_manual_application(
+        self,
+        job_title: str,
+        company_name: str | None,
+        job_url: str | None,
+        jd_text: str | None,
+        db: AsyncSession,
+    ) -> str:
+        """Create a JobPosting + Application for a manually-sourced internet job.
+
+        If a JobPosting already exists for the given URL it is reused (no
+        duplicate created). A new Application is always created so each
+        tailoring attempt is independently tracked.
+
+        Returns:
+            The new Application UUID (string).
+        """
+        from ..models.job import JobPosting  # noqa: PLC0415
+        from ..models.application import Application  # noqa: PLC0415
+        from sqlalchemy import select  # noqa: PLC0415
+
+        effective_url = job_url or f"manual://{uuid.uuid4()}"
+
+        result = await db.execute(
+            select(JobPosting).where(JobPosting.url == effective_url)
+        )
+        job = result.scalar_one_or_none()
+
+        if job is None:
+            job = JobPosting(
+                id=str(uuid.uuid4()),
+                title=job_title or "Manual Job",
+                company=company_name,
+                url=effective_url,
+                source="manual",
+                description=jd_text,
+            )
+            db.add(job)
+            await db.flush()
+
+        app = Application(
+            id=str(uuid.uuid4()),
+            job_id=job.id,
+            status="discovered",
+            agent_created=False,
+            approval_status="pending",
+            notes="Created via Resume Tailoring page",
+        )
+        db.add(app)
+        await db.flush()
+        await db.commit()
+        logger.info("Auto-created application %s for manual job '%s'", app.id, job.title)
+        return app.id
+
     async def generate_all(
         self,
-        application_id: str,
+        application_id: str | None,
         variant: str,
         jd_text: str,
         db: AsyncSession,
         generate_variants: bool = False,
+        job_title: str | None = None,
+        company_name: str | None = None,
+        job_url: str | None = None,
     ) -> TailorResultBundle:
         """Run the full pipeline: JD analysis → CV → Cover letter.
 
         Args:
-            application_id: UUID of the Application.
+            application_id: UUID of an existing Application, or None to
+                auto-create a pipeline entry from the job metadata below.
             variant: "A" or "B".
             jd_text: Full JD text.
             db: Active async DB session.
             generate_variants: If True, also generate variant B.
+            job_title: Used only when application_id is None.
+            company_name: Used only when application_id is None.
+            job_url: Used only when application_id is None.
 
         Returns:
             TailorResultBundle with document IDs and scores.
         """
+        if not application_id:
+            application_id = await self._create_manual_application(
+                job_title=job_title or "Manual Job",
+                company_name=company_name,
+                job_url=job_url,
+                jd_text=jd_text,
+                db=db,
+            )
         analysis = await self._jd_analyser.analyse(jd_text)
         master_cv = _load_master_cv()
         skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)

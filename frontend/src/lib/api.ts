@@ -596,13 +596,25 @@ export async function analyseJdText(
 }
 
 export async function generateAll(
-  applicationId: string,
   jdText: string,
   variant = "A",
+  meta?: {
+    applicationId?: string | null;
+    jobTitle?: string | null;
+    companyName?: string | null;
+    jobUrl?: string | null;
+  }
 ): Promise<AsyncJobRef> {
   return apiFetch<AsyncJobRef>(`/api/tailor/generate`, {
     method: "POST",
-    body: JSON.stringify({ application_id: applicationId, variant, jd_text: jdText }),
+    body: JSON.stringify({
+      application_id: meta?.applicationId ?? null,
+      variant,
+      jd_text: jdText,
+      job_title: meta?.jobTitle ?? null,
+      company_name: meta?.companyName ?? null,
+      job_url: meta?.jobUrl ?? null,
+    }),
   });
 }
 
