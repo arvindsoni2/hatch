@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { X, Loader2 } from "lucide-react";
+import { X, Loader2, ExternalLink, FileText, Download, Sparkles } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
@@ -12,12 +12,15 @@ import { ActivityFeed } from "./ActivityFeed";
 import { RecruiterContact } from "./RecruiterContact";
 import {
   fetchApplication,
+  getDocumentHistory,
   updateApplicationStatus,
   addApplicationNote,
   completeFollowUp,
   createInterview,
+  downloadDocument,
   type Application,
   type ApplicationStatus,
+  type GeneratedDocument,
 } from "@/lib/api";
 
 const TABS = ["Overview", "Interviews", "Follow-ups", "Activity"] as const;
@@ -66,12 +69,16 @@ export function ApplicationDetail({
   const [newInterviewType, setNewInterviewType] = useState("phone_screen");
   const [newInterviewDate, setNewInterviewDate] = useState("");
   const [addingInterview, setAddingInterview] = useState(false);
+  const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
 
   const loadApp = useCallback(async () => {
     try {
       setLoading(true);
       const data = await fetchApplication(applicationId);
       setApp(data);
+      // Load generated documents in parallel
+      const docs = await getDocumentHistory(applicationId).catch(() => []);
+      setDocuments(docs);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load application");
     } finally {
@@ -141,11 +148,25 @@ export function ApplicationDetail({
           <div className="flex-1 min-w-0 pr-4">
             {app ? (
               <>
-                <h2 className="text-lg font-semibold text-slate-800 truncate">
-                  {app.job_id
-                    ? "Tracked Application"
-                    : app.agency_name ?? "Manual Application"}
-                </h2>
+                <div className="flex items-center gap-2 min-w-0">
+                  <h2 className="text-lg font-semibold text-slate-800 truncate">
+                    {app.job?.title ?? app.agency_name ?? "Manual Application"}
+                  </h2>
+                  {app.job?.url && (
+                    <a
+                      href={app.job.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-slate-400 hover:text-indigo-500 transition-colors"
+                      title="View original job posting"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  )}
+                </div>
+                {app.job?.company && (
+                  <p className="text-sm text-slate-500 truncate">{app.job.company}</p>
+                )}
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <Badge variant={`status-${app.status}` as Parameters<typeof Badge>[0]["variant"]}>
                     {app.status}
@@ -209,6 +230,74 @@ export function ApplicationDetail({
             <>
               {activeTab === "Overview" && (
                 <div className="space-y-6">
+                  {/* Agent banner */}
+                  {app.agent_created && (
+                    <div className="flex items-start gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3">
+                      <Sparkles className="h-4 w-4 text-indigo-500 mt-0.5 shrink-0" />
+                      <div className="text-sm text-indigo-800">
+                        <span className="font-medium">Hatch prepared tailored documents for this role.</span>{" "}
+                        {app.job?.url ? (
+                          <>
+                            Review the CV and cover letter below, then{" "}
+                            <a
+                              href={app.job.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline font-medium hover:text-indigo-600"
+                            >
+                              apply at the original posting
+                            </a>
+                            {" "}manually.
+                          </>
+                        ) : (
+                          "Review the CV and cover letter below before applying manually."
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Generated documents */}
+                  {documents.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+                        Generated Documents
+                      </h3>
+                      <div className="space-y-2">
+                        {documents.map((doc) => (
+                          <div
+                            key={doc.id}
+                            className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <FileText className="h-4 w-4 text-slate-400 shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-slate-700 capitalize">
+                                  {doc.document_type.replace(/_/g, " ")}
+                                  {doc.version > 1 && (
+                                    <span className="ml-1 text-xs text-slate-400">v{doc.version}</span>
+                                  )}
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  {format(new Date(doc.created_at), "d MMM yyyy, HH:mm")}
+                                  {doc.ats_score != null && (
+                                    <span className="ml-2 text-indigo-500 font-medium">ATS {Math.round(doc.ats_score)}%</span>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => void downloadDocument(doc.id)}
+                              className="shrink-0 ml-3 text-slate-400 hover:text-indigo-500 transition-colors"
+                              title="Download"
+                            >
+                              <Download className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Status */}
                   <div>
                     <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">

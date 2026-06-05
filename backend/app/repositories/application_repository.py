@@ -78,16 +78,18 @@ class ApplicationRepository:
         """
         if load_relations:
             result = await self._session.execute(
-                select(Application)
+                select(Application, JobPosting)
+                .outerjoin(JobPosting, Application.job_id == JobPosting.id)
                 .options(
                     selectinload(Application.interviews),
                     selectinload(Application.follow_ups),
                 )
                 .where(Application.id == app_id, Application.is_active == True)
             )
-            row = result.scalar_one_or_none()
+            row = result.one_or_none()
             if row is None:
                 return None
+            app_row, job_row = row
             # Load activity separately to avoid multi-level eager load complexity
             act_result = await self._session.execute(
                 select(ActivityLog)
@@ -97,10 +99,11 @@ class ApplicationRepository:
             )
             activity_rows = act_result.scalars().all()
             app_dict: dict[str, Any] = {
-                **{c.key: getattr(row, c.key) for c in Application.__table__.columns},
-                "interviews": row.interviews,
-                "follow_ups": row.follow_ups,
+                **{c.key: getattr(app_row, c.key) for c in Application.__table__.columns},
+                "interviews": app_row.interviews,
+                "follow_ups": app_row.follow_ups,
                 "activity": activity_rows,
+                "job": job_row if job_row is not None else None,
             }
             return ApplicationRead.model_validate(app_dict)
         else:

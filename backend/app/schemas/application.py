@@ -203,6 +203,11 @@ class ApplicationRead(BaseModel):
     interviews: list[InterviewRoundRead] = []
     follow_ups: list[FollowUpRead] = []
     activity: list[ActivityLogRead] = []
+    # Agentic pipeline fields
+    agent_created: bool = False
+    approval_status: str | None = None
+    # Embedded job info (populated when job_id is set)
+    job: JobSummary | None = None
 
 
 class ApplicationKanbanResponse(BaseModel):

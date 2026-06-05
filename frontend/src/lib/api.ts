@@ -252,6 +252,17 @@ export interface ApplicationListItem {
   approval_status: string | null;
 }
 
+export interface ApplicationJob {
+  id: string;
+  title: string;
+  company: string | null;
+  location: string | null;
+  rate_text: string | null;
+  url: string;
+  source: string;
+  ir35_status: string | null;
+}
+
 export interface Application {
   id: string;
   job_id: string | null;
@@ -273,6 +284,9 @@ export interface Application {
   interviews: InterviewRound[];
   follow_ups: FollowUp[];
   activity: ActivityLogEntry[];
+  agent_created: boolean;
+  approval_status: string | null;
+  job: ApplicationJob | null;
 }
 
 export interface KanbanStats {
