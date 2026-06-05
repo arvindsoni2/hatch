@@ -44,9 +44,13 @@ class AsyncJobService:
                     )
                     await db.commit()
                 await coro
-            except Exception as exc:
+            except BaseException as exc:
+                # Catch BaseException so asyncio.CancelledError and other non-Exception
+                # base classes don't leave jobs permanently stuck in "running".
                 logger.exception("Unhandled error in async job %s: %s", job_id, exc)
                 await AsyncJobService._finish(job_id, None, str(exc))
+                if not isinstance(exc, Exception):
+                    raise  # re-raise CancelledError etc. so asyncio bookkeeping stays correct
 
         asyncio.create_task(_run_and_track())
 

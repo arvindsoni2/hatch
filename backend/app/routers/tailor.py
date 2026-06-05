@@ -151,8 +151,10 @@ async def generate_all(
 
     async def _work() -> None:
         from ..database import AsyncSessionLocal  # noqa: PLC0415
-        async with AsyncSessionLocal() as job_db:
-            try:
+        result = None
+        exc_str: str | None = None
+        try:
+            async with AsyncSessionLocal() as job_db:
                 result = await svc.generate_all(
                     application_id=request.application_id,
                     variant=request.variant,
@@ -163,9 +165,11 @@ async def generate_all(
                     company_name=request.company_name,
                     job_url=request.job_url,
                 )
-                await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
-            except Exception as exc:
-                await AsyncJobService._finish(async_job.id, None, str(exc))
+        except Exception as exc:
+            logger.exception("generate_all failed for async job %s: %s", async_job.id, exc)
+            exc_str = str(exc)
+        # Call _finish AFTER the session is fully closed to avoid SQLite write-lock deadlock
+        await AsyncJobService._finish(async_job.id, result.model_dump_json() if result else None, exc_str)
 
     AsyncJobService.run(async_job.id, _work())
     return {"job_id": async_job.id, "status": "pending", "type": "tailor_generate"}

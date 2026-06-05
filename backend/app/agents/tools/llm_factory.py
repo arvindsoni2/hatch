@@ -315,6 +315,7 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     # response times and breaking JSON parsing.
     if llm_cfg.provider == "ollama":
         kwargs["reasoning"] = False
+        kwargs["request_timeout"] = 300  # 5-minute hard ceiling; prevents silent hangs
 
     return _attach_tracer(init_chat_model(
         model=model_name,
@@ -361,6 +362,7 @@ def get_json_model() -> BaseChatModel:
             "format": "json",
             "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
             "reasoning": False,
+            "request_timeout": 300,  # 5-minute hard ceiling; prevents silent hangs
         }
         return _attach_tracer(init_chat_model(
             model=model_name,

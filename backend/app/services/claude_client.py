@@ -120,9 +120,12 @@ class ClaudeClient:
                                 except (ValueError, SyntaxError):
                                     pass
                     raise
-            except (json.JSONDecodeError, ValueError) as exc:
+            except Exception as exc:
                 last_error = exc
                 logger.warning("JSON parse failed (attempt %d/3): %s", attempt + 1, exc)
+                if attempt == 0:
+                    # Log a preview of the raw output to aid diagnosis
+                    logger.debug("Raw LLM output (first 500 chars): %r", cleaned[:500])
 
         raise ValueError(f"LLM did not return valid JSON after 3 attempts: {last_error}")
 
