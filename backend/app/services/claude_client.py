@@ -8,6 +8,7 @@ honour whatever provider is configured in profile.yaml.
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import re
@@ -96,6 +97,14 @@ class ClaudeClient:
                 try:
                     return json.loads(cleaned)
                 except json.JSONDecodeError:
+                    # gemma4 / other local models sometimes emit Python-style single-quoted
+                    # dicts — ast.literal_eval handles those safely.
+                    try:
+                        result = ast.literal_eval(cleaned)
+                        if isinstance(result, (dict, list)):
+                            return result  # type: ignore[return-value]
+                    except (ValueError, SyntaxError):
+                        pass
                     # Local models often wrap JSON in prose — try to extract it.
                     # Try object first, then array (Ollama format=json forces objects).
                     for pattern in (r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', r'\[.*\]', r'\{.*\}'):
@@ -104,7 +113,12 @@ class ClaudeClient:
                             try:
                                 return json.loads(match.group())
                             except json.JSONDecodeError:
-                                continue
+                                try:
+                                    result = ast.literal_eval(match.group())
+                                    if isinstance(result, (dict, list)):
+                                        return result  # type: ignore[return-value]
+                                except (ValueError, SyntaxError):
+                                    pass
                     raise
             except (json.JSONDecodeError, ValueError) as exc:
                 last_error = exc
@@ -129,4 +143,25 @@ class ClaudeClient:
         if cleaned.startswith("```"):
             lines = cleaned.split("\n")
             cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-        return json.loads(cleaned)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            try:
+                result = ast.literal_eval(cleaned)
+                if isinstance(result, (dict, list)):
+                    return result  # type: ignore[return-value]
+            except (ValueError, SyntaxError):
+                pass
+            for pattern in (r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', r'\[.*\]', r'\{.*\}'):
+                match = re.search(pattern, cleaned, re.DOTALL)
+                if match:
+                    try:
+                        return json.loads(match.group())
+                    except json.JSONDecodeError:
+                        try:
+                            result = ast.literal_eval(match.group())
+                            if isinstance(result, (dict, list)):
+                                return result  # type: ignore[return-value]
+                        except (ValueError, SyntaxError):
+                            pass
+            raise
