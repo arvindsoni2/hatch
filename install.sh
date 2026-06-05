@@ -66,10 +66,12 @@ cd "$INSTALL_DIR"
 
 # ── Ollama (default LLM — free, local, no API key) ─────────────────
 
-# Default model to pull if none are installed. phi3:mini (3.8B) is a safe
-# starting point — runs on ~4 GB RAM, no GPU required, no thinking-mode latency.
-# Override by setting HATCH_OLLAMA_MODEL before running.
-DEFAULT_OLLAMA_MODEL="${HATCH_OLLAMA_MODEL:-phi3:mini}"
+# Two models are used by Hatch:
+#   primary (gemma4:e2b) — CV / cover-letter generation, JD analysis
+#   triage  (phi3:mini)  — fast job classification, runs in background
+# Both are pulled automatically on first install when no models are present.
+DEFAULT_PRIMARY_MODEL="gemma4:e2b"
+DEFAULT_TRIAGE_MODEL="phi3:mini"
 
 setup_ollama() {
   # 1. Install Ollama if missing
@@ -130,23 +132,37 @@ setup_ollama() {
     fi
   fi
 
-  # 4. Pull a model if none are installed
+  # 4. Pull default models if none are installed
   local model_count
   model_count=$(curl -s --max-time 3 http://localhost:11434/api/tags \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('models',[])))" 2>/dev/null || echo "0")
 
   if [ "$model_count" -eq 0 ]; then
-    info "No Ollama models found — pulling ${DEFAULT_OLLAMA_MODEL}…"
-    warn "This is a one-time download (~2.3 GB). It may take a few minutes."
-    warn "Set HATCH_OLLAMA_MODEL=<name> before running this script to choose a different model."
-    warn "Larger models (gemma3:9b, qwen3:14b) give better results but require 8+ GB RAM."
-    ollama pull "$DEFAULT_OLLAMA_MODEL"
-    ok "Model ${DEFAULT_OLLAMA_MODEL} ready."
+    info "No Ollama models found — pulling default models…"
+    warn "One-time download of two models (several GB). This may take a few minutes on a slow connection."
+    warn "  • ${DEFAULT_PRIMARY_MODEL}  — primary model for CV/CL generation and JD analysis"
+    warn "  • ${DEFAULT_TRIAGE_MODEL}   — fast triage model for background job classification"
+
+    info "Pulling ${DEFAULT_PRIMARY_MODEL}…"
+    ollama pull "$DEFAULT_PRIMARY_MODEL"
+    ok "${DEFAULT_PRIMARY_MODEL} ready."
+
+    info "Pulling ${DEFAULT_TRIAGE_MODEL}…"
+    ollama pull "$DEFAULT_TRIAGE_MODEL"
+    ok "${DEFAULT_TRIAGE_MODEL} ready."
   else
-    local first_model
-    first_model=$(curl -s --max-time 3 http://localhost:11434/api/tags \
-      | python3 -c "import sys,json; d=json.load(sys.stdin); m=d.get('models',[]); print(m[0]['name'] if m else '')" 2>/dev/null || echo "unknown")
-    ok "Ollama model available: ${first_model}"
+    # Models already present — report what's there
+    local model_list
+    model_list=$(curl -s --max-time 3 http://localhost:11434/api/tags \
+      | python3 -c "import sys,json; m=json.load(sys.stdin).get('models',[]); print(', '.join(x['name'] for x in m))" 2>/dev/null || echo "unknown")
+    ok "Ollama models already available: ${model_list}"
+
+    # Warn if the expected models are missing so the user knows to pull them
+    for model in "$DEFAULT_PRIMARY_MODEL" "$DEFAULT_TRIAGE_MODEL"; do
+      if ! ollama list 2>/dev/null | grep -qF "$model"; then
+        warn "Model '${model}' not found — pull it with: ollama pull ${model}"
+      fi
+    done
   fi
 }
 
@@ -215,7 +231,7 @@ preferences:
 PROFILEEOF
   fi
 
-  # Inject the actual Ollama model name and correct base_url
+  # Inject Ollama model names and correct base_url into profile.yaml
   python3 - <<'PYEOF'
 import yaml, pathlib, urllib.request, json, sys
 
@@ -230,19 +246,28 @@ d["llm"]["api_key_env"] = ""
 d["llm"]["track_costs"] = False
 d["llm"]["monthly_budget"] = 0.0
 
-# Use the first locally-available model; fall back to default
+# Preferred models matching the two roles Hatch uses:
+#   primary — CV/CL generation and JD analysis (larger, instruction-tuned)
+#   triage  — fast background job classification
+PREFERRED_PRIMARY = "gemma4:e2b"
+PREFERRED_TRIAGE  = "phi3:mini"
+
 try:
     resp = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3)
     models = json.loads(resp.read()).get("models", [])
-    if models:
-        name = models[0]["name"]
-        d["llm"]["triage_model"] = name
-        d["llm"]["primary_model"] = name
-        print(f"[hatch] Profile: using Ollama model '{name}'")
+    names = [m["name"] for m in models]
+
+    if names:
+        # Use preferred models when available; fall back to the first installed model
+        primary = PREFERRED_PRIMARY if PREFERRED_PRIMARY in names else names[0]
+        triage  = PREFERRED_TRIAGE  if PREFERRED_TRIAGE  in names else names[0]
+        d["llm"]["primary_model"] = primary
+        d["llm"]["triage_model"]  = triage
+        print(f"[hatch] Profile: primary_model='{primary}', triage_model='{triage}'")
     else:
-        print("[hatch] Warning: no Ollama models found — set triage_model/primary_model in data/profile.yaml after pulling one.")
+        print("[hatch] Warning: no Ollama models found — set primary_model/triage_model in data/profile.yaml after pulling one.")
 except Exception as e:
-    print(f"[hatch] Could not auto-detect Ollama model: {e}")
+    print(f"[hatch] Could not auto-detect Ollama models: {e}")
 
 p.write_text(yaml.dump(d, default_flow_style=False, allow_unicode=True))
 PYEOF
@@ -299,7 +324,7 @@ echo "  Dashboard:  http://localhost:3000"
 echo "  API docs:   http://localhost:8000/docs"
 echo ""
 warn "First run? The onboarding wizard will appear automatically at http://localhost:3000"
-warn "Ollama model in use: $(curl -s --max-time 2 http://localhost:11434/api/tags | python3 -c "import sys,json; m=json.load(sys.stdin).get('models',[]); print(m[0]['name'] if m else 'none')" 2>/dev/null)"
+warn "Ollama models available: $(curl -s --max-time 2 http://localhost:11434/api/tags | python3 -c "import sys,json; m=json.load(sys.stdin).get('models',[]); print(', '.join(x['name'] for x in m) if m else 'none')" 2>/dev/null)"
 echo ""
 echo "  Manage:  cd $INSTALL_DIR && $COMPOSE ps"
 echo "  Logs:    cd $INSTALL_DIR && $COMPOSE logs -f"
