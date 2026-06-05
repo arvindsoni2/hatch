@@ -55,12 +55,14 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | **Profile-driven** | All user config in `profile.yaml` — roles, location, skills, weights, LLM provider. No code changes per user. |
 | **Locale Pack System** | YAML-driven market packs for 🇬🇧 UK, 🇮🇳 India, 🇮🇪 Ireland, 🇦🇪 UAE. Controls job boards, compensation defaults, and legal/compliance fields. |
 | **Pluggable AI** | Anthropic, OpenAI, Google, Ollama (free/local), Azure, AWS Bedrock — switch via `profile.yaml` |
-| **Dynamic model picker** | Settings page auto-discovers models from your running Ollama instance — no manual config needed |
+| **Dynamic model picker** | Settings page auto-discovers models from your running Ollama instance — no manual config needed. `gemma4:e2b` (primary) and `phi3:mini` (triage) are installed automatically on first run |
 | **Two-tier scoring** | Cheap triage model pre-filters; strong primary model scores on 4 dimensions with configurable weights |
 | **Locale-aware scoring** | Contract status, work authorisation, notice period, and other locale-specific signals injected into the `location_match` scoring dimension |
 | **Human-in-the-loop** | Mandatory approval checkpoint before any application leaves the system — never auto-submits |
 | **Autonomous pipeline** | APScheduler cron → event bus → LangGraph StateGraph routes events to correct agents |
-| **Async notification bell** | Tailor and Coach run in the background; a persistent notification bell fires when jobs complete or fail |
+| **Async notification bell** | Tailor and Coach run in the background; a persistent notification bell fires when jobs complete or fail, with error detail on failure |
+| **Tailor history panel** | Per-job document history: all generated CV and cover letter variants listed with ATS score, download link, and regeneration button |
+| **Manual JD tailoring** | Paste any job description from any website — Hatch auto-creates the job and application records, then generates tailored documents without requiring a scraper |
 | **Interview coaching** | Company research, 12 categorised questions, STAR model answers mapped to your proof points |
 | **JD gap analysis** | Per-job skill gap card: matched skills, missing skills, JD-only keywords, match %, actionable recommendations |
 | **LLM trace panel** | Per-call latency, token counts, and response preview — visible in the debug panel for local troubleshooting |
@@ -146,7 +148,7 @@ curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh |
 iwr https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.ps1 | iex
 ```
 
-The installer checks prerequisites (Docker/Podman, git), clones the repo, creates a template `.env`, builds and starts the containers, and optionally installs a systemd user service on Linux.
+The installer checks prerequisites (Docker/Podman, git), clones the repo, pulls the default Ollama models (`gemma4:e2b` + `phi3:mini`) if none are present, creates a template `.env`, builds and starts the containers, and optionally installs a systemd user service on Linux.
 
 ---
 
@@ -232,7 +234,7 @@ The locale pack (`locales/<id>.yaml`) determines:
 | Anthropic | `anthropic` | `claude-haiku-4-5-20251001` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
 | OpenAI | `openai` | `gpt-4o-mini` | `gpt-4o` | `OPENAI_API_KEY` |
 | Google | `google` | `gemini-2.0-flash` | `gemini-2.5-pro` | `GOOGLE_API_KEY` |
-| Ollama (free) | `ollama` | `phi3:mini` | `phi3:mini` or `gemma3:9b` | — (set `base_url`) |
+| Ollama (free) | `ollama` | `phi3:mini` | `gemma4:e2b` | — (set `base_url`) |
 | Azure OpenAI | `azure` | deployment name | deployment name | `AZURE_OPENAI_API_KEY` |
 | AWS Bedrock | `aws_bedrock` | model ID | model ID | AWS credentials |
 
@@ -240,13 +242,13 @@ The locale pack (`locales/<id>.yaml`) determines:
 # profile.yaml — switch to Ollama for zero API cost
 llm:
   provider: "ollama"
-  triage_model: "phi3:mini"   # 3.8B — fast pre-filter, ~2.3 GB download
-  primary_model: "phi3:mini"  # upgrade to gemma3:9b or qwen3:14b for better quality
+  triage_model: "phi3:mini"    # 3.8B — fast background job classification
+  primary_model: "gemma4:e2b"  # 4B instruction-tuned — CV/CL generation and JD analysis
   base_url: "http://host.containers.internal:11434"  # use localhost if running outside Docker
   track_costs: false
 ```
 
-> **Ollama model tip:** `phi3:mini` is the default — it runs on any machine with 4 GB RAM and has no thinking-mode latency. `gemma3:9b` or `qwen3:14b` give noticeably better CV tailoring and coaching quality but require 8–16 GB RAM. The Settings page auto-discovers all locally-pulled models so you can switch without editing YAML.
+> **Ollama model tip:** The installer pulls both `gemma4:e2b` (primary) and `phi3:mini` (triage) automatically on first run — no manual `ollama pull` needed. The two models serve different roles: `phi3:mini` runs fast background classification every 30 minutes; `gemma4:e2b` handles the heavier CV tailoring and JD analysis tasks. Thinking mode is automatically disabled on both to avoid multi-minute response delays. The Settings page auto-discovers all locally-pulled models so you can swap them without editing YAML.
 
 ### Scoring
 
@@ -301,16 +303,18 @@ preferences:
 - **LLM:** Triage model (cheap, fast) + primary model (strong)
 
 ### Tailor
-- **Trigger:** `job_shortlisted` events (score ≥ threshold)
-- **Does:** Generates tailored CV + cover letter; ATS compatibility scoring
+
+- **Trigger:** `job_shortlisted` events (score ≥ threshold), or manually via the UI for any job URL
+- **Does:** Generates tailored CV + cover letter; ATS compatibility scoring. All runs are tracked in the tailor history panel per job — download any previous variant or regenerate at any time
 - **Proof points:** Mapped from `profile.yaml → proof_points` to JD requirements by tag matching
-- **LLM:** Primary model (delegates to existing TailorService)
+- **Reliability:** Hard 20-minute timeout prevents indefinite hangs when Ollama is busy with background classification. 16 K context window (`num_ctx=16384`) ensures full CV prompts are never silently truncated
+- **LLM:** Primary model (`gemma4:e2b` default for Ollama) with 16 K context
 
 ### Coach
 - **Trigger:** `interview_scheduled` events (user action on Kanban)
-- **Does:** Company research, 12 categorised questions, STAR model answers
+- **Does:** Company research, 12 categorised questions, STAR model answers. Multiple coach sessions are queued and processed in order — each session is tracked as an async job with notification on completion
 - **User context:** Skills and proof points injected from `profile.yaml`
-- **LLM:** Primary model (delegates to existing CoachService)
+- **LLM:** Primary model
 
 ### Supervisor (LangGraph StateGraph)
 - Routes events to the correct agent
@@ -419,7 +423,7 @@ Well within the default monthly budget configured in `profile.yaml`. Use Ollama 
 LangGraph's explicit state machine maps cleanly to the application lifecycle; `interrupt()` gives clean human-in-the-loop; `SqliteSaver` matches the existing SQLite stack. CrewAI is great for fast prototyping but lacks built-in checkpointing.
 
 **Can I use a local model?**
-Yes — Ollama is the default. `phi3:mini` is pulled automatically by the installer if no models are present (~2.3 GB). For better tailoring and coaching quality, `ollama pull gemma3:9b` or `ollama pull qwen3:14b` and select them in Settings. Note: models with built-in thinking/reasoning mode (e.g. `gemma4:e4b`) are supported — Hatch automatically disables their thinking mode to avoid multi-minute response times.
+Yes — Ollama is the default and requires no API key. The installer automatically pulls both `gemma4:e2b` (primary model, ~3 GB — used for CV/CL generation and JD analysis) and `phi3:mini` (triage model, ~2.3 GB — used for fast background job classification) when no models are present. Thinking mode is automatically disabled on both to avoid multi-minute response delays. You can swap models at any time from the Settings page without editing YAML.
 
 **Is my data safe?**
 All data stays local. The only external calls are to your configured LLM provider's API. `profile.yaml` and `master_cv.json` are gitignored — never committed.
