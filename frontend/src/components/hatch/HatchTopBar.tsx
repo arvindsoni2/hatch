@@ -1,12 +1,13 @@
 "use client";
 import { HatchIcon } from './HatchIcon';
 import { UserAvatar } from './UserAvatar';
+import { NotificationBell } from '@/components/NotificationBell';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 interface HatchTopBarProps {
   name: string;
   pageTitle: string;
   pageSub?: string;
-  notifCount?: number;
 }
 
 function getGreeting(): string {
@@ -16,7 +17,7 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-export function HatchTopBar({ name, pageTitle, pageSub, notifCount = 0 }: HatchTopBarProps) {
+export function HatchTopBar({ name, pageTitle, pageSub }: HatchTopBarProps) {
   const initials = name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
   return (
@@ -67,48 +68,8 @@ export function HatchTopBar({ name, pageTitle, pageSub, notifCount = 0 }: HatchT
         />
       </div>
 
-      {/* Bell */}
-      <button
-        aria-label="Notifications"
-        style={{
-          position: 'relative',
-          width: 36,
-          height: 36,
-          borderRadius: 9,
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          flexShrink: 0,
-        }}
-      >
-        <HatchIcon name="bell" size={17} color="var(--text-dim)" />
-        {notifCount > 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              top: -3,
-              right: -3,
-              width: 16,
-              height: 16,
-              borderRadius: 999,
-              background: 'var(--danger)',
-              border: '2px solid var(--bg)',
-              fontSize: 9,
-              fontWeight: 700,
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {notifCount > 9 ? '9+' : notifCount}
-          </span>
-        )}
-      </button>
-
+      <ThemeToggle />
+      <NotificationBell />
       <UserAvatar initials={initials} size={32} />
     </header>
   );

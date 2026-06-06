@@ -1,0 +1,39 @@
+"use client";
+import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
+import { HatchTopBar } from './HatchTopBar';
+import { fetchProfileStatus } from '@/lib/api';
+
+const ROUTE_LABELS: Record<string, { title: string; sub?: string }> = {
+  '/today':        { title: 'Today' },
+  '/stream':       { title: 'Stream' },
+  '/tracker':      { title: 'Tracker' },
+  '/prep':         { title: 'Prep' },
+  '/settings':     { title: 'Settings' },
+  '/coach':        { title: 'Coach' },
+  '/jobs':         { title: 'Jobs' },
+  '/applications': { title: 'Applications' },
+  '/analytics':    { title: 'Analytics' },
+  '/calendar':     { title: 'Calendar' },
+};
+
+function deriveLabels(pathname: string): { title: string; sub?: string } {
+  for (const [prefix, label] of Object.entries(ROUTE_LABELS)) {
+    if (pathname.startsWith(prefix)) return label;
+  }
+  return { title: 'Hatch' };
+}
+
+export function HatchTopBarSlot() {
+  const pathname = usePathname();
+  const [name, setName] = useState('there');
+  const { title, sub } = deriveLabels(pathname);
+
+  useEffect(() => {
+    fetchProfileStatus()
+      .then((s) => { if (s.candidate_name) setName(s.candidate_name); })
+      .catch(() => {/* backend offline — keep fallback */});
+  }, []);
+
+  return <HatchTopBar name={name} pageTitle={title} pageSub={sub} />;
+}

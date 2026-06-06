@@ -1,9 +1,10 @@
 /**
  * Phase 4 — RED tests for Hatch navigation components.
  * Written BEFORE any implementation exists.
+ * v4.1: extended with live NotificationBell assertions (Task 2).
  */
-import { render, screen } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { render, screen, act } from '@testing-library/react';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 // ── HatchNav (mobile bottom tab bar) ─────────────────────────────────────────
 describe('HatchNav', () => {
@@ -111,9 +112,42 @@ describe('HatchTopBar', () => {
 
   it('renders a bell notification button', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    render(<HatchTopBar name="Arvind" pageTitle="Today" />);
-    // Bell button should have accessible name or aria-label
+    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
     const bellBtn = screen.getByRole('button', { name: /notification/i });
     expect(bellBtn).toBeTruthy();
+  });
+});
+
+// ── HatchTopBar — live NotificationBell (Task 2) ───────────────────────────
+describe('HatchTopBar — live NotificationBell', () => {
+  const mockFetch = vi.fn();
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+    global.fetch = mockFetch;
+    localStorage.clear();
+  });
+
+  it('shows bell-badge count when listCompletedJobs returns 3 jobs', async () => {
+    const jobs = Array.from({ length: 3 }, (_, i) => ({
+      id: `j-${i}`, type: 'tailor_analyse', status: 'done',
+      result: null, error: null, created_at: new Date().toISOString(),
+    }));
+    mockFetch.mockResolvedValue({ ok: true, json: async () => jobs });
+
+    const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
+    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+
+    const badge = screen.getByTestId('bell-badge');
+    expect(badge.textContent).toBe('3');
+  });
+
+  it('shows no badge when there are no jobs', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => [] });
+
+    const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
+    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+
+    expect(screen.queryByTestId('bell-badge')).toBeNull();
   });
 });

@@ -1,0 +1,73 @@
+/**
+ * Task 1 — RED tests for HatchTopBarSlot.
+ * Written BEFORE the component exists.
+ * Bell + toggle assertions become GREEN after Tasks 2 & 3.
+ */
+import { render, screen, act } from '@testing-library/react';
+import { vi, describe, it, expect, beforeEach } from 'vitest';
+
+vi.mock('next/navigation', () => ({
+  usePathname: vi.fn(() => '/today'),
+}));
+
+vi.mock('@/lib/api', () => ({
+  fetchProfileStatus: vi.fn().mockResolvedValue({ candidate_name: 'Arvind', onboarding_required: false }),
+  listCompletedJobs: vi.fn().mockResolvedValue([]),
+}));
+
+describe('HatchTopBarSlot', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('renders a header landmark', async () => {
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByRole('banner')).toBeTruthy();
+  });
+
+  it('shows "Today" for /today pathname', async () => {
+    const nav = await import('next/navigation');
+    vi.mocked(nav.usePathname).mockReturnValue('/today');
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByText('Today')).toBeTruthy();
+  });
+
+  it('shows "Stream" for /stream pathname', async () => {
+    const nav = await import('next/navigation');
+    vi.mocked(nav.usePathname).mockReturnValue('/stream');
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByText('Stream')).toBeTruthy();
+  });
+
+  it('shows "Tracker" for /tracker pathname', async () => {
+    const nav = await import('next/navigation');
+    vi.mocked(nav.usePathname).mockReturnValue('/tracker');
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByText('Tracker')).toBeTruthy();
+  });
+
+  it('shows "Settings" for /settings pathname', async () => {
+    const nav = await import('next/navigation');
+    vi.mocked(nav.usePathname).mockReturnValue('/settings');
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByText('Settings')).toBeTruthy();
+  });
+
+  it('renders a notifications button', async () => {
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByRole('button', { name: /notifications/i })).toBeTruthy();
+  });
+
+  it('renders a theme toggle button', async () => {
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByRole('button', { name: /toggle dark mode/i })).toBeTruthy();
+  });
+});
