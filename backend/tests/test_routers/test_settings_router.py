@@ -1,7 +1,6 @@
 """Tests for the settings router (API key management)."""
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 

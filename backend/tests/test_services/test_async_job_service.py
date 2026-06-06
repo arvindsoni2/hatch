@@ -1,12 +1,10 @@
 """Tests for AsyncJobService."""
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 
 import pytest
 
-from app.models.async_job import AsyncJob
 from app.services.async_job_service import AsyncJobService
 
 

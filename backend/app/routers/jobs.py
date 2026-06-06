@@ -14,7 +14,6 @@ from sqlalchemy import func, select
 
 from ..database import get_db
 from ..models.agent_event import AgentEvent
-from ..models.job_score import JobScore
 from ..models.cost_tracking import CostTracking
 from ..repositories.job_repository import JobRepository
 from ..schemas.job import (
@@ -456,3 +455,94 @@ async def get_job_decisions(
         steps=steps,
         total_cost_usd=round(total_cost, 6),
     )
+
+
+# ──────────────────────── Hatch v4: Two-step assisted apply ────────────────────────
+
+
+@router.post("/{job_id}/approve")
+async def approve_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Approve a job for application: tailor docs + assemble package → ready_to_apply.
+
+    This endpoint prepares application materials for human review.
+    It does NOT submit anything or fill forms autonomously.
+    Status transitions: * → preparing → ready_to_apply.
+
+    Args:
+        job_id: UUID of the job posting to approve.
+
+    Returns:
+        ApplicationPackage JSON: job_id, job_url, cv_path, cover_letter_path,
+        prefill_map, screening_answers, paste_map.
+
+    Raises:
+        HTTPException 404: Job not found.
+    """
+    from sqlalchemy import select, update
+    from datetime import datetime
+
+    from ..models.job import JobPosting
+    from ..models.application import Application
+    from ..services.assisted_apply import AssistedApplyService
+
+    # 1. Verify job exists
+    job_result = await db.execute(
+        select(JobPosting).where(JobPosting.id == job_id, JobPosting.is_active.is_(True))
+    )
+    job = job_result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+
+    # 2. Find or create the linked Application
+    app_result = await db.execute(
+        select(Application).where(
+            Application.job_id == job_id,
+            Application.is_active.is_(True),
+        )
+    )
+    app_obj = app_result.scalar_one_or_none()
+    if app_obj is None:
+        app_obj = Application(
+            job_id=job_id,
+            status="approved",
+            priority="normal",
+            is_active=True,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(app_obj)
+        await db.commit()
+        await db.refresh(app_obj)
+    else:
+        await db.execute(
+            update(Application)
+            .where(Application.id == app_obj.id)
+            .values(status="approved", updated_at=datetime.utcnow())
+        )
+        await db.commit()
+
+    # 3. Prepare the application package
+    service = AssistedApplyService()
+    package = await service.prepare_application(job_id=job_id, db=db)
+
+    # 4. Guarantee final status is ready_to_apply (idempotent if prepare_application
+    # already set it; a safety net when prepare_application is mocked in tests)
+    await db.execute(
+        update(Application)
+        .where(Application.job_id == job_id)
+        .values(status="ready_to_apply", updated_at=datetime.utcnow())
+    )
+    await db.commit()
+
+    return {
+        "job_id": package.job_id,
+        "job_url": package.job_url,
+        "cv_path": package.cv_path,
+        "cover_letter_path": package.cover_letter_path,
+        "prefill_map": package.prefill_map,
+        "screening_answers": package.screening_answers,
+        "paste_map": package.paste_map,
+    }

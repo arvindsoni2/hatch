@@ -114,8 +114,6 @@ async def save_api_key(data: dict[str, Any]) -> dict[str, Any]:
             api_key_env=key_name,
         )
         # Set model temporarily
-        original_provider = profile.llm.provider
-        original_triage = profile.llm.triage_model
         profile.llm.provider = provider  # type: ignore[assignment]
         profile.llm.triage_model = test_cfg.triage_model
         profile.llm.api_key_env = key_name

@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime
 
 import pytest
-import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import uuid
-import pytest
 from datetime import datetime
 
 from app.models.agent_event import AgentEvent

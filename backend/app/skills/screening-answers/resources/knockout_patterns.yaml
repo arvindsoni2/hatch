@@ -1,0 +1,56 @@
+# Knockout question patterns per locale.
+# label: the form label the candidate will see
+# profile_field: the profile.yaml path to resolve the answer
+# template: optional string template (use {value} for the resolved field)
+
+uk:
+  work_authorisation:
+    labels: ["Right to work in the UK", "UK work authorisation", "Do you have the right to work in the UK?"]
+    profile_field: candidate.nationality
+    templates:
+      british_citizen: "British Citizen — no visa sponsorship required."
+      eu_settled: "EU Settled Status — no visa sponsorship required."
+      default: "I hold the right to work in the UK and do not require sponsorship."
+  notice_period:
+    labels: ["Notice period", "When can you start?", "Earliest start date"]
+    profile_field: candidate.availability.notice_period
+    default: "Immediately available."
+  expected_rate:
+    labels: ["Expected day rate", "Daily rate expectation", "Desired rate (£/day)", "Rate range"]
+    profile_field: compensation
+    template: "£{min_rate}–£{max_rate}/day ({currency})"
+  relocation:
+    labels: ["Are you willing to relocate?", "Relocation", "Open to relocation?"]
+    profile_field: search.locations[0].remote_preference
+    templates:
+      remote: "No — fully remote preferred."
+      hybrid: "No relocation required — hybrid working acceptable within commuting distance of {city}."
+      onsite: "Open to on-site in {city} area."
+
+ae:
+  work_authorisation:
+    labels: ["UAE work permit", "Visa status", "Can you work in the UAE?"]
+    profile_field: candidate.nationality
+    default: "I hold a valid UAE residency visa and am authorised to work."
+  notice_period:
+    labels: ["Notice period", "Earliest joining date"]
+    profile_field: candidate.availability.notice_period
+    default: "Available immediately."
+  expected_salary:
+    labels: ["Expected salary", "Salary expectation (AED/month)", "CTC expectation"]
+    profile_field: compensation
+    template: "AED {min_rate}–{max_rate}/month"
+
+in:
+  work_authorisation:
+    labels: ["Are you an Indian citizen?", "Work authorisation — India"]
+    profile_field: candidate.nationality
+    default: "Indian citizen — no work permit required."
+  notice_period:
+    labels: ["Notice period", "Current notice period", "Serving notice?"]
+    profile_field: candidate.availability.notice_period
+    default: "Immediately available / Serving {notice_period} notice."
+  expected_ctc:
+    labels: ["Expected CTC", "Salary expectation (LPA)", "CTC expectation"]
+    profile_field: compensation
+    template: "₹{min_rate}–{max_rate} LPA"

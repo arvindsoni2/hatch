@@ -12,10 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..schemas.document import DocumentListItem, GeneratedDocumentRead
 from ..schemas.tailor import (
-    JDAnalysisResponse,
     RegenerateSectionRequest,
     TailorRequest,
-    TailorResultBundle,
 )
 from ..services.async_job_service import AsyncJobService
 from ..services.tailor_service import TailorService
@@ -228,9 +226,6 @@ async def regenerate_section(
 ) -> dict:
     """Regenerate a specific section of a cover letter paragraph."""
     from ..repositories.document_repository import DocumentRepository
-    from ..services.cl_generator import CoverLetterGenerator
-    from ..services.claude_client import ClaudeClient
-    from ..schemas.tailor import CoverLetterResult
 
     doc_repo = DocumentRepository(db)
     doc = await doc_repo.get_by_id(request.document_id)

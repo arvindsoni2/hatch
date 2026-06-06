@@ -30,7 +30,8 @@ class TestLlmFactory:
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs.get("model") == "claude-haiku-4-5-20251001"
         assert call_kwargs.get("model_provider") == "anthropic"
-        assert result is mock_model
+        # _attach_tracer wraps the model via .with_config() for latency callbacks
+        assert result is mock_model.with_config.return_value
 
     def test_get_primary_model_calls_init_chat_model_with_correct_args(self):
         """get_primary_model() calls init_chat_model with the primary model from profile."""
@@ -53,7 +54,8 @@ class TestLlmFactory:
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs.get("model") == "claude-sonnet-4-6"
         assert call_kwargs.get("model_provider") == "anthropic"
-        assert result is mock_model
+        # _attach_tracer wraps the model via .with_config() for latency callbacks
+        assert result is mock_model.with_config.return_value
 
     def test_estimate_cost_returns_correct_value_for_known_model(self):
         """estimate_cost() calculates correct USD cost from the pricing table."""
@@ -92,7 +94,8 @@ class TestLlmFactory:
         assert call_kwargs.get("format") == "json"
         assert call_kwargs.get("model") == "phi3:mini"
         assert call_kwargs.get("model_provider") == "ollama"
-        assert result is mock_model
+        # _attach_tracer wraps the model via .with_config() for latency callbacks
+        assert result is mock_model.with_config.return_value
 
     def test_get_json_model_no_format_for_non_ollama(self):
         """get_json_model() does not pass format='json' for non-Ollama providers."""
@@ -108,13 +111,13 @@ class TestLlmFactory:
         with patch("app.agents.tools.llm_factory.load_profile", return_value=mock_profile), \
              patch("app.agents.tools.llm_factory.init_chat_model", return_value=mock_model) as mock_init:
             from app.agents.tools.llm_factory import get_json_model
-            result = get_json_model()
+            get_json_model()
 
         call_kwargs = mock_init.call_args.kwargs
         assert "format" not in call_kwargs
 
     def test_get_json_model_raises_for_empty_model_name(self):
-        """get_json_model() raises ValueError when primary_model is empty for Ollama."""
+        """get_json_model() propagates ValueError from _detect_ollama_model when Ollama has no models."""
         mock_profile = MagicMock()
         mock_profile.llm.provider = "ollama"
         mock_profile.llm.primary_model = ""
@@ -122,7 +125,9 @@ class TestLlmFactory:
         mock_profile.llm.max_retries = 3
         mock_profile.llm.base_url = "http://localhost:11434"
 
-        with patch("app.agents.tools.llm_factory.load_profile", return_value=mock_profile):
+        with patch("app.agents.tools.llm_factory.load_profile", return_value=mock_profile), \
+             patch("app.agents.tools.llm_factory._detect_ollama_model",
+                   side_effect=ValueError("model name is empty")):
             from app.agents.tools.llm_factory import get_json_model
             with pytest.raises(ValueError, match="model name is empty"):
                 get_json_model()
@@ -146,16 +151,21 @@ def _make_profile(provider: str) -> MagicMock:
     return profile
 
 
+def _unwrap(model: object) -> object:
+    """Unwrap a RunnableBinding returned by _attach_tracer to get the inner model."""
+    return model.bound if hasattr(model, "bound") else model  # type: ignore[union-attr]
+
+
 class TestLlamaCppProvider:
     def test_build_model_llamacpp_returns_chat_openai(self):
-        """_build_model with provider=llamacpp returns a ChatOpenAI instance."""
+        """_build_model with provider=llamacpp returns a ChatOpenAI (wrapped by _attach_tracer)."""
         from langchain_openai import ChatOpenAI
         from app.agents.tools.llm_factory import _build_model
 
         cfg = _make_llm_cfg("llamacpp")
         model = _build_model("Qwen3-14B-Instruct", cfg)
 
-        assert isinstance(model, ChatOpenAI)
+        assert isinstance(_unwrap(model), ChatOpenAI)
 
     def test_get_primary_model_llamacpp_uses_base_url(self):
         """get_primary_model for llamacpp passes openai_api_base."""
@@ -165,8 +175,9 @@ class TestLlamaCppProvider:
         with patch("app.agents.tools.llm_factory.load_profile", return_value=_make_profile("llamacpp")):
             model = get_primary_model()
 
-        assert isinstance(model, ChatOpenAI)
-        assert model.openai_api_base == "http://llamacpp:8080/v1"
+        inner = _unwrap(model)
+        assert isinstance(inner, ChatOpenAI)
+        assert inner.openai_api_base == "http://llamacpp:8080/v1"
 
     def test_get_json_model_llamacpp_sets_response_format(self):
         """get_json_model for llamacpp sets response_format=json_object in model_kwargs."""
@@ -176,8 +187,9 @@ class TestLlamaCppProvider:
         with patch("app.agents.tools.llm_factory.load_profile", return_value=_make_profile("llamacpp")):
             model = get_json_model()
 
-        assert isinstance(model, ChatOpenAI)
-        assert model.model_kwargs.get("response_format") == {"type": "json_object"}
+        inner = _unwrap(model)
+        assert isinstance(inner, ChatOpenAI)
+        assert inner.model_kwargs.get("response_format") == {"type": "json_object"}
 
 
 class TestThinkBlockStripping:

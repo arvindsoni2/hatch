@@ -15,7 +15,7 @@ import logging
 import os
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 
 logger = logging.getLogger("jobpilot.rate_limiter")

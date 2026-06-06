@@ -9,7 +9,6 @@ The semantic scorer tests guard against the core regression:
 """
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
 from app.agents.tools.local_scorer import score_locally

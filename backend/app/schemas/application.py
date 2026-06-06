@@ -20,6 +20,10 @@ VALID_STATUSES = {
     "declined",
     "preparing",
     "ready_to_apply",
+    # Hatch v4 two-step states
+    "ready",      # tailoring done, awaiting human review
+    "approved",   # human approved; package being prepared
+    "parked",     # scored below threshold
 }
 VALID_PRIORITIES = {"low", "normal", "high", "urgent"}
 

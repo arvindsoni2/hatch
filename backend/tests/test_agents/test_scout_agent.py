@@ -1,7 +1,6 @@
 """Tests for ScoutAgent scraping, deduplication, and event emission."""
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.schemas.job import JobPostingCreate

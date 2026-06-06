@@ -7,16 +7,16 @@ const defaultCandidate = { name: "", title: "", years_experience: 0, summary: ""
 describe("StepAboutYou", () => {
   it("renders all required fields", () => {
     render(<StepAboutYou candidate={defaultCandidate} onChange={vi.fn()} tried={false} />);
-    expect(screen.getByPlaceholderText(/arvind soni/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Delivery Lead")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("12")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/senior delivery lead with 12 years/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/alex kim/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/senior programme manager/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("8")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/results-driven technologist/i)).toBeInTheDocument();
   });
 
   it("calls onChange with updated name when input changes", () => {
     const onChange = vi.fn();
     render(<StepAboutYou candidate={defaultCandidate} onChange={onChange} tried={false} />);
-    fireEvent.change(screen.getByPlaceholderText(/arvind soni/i), { target: { value: "Jane Doe" } });
+    fireEvent.change(screen.getByPlaceholderText(/alex kim/i), { target: { value: "Jane Doe" } });
     expect(onChange).toHaveBeenCalledWith({ ...defaultCandidate, name: "Jane Doe" });
   });
 

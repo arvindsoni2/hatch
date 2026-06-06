@@ -11,7 +11,6 @@ import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.agents.scout_agent import ScoutAgent
 from app.agents.scorer_agent import ScorerAgent
 from app.agents.supervisor import SupervisorAgent
 from app.agents.tools.event_bus import EventBus

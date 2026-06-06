@@ -67,7 +67,7 @@ class TestProfileRouter:
     async def test_test_connection_does_not_mutate_os_environ(self, client) -> None:
         """test-connection must not write to os.environ."""
         import os
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import AsyncMock
 
         sentinel = os.environ.get("ANTHROPIC_API_KEY", "ORIGINAL_SENTINEL")
 

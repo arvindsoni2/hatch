@@ -180,9 +180,6 @@ def create_scheduler(
     """
     scheduler = AsyncIOScheduler(timezone="UTC")
 
-    full_trigger = IntervalTrigger(hours=settings.FULL_SCRAPE_INTERVAL_HOURS)
-    quick_trigger = IntervalTrigger(hours=settings.QUICK_SCRAPE_INTERVAL_HOURS)
-
     # Scraping is now delegated entirely to ScoutAgent (via the agent orchestrator).
     # ScoutAgent reads job_boards from profile.yaml, uses the class-based registry,
     # and manages its own DB sessions — avoiding the write-lock contention that

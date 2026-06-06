@@ -61,8 +61,7 @@ class TestEmbedder:
 
     def test_model_loads_once(self):
         """SentenceTransformer constructor called at most once (singleton pattern)."""
-        import importlib
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         # Reset the singleton so we can observe the constructor call
         import app.agents.tools.embedder as emb_module
@@ -70,11 +69,9 @@ class TestEmbedder:
         emb_module._model = None  # reset singleton
 
         constructor_call_count = 0
-        real_class = None
 
         try:
             from sentence_transformers import SentenceTransformer as _Real
-            real_class = _Real
 
             class TrackingTransformer(_Real):
                 def __init__(self, *args, **kwargs):

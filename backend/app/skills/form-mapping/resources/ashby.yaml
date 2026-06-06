@@ -1,0 +1,49 @@
+# Ashby ATS field schema for form-mapping skill.
+
+fields:
+  - field_id: first_name
+    label: "First Name"
+    source: profile_field
+    path: candidate.full_name
+    transform: first_word
+
+  - field_id: last_name
+    label: "Last Name"
+    source: profile_field
+    path: candidate.full_name
+    transform: last_word
+
+  - field_id: email
+    label: "Email"
+    source: profile_field
+    path: candidate.email
+
+  - field_id: phone
+    label: "Phone Number"
+    source: profile_field
+    path: candidate.phone
+
+  - field_id: resume
+    label: "Resume"
+    source: document
+    document_type: cv
+
+  - field_id: cover_letter
+    label: "Cover Letter"
+    source: document
+    document_type: cover_letter
+
+  - field_id: linkedin_url
+    label: "LinkedIn URL"
+    source: profile_field
+    path: candidate.linkedin_url
+
+  - field_id: location
+    label: "City"
+    source: profile_field
+    path: search.locations[0].city
+
+  - field_id: work_auth
+    label: "Do you have the right to work in this location?"
+    source: screening_answer
+    screening_key: work_authorisation

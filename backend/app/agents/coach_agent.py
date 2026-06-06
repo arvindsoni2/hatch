@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.application import Application, InterviewRound
+from ..models.application import Application
 from ..models.cost_tracking import CostTracking
 from ..models.job import JobPosting
 from ..schemas.coach import CreateSessionRequest

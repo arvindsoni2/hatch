@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -169,7 +168,7 @@ class CoachService:
 
         # Map saved DB questions to QuestionPresentation
         total = len(saved_questions)
-        question_presentations = [
+        _question_presentations = [
             QuestionPresentation(
                 id=sq.id,
                 text=sq.text,

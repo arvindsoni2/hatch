@@ -1,0 +1,52 @@
+# Greenhouse ATS field schema for form-mapping skill.
+# field_id: Greenhouse internal field identifier
+# label: visible form label
+# source: where the value comes from (profile_field, document, or screening_answer)
+
+fields:
+  - field_id: first_name
+    label: "First Name"
+    source: profile_field
+    path: candidate.full_name
+    transform: first_word
+
+  - field_id: last_name
+    label: "Last Name"
+    source: profile_field
+    path: candidate.full_name
+    transform: last_word
+
+  - field_id: email
+    label: "Email Address"
+    source: profile_field
+    path: candidate.email
+
+  - field_id: phone
+    label: "Phone"
+    source: profile_field
+    path: candidate.phone
+
+  - field_id: linkedin
+    label: "LinkedIn Profile"
+    source: profile_field
+    path: candidate.linkedin_url
+
+  - field_id: resume
+    label: "Resume/CV"
+    source: document
+    document_type: cv
+
+  - field_id: cover_letter
+    label: "Cover Letter"
+    source: document
+    document_type: cover_letter
+
+  - field_id: location
+    label: "Current Location"
+    source: profile_field
+    path: search.locations[0].city
+
+  - field_id: work_auth
+    label: "Are you authorised to work in this country?"
+    source: screening_answer
+    screening_key: work_authorisation

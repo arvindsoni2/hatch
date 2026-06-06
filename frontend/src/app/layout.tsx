@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/Sidebar";
-import { BottomNav } from "@/components/BottomNav";
+import { HatchNavShell } from "@/components/hatch/HatchNavShell";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { InstallPrompt } from "@/components/InstallPrompt";
 
@@ -34,7 +33,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#3b82f6" />
+        <meta name="theme-color" content="#36c5a8" />
         <script
           dangerouslySetInnerHTML={{
             __html: `
@@ -60,18 +59,17 @@ export default function RootLayout({
         <OfflineIndicator />
 
         <div className="flex" style={{ minHeight: "100vh" }}>
-          <Sidebar />
+          {/* Desktop sidebar (hidden on mobile) — rendered via client shell for pathname awareness */}
+          <HatchNavShell />
 
           {/* Main content area */}
           <div className="flex flex-col flex-1 min-w-0">
-            <main className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-8 md:pb-8">
+            <main className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-6 md:pb-8">
               {children}
             </main>
           </div>
         </div>
 
-        {/* Mobile bottom nav */}
-        <BottomNav />
         <InstallPrompt />
       </body>
     </html>

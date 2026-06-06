@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.application import Application, FollowUp, InterviewRound
 from ..models.job import JobPosting
 from ..schemas.analytics import (
-    AnalyticsDashboard,
     FunnelResponse,
     FunnelStage,
     KanbanStats,
@@ -35,7 +34,7 @@ class AnalyticsRepository:
         """
         result = await self._session.execute(
             select(Application.status, func.count(Application.id))
-            .where(Application.is_active == True)
+            .where(Application.is_active)
             .group_by(Application.status)
         )
         counts: dict[str, int] = dict(result.all())
@@ -122,7 +121,7 @@ class AnalyticsRepository:
         result = await self._session.execute(
             select(JobPosting.source, func.count(Application.id).label("total"))
             .join(Application, Application.job_id == JobPosting.id)
-            .where(Application.is_active == True)
+            .where(Application.is_active)
             .group_by(JobPosting.source)
         )
         source_total: dict[str, int] = {row.source: row.total for row in result}
@@ -131,7 +130,7 @@ class AnalyticsRepository:
         applied_result = await self._session.execute(
             select(JobPosting.source, func.count(Application.id).label("cnt"))
             .join(Application, Application.job_id == JobPosting.id)
-            .where(Application.is_active == True, Application.status != "discovered")
+            .where(Application.is_active, Application.status != "discovered")
             .group_by(JobPosting.source)
         )
         source_applied: dict[str, int] = {row.source: row.cnt for row in applied_result}
@@ -141,7 +140,7 @@ class AnalyticsRepository:
             select(JobPosting.source, func.count(Application.id).label("cnt"))
             .join(Application, Application.job_id == JobPosting.id)
             .where(
-                Application.is_active == True,
+                Application.is_active,
                 Application.status.in_(["interview", "offered", "accepted"]),
             )
             .group_by(JobPosting.source)
@@ -197,7 +196,7 @@ class AnalyticsRepository:
         """
         result = await self._session.execute(
             select(Application.status, func.count(Application.id))
-            .where(Application.is_active == True)
+            .where(Application.is_active)
             .group_by(Application.status)
         )
         counts: dict[str, int] = dict(result.all())
@@ -224,7 +223,7 @@ class AnalyticsRepository:
 
         overdue_result = await self._session.execute(
             select(func.count(FollowUp.id)).where(
-                FollowUp.completed == False,
+                ~FollowUp.completed,
                 FollowUp.due_date < datetime.utcnow(),
             )
         )

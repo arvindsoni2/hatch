@@ -1854,12 +1854,30 @@ export interface ApplicationPackage {
   cv_path: string | null;
   cover_letter_path: string | null;
   prefill_map: Record<string, string>;
+  screening_answers: Record<string, string>;
+  paste_map: Record<string, string>;
 }
 
 export async function prepareApplication(applicationId: string): Promise<ApplicationPackage> {
   return apiFetch<ApplicationPackage>(`/api/applications/${applicationId}/prepare`, {
     method: "POST",
   });
+}
+
+export async function approveJob(jobId: string): Promise<ApplicationPackage> {
+  return apiFetch<ApplicationPackage>(`/api/jobs/${jobId}/approve`, { method: "POST" });
+}
+
+export async function getApplicationPackage(appId: string): Promise<ApplicationPackage> {
+  return apiFetch<ApplicationPackage>(`/api/applications/${appId}/package`);
+}
+
+export async function markApplied(appId: string): Promise<Application> {
+  return apiFetch<Application>(`/api/applications/${appId}/mark-applied`, { method: "POST" });
+}
+
+export async function revertApplication(appId: string): Promise<Application> {
+  return apiFetch<Application>(`/api/applications/${appId}/revert`, { method: "POST" });
 }
 
 export async function downloadInterviewIcs(interviewId: string): Promise<void> {

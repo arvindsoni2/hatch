@@ -10,7 +10,6 @@ from ..repositories.application_repository import ApplicationRepository
 from ..repositories.interview_repository import InterviewRepository
 from ..schemas.application import (
     ApplicationCreate,
-    ApplicationListItem,
     ApplicationRead,
     ApplicationStatusUpdate,
     ApplicationUpdate,

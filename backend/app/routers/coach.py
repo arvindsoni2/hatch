@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..schemas.coach import (
-    AnswerEvaluation,
     CompanyResearchResponse,
     CreateSessionRequest,
     QuestionPresentation,

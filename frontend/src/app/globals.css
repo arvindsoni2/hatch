@@ -1,5 +1,7 @@
 @import "@fontsource/newsreader/500.css";
 @import "@fontsource/newsreader/500-italic.css";
+@import "@fontsource/roboto-mono/500.css";
+@import "@fontsource/roboto-mono/700.css";
 
 @tailwind base;
 @tailwind components;
@@ -9,7 +11,7 @@
 
 :root {
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-mono: ui-monospace, 'JetBrains Mono', monospace;
+  --font-mono: 'Roboto Mono', ui-monospace, 'JetBrains Mono', monospace;
 
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -40,11 +42,15 @@
   --text-dim:    #a8a8b3;   /* body        8.2:1 */
   --text-muted:  #74747f;   /* captions    4.6:1 */
 
-  --accent:      #5b9bff;   /* primary actions   6.4:1 */
-  --accent-hover: #7ab0ff;
-  --accent-soft: rgba(91,155,255,0.14);
-  --accent-soft-strong: rgba(91,155,255,0.22);
-  --on-accent:   #06122b;
+  --accent:      #36c5a8;   /* primary actions — user-selected teal */
+  --accent-hover: #5ed3bc;
+  --accent-soft: rgba(54,197,168,0.14);
+  --accent-soft-strong: rgba(54,197,168,0.22);
+  --on-accent:   #042e26;
+
+  /* Fixed agent colours (independent of --accent) */
+  --scout:       #5b9bff;
+  --scout-soft:  rgba(91,155,255,0.14);
 
   --success:     #3ddc97;
   --success-soft: rgba(61,220,151,0.14);
@@ -71,11 +77,14 @@
   --text-dim:    #52525b;
   --text-muted:  #71717a;
 
-  --accent:      #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: rgba(37,99,235,0.08);
-  --accent-soft-strong: rgba(37,99,235,0.14);
+  --accent:      #0e9e86;   /* teal, light-mode legible */
+  --accent-hover: #0c8a75;
+  --accent-soft: rgba(14,158,134,0.08);
+  --accent-soft-strong: rgba(14,158,134,0.14);
   --on-accent:   #ffffff;
+
+  --scout:       #2563eb;
+  --scout-soft:  rgba(37,99,235,0.10);
 
   --success:     #16a34a;
   --success-soft: rgba(22,163,74,0.10);

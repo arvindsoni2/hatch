@@ -21,8 +21,6 @@ from ..schemas.application import (
     FollowUpRead,
 )
 from ..schemas.interview import (
-    FollowUpCreate,
-    FollowUpUpdate,
     InterviewRoundRead,
 )
 from ..schemas.analytics import KanbanStats
@@ -84,7 +82,7 @@ class ApplicationRepository:
                     selectinload(Application.interviews),
                     selectinload(Application.follow_ups),
                 )
-                .where(Application.id == app_id, Application.is_active == True)
+                .where(Application.id == app_id, Application.is_active)
             )
             row = result.one_or_none()
             if row is None:
@@ -109,7 +107,7 @@ class ApplicationRepository:
         else:
             result = await self._session.execute(
                 select(Application).where(
-                    Application.id == app_id, Application.is_active == True
+                    Application.id == app_id, Application.is_active
                 )
             )
             row = result.scalar_one_or_none()
@@ -126,7 +124,7 @@ class ApplicationRepository:
         """
         result = await self._session.execute(
             select(Application).where(
-                Application.job_id == job_id, Application.is_active == True
+                Application.job_id == job_id, Application.is_active
             )
         )
         row = result.scalar_one_or_none()
@@ -160,7 +158,7 @@ class ApplicationRepository:
         query = (
             select(Application, JobPosting)
             .outerjoin(JobPosting, Application.job_id == JobPosting.id)
-            .where(Application.is_active == True)
+            .where(Application.is_active)
         )
         if status:
             query = query.where(Application.status == status)
@@ -199,7 +197,7 @@ class ApplicationRepository:
             select(Application, JobPosting, JobScore)
             .outerjoin(JobPosting, Application.job_id == JobPosting.id)
             .outerjoin(JobScore, Application.job_id == JobScore.job_id)
-            .where(Application.is_active == True)
+            .where(Application.is_active)
             .order_by(Application.updated_at.desc())
         )
         rows = result.all()
@@ -255,7 +253,7 @@ class ApplicationRepository:
         now = datetime.utcnow()
         result = await self._session.execute(
             select(FollowUp)
-            .where(FollowUp.completed == False, FollowUp.due_date < now)
+            .where(~FollowUp.completed, FollowUp.due_date < now)
             .order_by(FollowUp.due_date.asc())
         )
         rows = result.scalars().all()
@@ -321,7 +319,7 @@ class ApplicationRepository:
         """
         result = await self._session.execute(
             select(Application.status, func.count(Application.id))
-            .where(Application.is_active == True)
+            .where(Application.is_active)
             .group_by(Application.status)
         )
         counts: dict[str, int] = dict(result.all())
@@ -349,7 +347,7 @@ class ApplicationRepository:
 
         overdue_result = await self._session.execute(
             select(func.count(FollowUp.id)).where(
-                FollowUp.completed == False,
+                ~FollowUp.completed,
                 FollowUp.due_date < datetime.utcnow(),
             )
         )

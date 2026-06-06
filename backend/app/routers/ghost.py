@@ -46,7 +46,7 @@ async def get_job_ghost_score(
     from ..models.job import JobPosting
 
     result = await db.execute(
-        select(JobPosting).where(JobPosting.id == job_id, JobPosting.is_active == True)
+        select(JobPosting).where(JobPosting.id == job_id, JobPosting.is_active)
     )
     job = result.scalar_one_or_none()
     if job is None:
@@ -74,7 +74,7 @@ async def analyse_job(
                 result = await own_db.execute(
                     sa_select(JobPosting).where(
                         JobPosting.id == job_id,
-                        JobPosting.is_active == True,  # noqa: E712
+                        JobPosting.is_active,  # noqa: E712
                     )
                 )
                 job = result.scalar_one_or_none()
@@ -100,9 +100,9 @@ async def analyse_all(
 
     from ..models.job import JobPosting
 
-    pending_result = await db.execute(
+    await db.execute(
         select(JobPosting)
-        .where(JobPosting.is_active == True, JobPosting.ghost_score.is_(None))
+        .where(JobPosting.is_active, JobPosting.ghost_score.is_(None))
         .limit(1)
     )
     # Count approximate pending jobs
@@ -152,7 +152,7 @@ async def override_verdict(
     await db.commit()
 
     result = await db.execute(
-        select(JobPosting).where(JobPosting.id == job_id, JobPosting.is_active == True)
+        select(JobPosting).where(JobPosting.id == job_id, JobPosting.is_active)
     )
     job = result.scalar_one_or_none()
     if job is None:

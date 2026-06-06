@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import uuid
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -351,7 +350,6 @@ class TestScorerAgent:
 
         primary_llm.ainvoke = capture_ainvoke
 
-        from app.agents.tools.local_scorer import LocalScoreResult
         from app.agents.tools.semantic_scorer import SemanticScoreResult
 
         fake_sem_score = SemanticScoreResult(

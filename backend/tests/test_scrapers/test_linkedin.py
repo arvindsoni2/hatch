@@ -1,10 +1,7 @@
 """Tests for LinkedIn scraper full JD fetch logic."""
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, call
 
-import pytest
 
 from app.scrapers.linkedin import LinkedInScraper
 

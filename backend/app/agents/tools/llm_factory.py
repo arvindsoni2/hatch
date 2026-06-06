@@ -19,13 +19,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.outputs import LLMResult
 
 from .profile_loader import load_profile
+
+logger = logging.getLogger(__name__)
 
 try:
     from langchain_core.callbacks import BaseCallbackHandler as _BaseCallbackHandler

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from urllib.parse import quote_plus
 
 import httpx
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.application import Application, FollowUp, InterviewRound
+from ..models.application import Application, InterviewRound
 from ..models.follow_up_email import FollowUpEmail
 from ..repositories.application_repository import ApplicationRepository
 
@@ -104,7 +104,6 @@ class ReminderService:
                 else:
                     days_since_applied = (now - application.created_at).days
 
-                email_type = fu.type  # use follow_up.type as hint
                 if fu.type == "thank_you":
                     # Find the latest completed interview
                     interview_result = await db.execute(

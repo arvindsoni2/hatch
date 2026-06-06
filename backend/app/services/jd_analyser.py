@@ -124,8 +124,6 @@ class JDAnalyser:
             + jd_analysis.ats_keywords.domain
             + jd_analysis.ats_keywords.certifications
         )
-        jd_lower = {k.lower() for k in jd_kws}
-
         # Flatten CV skills from all categories
         cv_skills: set[str] = set()
         for skill_cat in master_cv.get("skills", {}).values():
@@ -244,7 +242,6 @@ def _parse_jd_analysis(raw: dict[str, Any], text_length: int) -> JDAnalysisResul
         Validated JDAnalysisResult.
     """
     from ..schemas.tailor import (
-        ATSKeywords,
         CompanyContext,
         ContractDetails,
         Requirements,

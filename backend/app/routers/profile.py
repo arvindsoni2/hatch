@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from ..agents.tools.profile_loader import invalidate_cache
 from ..schemas.profile import Profile
-from ..services.locale_service import list_locales
 from ..services.profile_service import (
     load_profile,
     load_profile_raw,

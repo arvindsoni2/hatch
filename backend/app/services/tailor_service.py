@@ -15,7 +15,6 @@ from ..schemas.document import GeneratedDocumentRead
 from ..schemas.tailor import (
     ATSScoreResult,
     JDAnalysisResponse,
-    SkillMatchResult,
     TailorResultBundle,
 )
 from .ats_optimiser import ATSOptimiser
@@ -347,7 +346,7 @@ class TailorService:
 
         yield sse("skill_match", 25, "Computing skill match...")
         master_cv = _load_master_cv()
-        skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
+        self._jd_analyser.compute_skill_match(analysis, master_cv)
 
         yield sse("tailoring_cv", 40, "Tailoring CV with Claude...")
         tailored_cv = await self._cv_tailor.tailor(analysis, variant)
@@ -427,7 +426,6 @@ class TailorService:
         Returns:
             List of GeneratedDocumentRead, newest first.
         """
-        from ..schemas.document import DocumentListItem
 
         doc_repo = DocumentRepository(db)
         items = await doc_repo.list_by_application(application_id, doc_type)

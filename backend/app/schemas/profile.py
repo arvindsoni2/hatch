@@ -15,6 +15,10 @@ class CandidateConfig(BaseModel):
     title: str = ""
     years_experience: int = 0
     summary: str = ""
+    email: str = ""
+    phone: str = ""
+    linkedin_url: str = ""
+    current_employer: str = ""
 
 
 class LocationConfig(BaseModel):

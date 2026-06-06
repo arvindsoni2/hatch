@@ -1,9 +1,8 @@
 """Integration tests for /api/coach router — create session, submit answer, end session, 404 handling."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -12,7 +11,6 @@ from app.main import app
 from app.schemas.coach import (
     AnswerEvaluation,
     CompanyResearchResponse,
-    QuestionPresentation,
     SessionFeedbackReport,
     SessionResponse,
 )

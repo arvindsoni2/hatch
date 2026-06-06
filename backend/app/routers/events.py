@@ -107,8 +107,6 @@ async def get_activity(
         .order_by(AgentEvent.created_at.desc())
         .limit(limit)
     )
-    count_stmt = select(AgentEvent).where(AgentEvent.created_at >= since)
-
     result = await db.execute(stmt)
     rows = result.scalars().all()
     total = len(rows)

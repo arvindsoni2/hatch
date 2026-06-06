@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
 
 from ..agents.tools.profile_loader import load_profile  # noqa: E402 — imported at module level for testability
 

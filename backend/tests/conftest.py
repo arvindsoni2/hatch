@@ -101,7 +101,9 @@ def make_job_create(
     if url is None:
         url = f"https://example.com/jobs/{uuid.uuid4()}"
     if title is None:
-        title = f"Solutions Architect {uuid.uuid4().hex[:6]}"
+        # Use 12-char suffix to stay well below the 90% fuzzy-dedup threshold
+        # when multiple test jobs share the same "Solutions Architect" base title.
+        title = f"Solutions Architect {uuid.uuid4().hex[:12]}"
     return JobPostingCreate(
         title=title,
         company=company,

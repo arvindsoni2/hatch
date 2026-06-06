@@ -22,7 +22,7 @@ Discover → Score → Tailor → Track → Coach — fully automated, human-in-
 
 ## What is Hatch?
 
-> **Status:** Active development — core pipeline (Scout → Score → Tailor → Coach) is functional. Tailor and Coach run as async background jobs with real-time notification bell.
+> **Status:** Active development — v4 complete. Full pipeline (Scout → Score → Tailor → Coach) with two-step assisted apply, Agent Skills layer, and Direction A UX (Today · Stream · Tracker · Prep). 427 backend + 207 frontend tests green.
 
 Hatch is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
 
@@ -32,16 +32,22 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
        → Scorer agent processes batch (triage model filters, primary model scores)
        → 3 jobs score ≥ 0.75 → auto-shortlisted
        → Tailor agent generates tailored CV + cover letter for each
-       → 3 items land in your approval queue
+       → Skills layer assembles: screening answers + form paste-map
+       → 3 items land in Today → "Needs your approval"
 
-08:30  You open the dashboard
-       → Review: score breakdown, tailored CV preview, cover letter preview
-       → Approve 2, reject 1 (wrong contract status)
-       → Approved applications move to "Ready to Apply"
+08:30  You open Today (Direction A cockpit)
+       → Review overlay: score breakdown, tailored CV, cover letter preview
+       → Tap "Approve & prepare" → package assembled instantly
+       → Application ready card: screening answers, paste-map, "Open application"
+       → You open the job site, paste, submit → tap "Mark as applied"
+       → Confirmed apply moves to Tracker → Applied
 
-14:00  You mark "Interview scheduled" on Kanban
+11:00  Stale ready_to_apply? → Today shows "Finish applying" nudge
+       → Tap "Undo" to revert back to review queue
+
+14:00  You mark "Interview scheduled" on Tracker
        → Coach agent auto-triggers: company research, 12 questions, model answers
-       → "Prep ready" notification — 45 minutes of prep, ready to review
+       → "Prep ready" notification — 45 minutes of prep, ready to review in Prep tab
 ```
 
 **Reducing 15–20 hours/week of manual job search to < 1 hour of review.**
@@ -58,7 +64,9 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | **Dynamic model picker** | Settings page auto-discovers models from your running Ollama instance — no manual config needed. `gemma4:e2b` (primary) and `phi3:mini` (triage) are installed automatically on first run |
 | **Two-tier scoring** | Cheap triage model pre-filters; strong primary model scores on 4 dimensions with configurable weights |
 | **Locale-aware scoring** | Contract status, work authorisation, notice period, and other locale-specific signals injected into the `location_match` scoring dimension |
-| **Human-in-the-loop** | Mandatory approval checkpoint before any application leaves the system — never auto-submits |
+| **Assisted apply (two-step)** | Approve → package assembled (CV + cover letter + screening answers + paste-map) → you open the job site and submit → tap "Mark as applied". Hatch never submits autonomously — you are always in control of the final click. |
+| **Direction A UX** | Today cockpit · Stream · Tracker · Prep — four focused screens with StageTrack pipeline visibility on every card. "Finish applying" nudge for stale `ready_to_apply` roles. |
+| **Agent Skills layer** | 7 capability skills with `SKILL.md` metadata, deterministic `scripts/`, and YAML `resources/` — progressively loaded to keep LLM context lean. `screening-answers` + `form-mapping` generate clipboard-ready answers and paste-maps for the application-ready card. |
 | **Autonomous pipeline** | APScheduler cron → event bus → LangGraph StateGraph routes events to correct agents |
 | **Async notification bell** | Tailor and Coach run in the background; a persistent notification bell fires when jobs complete or fail, with error detail on failure |
 | **Tailor history panel** | Per-job document history: all generated CV and cover letter variants listed with ATS score, download link, and regeneration button |
@@ -68,7 +76,7 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | **LLM trace panel** | Per-call latency, token counts, and response preview — visible in the debug panel for local troubleshooting |
 | **Calendar export** | Download any interview round as an `.ics` file — one click to add to Google Calendar, Outlook, or Apple Calendar |
 | **Job archiving** | Configurable auto-archive for stale listings; archived jobs stay in DB for history |
-| **Self-hosted** | Docker Compose on any laptop. SQLite + ChromaDB — no external services required |
+| **Self-hosted** | Docker Compose / Podman on any laptop. SQLite + ChromaDB — no external services required |
 
 ---
 
@@ -110,7 +118,7 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | `agents/tools/llm_factory.py` | **New** | LangChain `init_chat_model()` factory — provider-agnostic |
 | `agents/scorer_agent.py` | **Updated** | Two-tier scoring; locale-aware `location_match`; weights from `profile.yaml` |
 | `agents/tailor_agent.py` | **Updated** | Score threshold and proof points from `profile.yaml` |
-| `agents/supervisor.py` | **Updated** | Shortlist threshold from `profile.yaml` |
+| `agents/supervisor.py` | **Updated** | Shortlist threshold from `profile.yaml`; scorer owns `job_discovered` event lifecycle |
 | `routers/profile.py` | **New** | Profile CRUD + live LLM connection test endpoint |
 | `routers/locales.py` | **New** | Locale list, legal fields, board config for onboarding wizard |
 | `components/Navigation.tsx` | **New** | 5-item nav with live approval badge, active-route highlight |
@@ -119,7 +127,7 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | `components/ErrorBanner.tsx` | **New** | API key invalid / scraper failure / no matching jobs banners |
 | `components/GapAnalysisCard.tsx` | **New** | Inline JD gap analysis: match bar, matched/missing skill pills, JD-only keywords, recommendations |
 | `components/InterviewTimeline.tsx` | **Updated** | "Add to calendar" button per interview round — downloads `.ics` |
-| `app/page.tsx` (dashboard) | **Rewritten** | Agent status strip, action cards, pipeline bar, top matches |
+| `app/page.tsx` (dashboard) | **Rewritten** | Redirects to `/today` — Direction A cockpit |
 | `app/jobs/page.tsx` | **Rewritten** | Score band legend, match threshold toggle, archive view |
 | `app/jobs/[id]/page.tsx` | **Updated** | Gap analysis section fetched server-side and rendered below job header |
 | `app/onboarding/page.tsx` | **Rewritten** | 5-step wizard with locale picker, STAR proof points, API key tester, board toggles |
@@ -129,6 +137,15 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | `scrapers/naukri.py` | **New** | Naukri.com job scraper (India) via `jobapi/v3/search` API |
 | `scrapers/indeed_india.py` | **New** | Indeed India scraper (`in.indeed.com`) |
 | `examples/` | **New** | Example profiles for each supported locale (UK, India, Ireland, UAE) |
+| `skills/` | **New (v4)** | 7 agent skills: `cv-tailoring`, `cover-letter`, `ats-optimization`, `company-research`, `interview-prep`, `screening-answers`, `form-mapping` — SKILL.md + scripts + resources |
+| `services/assisted_apply.py` | **Updated (v4)** | `prepare_application` returns full `ApplicationPackage` (docs + prefill + screening answers + paste-map); no submit path |
+| `routers/jobs.py` `/{id}/approve` | **New (v4)** | Two-step approve: tailor → assemble package → `ready_to_apply`; returns `ApplicationPackage` |
+| `routers/applications.py` v4 | **New (v4)** | `/package`, `/mark-applied`, `/reject`, `/revert` endpoints for the assisted apply flow |
+| `app/today/` | **New (v4)** | Today cockpit — pending approvals + "Finish applying" for stale `ready_to_apply` |
+| `app/stream/` | **New (v4)** | Stream — full pipeline feed with StageTrack hand-off visibility |
+| `app/tracker/` | **New (v4)** | Tracker — Kanban-style confirmed applies, interviews, offers |
+| `app/prep/` | **New (v4)** | Prep — interview coaching questions and STAR model answers |
+| `components/hatch/` | **New (v4)** | Direction A component set: `HatchNavShell`, `ReviewOverlay`, `ApplicationReadyCard`, `StageTrack`, `ScorePill`, `Btn`, `Card`, `Chip`, `HatchIcon` |
 
 ---
 
@@ -203,6 +220,7 @@ cp data/profile.yaml.example data/profile.yaml
 ```
 
 See `examples/` for complete worked profiles:
+
 - `examples/profile_uk_contractor.yaml` — UK Delivery Lead (outside contract)
 - `examples/profile_in_engineer.yaml` — India Senior Software Engineer
 - `examples/profile_ie_pm.yaml` — Ireland Product Manager
@@ -291,11 +309,13 @@ preferences:
 ## Agents
 
 ### Scout
+
 - **Trigger:** APScheduler cron (`preferences.scrape_interval_hours`)
 - **Does:** Scrapes enabled job boards for the configured locale, deduplicates, emits `job_discovered` events
 - **LLM:** None — fully deterministic
 
 ### Scorer
+
 - **Trigger:** `job_discovered` events
 - **Does:** Two-tier scoring — triage model pre-filters, primary model scores on 4 dimensions
 - **Weights:** Read from `profile.yaml → scoring.weights` at runtime
@@ -311,12 +331,14 @@ preferences:
 - **LLM:** Primary model (`gemma4:e2b` default for Ollama) with 16 K context
 
 ### Coach
-- **Trigger:** `interview_scheduled` events (user action on Kanban)
+
+- **Trigger:** `interview_scheduled` events (user action on Tracker)
 - **Does:** Company research, 12 categorised questions, STAR model answers. Multiple coach sessions are queued and processed in order — each session is tracked as an async job with notification on completion
 - **User context:** Skills and proof points injected from `profile.yaml`
 - **LLM:** Primary model
 
 ### Supervisor (LangGraph StateGraph)
+
 - Routes events to the correct agent
 - Enforces human-in-the-loop approval checkpoint (`interrupt()` from `langgraph.types`)
 - Reads `shortlist_threshold` from `profile.yaml` at runtime
@@ -326,10 +348,10 @@ preferences:
 
 ## Human-in-the-Loop
 
-Hatch **never submits applications autonomously.** Two mandatory checkpoints:
+Hatch **never submits applications autonomously.** Two mandatory human actions:
 
-1. **Application approval** (`/approvals`) — review tailored CV, cover letter, score breakdown. Approve / reject / edit.
-2. **Interview prep review** (`/prep/[session_id]`) — review questions, model answers, STAR notes. Approve or regenerate.
+1. **Approve & prepare** (Today → Review overlay) — review score breakdown, tailored CV, cover letter. Tap "Approve & prepare" → Hatch assembles the package (screening answers, paste-map, docs). You open the job site and submit yourself. Tap "Mark as applied" to confirm. The Tracker only shows confirmed applies — no guessing.
+2. **Interview prep review** (Prep tab) — review questions, model answers, STAR notes. Regenerate any answer.
 
 `AUTO_APPROVE=true` exists only for automated testing. Never set it in production.
 
@@ -337,7 +359,7 @@ Hatch **never submits applications autonomously.** Two mandatory checkpoints:
 
 ## API Reference
 
-```
+```text
 # Profile
 GET    /api/v2/profile                    Raw profile dict
 GET    /api/v2/profile/validated          Profile validated against Pydantic schema
@@ -359,6 +381,15 @@ GET    /api/v2/jobs/{id}/gap-analysis    JD skill gap: matched, missing, keyword
 POST   /api/jobs/scrape                  Trigger scraper(s) now
 POST   /api/jobs/archive/run             Archive jobs older than profile threshold
 POST   /api/jobs/{id}/unarchive          Restore an archived job
+
+# Two-step assisted apply (v4)
+POST   /api/jobs/{id}/approve            Approve job → assemble package → ready_to_apply
+                                          Returns: ApplicationPackage (cv_path, cover_letter_path,
+                                          job_url, prefill_map, screening_answers, paste_map)
+GET    /api/applications/{id}/package    Re-fetch package for the application-ready card
+POST   /api/applications/{id}/mark-applied  Confirm submission → applied (step 2)
+POST   /api/applications/{id}/reject     Reject → rejected
+POST   /api/applications/{id}/revert     Undo approve → ready_to_apply → ready
 
 # Interviews
 GET    /api/v2/interviews/{id}/ical      Download interview round as .ics calendar file

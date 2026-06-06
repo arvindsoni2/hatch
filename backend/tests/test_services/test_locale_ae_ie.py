@@ -1,12 +1,10 @@
 """Tests for UAE and Ireland locale packs loading correctly via the locale service."""
 from __future__ import annotations
 
-import pytest
 
 from app.services.locale_service import (
     get_locale,
     list_locales,
-    LocaleNotFoundError,
 )
 
 

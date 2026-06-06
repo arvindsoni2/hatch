@@ -1,7 +1,6 @@
 """Tests for QuestionGeneratorService — question count, category weights, model answers."""
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

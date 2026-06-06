@@ -1,7 +1,6 @@
 """Tests for local keyword-based job scorer."""
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
 
 from app.agents.tools.local_scorer import score_locally, LocalScoreResult

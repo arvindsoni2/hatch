@@ -19,7 +19,6 @@ from ..schemas.application import (
     ApplicationRead,
     ApplicationStatusUpdate,
     ApplicationUpdate,
-    KanbanStats,
 )
 from ..schemas.job import PaginatedResponse
 from ..services.application_service import ApplicationService
@@ -199,7 +198,7 @@ async def get_follow_up_reminders(
         select(Application).where(
             Application.status == "applied",
             Application.applied_date.isnot(None),
-            Application.is_active == True,
+            Application.is_active,
         )
     )
     apps = result.scalars().all()
@@ -379,6 +378,210 @@ async def prepare_application(
         "cover_letter_path": package.cover_letter_path,
         "prefill_map": package.prefill_map,
     }
+
+
+# ──────────────────────── Hatch v4: Two-step assisted apply ────────────────────────
+
+
+@router.get("/{app_id}/package")
+async def get_application_package(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the prepared ApplicationPackage for the Application-ready surface.
+
+    Re-assembles the package from the stored application state so the card can
+    be re-opened after the initial approve.
+
+    Args:
+        app_id: UUID of the application.
+
+    Returns:
+        ApplicationPackage JSON.
+
+    Raises:
+        HTTPException 404: If the application is not found.
+    """
+    from ..models.application import Application
+    from ..services.assisted_apply import AssistedApplyService
+
+    app_result = await db.execute(
+        select(Application).where(Application.id == app_id, Application.is_active.is_(True))
+    )
+    app_obj = app_result.scalar_one_or_none()
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+    job_id = app_obj.job_id or app_id
+    service = AssistedApplyService()
+    package = await service.prepare_application(job_id=job_id, db=db)
+
+    return {
+        "job_id": package.job_id,
+        "job_url": package.job_url,
+        "cv_path": package.cv_path,
+        "cover_letter_path": package.cover_letter_path,
+        "prefill_map": package.prefill_map,
+        "screening_answers": package.screening_answers,
+        "paste_map": package.paste_map,
+    }
+
+
+@router.post("/{app_id}/mark-applied", response_model=ApplicationRead)
+async def mark_applied(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationRead:
+    """Confirm that the user has submitted the application on the external site.
+
+    Only allowed when Application.status == 'ready_to_apply'.
+    Sets status → 'applied' and records applied_date.
+
+    Args:
+        app_id: UUID of the application.
+
+    Returns:
+        Updated ApplicationRead with status 'applied'.
+
+    Raises:
+        HTTPException 404: Application not found.
+        HTTPException 422: Application is not in 'ready_to_apply' state.
+    """
+    from sqlalchemy import update
+    from datetime import datetime
+
+    from ..models.application import Application
+    from ..repositories.application_repository import ApplicationRepository
+
+    app_result = await db.execute(
+        select(Application).where(Application.id == app_id, Application.is_active.is_(True))
+    )
+    app_obj = app_result.scalar_one_or_none()
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+    if app_obj.status != "ready_to_apply":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Cannot mark as applied: application is '{app_obj.status}', "
+                "must be 'ready_to_apply'."
+            ),
+        )
+
+    now = datetime.utcnow()
+    await db.execute(
+        update(Application)
+        .where(Application.id == app_id)
+        .values(status="applied", applied_date=now, updated_at=now)
+    )
+    await db.commit()
+
+    repo = ApplicationRepository(db)
+    result = await repo.get_by_id(app_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+    return result
+
+
+@router.post("/{app_id}/reject", response_model=ApplicationRead)
+async def reject_application(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationRead:
+    """Reject a job application (human decided not to apply).
+
+    Sets Application.status → 'rejected'.
+
+    Args:
+        app_id: UUID of the application.
+
+    Returns:
+        Updated ApplicationRead with status 'rejected'.
+
+    Raises:
+        HTTPException 404: Application not found.
+    """
+    from sqlalchemy import update
+    from datetime import datetime
+
+    from ..models.application import Application
+    from ..repositories.application_repository import ApplicationRepository
+
+    app_result = await db.execute(
+        select(Application).where(Application.id == app_id, Application.is_active.is_(True))
+    )
+    app_obj = app_result.scalar_one_or_none()
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+    await db.execute(
+        update(Application)
+        .where(Application.id == app_id)
+        .values(status="rejected", updated_at=datetime.utcnow())
+    )
+    await db.commit()
+
+    repo = ApplicationRepository(db)
+    result = await repo.get_by_id(app_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+    return result
+
+
+@router.post("/{app_id}/revert", response_model=ApplicationRead)
+async def revert_application(
+    app_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationRead:
+    """Undo the approve step — move application back from 'ready_to_apply' to 'ready'.
+
+    Only allowed when Application.status == 'ready_to_apply'.
+
+    Args:
+        app_id: UUID of the application.
+
+    Returns:
+        Updated ApplicationRead with status 'ready'.
+
+    Raises:
+        HTTPException 404: Application not found.
+        HTTPException 422: Application is not in 'ready_to_apply' state.
+    """
+    from sqlalchemy import update
+    from datetime import datetime
+
+    from ..models.application import Application
+    from ..repositories.application_repository import ApplicationRepository
+
+    app_result = await db.execute(
+        select(Application).where(Application.id == app_id, Application.is_active.is_(True))
+    )
+    app_obj = app_result.scalar_one_or_none()
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+    if app_obj.status != "ready_to_apply":
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Cannot revert: application is '{app_obj.status}', "
+                "must be 'ready_to_apply'."
+            ),
+        )
+
+    await db.execute(
+        update(Application)
+        .where(Application.id == app_id)
+        .values(status="ready", updated_at=datetime.utcnow())
+    )
+    await db.commit()
+
+    repo = ApplicationRepository(db)
+    result = await repo.get_by_id(app_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+    return result
 
 
 @router.delete("/{app_id}", status_code=200)

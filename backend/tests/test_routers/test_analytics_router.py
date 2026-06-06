@@ -1,7 +1,6 @@
 """Tests for the analytics router (dashboard, score-distribution, costs)."""
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch, MagicMock
 
 

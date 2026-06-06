@@ -1,0 +1,56 @@
+# Workday ATS field schema for form-mapping skill.
+# Workday uses a multi-step wizard; fields are mapped by step.
+
+steps:
+  - step: personal_information
+    fields:
+      - field_id: legal_first_name
+        label: "Legal First Name"
+        source: profile_field
+        path: candidate.full_name
+        transform: first_word
+
+      - field_id: legal_last_name
+        label: "Legal Last Name"
+        source: profile_field
+        path: candidate.full_name
+        transform: last_word
+
+      - field_id: email_address
+        label: "Email Address"
+        source: profile_field
+        path: candidate.email
+
+      - field_id: phone_number
+        label: "Phone Number"
+        source: profile_field
+        path: candidate.phone
+
+      - field_id: city
+        label: "City"
+        source: profile_field
+        path: search.locations[0].city
+
+  - step: resume_and_cover_letter
+    fields:
+      - field_id: resume
+        label: "Resume/CV"
+        source: document
+        document_type: cv
+
+      - field_id: cover_letter
+        label: "Cover Letter"
+        source: document
+        document_type: cover_letter
+
+  - step: self_identification
+    fields:
+      - field_id: work_authorisation
+        label: "Are you legally authorised to work in this country?"
+        source: screening_answer
+        screening_key: work_authorisation
+
+      - field_id: linkedin_profile
+        label: "LinkedIn Profile URL"
+        source: profile_field
+        path: candidate.linkedin_url

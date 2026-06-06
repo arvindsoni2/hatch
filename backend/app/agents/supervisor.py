@@ -5,17 +5,14 @@ human-in-the-loop approval checkpoint, and handles errors.
 """
 from __future__ import annotations
 
-import json
 import logging
-import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.application import Application
-from ..models.job_score import JobScore
 from .coach_agent import CoachAgent
 from .scorer_agent import ScorerAgent
 from .tailor_agent import TailorAgent
@@ -235,7 +232,7 @@ class SupervisorAgent:
         """
         try:
             from typing import TypedDict
-            from langgraph.graph import StateGraph, END
+            from langgraph.graph import StateGraph
             from langgraph.checkpoint.sqlite import SqliteSaver
 
             class SupervisorState(TypedDict):
@@ -285,6 +282,7 @@ class SupervisorAgent:
                          "mark_applied", "prepare_interview", "log_unknown"]:
                 graph.add_edge(node, "poll_events")
 
+            from ..config import settings as app_settings
             checkpoint_db = getattr(app_settings, "LANGGRAPH_CHECKPOINT_DB",
                                     "sqlite:///data/langgraph_checkpoints.db")
             memory = SqliteSaver.from_conn_string(checkpoint_db)

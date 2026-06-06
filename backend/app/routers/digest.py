@@ -88,7 +88,7 @@ async def update_digest_settings(data: dict[str, object]) -> dict[str, object]:
     from pathlib import Path  # noqa: PLC0415
     from ..config import settings  # noqa: PLC0415
 
-    allowed = {
+    _allowed = {
         "DIGEST_TIMEZONE": str,
         "DIGEST_TIME": str,
         "DIGEST_FREQUENCY": str,

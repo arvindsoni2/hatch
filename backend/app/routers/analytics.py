@@ -354,7 +354,6 @@ async def get_ab_testing(
 
     for row in rows:
         responses = row.responses or 0
-        rate = round(responses / row.total * 100, 1) if row.total > 0 else 0.0
 
         cv_key = row.cv_variant or "unset"
         if cv_key not in by_cv:

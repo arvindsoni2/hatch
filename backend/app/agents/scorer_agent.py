@@ -12,7 +12,6 @@ The LLM used is determined by profile.yaml llm config via llm_factory.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
@@ -414,7 +413,6 @@ class ScorerAgent(BaseAgent):
         # Triage pre-filter
         await limiter.acquire()
         triage_prompt = self._build_triage_prompt(job, profile)
-        t0 = time.monotonic()
         try:
             triage: _TriageResult = await triage_llm.ainvoke(triage_prompt)
         except Exception as exc:

@@ -1,0 +1,23 @@
+# CV patterns used to guide bullet rewriting without fabrication.
+# Each role_type has bullet templates; the tailoring service fills in proof points.
+
+delivery_lead:
+  action_verbs: [Led, Delivered, Orchestrated, Governed, Accelerated, Reduced, Saved]
+  bullet_templates:
+    - "Led {team_size}-person team delivering {outcome} for {stakeholder}, saving {metric}."
+    - "Reduced {problem} by {metric} through {method}, enabling {business_outcome}."
+    - "Governed {programme_name} ({budget}) across {departments}, achieving {result}."
+
+solutions_architect:
+  action_verbs: [Designed, Architected, Migrated, Implemented, Optimised, Integrated]
+  bullet_templates:
+    - "Architected {solution_name} on {platform}, reducing {cost_metric} by {pct}%."
+    - "Designed and implemented {system} for {client}, handling {scale} with {sla}% uptime."
+    - "Migrated {legacy_system} to {target_platform}, cutting {time_metric} from {before} to {after}."
+
+product_owner:
+  action_verbs: [Defined, Prioritised, Launched, Shipped, Drove, Increased]
+  bullet_templates:
+    - "Defined and prioritised {feature_count}-item backlog for {product}, increasing {kpi} by {pct}%."
+    - "Launched {feature} to {user_count} users; drove {metric_improvement}."
+    - "Shipped {n} sprints on schedule, maintaining {velocity} story points/sprint."

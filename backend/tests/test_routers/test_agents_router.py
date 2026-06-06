@@ -1,8 +1,7 @@
 """Tests for the agents router (status, trigger, approvals)."""
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from app.models.agent_state import AgentState
 from datetime import datetime

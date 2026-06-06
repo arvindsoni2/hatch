@@ -36,7 +36,7 @@ async def test_approve_triggers_tailoring():
     fake_app = MagicMock()
     fake_app.job_id = "job-123"
 
-    execute_results = []
+    _execute_results = []
 
     class MockScalarResult:
         def __init__(self, value):

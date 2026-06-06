@@ -68,12 +68,12 @@ class FollowUpEmail(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     # Relationships (viewonly=True — FollowUpEmail never cascades writes to parents)
-    follow_up: Mapped[FollowUp | None] = relationship(  # type: ignore[name-defined]
+    follow_up: Mapped[FollowUp | None] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "FollowUp",
         foreign_keys=[follow_up_id],
         viewonly=True,
     )
-    application: Mapped[Application] = relationship(  # type: ignore[name-defined]
+    application: Mapped[Application] = relationship(  # type: ignore[name-defined]  # noqa: F821
         "Application",
         foreign_keys=[application_id],
         viewonly=True,

@@ -77,7 +77,7 @@ describe("StepAIProvider", () => {
       />
     );
     expect(screen.queryByPlaceholderText(/GOOGLE_API_KEY/i)).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/http:\/\/localhost/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/http:\/\/host\.containers/i)).toBeInTheDocument();
   });
 
   it("calls onTestConnection when Test button is clicked", () => {

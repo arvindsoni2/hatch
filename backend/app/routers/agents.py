@@ -4,11 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
 from datetime import datetime
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 from datetime import timedelta
 
@@ -23,6 +20,8 @@ from ..models.document import GeneratedDocument
 from ..models.job import JobPosting
 from ..models.job_score import JobScore
 from ..schemas.agent_state import AgentStateRead, AgentStatusSummary, AllAgentStatus
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -156,7 +155,7 @@ async def list_pending_approvals(
     result = await db.execute(
         select(Application)
         .join(JobPosting, Application.job_id == JobPosting.id)
-        .where(Application.agent_created == True)
+        .where(Application.agent_created)
         .where(Application.approval_status == "pending")
         .where(JobPosting.posted_at >= cutoff)
         .order_by(Application.created_at.desc())
@@ -381,11 +380,11 @@ async def pipeline_stats(
     total_jobs = (await db.execute(select(func.count()).select_from(JP))).scalar_one() or 0
     scored = (await db.execute(select(func.count()).select_from(JobScore))).scalar_one() or 0
     tailored = (await db.execute(
-        select(func.count()).select_from(Application).where(Application.agent_created == True)
+        select(func.count()).select_from(Application).where(Application.agent_created)
     )).scalar_one() or 0
     approved = (await db.execute(
         select(func.count()).select_from(Application)
-        .where(Application.agent_created == True)
+        .where(Application.agent_created)
         .where(Application.approval_status == "approved")
     )).scalar_one() or 0
 

@@ -171,7 +171,7 @@ class InterviewRepository:
         now = datetime.utcnow()
         result = await self._session.execute(
             select(FollowUp)
-            .where(FollowUp.completed == False, FollowUp.due_date < now)
+            .where(~FollowUp.completed, FollowUp.due_date < now)
             .order_by(FollowUp.due_date.asc())
         )
         rows = result.scalars().all()
