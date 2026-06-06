@@ -100,7 +100,7 @@ export default function ResumePage() {
         <ArrowLeft className="h-4 w-4" /> Settings
       </Link>
 
-      <h1 className="text-2xl font-bold text-slate-900">Master CV</h1>
+      <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Master CV</h1>
       <p className="text-sm text-slate-500">
         Upload your CV once. Hatch uses it to generate tailored applications for each job.
         Supported formats: <strong>.docx</strong> and <strong>.pdf</strong>.
@@ -114,7 +114,7 @@ export default function ResumePage() {
         className={`rounded-xl border-2 border-dashed p-10 text-center transition-colors cursor-pointer ${
           dragOver
             ? "border-brand-400 bg-brand-50"
-            : "border-slate-200 bg-white hover:border-brand-300 hover:bg-slate-50"
+            : "border-[var(--border)] bg-[var(--surface)] hover:border-brand-300"
         }`}
         onClick={() => inputRef.current?.click()}
       >
@@ -153,12 +153,12 @@ export default function ResumePage() {
 
       {/* Current CV status */}
       {status && (
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="rounded-xl shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
           <div className="border-b border-slate-100 px-5 py-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-slate-400" />
               <div>
-                <p className="text-sm font-semibold text-slate-900">
+                <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
                   {status.filename ?? "master_cv.json"}
                 </p>
                 {status.uploaded_at && (
@@ -196,15 +196,15 @@ export default function ResumePage() {
               {/* Stats */}
               <div className="grid grid-cols-3 gap-3 border-t border-slate-100 pt-4">
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-900">{status.skills_count}</p>
+                  <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{status.skills_count}</p>
                   <p className="text-xs text-slate-500">skills extracted</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-900">{status.experience_count}</p>
+                  <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{status.experience_count}</p>
                   <p className="text-xs text-slate-500">experience items</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-900">{status.proof_points_count}</p>
+                  <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{status.proof_points_count}</p>
                   <p className="text-xs text-slate-500">proof points</p>
                   {status.proof_points_count === 0 && (
                     <p className="text-xs text-amber-600 mt-0.5">Configure in profile.yaml</p>

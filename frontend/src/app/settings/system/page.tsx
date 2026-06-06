@@ -165,31 +165,31 @@ export default function SystemLogPage() {
         </div>
       </div>
 
-      <h1 className="text-2xl font-bold text-slate-900">System Event Log</h1>
+      <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>System Event Log</h1>
 
       {/* Cost summary */}
       {costs && costs.total_calls > 0 && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
             <p className="text-xs text-slate-500">Total LLM cost (30d)</p>
-            <p className="text-xl font-bold text-slate-900">${costs.total_cost_usd.toFixed(4)}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>${costs.total_cost_usd.toFixed(4)}</p>
             <p className="text-xs text-slate-400">USD</p>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
             <p className="text-xs text-slate-500">LLM calls (30d)</p>
-            <p className="text-xl font-bold text-slate-900">{costs.total_calls.toLocaleString()}</p>
+            <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>{costs.total_calls.toLocaleString()}</p>
           </div>
           {Object.entries(costs.by_agent).map(([agent, cost]) => (
-            <div key={agent} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div key={agent} className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
               <p className="text-xs text-slate-500 capitalize">{agent} agent cost</p>
-              <p className="text-xl font-bold text-slate-900">${cost.toFixed(4)}</p>
+              <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>${cost.toFixed(4)}</p>
             </div>
           ))}
         </div>
       )}
 
       {/* LLM Traces */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
           <div className="flex items-center gap-2">
             <Zap className="h-4 w-4 text-amber-500" />
@@ -292,7 +292,7 @@ export default function SystemLogPage() {
             key={key}
             value={filter[key as keyof typeof filter]}
             onChange={(e) => { setOffset(0); setFilter((f) => ({ ...f, [key]: e.target.value })); }}
-            className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-dim)' }}
           >
             {options.map((o) => (
               <option key={o} value={o}>
@@ -305,7 +305,7 @@ export default function SystemLogPage() {
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-6 w-6 animate-spin text-slate-400" />

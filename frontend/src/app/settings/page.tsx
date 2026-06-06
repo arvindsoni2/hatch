@@ -20,9 +20,9 @@ import { DigestPreview } from "../../components/DigestPreview"
 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 px-6 py-4">
-        <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+    <div className="rounded-xl shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+      <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--border)' }}>
+        <h2 className="text-base font-semibold" style={{ color: 'var(--text)' }}>{title}</h2>
       </div>
       <div className="px-6 py-5">{children}</div>
     </div>
@@ -33,7 +33,7 @@ function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4 py-2.5 border-b border-slate-100 last:border-0">
       <span className="text-sm font-medium text-slate-500 sm:shrink-0 sm:w-48">{label}</span>
-      <span className="text-sm text-slate-800 sm:text-right">{value}</span>
+      <span className="text-sm sm:text-right" style={{ color: 'var(--text)' }}>{value}</span>
     </div>
   )
 }
@@ -328,7 +328,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
                   </div>
                   <div className="flex items-center gap-2 text-right">
                     {info?.masked && (
-                      <code className="text-xs text-slate-400 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
+                      <code className="text-xs px-1.5 py-0.5 rounded" style={{ color: 'var(--text-muted)', background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
                         {info.masked}
                       </code>
                     )}
@@ -355,7 +355,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
               <select
                 value={selectedKeyName}
                 onChange={(e) => setSelectedKeyName(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}"
               >
                 {Object.entries(KEY_PROVIDER_MAP).map(([envVar, provider]) => (
                   <option key={envVar} value={envVar}>
@@ -372,7 +372,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
                 value={keyValue}
                 onChange={(e) => setKeyValue(e.target.value)}
                 placeholder="Paste key here…"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}
                 onKeyDown={(e) => { if (e.key === "Enter") void handleSave() }}
               />
             </div>
@@ -417,7 +417,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
                   <select
                     value={selectedPrimary}
                     onChange={(e) => setSelectedPrimary(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}"
                   >
                     {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
@@ -427,7 +427,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
                   <select
                     value={selectedTriage}
                     onChange={(e) => setSelectedTriage(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}"
                   >
                     {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
@@ -629,7 +629,7 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
                       value={timezoneInput}
                       onChange={(e) => setTimezoneInput(e.target.value)}
                       placeholder="e.g. Asia/Kolkata"
-                      className="rounded border border-slate-300 px-2 py-1 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-brand-500 w-44"
+                      className="rounded border px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500 w-44" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}
                       onKeyDown={(e) => { if (e.key === "Enter") void handleSaveTimezone(); if (e.key === "Escape") setEditingTimezone(false); }}
                       autoFocus
                     />
@@ -644,7 +644,7 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-slate-900">
+                    <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>
                       {digestStatus?.timezone || "UTC"}
                     </span>
                     <button
@@ -737,12 +737,12 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Settings</h1>
+        <h1 className="text-2xl font-semibold" style={{ color: 'var(--text)' }}>Settings</h1>
         <p className="mt-1 text-sm text-slate-500">Configure Hatch — profile, resume, AI provider, job boards, and system.</p>
       </div>
 
       {/* Tab bar */}
-      <div className="border-b border-slate-200">
+      <div style={{ borderBottom: '1px solid var(--border)' }}>
         <nav className="flex gap-1 -mb-px" aria-label="Settings tabs">
           {TABS.map((tab) => (
             <button
