@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { HatchNavShell } from "@/components/hatch/HatchNavShell";
 import { HatchTopBarSlot } from "@/components/hatch/HatchTopBarSlot";
+import { OnboardingGate } from "@/components/OnboardingGate";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { InstallPrompt } from "@/components/InstallPrompt";
 
@@ -57,6 +58,7 @@ export default function RootLayout({
         className={`${inter.variable} font-sans antialiased`}
         style={{ background: "var(--bg)", color: "var(--text)" }}
       >
+        <OnboardingGate />
         <OfflineIndicator />
 
         <div className="flex" style={{ minHeight: "100vh" }}>
