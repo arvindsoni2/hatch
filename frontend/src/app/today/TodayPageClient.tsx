@@ -3,18 +3,21 @@ import { useState } from "react";
 import { TodayScreen } from "@/components/hatch/screens/TodayScreen";
 import { ReviewOverlay } from "@/components/hatch/ReviewOverlay";
 import { ApplicationReadyCard } from "@/components/hatch/ApplicationReadyCard";
+import { AgentActivityPanel } from "@/components/hatch/AgentActivityPanel";
 import { approveJob, rejectApplication, markApplied, revertApplication } from "@/lib/api";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
-import type { ApplicationPackage } from "@/lib/api";
+import type { ApplicationPackage, AgentPerformance } from "@/lib/api";
 
 interface TodayPageClientProps {
   jobs: HatchJob[];
   funnel: { scout: number; scorer: number; tailor: number; coach: number };
+  transit?: { scout_to_scorer: number; scorer_to_tailor: number; tailor_to_coach: number };
   profileName?: string;
   followUpCount?: number;
+  agentPerf?: AgentPerformance | null;
 }
 
-export function TodayPageClient({ jobs, funnel, profileName, followUpCount }: TodayPageClientProps) {
+export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCount, agentPerf }: TodayPageClientProps) {
   const [localJobs, setLocalJobs] = useState<HatchJob[]>(jobs);
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
@@ -66,19 +69,33 @@ export function TodayPageClient({ jobs, funnel, profileName, followUpCount }: To
 
   return (
     <>
-      <TodayScreen
-        jobs={localJobs}
-        funnel={funnel}
-        profileName={profileName ?? "there"}
-        followUpCount={followUpCount}
-        onReview={(ids) => {
-          const q = localJobs.filter((j) => ids.includes(j.id));
-          setReviewQueue(q);
-          setReviewIdx(0);
-        }}
-        onMarkApplied={handleMarkApplied}
-        onRevert={handleRevert}
-      />
+      {/* Desktop 2-col: Today content left, Agent activity right */}
+      <div className="flex gap-6 items-start">
+        <div className="flex-1 min-w-0">
+          <TodayScreen
+            jobs={localJobs}
+            funnel={funnel}
+            transit={transit}
+            profileName={profileName ?? "there"}
+            followUpCount={followUpCount}
+            onReview={(ids) => {
+              const q = localJobs.filter((j) => ids.includes(j.id));
+              setReviewQueue(q);
+              setReviewIdx(0);
+            }}
+            onMarkApplied={handleMarkApplied}
+            onRevert={handleRevert}
+          />
+        </div>
+        {/* Agent activity panel — desktop right column, mobile hidden (shows below) */}
+        <div className="hidden lg:block shrink-0" style={{ width: 272, paddingTop: 0 }}>
+          <AgentActivityPanel initialData={agentPerf ?? null} />
+        </div>
+      </div>
+      {/* Agent activity — mobile only, below main content */}
+      <div className="lg:hidden mt-6">
+        <AgentActivityPanel initialData={agentPerf ?? null} />
+      </div>
       {readyToApplyWithPkg.map(({ job, pkg }) => (
         <ApplicationReadyCard
           key={job.id}

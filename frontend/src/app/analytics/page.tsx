@@ -5,7 +5,7 @@ import {
   ScoreDistributionChart,
   DailyCostChart,
 } from "@/components/AnalyticsCharts";
-import { AgentPerformanceTable } from "@/components/AgentPerformanceTable";
+import { BackButton } from "@/components/hatch/BackButton";
 import {
   fetchAnalyticsDashboard,
   fetchAtsCorrelation,
@@ -14,7 +14,6 @@ import {
   fetchScoreDistribution,
   fetchCostsMonthly,
   fetchCostsDaily,
-  fetchAgentPerformance,
   fetchSearchQuality,
   fetchRateLimitStatus,
 } from "@/lib/api";
@@ -47,7 +46,6 @@ export default async function AnalyticsPage() {
     scoreDist,
     costsMonthly,
     costsDaily,
-    agentPerf,
     searchQuality,
     rateLimitStatus,
   ] = await Promise.all([
@@ -58,7 +56,6 @@ export default async function AnalyticsPage() {
     fetchScoreDistribution().catch(() => null),
     fetchCostsMonthly().catch(() => null),
     fetchCostsDaily(30).catch(() => null),
-    fetchAgentPerformance().catch(() => null),
     fetchSearchQuality().catch(() => null),
     fetchRateLimitStatus().catch(() => null),
   ]);
@@ -75,7 +72,8 @@ export default async function AnalyticsPage() {
     <main className="min-h-screen" style={{ background: "var(--bg)" }}>
       <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 sm:py-8 space-y-8">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Analytics</h1>
+          <BackButton href="/today" label="Today" />
+          <h1 className="text-[28px] font-semibold tracking-tight mt-3" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Analytics</h1>
           <p className="text-sm mt-0.5" style={{ color: "var(--text-muted)" }}>How your search is performing</p>
         </div>
 
@@ -180,11 +178,6 @@ export default async function AnalyticsPage() {
           ) : (
             <p className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>No cost data yet — costs are tracked when agents run LLM calls.</p>
           )}
-        </div>
-
-        {/* Section F: Agent Performance — client component, polls every 30s */}
-        <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          <AgentPerformanceTable initialData={agentPerf} />
         </div>
 
         {/* Section G: Skills */}

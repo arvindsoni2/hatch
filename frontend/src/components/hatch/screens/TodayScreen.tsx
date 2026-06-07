@@ -1,4 +1,5 @@
 "use client";
+import React from 'react';
 import { AgentBadge } from '../AgentBadge';
 import { Btn } from '../Btn';
 import { Card } from '../Card';
@@ -29,9 +30,16 @@ interface FunnelCounts {
   coach: number;
 }
 
+interface TransitCounts {
+  scout_to_scorer: number;
+  scorer_to_tailor: number;
+  tailor_to_coach: number;
+}
+
 interface TodayScreenProps {
   jobs: HatchJob[];
   funnel: FunnelCounts;
+  transit?: TransitCounts;
   profileName: string;
   followUpCount?: number;
   onReview?: (ids: string[]) => void;
@@ -40,25 +48,31 @@ interface TodayScreenProps {
   onOpenPrep?: () => void;
 }
 
-function FunnelStep({ agent, count, last }: { agent: string; count: number; last?: boolean }) {
+function FunnelStep({ agent, count }: { agent: string; count: number }) {
   const a = AGENT_DEFS[agent as keyof typeof AGENT_DEFS];
   return (
-    <>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, flex: 1 }}>
-        <AgentBadge agent={agent as never} size={34} />
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{count}</div>
-        <div style={{ fontSize: 10, fontWeight: 600, color: a.color }}>{a.name}</div>
-      </div>
-      {!last && (
-        <div style={{ display: 'flex', alignItems: 'center', paddingBottom: 28 }}>
-          <HatchIcon name="chevronR" size={14} color="var(--border-strong)" strokeWidth={2.5} />
-        </div>
-      )}
-    </>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, flex: 1 }}>
+      <AgentBadge agent={agent as never} size={34} />
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{count}</div>
+      <div style={{ fontSize: 10, fontWeight: 600, color: a.color }}>{a.name}</div>
+    </div>
   );
 }
 
-export function TodayScreen({ jobs, funnel, profileName, followUpCount = 2, onReview, onMarkApplied, onRevert, onOpenPrep }: TodayScreenProps) {
+function FunnelArrow({ count }: { count: number }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, paddingBottom: 28, flexShrink: 0 }}>
+      {count > 0 && (
+        <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', lineHeight: 1 }}>
+          {count}
+        </span>
+      )}
+      <HatchIcon name="arrowR" size={13} color="var(--text-dim)" strokeWidth={2} />
+    </div>
+  );
+}
+
+export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount = 2, onReview, onMarkApplied, onRevert, onOpenPrep }: TodayScreenProps) {
   const ready = jobs.filter((j) => j.state === 'ready');
   const readyToApply = jobs.filter((j) => j.state === 'ready_to_apply');
   const initials = profileName.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -108,16 +122,23 @@ export function TodayScreen({ jobs, funnel, profileName, followUpCount = 2, onRe
             <strong style={{ color: 'var(--success)' }}>{ready.length} tailored</strong> and ready for review.
           </p>
           {/* Mini funnel */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', marginTop: 16, padding: '4px 2px 0' }}>
-            {PIPELINE.map((k, i) => (
-              <FunnelStep
-                key={k}
-                agent={k}
-                count={funnel[k as keyof FunnelCounts]}
-                last={i === PIPELINE.length - 1}
-              />
-            ))}
-          </div>
+          {(() => {
+            const transitArr = [
+              transit?.scout_to_scorer ?? 0,
+              transit?.scorer_to_tailor ?? 0,
+              transit?.tailor_to_coach ?? 0,
+            ];
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, padding: '4px 2px 0' }}>
+                {PIPELINE.map((k, i) => (
+                  <React.Fragment key={k}>
+                    <FunnelStep agent={k} count={funnel[k as keyof FunnelCounts]} />
+                    {i < PIPELINE.length - 1 && <FunnelArrow count={transitArr[i]} />}
+                  </React.Fragment>
+                ))}
+              </div>
+            );
+          })()}
         </Card>
 
         {/* Needs you header */}
