@@ -9,7 +9,11 @@ interface UserMenuProps {
   role?: string;
 }
 
-const NAV_ITEMS: { label: string; icon: string; href: string }[] = [
+const QUICK_LINKS: { label: string; icon: string; href: string }[] = [
+  { label: 'Analytics', icon: 'trending', href: '/analytics' },
+];
+
+const SETTINGS_ITEMS: { label: string; icon: string; href: string }[] = [
   { label: 'Profile & CV',  icon: 'user',     href: '/settings/profile' },
   { label: 'AI Provider',   icon: 'zap',      href: '/settings'         },
   { label: 'Resume',        icon: 'fileText', href: '/settings/resume'  },
@@ -122,9 +126,26 @@ export function UserMenu({ name, role }: UserMenuProps) {
             </div>
           </div>
 
-          {/* Nav items */}
+          {/* Quick links (Analytics) */}
           <div style={{ padding: '6px 0' }}>
-            {NAV_ITEMS.map(({ label, icon, href }) => (
+            {QUICK_LINKS.map(({ label, icon, href }) => (
+              <button
+                key={label}
+                role="menuitem"
+                onClick={() => { setOpen(false); router.push(href); }}
+                style={{ ...menuRow, color: 'var(--text)' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none'; }}
+              >
+                <HatchIcon name={icon} size={15} color="var(--text-dim)" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Settings items */}
+          <div style={{ padding: '6px 0', borderTop: '1px solid var(--border)' }}>
+            {SETTINGS_ITEMS.map(({ label, icon, href }) => (
               <button
                 key={label}
                 role="menuitem"

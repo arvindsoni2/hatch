@@ -52,6 +52,13 @@ describe('UserMenu', () => {
     expect(screen.getByText('Delivery Lead')).toBeTruthy();
   });
 
+  it('renders Analytics as a quick-link above the settings group', async () => {
+    const { UserMenu } = await import('@/components/hatch/UserMenu');
+    render(<UserMenu {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /open user menu/i }));
+    expect(screen.getByText('Analytics')).toBeTruthy();
+  });
+
   it('renders all 4 settings navigation items', async () => {
     const { UserMenu } = await import('@/components/hatch/UserMenu');
     render(<UserMenu {...defaultProps} />);
