@@ -48,29 +48,33 @@ test("notification bell is present and clickable", async ({ page }) => {
   expect(isDisabled).toBeNull();
 });
 
-// Theme toggle is present in top bar (v4.1 ThemeToggle in HatchTopBar)
-test("theme toggle is present in top bar", async ({ page }) => {
+// User menu avatar is present in top bar (v4.1 UserMenu replaces standalone ThemeToggle + UserAvatar)
+test("user menu avatar is present in top bar", async ({ page }) => {
   await page.goto("/today");
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("domcontentloaded");
 
-  const toggleButton = page.getByRole("button", { name: /toggle dark mode/i });
-  await expect(toggleButton.first()).toBeVisible();
+  const avatarButton = page.getByRole("button", { name: /open user menu/i });
+  await expect(avatarButton.first()).toBeVisible();
 });
 
-// Theme toggle switches theme attribute on html element
-test("theme toggle switches data-theme attribute", async ({ page }) => {
+// Theme toggle is accessible via user menu dropdown
+test("theme toggle switches data-theme attribute via user menu", async ({ page }) => {
   await page.goto("/today");
-  // Wait for React hydration so ThemeToggle's useEffect has run and resolved
-  // the initial theme (boot script sets dark, useEffect may override to light)
+  // Open user menu dropdown first
+  const avatarButton = page.getByRole("button", { name: /open user menu/i });
+  await expect(avatarButton.first()).toBeVisible();
+  await avatarButton.first().click();
+
+  // Wait for ThemeToggle to be visible in the dropdown + allow useEffect to settle
   const toggleButton = page.getByRole("button", { name: /toggle dark mode/i });
-  await expect(toggleButton.first()).toBeVisible();
-  await page.waitForTimeout(200); // allow useEffect to settle
+  await expect(toggleButton).toBeVisible();
+  await page.waitForTimeout(200);
 
   const initialTheme = await page.evaluate(() =>
     document.documentElement.getAttribute("data-theme")
   );
 
-  await toggleButton.first().click();
+  await toggleButton.click();
   await page.waitForTimeout(300);
 
   const newTheme = await page.evaluate(() =>

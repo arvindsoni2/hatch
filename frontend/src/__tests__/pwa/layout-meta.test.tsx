@@ -16,11 +16,12 @@ describe("Layout PWA metadata", () => {
     expect(layoutContent).toContain("theme-color");
   });
 
-  it("includes apple web app capable", () => {
-    // Next.js metadata API uses appleWebApp: { capable: true } which generates
-    // the apple-mobile-web-app-capable meta tag at runtime
+  it("has appleWebApp metadata without deprecated capable flag", () => {
+    // appleWebApp.capable: true generated the deprecated mobile-web-app-capable meta tag.
+    // statusBarStyle is kept; capable is intentionally removed to silence the Chrome warning.
     expect(layoutContent).toContain("appleWebApp");
-    expect(layoutContent).toContain("capable");
+    expect(layoutContent).toContain("statusBarStyle");
+    expect(layoutContent).not.toContain("capable: true");
   });
 
   it("includes apple touch icon", () => {

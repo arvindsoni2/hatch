@@ -49,9 +49,15 @@ describe('Navigation cleanup (v4.1)', () => {
     expect(topBar).toContain('NotificationBell');
   });
 
-  it('HatchTopBar imports ThemeToggle', () => {
+  it('HatchTopBar imports UserMenu (ThemeToggle moved into UserMenu dropdown)', () => {
     const topBar = read('components', 'hatch', 'HatchTopBar.tsx');
-    expect(topBar).toContain('ThemeToggle');
+    expect(topBar).toContain('UserMenu');
+  });
+
+  it('UserMenu.tsx exists with ThemeToggle inside (v4.1 user settings dropdown)', () => {
+    expect(exists('components', 'hatch', 'UserMenu.tsx')).toBe(true);
+    const menu = read('components', 'hatch', 'UserMenu.tsx');
+    expect(menu).toContain('ThemeToggle');
   });
 });
 

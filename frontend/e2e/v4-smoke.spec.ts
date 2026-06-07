@@ -65,7 +65,7 @@ test("onboarding page is reachable at /onboarding", async ({ page }) => {
   await expect(page.getByText("Get started")).toBeVisible();
 });
 
-// ── Shell contract: bell + toggle present on all Direction A routes ────────────
+// ── Shell contract: bell + user menu present on all Direction A routes ────────
 
 for (const route of ["/today", "/stream", "/tracker", "/prep"]) {
   test(`notification bell visible on ${route}`, async ({ page }) => {
@@ -75,10 +75,20 @@ for (const route of ["/today", "/stream", "/tracker", "/prep"]) {
     await expect(bell.first()).toBeVisible();
   });
 
-  test(`theme toggle visible on ${route}`, async ({ page }) => {
+  test(`user menu avatar visible on ${route}`, async ({ page }) => {
     await page.goto(route);
     await page.waitForLoadState("domcontentloaded");
-    const toggle = page.getByRole("button", { name: /toggle dark mode/i });
-    await expect(toggle.first()).toBeVisible();
+    const avatar = page.getByRole("button", { name: /open user menu/i });
+    await expect(avatar.first()).toBeVisible();
   });
 }
+
+// ── UserMenu: opens and shows ThemeToggle ─────────────────────────────────────
+
+test("user menu opens and shows theme toggle", async ({ page }) => {
+  await page.goto("/today");
+  await page.waitForLoadState("domcontentloaded");
+  const avatar = page.getByRole("button", { name: /open user menu/i });
+  await avatar.first().click();
+  await expect(page.getByRole("button", { name: /toggle dark mode/i })).toBeVisible();
+});

@@ -27,13 +27,17 @@ function deriveLabels(pathname: string): { title: string; sub?: string } {
 export function HatchTopBarSlot() {
   const pathname = usePathname();
   const [name, setName] = useState('there');
+  const [role, setRole] = useState<string | undefined>(undefined);
   const { title, sub } = deriveLabels(pathname);
 
   useEffect(() => {
     fetchProfileStatus()
-      .then((s) => { if (s.candidate_name) setName(s.candidate_name); })
+      .then((s) => {
+        if (s.candidate_name) setName(s.candidate_name);
+        if (s.target_roles?.length) setRole(s.target_roles[0]);
+      })
       .catch(() => {/* backend offline — keep fallback */});
   }, []);
 
-  return <HatchTopBar name={name} pageTitle={title} pageSub={sub} />;
+  return <HatchTopBar name={name} role={role} pageTitle={title} pageSub={sub} />;
 }

@@ -1,11 +1,11 @@
 "use client";
 import { HatchIcon } from './HatchIcon';
-import { UserAvatar } from './UserAvatar';
 import { NotificationBell } from '@/components/NotificationBell';
-import { ThemeToggle } from '@/components/ThemeToggle';
+import { UserMenu } from './UserMenu';
 
 interface HatchTopBarProps {
   name: string;
+  role?: string;
   pageTitle: string;
   pageSub?: string;
 }
@@ -17,8 +17,7 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-export function HatchTopBar({ name, pageTitle, pageSub }: HatchTopBarProps) {
-  const initials = name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+export function HatchTopBar({ name, role, pageTitle, pageSub }: HatchTopBarProps) {
 
   return (
     <header
@@ -68,9 +67,8 @@ export function HatchTopBar({ name, pageTitle, pageSub }: HatchTopBarProps) {
         />
       </div>
 
-      <ThemeToggle />
       <NotificationBell />
-      <UserAvatar initials={initials} size={32} />
+      <UserMenu name={name} role={role} />
     </header>
   );
 }

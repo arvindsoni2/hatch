@@ -8,6 +8,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 vi.mock('next/navigation', () => ({
   usePathname: vi.fn(() => '/today'),
+  useRouter: vi.fn(() => ({ push: vi.fn() })),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -65,9 +66,10 @@ describe('HatchTopBarSlot', () => {
     expect(screen.getByRole('button', { name: /notifications/i })).toBeTruthy();
   });
 
-  it('renders a theme toggle button', async () => {
+  it('renders the user menu avatar (theme toggle moved into UserMenu dropdown)', async () => {
     const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
     await act(async () => { render(<HatchTopBarSlot />); });
-    expect(screen.getByRole('button', { name: /toggle dark mode/i })).toBeTruthy();
+    // UserMenu replaces standalone ThemeToggle — avatar button opens the dropdown
+    expect(screen.getByRole('button', { name: /open user menu/i })).toBeTruthy();
   });
 });
