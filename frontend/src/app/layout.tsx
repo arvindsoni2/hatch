@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { HatchNavShell } from "@/components/hatch/HatchNavShell";
 import { HatchTopBarSlot } from "@/components/hatch/HatchTopBarSlot";
+import { HatchMobileBar } from "@/components/hatch/HatchMobileBar";
 import { OnboardingGate } from "@/components/OnboardingGate";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { InstallPrompt } from "@/components/InstallPrompt";
@@ -67,6 +68,7 @@ export default function RootLayout({
 
           {/* Main content area */}
           <div className="flex flex-col flex-1 min-w-0">
+            <HatchMobileBar />
             <HatchTopBarSlot />
             <main className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-6 md:pb-8">
               {children}
