@@ -30,7 +30,7 @@ function DimBar({ label, val }: DimBarProps) {
   );
 }
 
-const DEFAULT_DIMS: Record<string, number> = { Skills: 0.92, Experience: 0.85, Rate: 0.90, Location: 0.80 };
+const DEFAULT_DIMS: Record<string, number> = { Skills: 0.80, Experience: 0.75, Rate: 0.80, Location: 0.75 };
 
 interface ReviewOverlayProps {
   queue: HatchJob[];
@@ -113,7 +113,7 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
-              {Object.entries(DEFAULT_DIMS).map(([k, v]) => <DimBar key={k} label={k} val={v} />)}
+              {Object.entries(job.dims ?? DEFAULT_DIMS).map(([k, v]) => <DimBar key={k} label={k} val={v} />)}
             </div>
           </Card>
 
@@ -145,12 +145,21 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
             ))}
           </div>
 
-          {/* Faux document preview */}
-          <div style={{ background: 'var(--surface-2)', borderRadius: 12, padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ height: 10, width: '46%', borderRadius: 3, background: 'var(--text)' }} />
-            <div style={{ height: 1, background: 'var(--border)' }} />
-            <div style={{ height: 5, width: '64%', borderRadius: 3, background: 'var(--text-muted)' }} />
-            <div style={{ height: 5, width: '55%', borderRadius: 3, background: 'var(--text-muted)' }} />
+          {/* Document drafted confirmation */}
+          <div style={{ background: 'var(--surface-2)', borderRadius: 12, padding: 16, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--success-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <HatchIcon name="checkCircle" size={18} color="var(--success)" />
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>
+                {tab === 'cv' ? 'CV drafted and ready' : 'Cover letter drafted and ready'}
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                {tab === 'cv'
+                  ? 'Tailored to this job description and optimised for ATS keyword matching.'
+                  : 'Personalised to your experience and written specifically for this role.'}
+              </div>
+            </div>
           </div>
 
           {/* Info strip */}

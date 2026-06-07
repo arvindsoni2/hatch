@@ -18,6 +18,7 @@ import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 export const revalidate = 30;
 
 function pendingToHatchJob(a: PendingApproval): HatchJob {
+  const hasDims = a.skill_match != null || a.experience_match != null || a.rate_match != null || a.location_match != null;
   return {
     id: a.application_id,
     jobPostingId: a.job_id ?? undefined,
@@ -26,6 +27,12 @@ function pendingToHatchJob(a: PendingApproval): HatchJob {
     loc: "—",
     rate: a.rate_text ?? "—",
     score: a.overall_score ?? 0,
+    dims: hasDims ? {
+      Skills: a.skill_match ?? 0,
+      Experience: a.experience_match ?? 0,
+      Rate: a.rate_match ?? 0,
+      Location: a.location_match ?? 0,
+    } : undefined,
     state: "ready",
   };
 }

@@ -9,6 +9,7 @@ import { HatchIcon } from '../HatchIcon';
 import { ScorePill } from '../ScorePill';
 import { UserAvatar } from '../UserAvatar';
 import { AGENT_DEFS, PIPELINE } from '../agents';
+import { TimeGreeting } from '@/components/TimeGreeting';
 
 export interface HatchJob {
   id: string;
@@ -19,6 +20,7 @@ export interface HatchJob {
   rate: string;
   score: number;
   ats?: number;
+  dims?: { Skills: number; Experience: number; Rate: number; Location: number };
   state: 'ready' | 'ready_to_apply' | 'tailoring' | 'parked' | 'applied' | 'rejected' | 'interview';
   jobUrl?: string;
   when?: string;
@@ -114,7 +116,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
       {/* Desktop greeting */}
       <div className="hidden md:block" style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)' }}>
-          Good morning, {profileName}
+          <TimeGreeting name={profileName} />
         </div>
         <div style={{ fontSize: 13.5, color: 'var(--text-muted)', marginTop: 4 }}>
           {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })} — here&apos;s what your agents did overnight

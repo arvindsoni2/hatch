@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   fetchAgentPerformance,
   fetchAnalyticsDashboard,
+  listSessions,
   type AgentPerformance,
   type AgentPerformanceRow,
   type AnalyticsDashboard,
@@ -25,6 +27,7 @@ function narrativeFor(
   row: AgentPerformanceRow | undefined,
   funnel: FunnelCounts,
   transit: TransitCounts | undefined,
+  coachSessions: number,
 ): NarrativeResult {
   switch (agent) {
     case "scout": {
@@ -64,12 +67,11 @@ function narrativeFor(
       };
     }
     case "coach": {
-      const count = funnel.coach;
       return {
-        text: count > 0
-          ? `Prepped ${count} interview session${count !== 1 ? "s" : ""}`
-          : "No interviews scheduled yet",
-        chip: count > 0 ? `${count} ready` : null,
+        text: coachSessions > 0
+          ? `Prepped ${coachSessions} interview session${coachSessions !== 1 ? "s" : ""}`
+          : "No interview sessions yet",
+        chip: coachSessions > 0 ? `${coachSessions} ready` : null,
         chipColor: "var(--purple)",
         chipBg: "var(--purple-soft)",
       };
@@ -100,11 +102,16 @@ interface AgentActivityPanelProps {
 }
 
 export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: AgentActivityPanelProps) {
+  const router = useRouter();
   const [data, setData] = useState<AgentPerformance | null>(initialData);
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null);
+  const [coachSessions, setCoachSessions] = useState(0);
 
   useEffect(() => {
     fetchAnalyticsDashboard().then(setAnalytics).catch(() => {});
+    listSessions(20)
+      .then((sessions) => setCoachSessions(sessions.filter((s) => s.status === "active" || s.status === "completed").length))
+      .catch(() => {});
     const id = setInterval(() => {
       fetchAgentPerformance().then(setData).catch(() => {});
     }, 30_000);
@@ -141,12 +148,14 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
       {sorted.map((key) => {
         const def = AGENT_DEFS[key];
         const row = agentMap.get(key);
-        const { text, chip, chipColor, chipBg } = narrativeFor(key, row, defaultFunnel, transit);
+        const { text, chip, chipColor, chipBg } = narrativeFor(key, row, defaultFunnel, transit, coachSessions);
         const timeStr = formatTimestamp(row?.last_run_at ?? null);
+        const isCoach = key === "coach";
 
         return (
           <div
             key={key}
+            onClick={isCoach ? () => router.push("/prep") : undefined}
             style={{
               display: "flex",
               gap: 10,
@@ -154,6 +163,7 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
               borderRadius: 10,
               background: "var(--surface)",
               border: "1px solid var(--border)",
+              cursor: isCoach ? "pointer" : "default",
             }}
           >
             <AgentBadge agent={key as never} size={30} />
