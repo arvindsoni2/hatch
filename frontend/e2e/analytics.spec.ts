@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 // Bug 4: Agent performance shows live data with refresh button
 test("analytics page shows agent performance table", async ({ page }) => {

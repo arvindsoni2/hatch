@@ -88,22 +88,22 @@ describe('ScorePill', () => {
   it('uses green colour for scores at or above threshold', async () => {
     const { ScorePill } = await import('@/components/hatch/ScorePill');
     const { container } = render(<ScorePill score={0.85} threshold={0.75} />);
-    // green = success = #3ddc97
-    expect((container.firstChild as HTMLElement).style.color).toBe('rgb(61, 220, 151)');
+    // success token — jsdom does not resolve CSS vars, so check for the variable name
+    expect((container.firstChild as HTMLElement).style.color).toBe('var(--success)');
   });
 
   it('uses amber colour for scores in the mid range', async () => {
     const { ScorePill } = await import('@/components/hatch/ScorePill');
     const { container } = render(<ScorePill score={0.6} threshold={0.75} />);
-    // amber = warning = #f5b950
-    expect((container.firstChild as HTMLElement).style.color).toBe('rgb(245, 185, 80)');
+    // warning token
+    expect((container.firstChild as HTMLElement).style.color).toBe('var(--warning)');
   });
 
   it('uses muted colour for low scores', async () => {
     const { ScorePill } = await import('@/components/hatch/ScorePill');
     const { container } = render(<ScorePill score={0.3} threshold={0.75} />);
-    // muted = #74747f
-    expect((container.firstChild as HTMLElement).style.color).toBe('rgb(116, 116, 127)');
+    // text-muted token
+    expect((container.firstChild as HTMLElement).style.color).toBe('var(--text-muted)');
   });
 
   it('renders a larger pill when size=lg', async () => {

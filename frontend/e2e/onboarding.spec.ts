@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test("onboarding welcome screen renders with Get started button", async ({ page }) => {
   await page.goto("/onboarding");

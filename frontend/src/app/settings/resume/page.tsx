@@ -18,7 +18,7 @@ function SectionRow({ label, present }: { label: string; present: boolean }) {
       ) : (
         <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
       )}
-      <span className="text-sm text-slate-700">{label}</span>
+      <span className="text-sm text-fg">{label}</span>
     </div>
   );
 }
@@ -76,7 +76,7 @@ export default function ResumePage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+        <Loader2 className="h-6 w-6 animate-spin text-muted" />
       </div>
     );
   }
@@ -95,13 +95,13 @@ export default function ResumePage() {
       {/* Nav */}
       <Link
         href="/settings"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+        className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
       >
         <ArrowLeft className="h-4 w-4" /> Settings
       </Link>
 
       <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Master CV</h1>
-      <p className="text-sm text-slate-500">
+      <p className="text-sm text-muted">
         Upload your CV once. Hatch uses it to generate tailored applications for each job.
         Supported formats: <strong>.docx</strong> and <strong>.pdf</strong>.
       </p>
@@ -133,13 +133,13 @@ export default function ResumePage() {
           )}
         </div>
         {uploading ? (
-          <p className="text-sm font-medium text-slate-700">Uploading and parsing…</p>
+          <p className="text-sm font-medium text-fg">Uploading and parsing…</p>
         ) : (
           <>
-            <p className="text-sm font-medium text-slate-700">
+            <p className="text-sm font-medium text-fg">
               Drag &amp; drop your CV here, or click to browse
             </p>
-            <p className="mt-1 text-xs text-slate-400">.docx or .pdf · max 10MB</p>
+            <p className="mt-1 text-xs text-muted">.docx or .pdf · max 10MB</p>
           </>
         )}
       </div>
@@ -154,15 +154,15 @@ export default function ResumePage() {
       {/* Current CV status */}
       {status && (
         <div className="rounded-xl shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-          <div className="border-b border-slate-100 px-5 py-4 flex items-center justify-between">
+          <div className="border-b border-border px-5 py-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-slate-400" />
+              <FileText className="h-5 w-5 text-muted" />
               <div>
                 <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
                   {status.filename ?? "master_cv.json"}
                 </p>
                 {status.uploaded_at && (
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-muted">
                     Last updated {new Date(status.uploaded_at).toLocaleDateString("en-GB", {
                       day: "numeric", month: "long", year: "numeric",
                     })}
@@ -179,7 +179,7 @@ export default function ResumePage() {
             <div className="px-5 py-4 space-y-4">
               {/* Parsed sections */}
               <div>
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">
                   Parsed sections
                 </h3>
                 <div className="grid grid-cols-2 gap-x-6">
@@ -194,18 +194,18 @@ export default function ResumePage() {
               </div>
 
               {/* Stats */}
-              <div className="grid grid-cols-3 gap-3 border-t border-slate-100 pt-4">
+              <div className="grid grid-cols-3 gap-3 border-t border-border pt-4">
                 <div className="text-center">
                   <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{status.skills_count}</p>
-                  <p className="text-xs text-slate-500">skills extracted</p>
+                  <p className="text-xs text-muted">skills extracted</p>
                 </div>
                 <div className="text-center">
                   <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{status.experience_count}</p>
-                  <p className="text-xs text-slate-500">experience items</p>
+                  <p className="text-xs text-muted">experience items</p>
                 </div>
                 <div className="text-center">
                   <p className="text-2xl font-bold" style={{ color: 'var(--text)' }}>{status.proof_points_count}</p>
-                  <p className="text-xs text-slate-500">proof points</p>
+                  <p className="text-xs text-muted">proof points</p>
                   {status.proof_points_count === 0 && (
                     <p className="text-xs text-amber-600 mt-0.5">Configure in profile.yaml</p>
                   )}
@@ -213,7 +213,7 @@ export default function ResumePage() {
               </div>
 
               {/* Actions */}
-              <div className="flex items-center gap-3 border-t border-slate-100 pt-4">
+              <div className="flex items-center gap-3 border-t border-border pt-4">
                 <a href={`${API_BASE}/api/resume/json`} target="_blank" rel="noopener noreferrer">
                   <Button variant="outline" size="sm">
                     <ExternalLink className="h-3.5 w-3.5 mr-1" /> View parsed JSON

@@ -13,14 +13,14 @@ export function ScorePill({ score, threshold = 0.75, size = 'md' }: ScorePillPro
   let color: string;
   let bg: string;
   if (score >= threshold) {
-    color = '#3ddc97';           // success
-    bg    = 'rgba(61,220,151,0.14)';
+    color = 'var(--success)';
+    bg    = 'var(--success-soft)';
   } else if (score >= threshold * 0.66) {
-    color = '#f5b950';           // warning
-    bg    = 'rgba(245,185,80,0.14)';
+    color = 'var(--warning)';
+    bg    = 'var(--warning-soft)';
   } else {
-    color = '#74747f';           // muted
-    bg    = '#1d1d25';
+    color = 'var(--text-muted)';
+    bg    = 'var(--surface-2)';
   }
 
   return (

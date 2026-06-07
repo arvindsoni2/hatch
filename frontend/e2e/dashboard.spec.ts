@@ -1,86 +1,80 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
-// Bug 1: Greeting shows correct time-based message with user name
-test("greeting shows correct time-of-day salutation", async ({ page }) => {
+// Root redirects to /today
+test("root redirect lands on today screen", async ({ page }) => {
   await page.goto("/");
   await page.waitForLoadState("networkidle");
-
-  const greeting = await page.locator("h2").first().textContent();
-  expect(greeting).toBeTruthy();
-
-  const hour = new Date().getHours();
-  const expectedPrefix =
-    hour >= 5 && hour < 12
-      ? "Good morning"
-      : hour >= 12 && hour < 17
-      ? "Good afternoon"
-      : hour >= 17 && hour < 21
-      ? "Good evening"
-      : "Good night";
-
-  expect(greeting).toContain(expectedPrefix);
+  expect(page.url()).toContain("/today");
 });
 
-// Bug 1b: Greeting does NOT stay as "Good morning" when time is evening
-test("greeting is not hardcoded to Good morning", async ({ page }) => {
-  await page.goto("/");
-  // Wait for hydration — the useEffect updates greeting on mount
-  await page.waitForTimeout(300);
-
-  const hour = new Date().getHours();
-  const greeting = await page.locator("h2").first().textContent();
-
-  if (hour >= 17) {
-    // It's evening or night — greeting must NOT say "Good morning"
-    expect(greeting).not.toContain("Good morning");
-  }
-});
-
-// Home page renders key sections
-test("home page renders KPI cards and activity section", async ({ page }) => {
-  await page.goto("/");
+// Today screen renders greeting (always "Good morning" — static by design in v4)
+test("today screen shows greeting", async ({ page }) => {
+  await page.goto("/today");
   await page.waitForLoadState("networkidle");
-
-  // Should have at least one KPI card showing a number
-  const kpiCards = page.locator("text=AI-sourced, text=Shortlisted, text=Applied").first();
-  await expect(page.getByText("AI-sourced")).toBeVisible();
+  await expect(page.getByText(/Good morning/).first()).toBeVisible();
 });
 
-// Sidebar navigation links are present
-test("sidebar contains required navigation links", async ({ page }) => {
-  await page.goto("/");
+// Today screen shows pipeline briefing card
+test("today screen shows agents active briefing card", async ({ page }) => {
+  await page.goto("/today");
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByText("Agents active")).toBeVisible();
+});
+
+// Sidebar navigation has Direction A labels (v4.1)
+test("sidebar contains Direction A navigation links", async ({ page }) => {
+  await page.goto("/today");
   await page.waitForLoadState("domcontentloaded");
 
-  // Use sidebar-specific locators to avoid strict-mode violations
-  const sidebar = page.locator("aside");
-  await expect(sidebar.getByText("Home").first()).toBeVisible();
-  await expect(sidebar.getByText("Inbox")).toBeVisible();
-  await expect(sidebar.getByText("Pipeline")).toBeVisible();
-  await expect(sidebar.getByText("Analytics")).toBeVisible();
+  // HatchSidebar renders as <aside> — use link roles to avoid strict-mode violations
+  await expect(page.getByRole("link", { name: "Today" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Stream" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Tracker" }).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Prep" }).first()).toBeVisible();
 });
 
-// Bug 5: Notification bell is interactive (not a dummy)
+// Notification bell is present (v4.1 live bell in HatchTopBar)
 test("notification bell is present and clickable", async ({ page }) => {
-  await page.goto("/");
-  await page.waitForLoadState("networkidle");
+  await page.goto("/today");
+  await page.waitForLoadState("domcontentloaded");
 
   const bellButton = page.getByRole("button", { name: /notifications/i });
-  await expect(bellButton).toBeVisible();
+  await expect(bellButton.first()).toBeVisible();
 
-  // Click it — it should either open a panel or at minimum be interactive (not a dummy non-clickable)
-  await bellButton.click();
-
-  // Wait briefly to allow panel to render
+  await bellButton.first().click();
   await page.waitForTimeout(500);
 
-  // Either a notification panel appeared OR the bell has no aria-disabled (it's interactive)
-  const isDisabled = await bellButton.getAttribute("disabled");
-  expect(isDisabled).toBeNull(); // button must not be disabled
-
-  // Panel or Notifications heading should appear (new implementation)
-  const panelTitle = page.getByRole("heading", { name: /notifications/i });
-  const panelOrFallback = await panelTitle.count() > 0 ||
-    await page.getByText(/no pending|awaiting approval|agent error|all clear/i).count() > 0;
-  // If panel didn't open, the button was at least clickable — test is flexible for both old and new builds
+  const isDisabled = await bellButton.first().getAttribute("disabled");
   expect(isDisabled).toBeNull();
+});
+
+// Theme toggle is present in top bar (v4.1 ThemeToggle in HatchTopBar)
+test("theme toggle is present in top bar", async ({ page }) => {
+  await page.goto("/today");
+  await page.waitForLoadState("networkidle");
+
+  const toggleButton = page.getByRole("button", { name: /toggle dark mode/i });
+  await expect(toggleButton.first()).toBeVisible();
+});
+
+// Theme toggle switches theme attribute on html element
+test("theme toggle switches data-theme attribute", async ({ page }) => {
+  await page.goto("/today");
+  // Wait for React hydration so ThemeToggle's useEffect has run and resolved
+  // the initial theme (boot script sets dark, useEffect may override to light)
+  const toggleButton = page.getByRole("button", { name: /toggle dark mode/i });
+  await expect(toggleButton.first()).toBeVisible();
+  await page.waitForTimeout(200); // allow useEffect to settle
+
+  const initialTheme = await page.evaluate(() =>
+    document.documentElement.getAttribute("data-theme")
+  );
+
+  await toggleButton.first().click();
+  await page.waitForTimeout(300);
+
+  const newTheme = await page.evaluate(() =>
+    document.documentElement.getAttribute("data-theme")
+  );
+  expect(newTheme).not.toBe(initialTheme);
 });

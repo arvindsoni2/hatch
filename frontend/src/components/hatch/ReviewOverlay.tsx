@@ -145,11 +145,11 @@ export function ReviewOverlay({ queue, idx, onAction, onClose }: ReviewOverlayPr
           </div>
 
           {/* Faux document preview */}
-          <div style={{ background: '#f7f7f4', borderRadius: 12, padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ height: 10, width: '46%', borderRadius: 3, background: '#2a2a30' }} />
-            <div style={{ height: 1, background: '#e2e2dc' }} />
-            <div style={{ height: 5, width: '64%', borderRadius: 3, background: '#bcbcc4' }} />
-            <div style={{ height: 5, width: '55%', borderRadius: 3, background: '#bcbcc4' }} />
+          <div style={{ background: 'var(--surface-2)', borderRadius: 12, padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ height: 10, width: '46%', borderRadius: 3, background: 'var(--text)' }} />
+            <div style={{ height: 1, background: 'var(--border)' }} />
+            <div style={{ height: 5, width: '64%', borderRadius: 3, background: 'var(--text-muted)' }} />
+            <div style={{ height: 5, width: '55%', borderRadius: 3, background: 'var(--text-muted)' }} />
           </div>
 
           {/* Info strip */}

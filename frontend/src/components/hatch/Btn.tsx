@@ -18,10 +18,10 @@ interface BtnProps {
 }
 
 const KIND_STYLES: Record<BtnKind, React.CSSProperties> = {
-  primary: { background: 'var(--accent)', color: '#fff', border: 'none' },
-  soft:    { background: '#1d1d25', color: '#f1f1f4', border: '1px solid #26262f' },
-  ghost:   { background: 'transparent', color: '#a8a8b3', border: '1px solid #26262f' },
-  success: { background: '#3ddc97', color: '#06231a', border: 'none' },
+  primary: { background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' },
+  soft:    { background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)' },
+  ghost:   { background: 'transparent', color: 'var(--text-dim)', border: '1px solid var(--border)' },
+  success: { background: 'var(--success)', color: 'var(--bg)', border: 'none' },
 };
 
 export function Btn({

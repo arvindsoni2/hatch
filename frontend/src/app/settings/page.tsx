@@ -31,8 +31,8 @@ function SectionCard({ title, children }: { title: string; children: React.React
 
 function FieldRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4 py-2.5 border-b border-slate-100 last:border-0">
-      <span className="text-sm font-medium text-slate-500 sm:shrink-0 sm:w-48">{label}</span>
+    <div className="flex flex-col gap-0.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4 py-2.5 border-b border-border last:border-0">
+      <span className="text-sm font-medium text-muted sm:shrink-0 sm:w-48">{label}</span>
       <span className="text-sm sm:text-right" style={{ color: 'var(--text)' }}>{value}</span>
     </div>
   )
@@ -42,7 +42,7 @@ function Badge({ variant, children }: { variant: "green" | "amber" | "slate"; ch
   const cls = {
     green: "bg-green-100 text-green-800",
     amber: "bg-amber-100 text-amber-700",
-    slate: "bg-slate-100 text-slate-600",
+    slate: "bg-surface-2 text-dim",
   }[variant]
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
@@ -97,7 +97,7 @@ interface ProfileData {
 // ── Tab: Profile ───────────────────────────────────────────────────
 
 function ProfileTab({ data }: { data: ProfileData | null }) {
-  if (!data) return <p className="text-sm text-slate-400 py-4">Loading profile…</p>
+  if (!data) return <p className="text-sm text-muted py-4">Loading profile…</p>
 
   const roles = data.search?.target_roles ?? []
   const loc = data.search?.locations?.[0]
@@ -124,7 +124,7 @@ function ProfileTab({ data }: { data: ProfileData | null }) {
           <FieldRow label="Locale" value={data.locale ?? "—"} />
         </div>
         {data.candidate?.summary && (
-          <p className="mt-3 text-xs text-slate-500 leading-relaxed line-clamp-3">{data.candidate.summary}</p>
+          <p className="mt-3 text-xs text-muted leading-relaxed line-clamp-3">{data.candidate.summary}</p>
         )}
       </SectionCard>
 
@@ -142,7 +142,7 @@ function ProfileTab({ data }: { data: ProfileData | null }) {
       <SectionCard title="Skills">
         <div className="space-y-3">
           <div>
-            <p className="text-xs font-medium text-slate-500 mb-1.5">Primary</p>
+            <p className="text-xs font-medium text-muted mb-1.5">Primary</p>
             <div className="flex flex-wrap gap-1.5">
               {(data.skills?.primary ?? []).map((s) => (
                 <span key={s} className="rounded-full bg-indigo-100 text-indigo-700 px-2.5 py-0.5 text-xs font-medium">{s}</span>
@@ -150,19 +150,19 @@ function ProfileTab({ data }: { data: ProfileData | null }) {
             </div>
           </div>
           <div>
-            <p className="text-xs font-medium text-slate-500 mb-1.5">Secondary / Certifications</p>
+            <p className="text-xs font-medium text-muted mb-1.5">Secondary / Certifications</p>
             <div className="flex flex-wrap gap-1.5">
               {(data.skills?.secondary ?? []).concat(data.skills?.certifications ?? []).map((s) => (
-                <span key={s} className="rounded-full bg-slate-100 text-slate-600 px-2.5 py-0.5 text-xs font-medium">{s}</span>
+                <span key={s} className="rounded-full bg-surface-2 text-dim px-2.5 py-0.5 text-xs font-medium">{s}</span>
               ))}
             </div>
           </div>
         </div>
       </SectionCard>
 
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-muted">
         Edit full profile in{" "}
-        <code className="rounded bg-slate-100 px-1 py-0.5 text-slate-600">data/profile.yaml</code>
+        <code className="rounded bg-surface-2 px-1 py-0.5 text-dim">data/profile.yaml</code>
         {" "}·{" "}
         <Link href="/settings/profile" className="text-brand-600 hover:underline">Open YAML editor →</Link>
       </p>
@@ -176,7 +176,7 @@ function ResumeTab() {
   return (
     <div className="space-y-6">
       <SectionCard title="Master CV">
-        <p className="text-sm text-slate-600 mb-4">
+        <p className="text-sm text-dim mb-4">
           Upload and manage your master CV. Hatch parses it to extract work experience,
           skills, and proof points used when tailoring applications.
         </p>
@@ -189,7 +189,7 @@ function ResumeTab() {
       </SectionCard>
 
       <SectionCard title="Proof Points">
-        <p className="text-sm text-slate-500 mb-3">
+        <p className="text-sm text-muted mb-3">
           Proof points are quantified achievements injected into every tailored CV.
           Edit them in your profile YAML.
         </p>
@@ -313,7 +313,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
       {/* Current status */}
       <SectionCard title="Configured Providers">
         {loadingStatus ? (
-          <div className="flex items-center gap-2 text-sm text-slate-500 py-2"><Spinner /> Loading…</div>
+          <div className="flex items-center gap-2 text-sm text-muted py-2"><Spinner /> Loading…</div>
         ) : (
           <div className="divide-y divide-slate-100">
             {Object.entries(PROVIDER_LABELS).map(([provider, label]) => {
@@ -322,8 +322,8 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
               return (
                 <div key={provider} className="flex items-center justify-between py-2.5">
                   <div className="flex items-center gap-2.5">
-                    <span className={`h-2 w-2 rounded-full shrink-0 ${info?.set ? "bg-green-500" : "bg-slate-300"}`} />
-                    <span className="text-sm font-medium text-slate-700">{label}</span>
+                    <span className={`h-2 w-2 rounded-full shrink-0 ${info?.set ? "bg-green-500" : "bg-[var(--border-strong)]"}`} />
+                    <span className="text-sm font-medium text-fg">{label}</span>
                     {isActive && <Badge variant="green">active</Badge>}
                   </div>
                   <div className="flex items-center gap-2 text-right">
@@ -333,10 +333,10 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
                       </code>
                     )}
                     {provider === "ollama" && (
-                      <span className="text-xs text-slate-400">no key needed</span>
+                      <span className="text-xs text-muted">no key needed</span>
                     )}
                     {!info?.set && provider !== "ollama" && (
-                      <span className="text-xs text-slate-400">not set</span>
+                      <span className="text-xs text-muted">not set</span>
                     )}
                   </div>
                 </div>
@@ -351,11 +351,11 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Provider</label>
+              <label className="block text-xs font-medium text-dim mb-1">Provider</label>
               <select
                 value={selectedKeyName}
                 onChange={(e) => setSelectedKeyName(e.target.value)}
-                className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}"
+                className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}
               >
                 {Object.entries(KEY_PROVIDER_MAP).map(([envVar, provider]) => (
                   <option key={envVar} value={envVar}>
@@ -365,7 +365,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">API Key</label>
+              <label className="block text-xs font-medium text-dim mb-1">API Key</label>
               <input
                 ref={inputRef}
                 type="password"
@@ -393,9 +393,9 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
             )}
           </div>
 
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted">
             The key is validated via a test call before being saved to{" "}
-            <code className="bg-slate-100 rounded px-1">data/api_keys.env</code>. The actual key value is never returned by the API.
+            <code className="bg-surface-2 rounded px-1">data/api_keys.env</code>. The actual key value is never returned by the API.
           </p>
         </div>
       </SectionCard>
@@ -404,30 +404,30 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
       {currentProvider === "ollama" && (
         <SectionCard title="Ollama Models">
           {ollamaLoading ? (
-            <div className="flex items-center gap-2 text-sm text-slate-500 py-2"><Spinner /> Fetching installed models…</div>
+            <div className="flex items-center gap-2 text-sm text-muted py-2"><Spinner /> Fetching installed models…</div>
           ) : ollamaError ? (
             <p className="text-sm text-red-600 py-2">{ollamaError}</p>
           ) : ollamaModels.length === 0 ? (
-            <p className="text-sm text-slate-400 py-2">No models found — pull a model with <code className="bg-slate-100 rounded px-1">ollama pull &lt;model&gt;</code> first.</p>
+            <p className="text-sm text-muted py-2">No models found — pull a model with <code className="bg-surface-2 rounded px-1">ollama pull &lt;model&gt;</code> first.</p>
           ) : (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Primary model <span className="text-slate-400 font-normal">(tailoring, coach, analysis)</span></label>
+                  <label className="block text-xs font-medium text-dim mb-1">Primary model <span className="text-muted font-normal">(tailoring, coach, analysis)</span></label>
                   <select
                     value={selectedPrimary}
                     onChange={(e) => setSelectedPrimary(e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}"
+                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}
                   >
                     {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Triage model <span className="text-slate-400 font-normal">(fast pre-filtering)</span></label>
+                  <label className="block text-xs font-medium text-dim mb-1">Triage model <span className="text-muted font-normal">(fast pre-filtering)</span></label>
                   <select
                     value={selectedTriage}
                     onChange={(e) => setSelectedTriage(e.target.value)}
-                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}"
+                    className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text)' }}
                   >
                     {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
@@ -454,9 +454,9 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
 
       {/* Scoring strategy */}
       <SectionCard title="Scoring Strategy">
-        <p className="text-sm text-slate-600 mb-3">
-          Set <code className="bg-slate-100 rounded px-1">scoring.method</code> in{" "}
-          <code className="bg-slate-100 rounded px-1">data/profile.yaml</code> to control LLM usage:
+        <p className="text-sm text-dim mb-3">
+          Set <code className="bg-surface-2 rounded px-1">scoring.method</code> in{" "}
+          <code className="bg-surface-2 rounded px-1">data/profile.yaml</code> to control LLM usage:
         </p>
         <div className="space-y-2">
           {[
@@ -467,7 +467,7 @@ function AiProviderTab({ currentProvider, currentPrimaryModel, currentTriageMode
           ].map(({ val, desc }) => (
             <div key={val} className="flex items-start gap-2 text-sm">
               <code className="mt-0.5 shrink-0 rounded bg-indigo-50 text-indigo-700 px-1.5 py-0.5 text-xs font-mono">{val}</code>
-              <span className="text-slate-600">{desc}</span>
+              <span className="text-dim">{desc}</span>
             </div>
           ))}
         </div>
@@ -489,19 +489,19 @@ function JobBoardsTab({ data }: { data: ProfileData | null }) {
   return (
     <div className="space-y-6">
       <SectionCard title="Active Boards">
-        <p className="text-sm text-slate-500 mb-4">
+        <p className="text-sm text-muted mb-4">
           Boards are automatically determined by your locale <Badge variant="slate">{locale}</Badge>.
-          Change the <code className="bg-slate-100 rounded px-1">locale</code> key in profile.yaml to switch regions.
+          Change the <code className="bg-surface-2 rounded px-1">locale</code> key in profile.yaml to switch regions.
         </p>
         {boards.length > 0 ? (
           <div className="divide-y divide-slate-100">
             {boards.map((board) => (
               <div key={board.name} className="flex items-center justify-between py-2.5">
                 <div className="flex items-center gap-2.5">
-                  <span className={`h-2 w-2 rounded-full shrink-0 ${board.enabled ? "bg-green-500" : "bg-slate-300"}`} />
-                  <span className="text-sm font-medium text-slate-700">{board.name}</span>
+                  <span className={`h-2 w-2 rounded-full shrink-0 ${board.enabled ? "bg-green-500" : "bg-[var(--border-strong)]"}`} />
+                  <span className="text-sm font-medium text-fg">{board.name}</span>
                   {board.scraper && (
-                    <span className="text-xs text-slate-400">({board.scraper})</span>
+                    <span className="text-xs text-muted">({board.scraper})</span>
                   )}
                 </div>
                 <Badge variant={board.enabled ? "green" : "slate"}>
@@ -511,11 +511,11 @@ function JobBoardsTab({ data }: { data: ProfileData | null }) {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-slate-400 py-2">
-            No job boards configured. Add boards under <code className="bg-slate-100 rounded px-1">job_boards</code> in profile.yaml.
+          <p className="text-sm text-muted py-2">
+            No job boards configured. Add boards under <code className="bg-surface-2 rounded px-1">job_boards</code> in profile.yaml.
           </p>
         )}
-        <p className="mt-3 text-xs text-slate-400">
+        <p className="mt-3 text-xs text-muted">
           Scrape interval: every {scrapeInterval} hours ·{" "}
           <Link href="/settings/profile" className="text-brand-600 hover:underline">Edit →</Link>
         </p>
@@ -535,8 +535,8 @@ function JobBoardsTab({ data }: { data: ProfileData | null }) {
             }
           />
         </div>
-        <p className="mt-3 text-xs text-slate-400">
-          Change locale in <code className="bg-slate-100 rounded px-1">profile.yaml</code> under the <code className="bg-slate-100 rounded px-1">locale</code> key.
+        <p className="mt-3 text-xs text-muted">
+          Change locale in <code className="bg-surface-2 rounded px-1">profile.yaml</code> under the <code className="bg-surface-2 rounded px-1">locale</code> key.
           Board availability and scoring rules adapt automatically.
         </p>
       </SectionCard>
@@ -613,7 +613,7 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
     <div className="space-y-6">
       <SectionCard title="Daily Digest">
         {digestLoading ? (
-          <div className="flex items-center gap-2 text-sm text-slate-500 py-2"><Spinner /> Loading…</div>
+          <div className="flex items-center gap-2 text-sm text-muted py-2"><Spinner /> Loading…</div>
         ) : digestError ? (
           <p className="text-sm text-red-600">{digestError}</p>
         ) : (
@@ -622,7 +622,7 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
               <FieldRow label="Enabled" value={<Badge variant={toBoolean(digestStatus?.enabled) ? "green" : "slate"}>{toBoolean(digestStatus?.enabled) ? "Yes" : "No"}</Badge>} />
               <FieldRow label="Send time" value={typeof digestStatus?.time === "string" && digestStatus.time ? digestStatus.time : "08:00"} />
               <div className="flex items-center justify-between py-3 gap-4">
-                <span className="text-sm text-slate-500 shrink-0">Timezone</span>
+                <span className="text-sm text-muted shrink-0">Timezone</span>
                 {editingTimezone ? (
                   <div className="flex items-center gap-2">
                     <input
@@ -640,7 +640,7 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
                     >
                       {savingTimezone ? "Saving…" : "Save"}
                     </button>
-                    <button onClick={() => setEditingTimezone(false)} className="text-xs text-slate-400 hover:text-slate-600">Cancel</button>
+                    <button onClick={() => setEditingTimezone(false)} className="text-xs text-muted hover:text-dim">Cancel</button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -738,7 +738,7 @@ export default function SettingsPage() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-2xl font-semibold" style={{ color: 'var(--text)' }}>Settings</h1>
-        <p className="mt-1 text-sm text-slate-500">Configure Hatch — profile, resume, AI provider, job boards, and system.</p>
+        <p className="mt-1 text-sm text-muted">Configure Hatch — profile, resume, AI provider, job boards, and system.</p>
       </div>
 
       {/* Tab bar */}
@@ -751,7 +751,7 @@ export default function SettingsPage() {
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
                   ? "border-brand-600 text-brand-700"
-                  : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"
+                  : "border-transparent text-muted hover:text-fg hover:border-[var(--border-strong)]"
               }`}
             >
               {tab}

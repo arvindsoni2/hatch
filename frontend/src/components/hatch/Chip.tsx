@@ -9,7 +9,7 @@ interface ChipProps {
   style?: React.CSSProperties;
 }
 
-export function Chip({ children, color = '#a8a8b3', bg = '#1d1d25', icon, style }: ChipProps) {
+export function Chip({ children, color = 'var(--text-dim)', bg = 'var(--surface-2)', icon, style }: ChipProps) {
   return (
     <span
       style={{

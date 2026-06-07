@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 // Bug 3: Approve button gives visible feedback (error or success)
 test("approvals page loads and shows items or empty state", async ({ page }) => {

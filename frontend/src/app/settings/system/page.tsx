@@ -51,7 +51,7 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 const AGENT_COLORS: Record<string, string> = {
-  scout: "bg-slate-100 text-slate-700",
+  scout: "bg-surface-2 text-fg",
   scorer: "bg-blue-100 text-blue-700",
   tailor: "bg-indigo-100 text-indigo-700",
   coach: "bg-purple-100 text-purple-700",
@@ -151,7 +151,7 @@ export default function SystemLogPage() {
       <div className="flex items-center justify-between">
         <Link
           href="/settings"
-          className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+          className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
         >
           <ArrowLeft className="h-4 w-4" /> Settings
         </Link>
@@ -171,17 +171,17 @@ export default function SystemLogPage() {
       {costs && costs.total_calls > 0 && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-            <p className="text-xs text-slate-500">Total LLM cost (30d)</p>
+            <p className="text-xs text-muted">Total LLM cost (30d)</p>
             <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>${costs.total_cost_usd.toFixed(4)}</p>
-            <p className="text-xs text-slate-400">USD</p>
+            <p className="text-xs text-muted">USD</p>
           </div>
           <div className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-            <p className="text-xs text-slate-500">LLM calls (30d)</p>
+            <p className="text-xs text-muted">LLM calls (30d)</p>
             <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>{costs.total_calls.toLocaleString()}</p>
           </div>
           {Object.entries(costs.by_agent).map(([agent, cost]) => (
             <div key={agent} className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-              <p className="text-xs text-slate-500 capitalize">{agent} agent cost</p>
+              <p className="text-xs text-muted capitalize">{agent} agent cost</p>
               <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>${cost.toFixed(4)}</p>
             </div>
           ))}
@@ -190,11 +190,11 @@ export default function SystemLogPage() {
 
       {/* LLM Traces */}
       <div className="rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface-2">
           <div className="flex items-center gap-2">
             <Zap className="h-4 w-4 text-amber-500" />
-            <h2 className="text-sm font-semibold text-slate-700">LLM Call Traces</h2>
-            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs text-slate-500">
+            <h2 className="text-sm font-semibold text-fg">LLM Call Traces</h2>
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-muted">
               last {traces.length} / 100 · auto-refreshes every 10s
             </span>
           </div>
@@ -209,13 +209,13 @@ export default function SystemLogPage() {
         </div>
 
         {traces.length === 0 ? (
-          <p className="py-10 text-center text-sm text-slate-400">
+          <p className="py-10 text-center text-sm text-muted">
             No traces yet — LLM calls will appear here as agents run.
           </p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100 text-xs text-slate-500">
+              <tr className="border-b border-border text-xs text-muted">
                 <th className="px-4 py-2 text-left font-medium">Time</th>
                 <th className="px-4 py-2 text-left font-medium">Model</th>
                 <th className="px-4 py-2 text-right font-medium">Latency</th>
@@ -235,8 +235,8 @@ export default function SystemLogPage() {
                     : "bg-red-100 text-red-700";
                 const isExpanded = expandedTrace === t.id;
                 return (
-                  <tr key={t.id} className="border-b border-slate-50 hover:bg-slate-50/60">
-                    <td className="px-4 py-2 text-xs text-slate-400 whitespace-nowrap">
+                  <tr key={t.id} className="border-b border-border hover:bg-surface-2/60">
+                    <td className="px-4 py-2 text-xs text-muted whitespace-nowrap">
                       {formatDistanceToNow(new Date(t.ts), { addSuffix: true })}
                     </td>
                     <td className="px-4 py-2">
@@ -251,27 +251,27 @@ export default function SystemLogPage() {
                           : `${t.duration_ms}ms`}
                       </span>
                     </td>
-                    <td className="px-4 py-2 text-right text-xs tabular-nums text-slate-500">
+                    <td className="px-4 py-2 text-right text-xs tabular-nums text-muted">
                       {t.tokens_in.toLocaleString()}
                     </td>
-                    <td className="px-4 py-2 text-right text-xs tabular-nums text-slate-500">
+                    <td className="px-4 py-2 text-right text-xs tabular-nums text-muted">
                       {t.tokens_out.toLocaleString()}
                     </td>
-                    <td className="px-4 py-2 text-right text-xs tabular-nums text-slate-400">
+                    <td className="px-4 py-2 text-right text-xs tabular-nums text-muted">
                       {t.cost_usd > 0 ? `$${t.cost_usd.toFixed(5)}` : "—"}
                     </td>
                     <td className="px-4 py-2 max-w-xs">
                       {t.response_preview ? (
                         <button
                           onClick={() => setExpandedTrace(isExpanded ? null : t.id)}
-                          className="text-left text-xs text-slate-500 hover:text-slate-700"
+                          className="text-left text-xs text-muted hover:text-fg"
                         >
                           {isExpanded
                             ? t.response_preview
                             : t.response_preview.slice(0, 80) + (t.response_preview.length > 80 ? "…" : "")}
                         </button>
                       ) : (
-                        <span className="text-xs text-slate-300">—</span>
+                        <span className="text-xs text-muted">—</span>
                       )}
                     </td>
                   </tr>
@@ -301,21 +301,21 @@ export default function SystemLogPage() {
             ))}
           </select>
         ))}
-        <p className="ml-auto self-center text-xs text-slate-400">{total.toLocaleString()} total events</p>
+        <p className="ml-auto self-center text-xs text-muted">{total.toLocaleString()} total events</p>
       </div>
 
       {/* Table */}
       <div className="rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+            <Loader2 className="h-6 w-6 animate-spin text-muted" />
           </div>
         ) : events.length === 0 ? (
-          <p className="py-16 text-center text-sm text-slate-400">No events found.</p>
+          <p className="py-16 text-center text-sm text-muted">No events found.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-100 bg-slate-50 text-xs text-slate-500">
+              <tr className="border-b border-border bg-surface-2 text-xs text-muted">
                 <th className="px-4 py-3 text-left font-medium">Timestamp</th>
                 <th className="px-4 py-3 text-left font-medium">Agent</th>
                 <th className="px-4 py-3 text-left font-medium">Event</th>
@@ -326,20 +326,20 @@ export default function SystemLogPage() {
             </thead>
             <tbody>
               {events.map((e) => (
-                <tr key={e.id} className="border-b border-slate-50 hover:bg-slate-50/50">
-                  <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+                <tr key={e.id} className="border-b border-border hover:bg-surface-2/50">
+                  <td className="px-4 py-2.5 text-xs text-muted whitespace-nowrap">
                     {formatDistanceToNow(new Date(e.created_at), { addSuffix: true })}
                   </td>
                   <td className="px-4 py-2.5">
                     {e.source_agent && (
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${AGENT_COLORS[e.source_agent] ?? "bg-slate-100 text-slate-600"}`}>
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${AGENT_COLORS[e.source_agent] ?? "bg-surface-2 text-dim"}`}>
                         {e.source_agent}
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-slate-700 font-mono">{e.event_type}</td>
+                  <td className="px-4 py-2.5 text-xs text-fg font-mono">{e.event_type}</td>
                   <td className="px-4 py-2.5">
-                    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[e.status] ?? "bg-slate-100 text-slate-600"}`}>
+                    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[e.status] ?? "bg-surface-2 text-dim"}`}>
                       {e.status}
                     </span>
                   </td>
@@ -375,7 +375,7 @@ export default function SystemLogPage() {
 
       {/* Pagination */}
       {total > LIMIT && (
-        <div className="flex items-center justify-between text-sm text-slate-500">
+        <div className="flex items-center justify-between text-sm text-muted">
           <span>
             Showing {offset + 1}–{Math.min(offset + LIMIT, total)} of {total}
           </span>

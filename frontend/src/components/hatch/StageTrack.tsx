@@ -34,15 +34,15 @@ export function StageTrack({ stage = 0, pct, compact = false, labels }: StageTra
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  background: reached ? a.soft : '#1d1d25',
+                  background: reached ? a.soft : 'var(--surface-2)',
                   boxShadow: here ? `0 0 0 3px ${a.soft}` : 'none',
-                  border: reached ? `1.5px solid ${a.color}` : '1.5px solid #26262f',
+                  border: reached ? `1.5px solid ${a.color}` : '1.5px solid var(--border)',
                 }}
               >
                 <HatchIcon
                   name={done ? 'check' : a.icon}
                   size={compact ? 10 : 12}
-                  color={reached ? a.color : '#74747f'}
+                  color={reached ? a.color : 'var(--text-muted)'}
                   strokeWidth={2.4}
                 />
               </div>
@@ -51,7 +51,7 @@ export function StageTrack({ stage = 0, pct, compact = false, labels }: StageTra
                   style={{
                     flex: 1,
                     height: 2,
-                    background: i < stage ? AGENT_DEFS[PIPELINE[i + 1]].color : '#26262f',
+                    background: i < stage ? AGENT_DEFS[PIPELINE[i + 1]].color : 'var(--border)',
                     opacity: i < stage ? 0.5 : 1,
                   }}
                 />
@@ -64,7 +64,7 @@ export function StageTrack({ stage = 0, pct, compact = false, labels }: StageTra
       {showLabels && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, fontWeight: 600, letterSpacing: '0.02em' }}>
           {PIPELINE.map((k, i) => (
-            <span key={k} style={{ color: i <= stage ? AGENT_DEFS[k].color : '#74747f', width: r * 2, textAlign: 'center' }}>
+            <span key={k} style={{ color: i <= stage ? AGENT_DEFS[k].color : 'var(--text-muted)', width: r * 2, textAlign: 'center' }}>
               {k === 'scorer' && pct != null && i === stage ? `${pct}%` : AGENT_DEFS[k].name}
             </span>
           ))}
