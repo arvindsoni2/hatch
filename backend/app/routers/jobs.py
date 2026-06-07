@@ -542,6 +542,8 @@ async def approve_job(
         "job_url": package.job_url,
         "cv_path": package.cv_path,
         "cover_letter_path": package.cover_letter_path,
+        "cv_document_id": package.cv_document_id,
+        "cl_document_id": package.cl_document_id,
         "prefill_map": package.prefill_map,
         "screening_answers": package.screening_answers,
         "paste_map": package.paste_map,

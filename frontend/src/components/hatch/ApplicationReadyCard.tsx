@@ -72,6 +72,24 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert }: Appl
         </span>
       </div>
 
+      {/* Document downloads */}
+      {(pkg.cv_document_id || pkg.cl_document_id) && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          {pkg.cv_document_id && (
+            <Btn kind="soft" size="sm" icon="arrowR"
+              onClick={() => window.open(`/api/tailor/document/${pkg.cv_document_id}/download`, '_blank')}>
+              Download CV
+            </Btn>
+          )}
+          {pkg.cl_document_id && (
+            <Btn kind="soft" size="sm" icon="arrowR"
+              onClick={() => window.open(`/api/tailor/document/${pkg.cl_document_id}/download`, '_blank')}>
+              Download Cover Letter
+            </Btn>
+          )}
+        </div>
+      )}
+
       {/* Actions */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
         {pkg.job_url && (

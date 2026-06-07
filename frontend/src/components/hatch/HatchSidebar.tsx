@@ -1,9 +1,17 @@
 "use client";
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { HatchIcon } from './HatchIcon';
+import { UserMenu } from './UserMenu';
 import { AGENT_DEFS, PIPELINE } from './agents';
 import { Dot } from './Dot';
 import type { HatchTab } from './HatchNav';
+import {
+  fetchRawProfile,
+  fetchPendingApprovals,
+  fetchPipelineStats,
+  listSessions,
+} from '@/lib/api';
 
 const NAV_ITEMS: { key: HatchTab; label: string; icon: string; href: string }[] = [
   { key: 'today',   label: 'Today',   icon: 'home',      href: '/today'   },
@@ -17,7 +25,52 @@ interface HatchSidebarProps {
   readyCount?: number;
 }
 
-export function HatchSidebar({ activeTab, readyCount = 0 }: HatchSidebarProps) {
+interface BadgeCounts {
+  today: number;
+  stream: number;
+  prep: number;
+}
+
+export function HatchSidebar({ activeTab }: HatchSidebarProps) {
+  const [profileName, setProfileName] = useState<string>('You');
+  const [profileTitle, setProfileTitle] = useState<string | undefined>(undefined);
+  const [badges, setBadges] = useState<BadgeCounts>({ today: 0, stream: 0, prep: 0 });
+
+  useEffect(() => {
+    async function load() {
+      const [profile, approvals, pipeline, sessions] = await Promise.allSettled([
+        fetchRawProfile(),
+        fetchPendingApprovals(),
+        fetchPipelineStats(),
+        listSessions(20),
+      ]);
+
+      if (profile.status === 'fulfilled' && profile.value.candidate) {
+        const c = profile.value.candidate;
+        if (c.name) setProfileName(c.name);
+        if (c.title) setProfileTitle(c.title);
+      }
+
+      const todayBadge = approvals.status === 'fulfilled' ? approvals.value.length : 0;
+      const streamBadge = pipeline.status === 'fulfilled'
+        ? (pipeline.value.discovered ?? 0)
+        : 0;
+      const prepBadge = sessions.status === 'fulfilled'
+        ? sessions.value.filter((s) => s.status === 'completed' || s.status === 'active').length
+        : 0;
+
+      setBadges({ today: todayBadge, stream: streamBadge, prep: prepBadge });
+    }
+    load();
+  }, []);
+
+  const badgeFor = (key: HatchTab): number => {
+    if (key === 'today') return badges.today;
+    if (key === 'stream') return badges.stream;
+    if (key === 'prep') return badges.prep;
+    return 0;
+  };
+
   return (
     <aside
       className="hidden md:flex flex-col sticky top-0 h-screen overflow-y-auto"
@@ -29,20 +82,21 @@ export function HatchSidebar({ activeTab, readyCount = 0 }: HatchSidebarProps) {
         gap: 2,
       }}
     >
-      {/* Brand */}
+      {/* Brand — Hatch layers icon */}
       <div className="flex items-center gap-2.5 px-2 pb-5">
         <div
-          className="flex items-center justify-center font-bold text-sm rounded-lg"
           style={{
             width: 28,
             height: 28,
-            background: 'var(--text)',
-            color: 'var(--bg)',
             borderRadius: 8,
-            fontSize: 15,
+            background: 'var(--accent)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
           }}
         >
-          H
+          <HatchIcon name="layers" size={15} color="#fff" strokeWidth={2} />
         </div>
         <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.015em', color: 'var(--text)' }}>
           Hatch
@@ -53,7 +107,7 @@ export function HatchSidebar({ activeTab, readyCount = 0 }: HatchSidebarProps) {
       <div className="flex flex-col gap-0.5">
         {NAV_ITEMS.map(({ key, label, icon, href }) => {
           const active = key === activeTab;
-          const badge = key === 'today' && readyCount > 0 ? readyCount : 0;
+          const badge = badgeFor(key);
           return (
             <Link
               key={key}
@@ -139,16 +193,21 @@ export function HatchSidebar({ activeTab, readyCount = 0 }: HatchSidebarProps) {
         </div>
       </div>
 
-      {/* Spacer + settings */}
+      {/* Spacer + user profile card */}
       <div className="mt-auto pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-        <Link
-          href="/settings"
-          className="flex items-center gap-2.5 rounded-lg p-2 transition-colors"
-          style={{ color: 'var(--text-dim)', textDecoration: 'none' }}
-        >
-          <HatchIcon name="settings" size={15} color="var(--text-muted)" />
-          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Settings</span>
-        </Link>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 2px' }}>
+          <UserMenu name={profileName} role={profileTitle} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {profileName}
+            </div>
+            {profileTitle && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {profileTitle}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </aside>
   );

@@ -40,14 +40,15 @@ function DetailView({ session }: { session: PrepSession }) {
   return (
     <div style={{ flex: 1, overflow: 'auto' }}>
       {/* Header */}
-      <div style={{ padding: '0 0 16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+      <div style={{ padding: '0 0 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <AgentBadge agent="coach" size={32} />
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>{session.title} · {session.company}</div>
             {session.when && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{session.when} · prepped by Coach</div>}
           </div>
         </div>
+        <Btn kind="soft" size="sm" icon="calendar">Add to calendar</Btn>
       </div>
 
       {/* Company research */}
@@ -59,11 +60,10 @@ function DetailView({ session }: { session: PrepSession }) {
       )}
 
       {/* Questions */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+      <div style={{ marginBottom: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
           {questions.length} likely questions
         </span>
-        <Btn kind="soft" size="sm" icon="calendar">Add to calendar</Btn>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -115,7 +115,7 @@ export function PrepScreen({ sessions, openSessionId }: PrepScreenProps) {
       {/* Page header */}
       <div style={{ padding: '8px 0 14px' }}>
         <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Prep</div>
-        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>AI mock-interview coaching</div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>AI mock-interview coaching by Coach</div>
       </div>
 
       {/* Unified layout: session list + optional detail pane.
@@ -133,6 +133,12 @@ export function PrepScreen({ sessions, openSessionId }: PrepScreenProps) {
           }}
           className={openSession ? 'md:flex md:w-80' : ''}
         >
+          {/* Sessions sub-header with + New button */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>SESSIONS</span>
+            <Btn kind="soft" size="sm" icon="plus">New</Btn>
+          </div>
+
           {sessions.map((s) => {
             const p = STATUS_PILL[s.status];
             const active = s.id === openSessionId;

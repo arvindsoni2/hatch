@@ -36,6 +36,8 @@ class ApplicationPackage:
     job_url: str
     cv_path: str | None         # path to generated tailored CV (.docx), or None if unavailable
     cover_letter_path: str | None
+    cv_document_id: str | None = None    # GeneratedDocument ID for /api/tailor/document/{id}/download
+    cl_document_id: str | None = None
     prefill_map: dict[str, str] = field(default_factory=dict)   # name, email, phone from profile
     screening_answers: dict[str, str] = field(default_factory=dict)  # knockout Q answers
     paste_map: dict[str, str] = field(default_factory=dict)          # ATS form field labels → values
@@ -348,19 +350,42 @@ class AssistedApplyService:
         # 5. Attempt to tailor CV + CL (wrap gracefully)
         cv_path: str | None = None
         cover_letter_path: str | None = None
+        cv_document_id: str | None = None
+        cl_document_id: str | None = None
 
         try:
             from ..services.tailor_service import TailorService
 
-            tailor = TailorService()
-            if job is not None:
-                jd_text = job.description or f"{job.title} at {job.company}"
-                result = await tailor.generate_all(
-                    job_id=job_id,
-                    jd_text=jd_text,
+            # Look up the existing application so we pass the correct application_id
+            app_result = await db.execute(
+                select(Application).where(
+                    Application.job_id == job_id,
+                    Application.is_active.is_(True),
                 )
-                cv_path = getattr(result, "cv_path", None)
-                cover_letter_path = getattr(result, "cover_letter_path", None)
+            )
+            app_for_tailor = app_result.scalar_one_or_none()
+
+            if job is not None and app_for_tailor is not None:
+                jd_text = job.description or f"{job.title} at {job.company}"
+                tailor = TailorService()
+                result = await tailor.generate_all(
+                    application_id=str(app_for_tailor.id),
+                    variant="A",
+                    jd_text=jd_text,
+                    db=db,
+                )
+                cv_document_id = getattr(result, "cv_document_id", None)
+                cl_document_id = getattr(result, "cl_document_id", None)
+                # Resolve file paths from document IDs for backward compat
+                if cv_document_id or cl_document_id:
+                    from ..repositories.document_repository import DocumentRepository
+                    doc_repo = DocumentRepository(db)
+                    if cv_document_id:
+                        cv_doc = await doc_repo.get_by_id(cv_document_id)
+                        cv_path = cv_doc.file_path if cv_doc else None
+                    if cl_document_id:
+                        cl_doc = await doc_repo.get_by_id(cl_document_id)
+                        cover_letter_path = cl_doc.file_path if cl_doc else None
         except Exception as exc:
             logger.warning(
                 "Tailor service unavailable for job %s, continuing without docs: %s",
@@ -404,6 +429,8 @@ class AssistedApplyService:
             job_url=job_url,
             cv_path=cv_path,
             cover_letter_path=cover_letter_path,
+            cv_document_id=cv_document_id,
+            cl_document_id=cl_document_id,
             prefill_map=prefill_map,
             screening_answers=screening_answers,
             paste_map=paste_map,

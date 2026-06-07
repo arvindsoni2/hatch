@@ -8,6 +8,13 @@ import { approveJob, rejectApplication, markApplied, revertApplication } from "@
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 import type { ApplicationPackage, AgentPerformance } from "@/lib/api";
 
+interface UpcomingInterview {
+  scheduledAt: string;
+  title: string;
+  company: string;
+  daysUntil: number;
+}
+
 interface TodayPageClientProps {
   jobs: HatchJob[];
   funnel: { scout: number; scorer: number; tailor: number; coach: number };
@@ -15,9 +22,10 @@ interface TodayPageClientProps {
   profileName?: string;
   followUpCount?: number;
   agentPerf?: AgentPerformance | null;
+  upcomingInterview?: UpcomingInterview | null;
 }
 
-export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCount, agentPerf }: TodayPageClientProps) {
+export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCount, agentPerf, upcomingInterview }: TodayPageClientProps) {
   const [localJobs, setLocalJobs] = useState<HatchJob[]>(jobs);
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
@@ -27,7 +35,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
     const job = reviewQueue[reviewIdx];
     if (!job) return;
     if (action === "approve") {
-      const pkg = await approveJob(job.id).catch(() => null);
+      const pkg = await approveJob(job.jobPostingId ?? job.id).catch(() => null);
       if (pkg) {
         setPackages((prev) => ({ ...prev, [job.id]: pkg }));
         setLocalJobs((prev) =>
@@ -67,6 +75,10 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
     .filter((j) => j.state === "ready_to_apply" && packages[j.id])
     .map((j) => ({ job: j, pkg: packages[j.id] }));
 
+  const avgMatch = localJobs.length > 0
+    ? Math.round(localJobs.reduce((sum, j) => sum + j.score, 0) / localJobs.length * 100)
+    : undefined;
+
   return (
     <>
       {/* Desktop 2-col: Today content left, Agent activity right */}
@@ -78,6 +90,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
             transit={transit}
             profileName={profileName ?? "there"}
             followUpCount={followUpCount}
+            upcomingInterview={upcomingInterview ?? null}
             onReview={(ids) => {
               const q = localJobs.filter((j) => ids.includes(j.id));
               setReviewQueue(q);
@@ -89,12 +102,22 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
         </div>
         {/* Agent activity panel — desktop right column, mobile hidden (shows below) */}
         <div className="hidden lg:block shrink-0" style={{ width: 272, paddingTop: 0 }}>
-          <AgentActivityPanel initialData={agentPerf ?? null} />
+          <AgentActivityPanel
+            initialData={agentPerf ?? null}
+            funnel={funnel}
+            transit={transit}
+            avgMatch={avgMatch}
+          />
         </div>
       </div>
       {/* Agent activity — mobile only, below main content */}
       <div className="lg:hidden mt-6">
-        <AgentActivityPanel initialData={agentPerf ?? null} />
+        <AgentActivityPanel
+          initialData={agentPerf ?? null}
+          funnel={funnel}
+          transit={transit}
+          avgMatch={avgMatch}
+        />
       </div>
       {readyToApplyWithPkg.map(({ job, pkg }) => (
         <ApplicationReadyCard

@@ -12,6 +12,7 @@ import { AGENT_DEFS, PIPELINE } from '../agents';
 
 export interface HatchJob {
   id: string;
+  jobPostingId?: string;  // JobPosting UUID — used for the approve API call
   title: string;
   company: string;
   loc: string;
@@ -36,12 +37,20 @@ interface TransitCounts {
   tailor_to_coach: number;
 }
 
+interface UpcomingInterview {
+  scheduledAt: string;
+  title: string;
+  company: string;
+  daysUntil: number;
+}
+
 interface TodayScreenProps {
   jobs: HatchJob[];
   funnel: FunnelCounts;
   transit?: TransitCounts;
   profileName: string;
   followUpCount?: number;
+  upcomingInterview?: UpcomingInterview | null;
   onReview?: (ids: string[]) => void;
   onMarkApplied?: (id: string) => void;
   onRevert?: (id: string) => void;
@@ -72,7 +81,7 @@ function FunnelArrow({ count }: { count: number }) {
   );
 }
 
-export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount = 2, onReview, onMarkApplied, onRevert, onOpenPrep }: TodayScreenProps) {
+export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount = 2, upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep }: TodayScreenProps) {
   const ready = jobs.filter((j) => j.state === 'ready');
   const readyToApply = jobs.filter((j) => j.state === 'ready_to_apply');
   const initials = profileName.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -97,13 +106,18 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
         </div>
       </div>
 
+      {/* Mobile date subtitle */}
+      <div className="md:hidden" style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: -8, marginBottom: 10 }}>
+        {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
+      </div>
+
       {/* Desktop greeting */}
       <div className="hidden md:block" style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)' }}>
           Good morning, {profileName}
         </div>
         <div style={{ fontSize: 13.5, color: 'var(--text-muted)', marginTop: 4 }}>
-          Here&apos;s what your agents did overnight
+          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })} — here&apos;s what your agents did overnight
         </div>
       </div>
 
@@ -229,20 +243,35 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           </>
         )}
 
-        {/* Interview prep card */}
-        <div onClick={onOpenPrep} style={{ cursor: 'pointer' }}>
-          <Card style={{ padding: 15 }}>
-            <div style={{ display: 'flex', gap: 11 }}>
-              <AgentBadge agent="coach" size={34} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>Interview Tuesday, 9am</div>
-                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>Lead Architect · Capgemini · in 3 days</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>Coach prepped 12 questions + STAR answers</div>
-                <div style={{ marginTop: 11 }}><Btn kind="soft" size="sm" iconR="arrowR">Review prep</Btn></div>
+        {/* Interview prep card — only shown when a real interview is scheduled */}
+        {upcomingInterview && (
+          <div onClick={onOpenPrep} style={{ cursor: 'pointer' }}>
+            <Card style={{ padding: 15 }}>
+              <div style={{ display: 'flex', gap: 11 }}>
+                <AgentBadge agent="coach" size={34} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
+                      Interview {new Date(upcomingInterview.scheduledAt).toLocaleDateString('en-GB', { weekday: 'long', hour: 'numeric', minute: '2-digit' })}
+                    </span>
+                    {upcomingInterview.daysUntil <= 7 && (
+                      <Chip color="var(--warning)" bg="var(--warning-soft)">
+                        {upcomingInterview.daysUntil === 0 ? 'today' : upcomingInterview.daysUntil === 1 ? 'tomorrow' : `in ${upcomingInterview.daysUntil} days`}
+                      </Chip>
+                    )}
+                  </div>
+                  {(upcomingInterview.title || upcomingInterview.company) && (
+                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>
+                      {upcomingInterview.title}{upcomingInterview.company ? ` · ${upcomingInterview.company}` : ''}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>Coach prepped questions + STAR answers</div>
+                  <div style={{ marginTop: 11 }}><Btn kind="soft" size="sm" iconR="arrowR">Review prep</Btn></div>
+                </div>
               </div>
-            </div>
-          </Card>
-        </div>
+            </Card>
+          </div>
+        )}
 
         {/* Follow-ups */}
         {followUpCount > 0 && (
@@ -255,7 +284,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{followUpCount} follow-up{followUpCount !== 1 ? 's' : ''} overdue</div>
                 <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 1 }}>Sent 12 &amp; 14 days ago — no reply yet</div>
               </div>
-              <HatchIcon name="chevronR" size={18} color="var(--text-muted)" />
+              <Btn kind="soft" size="sm" icon="send">Nudge {followUpCount > 1 ? 'both' : 'them'}</Btn>
             </div>
           </Card>
         )}

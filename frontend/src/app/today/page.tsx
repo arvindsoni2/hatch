@@ -5,6 +5,8 @@ import {
   getOverdueFollowUps,
   fetchApplications,
   fetchAgentPerformance,
+  getUpcomingInterviews,
+  fetchApplication,
   type PendingApproval,
   type PipelineStats,
   type ApplicationListItem,
@@ -18,6 +20,7 @@ export const revalidate = 30;
 function pendingToHatchJob(a: PendingApproval): HatchJob {
   return {
     id: a.application_id,
+    jobPostingId: a.job_id ?? undefined,
     title: a.job_title ?? "Untitled Role",
     company: a.company ?? "—",
     loc: "—",
@@ -40,14 +43,36 @@ function readyToApplyToHatchJob(a: ApplicationListItem): HatchJob {
 }
 
 export default async function TodayPage() {
-  const [approvals, readyToApplyPage, pipeline, profile, overdueFollowUps, agentPerf] = await Promise.all([
+  const [approvals, readyToApplyPage, pipeline, profile, overdueFollowUps, agentPerf, upcomingInterviews] = await Promise.all([
     fetchPendingApprovals().catch((): PendingApproval[] => []),
     fetchApplications({ status: "ready_to_apply" }, 0, 20).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 20 })),
     fetchPipelineStats().catch((): PipelineStats | null => null),
     fetchProfileStatus().catch(() => null),
     getOverdueFollowUps().catch(() => []),
     fetchAgentPerformance().catch((): AgentPerformance | null => null),
+    getUpcomingInterviews(14).catch(() => []),
   ]);
+
+  // Build upcoming interview card data if a real interview is scheduled
+  let upcomingInterview: { scheduledAt: string; title: string; company: string; daysUntil: number } | null = null;
+  const next = upcomingInterviews[0] ?? null;
+  if (next?.scheduled_at) {
+    const daysUntil = Math.ceil(
+      (new Date(next.scheduled_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+    );
+    if (daysUntil >= 0) {
+      let title = "Interview";
+      let company = "";
+      try {
+        const app = await fetchApplication(next.application_id);
+        title = app.job?.title ?? "Interview";
+        company = app.job?.company ?? "";
+      } catch {
+        // use defaults
+      }
+      upcomingInterview = { scheduledAt: next.scheduled_at, title, company, daysUntil };
+    }
+  }
 
   const jobs: HatchJob[] = [
     ...approvals.map(pendingToHatchJob),
@@ -77,6 +102,7 @@ export default async function TodayPage() {
       profileName={profile?.candidate_name}
       followUpCount={overdueFollowUps.length}
       agentPerf={agentPerf}
+      upcomingInterview={upcomingInterview}
     />
   );
 }

@@ -10,7 +10,7 @@ from typing import Any
 from datetime import timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -157,7 +157,7 @@ async def list_pending_approvals(
         .join(JobPosting, Application.job_id == JobPosting.id)
         .where(Application.agent_created)
         .where(Application.approval_status == "pending")
-        .where(JobPosting.posted_at >= cutoff)
+        .where(or_(JobPosting.posted_at.is_(None), JobPosting.posted_at >= cutoff))
         .order_by(Application.created_at.desc())
     )
     apps = result.scalars().all()

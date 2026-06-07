@@ -10,12 +10,12 @@ import type { HatchJob } from './TodayScreen';
 
 type StreamFilter = 'all' | 'ready' | 'tailoring' | 'parked';
 
-const STATUS_META: Record<string, { label: string; color: string }> = {
-  ready:     { label: 'Ready for your approval', color: 'var(--success)' },
-  tailoring: { label: 'Tailor is writing your CV…', color: 'var(--success)' },
-  parked:    { label: 'Parked · just below your 75% bar', color: 'var(--warning)' },
-  applied:   { label: 'Applied · awaiting reply', color: 'var(--accent)' },
-  rejected:  { label: 'Dismissed', color: 'var(--text-muted)' },
+const STATUS_META: Record<string, { label: string; color: string; dot: boolean }> = {
+  ready:     { label: 'Ready to send',   color: 'var(--success)',    dot: true  },
+  tailoring: { label: 'Tailoring…',      color: 'var(--success)',    dot: false },
+  parked:    { label: 'Below match bar', color: 'var(--warning)',    dot: false },
+  applied:   { label: 'Applied',         color: 'var(--accent)',     dot: false },
+  rejected:  { label: 'Dismissed',       color: 'var(--text-muted)', dot: false },
 };
 
 function stageOf(job: HatchJob): number {
@@ -54,6 +54,12 @@ export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprov
     { key: 'parked',   label: 'Parked'   },
   ];
 
+  const emptyState = (
+    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+      Nothing in this stage right now.
+    </div>
+  );
+
   return (
     <div>
       {/* Mobile header */}
@@ -88,46 +94,155 @@ export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprov
         })}
       </div>
 
-      {/* Job list — card layout; desktop adds a table view via Tailwind override */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 11, paddingBottom: 18 }}>
-        {filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>
-            Nothing in this stage right now.
-          </div>
-        ) : (
-          filtered.map((job) => {
-            const ready = job.state === 'ready';
-            const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
-            return (
-              <Card key={job.id} accent={ready} style={{ padding: 14 }}>
-                <button
-                  onClick={() => onReview?.([job.id])}
-                  style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>{job.title}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 3 }}>
-                        {job.company} · {job.loc} · <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>{job.rate}</span>
+      {/* ── Desktop table (md+) ── */}
+      <div className="hidden md:block">
+        {filtered.length === 0 ? emptyState : (
+          <div>
+            {/* Table header */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 72px 210px 148px 110px',
+                gap: '0 12px',
+                padding: '0 14px 8px',
+                fontSize: 10.5,
+                fontWeight: 700,
+                letterSpacing: '0.07em',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <span>ROLE</span>
+              <span>MATCH</span>
+              <span>PIPELINE STAGE</span>
+              <span>STATUS</span>
+              <span style={{ textAlign: 'right' }}>ACTION</span>
+            </div>
+
+            {/* Table rows */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 18 }}>
+              {filtered.map((job) => {
+                const ready = job.state === 'ready';
+                const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
+                return (
+                  <div
+                    key={job.id}
+                    onClick={() => onReview?.([job.id])}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 72px 210px 148px 110px',
+                      gap: '0 12px',
+                      alignItems: 'center',
+                      padding: '12px 14px',
+                      borderRadius: 12,
+                      background: ready ? 'color-mix(in srgb, var(--accent) 6%, var(--surface))' : 'var(--surface)',
+                      border: `1px solid ${ready ? 'var(--accent-soft)' : 'var(--border)'}`,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {/* ROLE */}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {job.title}
+                        </span>
+                        {job.jobUrl && (
+                          <a
+                            href={job.jobUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ flexShrink: 0, color: 'var(--text-muted)', lineHeight: 1 }}
+                          >
+                            <HatchIcon name="externalLink" size={12} color="var(--text-muted)" />
+                          </a>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {job.company} · {job.loc}
+                        {job.rate && job.rate !== '—' ? <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}> · {job.rate}</span> : null}
                       </div>
                     </div>
-                    <ScorePill score={job.score} />
+
+                    {/* MATCH */}
+                    <div><ScorePill score={job.score} /></div>
+
+                    {/* PIPELINE STAGE */}
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <StageTrack stage={stageOf(job)} pct={Math.round(job.score * 100)} compact />
+                    </div>
+
+                    {/* STATUS */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: m.color }}>
+                      {m.dot && <Dot color={m.color} size={6} pulse />}
+                      {m.label}
+                    </div>
+
+                    {/* ACTION */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      {ready ? (
+                        <Btn
+                          kind="success"
+                          size="sm"
+                          icon="check"
+                          onClick={(e) => { e.stopPropagation(); onApprove?.(job.id); }}
+                        >
+                          Approve
+                        </Btn>
+                      ) : (
+                        <Btn kind="soft" size="sm" iconR="chevronR" onClick={(e) => { e.stopPropagation(); onReview?.([job.id]); }}>
+                          Open
+                        </Btn>
+                      )}
+                    </div>
                   </div>
-                  <StageTrack stage={stageOf(job)} pct={Math.round(job.score * 100)} />
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 600, color: m.color, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                    {ready && <Dot color={m.color} size={6} pulse />}{m.label}
-                  </span>
-                  {ready
-                    ? <Btn kind="success" size="sm" icon="check" onClick={() => onApprove?.(job.id)}>Approve</Btn>
-                    : <HatchIcon name="chevronR" size={16} color="var(--text-muted)" />
-                  }
-                </div>
-              </Card>
-            );
-          })
+                );
+              })}
+            </div>
+          </div>
         )}
+      </div>
+
+      {/* ── Mobile cards ── */}
+      <div className="md:hidden" style={{ display: 'flex', flexDirection: 'column', gap: 11, paddingBottom: 18 }}>
+        {filtered.length === 0 ? emptyState : filtered.map((job) => {
+          const ready = job.state === 'ready';
+          const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
+          return (
+            <Card key={job.id} accent={ready} style={{ padding: 14 }}>
+              <button
+                onClick={() => onReview?.([job.id])}
+                style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>{job.title}</span>
+                      {job.jobUrl && (
+                        <a href={job.jobUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                          <HatchIcon name="externalLink" size={13} color="var(--text-muted)" />
+                        </a>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 3 }}>
+                      {job.company} · {job.loc} · <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>{job.rate}</span>
+                    </div>
+                  </div>
+                  <ScorePill score={job.score} />
+                </div>
+                <StageTrack stage={stageOf(job)} pct={Math.round(job.score * 100)} />
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: m.color, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  {m.dot && <Dot color={m.color} size={6} pulse />}{m.label}
+                </span>
+                {ready
+                  ? <Btn kind="success" size="sm" icon="check" onClick={() => onApprove?.(job.id)}>Approve</Btn>
+                  : <HatchIcon name="chevronR" size={16} color="var(--text-muted)" />
+                }
+              </div>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

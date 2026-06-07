@@ -1853,6 +1853,8 @@ export interface ApplicationPackage {
   job_url: string;
   cv_path: string | null;
   cover_letter_path: string | null;
+  cv_document_id?: string | null;
+  cl_document_id?: string | null;
   prefill_map: Record<string, string>;
   screening_answers: Record<string, string>;
   paste_map: Record<string, string>;
