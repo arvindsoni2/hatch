@@ -427,6 +427,7 @@ class ApplicationRepository:
             job_rate_text=job.rate_text if job else None,
             job_rate_min=job.rate_min if job else None,
             job_source=job.source if job else None,
+            job_url=job.url if job else None,
             agent_score=score.overall_score if score else None,
             agent_created=getattr(app, "agent_created", False),
             approval_status=getattr(app, "approval_status", None),

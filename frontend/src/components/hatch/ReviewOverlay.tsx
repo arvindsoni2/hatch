@@ -37,9 +37,10 @@ interface ReviewOverlayProps {
   idx: number;
   onAction: (action: 'approve' | 'reject') => void;
   onClose: () => void;
+  isLoading?: boolean;
 }
 
-export function ReviewOverlay({ queue, idx, onAction, onClose }: ReviewOverlayProps) {
+export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false }: ReviewOverlayProps) {
   const [tab, setTab] = useState<'cv' | 'cl'>('cv');
   const job = queue[idx];
   if (!job) return null;
@@ -170,8 +171,10 @@ export function ReviewOverlay({ queue, idx, onAction, onClose }: ReviewOverlayPr
           borderTop: '1px solid var(--border)',
           background: 'var(--bg-elevated)',
         }}>
-          <Btn kind="ghost" icon="x" onClick={() => onAction('reject')}>Reject</Btn>
-          <Btn kind="primary" full iconR="arrowR" onClick={() => onAction('approve')}>Approve &amp; prepare</Btn>
+          <Btn kind="ghost" icon="x" disabled={isLoading} onClick={() => onAction('reject')}>Reject</Btn>
+          <Btn kind="primary" full iconR={isLoading ? undefined : "arrowR"} disabled={isLoading} onClick={() => onAction('approve')}>
+            {isLoading ? 'Preparing…' : 'Approve & prepare'}
+          </Btn>
         </div>
         <div style={{ height: 30, flexShrink: 0 }} className="md:hidden" />
       </div>

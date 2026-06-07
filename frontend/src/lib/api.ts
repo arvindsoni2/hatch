@@ -246,6 +246,7 @@ export interface ApplicationListItem {
   job_rate_text: string | null;
   job_rate_min: number | null;
   job_source: string | null;
+  job_url: string | null;
   // Agentic fields
   agent_score: number | null;
   agent_created: boolean;

@@ -1,7 +1,9 @@
 "use client";
+import { useState } from 'react';
 import { Card } from '../Card';
 import { Chip } from '../Chip';
 import { Dot } from '../Dot';
+import { HatchIcon } from '../HatchIcon';
 import { ScorePill } from '../ScorePill';
 import type { HatchJob } from './TodayScreen';
 
@@ -13,12 +15,14 @@ interface KanbanJob {
   rate: string;
   score: number;
   when?: string;
+  jobUrl?: string;
 }
 
 interface TrackerScreenProps {
   jobs: HatchJob[];
   appliedJobs: KanbanJob[];
   interviewJobs: KanbanJob[];
+  onJobClick?: (job: KanbanJob, col: string) => void;
 }
 
 interface ColDef {
@@ -28,7 +32,8 @@ interface ColDef {
   list: KanbanJob[];
 }
 
-function KanbanCol({ col }: { col: ColDef }) {
+function KanbanCol({ col, onJobClick }: { col: ColDef; onJobClick?: (job: KanbanJob, colKey: string) => void }) {
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   return (
     <div
       data-testid={`col-${col.key}`}
@@ -52,15 +57,33 @@ function KanbanCol({ col }: { col: ColDef }) {
         {col.list.length > 0 ? col.list.map((job) => (
           <div
             key={job.id}
+            onClick={() => onJobClick?.(job, col.key)}
+            onMouseEnter={() => setHoveredId(job.id)}
+            onMouseLeave={() => setHoveredId(null)}
             style={{
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
+              background: hoveredId === job.id ? 'var(--surface-2)' : 'var(--surface)',
+              border: `1px solid ${hoveredId === job.id ? 'var(--accent-soft)' : 'var(--border)'}`,
               borderRadius: 11,
               padding: 11,
+              cursor: onJobClick ? 'pointer' : 'default',
+              transition: 'background 0.12s, border-color 0.12s',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{job.title}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.title}</span>
+                {job.jobUrl && (
+                  <a
+                    href={job.jobUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ flexShrink: 0, color: 'var(--text-muted)', lineHeight: 1 }}
+                  >
+                    <HatchIcon name="externalLink" size={11} color="var(--text-muted)" />
+                  </a>
+                )}
+              </div>
               <ScorePill score={job.score} />
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{job.company} · {job.loc}</div>
@@ -80,7 +103,7 @@ function KanbanCol({ col }: { col: ColDef }) {
   );
 }
 
-export function TrackerScreen({ jobs, appliedJobs, interviewJobs }: TrackerScreenProps) {
+export function TrackerScreen({ jobs, appliedJobs, interviewJobs, onJobClick }: TrackerScreenProps) {
   const discovered = jobs.filter((j) => ['ready', 'tailoring', 'parked'].includes(j.state));
 
   const cols: ColDef[] = [
@@ -106,7 +129,7 @@ export function TrackerScreen({ jobs, appliedJobs, interviewJobs }: TrackerScree
           alignItems: 'flex-start',
         }}
       >
-        {cols.map((col) => <KanbanCol key={col.key} col={col} />)}
+        {cols.map((col) => <KanbanCol key={col.key} col={col} onJobClick={onJobClick} />)}
       </div>
     </div>
   );

@@ -30,12 +30,15 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
   const [packages, setPackages] = useState<Record<string, ApplicationPackage>>({});
+  const [approving, setApproving] = useState(false);
 
   async function handleAction(action: "approve" | "reject") {
     const job = reviewQueue[reviewIdx];
     if (!job) return;
     if (action === "approve") {
+      setApproving(true);
       const pkg = await approveJob(job.jobPostingId ?? job.id).catch(() => null);
+      setApproving(false);
       if (pkg) {
         setPackages((prev) => ({ ...prev, [job.id]: pkg }));
         setLocalJobs((prev) =>
@@ -133,7 +136,8 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
           queue={reviewQueue}
           idx={reviewIdx}
           onAction={handleAction}
-          onClose={() => setReviewQueue([])}
+          onClose={() => { if (!approving) setReviewQueue([]); }}
+          isLoading={approving}
         />
       )}
     </>

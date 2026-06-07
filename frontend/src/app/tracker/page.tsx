@@ -12,6 +12,7 @@ interface KanbanJob {
   rate: string;
   score: number;
   when?: string;
+  jobUrl?: string;
 }
 
 function appToKanbanJob(a: ApplicationListItem): KanbanJob {
@@ -22,6 +23,7 @@ function appToKanbanJob(a: ApplicationListItem): KanbanJob {
     loc: a.job_location ?? "—",
     rate: a.job_rate_text ?? "—",
     score: a.agent_score ?? 0,
+    jobUrl: a.job_url ?? undefined,
   };
 }
 
@@ -34,6 +36,7 @@ function appToHatchJob(a: ApplicationListItem, state: HatchJob["state"]): HatchJ
     rate: a.job_rate_text ?? "—",
     score: a.agent_score ?? 0,
     state,
+    jobUrl: a.job_url ?? undefined,
   };
 }
 

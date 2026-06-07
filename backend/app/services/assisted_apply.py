@@ -340,12 +340,14 @@ class AssistedApplyService:
         if phone_val:
             prefill_map["phone"] = str(phone_val)
 
-        # 4. Mark status as "preparing"
+        # 4. Mark status as "preparing" and commit immediately — releases the DB lock
+        # before the (potentially long) TailorService call below.
         await db.execute(
             update(Application)
             .where(Application.job_id == job_id)
             .values(status="preparing", updated_at=datetime.utcnow())
         )
+        await db.commit()
 
         # 5. Attempt to tailor CV + CL (wrap gracefully)
         cv_path: str | None = None
@@ -355,6 +357,8 @@ class AssistedApplyService:
 
         try:
             from ..services.tailor_service import TailorService
+            from ..models.document import GeneratedDocument
+            from sqlalchemy import desc
 
             # Look up the existing application so we pass the correct application_id
             app_result = await db.execute(
@@ -365,27 +369,52 @@ class AssistedApplyService:
             )
             app_for_tailor = app_result.scalar_one_or_none()
 
-            if job is not None and app_for_tailor is not None:
-                jd_text = job.description or f"{job.title} at {job.company}"
-                tailor = TailorService()
-                result = await tailor.generate_all(
-                    application_id=str(app_for_tailor.id),
-                    variant="A",
-                    jd_text=jd_text,
-                    db=db,
+            if app_for_tailor is not None:
+                # Check if the Tailor agent already pre-generated documents — use them directly
+                existing_result = await db.execute(
+                    select(GeneratedDocument)
+                    .where(GeneratedDocument.application_id == str(app_for_tailor.id))
+                    .order_by(desc(GeneratedDocument.created_at))
                 )
-                cv_document_id = getattr(result, "cv_document_id", None)
-                cl_document_id = getattr(result, "cl_document_id", None)
-                # Resolve file paths from document IDs for backward compat
-                if cv_document_id or cl_document_id:
-                    from ..repositories.document_repository import DocumentRepository
-                    doc_repo = DocumentRepository(db)
-                    if cv_document_id:
-                        cv_doc = await doc_repo.get_by_id(cv_document_id)
-                        cv_path = cv_doc.file_path if cv_doc else None
-                    if cl_document_id:
-                        cl_doc = await doc_repo.get_by_id(cl_document_id)
-                        cover_letter_path = cl_doc.file_path if cl_doc else None
+                existing_docs = existing_result.scalars().all()
+
+                cv_doc_existing = next((d for d in existing_docs if d.document_type == "cv"), None)
+                cl_doc_existing = next((d for d in existing_docs if d.document_type == "cover_letter"), None)
+
+                if cv_doc_existing or cl_doc_existing:
+                    # Reuse pre-generated documents — no LLM call needed
+                    if cv_doc_existing:
+                        cv_document_id = str(cv_doc_existing.id)
+                        cv_path = cv_doc_existing.file_path
+                    if cl_doc_existing:
+                        cl_document_id = str(cl_doc_existing.id)
+                        cover_letter_path = cl_doc_existing.file_path
+                    logger.info(
+                        "Reusing %d existing docs for job %s (skipping TailorService)",
+                        len(existing_docs), job_id,
+                    )
+                elif job is not None:
+                    # No pre-generated docs — call TailorService now
+                    jd_text = job.description or f"{job.title} at {job.company}"
+                    tailor = TailorService()
+                    result = await tailor.generate_all(
+                        application_id=str(app_for_tailor.id),
+                        variant="A",
+                        jd_text=jd_text,
+                        db=db,
+                    )
+                    cv_document_id = getattr(result, "cv_document_id", None)
+                    cl_document_id = getattr(result, "cl_document_id", None)
+                    # Resolve file paths from document IDs for backward compat
+                    if cv_document_id or cl_document_id:
+                        from ..repositories.document_repository import DocumentRepository
+                        doc_repo = DocumentRepository(db)
+                        if cv_document_id:
+                            cv_doc2 = await doc_repo.get_by_id(cv_document_id)
+                            cv_path = cv_doc2.file_path if cv_doc2 else None
+                        if cl_document_id:
+                            cl_doc2 = await doc_repo.get_by_id(cl_document_id)
+                            cover_letter_path = cl_doc2.file_path if cl_doc2 else None
         except Exception as exc:
             logger.warning(
                 "Tailor service unavailable for job %s, continuing without docs: %s",

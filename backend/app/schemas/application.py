@@ -176,6 +176,7 @@ class ApplicationListItem(BaseModel):
     job_rate_text: str | None = None
     job_rate_min: float | None = None
     job_source: str | None = None
+    job_url: str | None = None
     # Agentic fields
     agent_score: float | None = None      # overall_score from job_scores (0.0–1.0)
     agent_created: bool = False

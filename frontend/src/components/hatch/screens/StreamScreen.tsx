@@ -28,10 +28,11 @@ interface StreamScreenProps {
   jobs: HatchJob[];
   defaultFilter?: StreamFilter;
   onReview?: (ids: string[]) => void;
-  onApprove?: (id: string) => void;
+  onApprove?: (id: string, jobPostingId?: string) => void;
+  approvingId?: string | null;
 }
 
-export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprove }: StreamScreenProps) {
+export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprove, approvingId }: StreamScreenProps) {
   const [filter, setFilter] = useState<StreamFilter>(defaultFilter);
 
   const counts = {
@@ -184,9 +185,10 @@ export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprov
                           kind="success"
                           size="sm"
                           icon="check"
-                          onClick={(e) => { e.stopPropagation(); onApprove?.(job.id); }}
+                          disabled={approvingId === job.id}
+                          onClick={(e) => { e.stopPropagation(); onApprove?.(job.id, job.jobPostingId); }}
                         >
-                          Approve
+                          {approvingId === job.id ? 'Preparing…' : 'Approve'}
                         </Btn>
                       ) : (
                         <Btn kind="soft" size="sm" iconR="chevronR" onClick={(e) => { e.stopPropagation(); onReview?.([job.id]); }}>
@@ -236,7 +238,7 @@ export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprov
                   {m.dot && <Dot color={m.color} size={6} pulse />}{m.label}
                 </span>
                 {ready
-                  ? <Btn kind="success" size="sm" icon="check" onClick={() => onApprove?.(job.id)}>Approve</Btn>
+                  ? <Btn kind="success" size="sm" icon="check" disabled={approvingId === job.id} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingId === job.id ? 'Preparing…' : 'Approve'}</Btn>
                   : <HatchIcon name="chevronR" size={16} color="var(--text-muted)" />
                 }
               </div>
