@@ -81,6 +81,86 @@ class CVTailor:
 
         return variants[best_key]
 
+    def _compact_jd(self, jd_analysis: JDAnalysisResult) -> dict[str, Any]:
+        """Return a compact JD summary for the prompt (avoids over-stuffing the context window).
+
+        Passes only must-have requirements, company name, sector, contract_type, and the
+        top 15 ATS keywords — enough for accurate tailoring without the full analysis JSON.
+        """
+        cc = jd_analysis.company_context
+        cd = jd_analysis.contract_details
+        all_kws = (
+            jd_analysis.ats_keywords.technical[:8]
+            + jd_analysis.ats_keywords.methodologies[:4]
+            + jd_analysis.ats_keywords.domain[:3]
+        )
+        return {
+            "role_title": jd_analysis.role_title,
+            "seniority_level": jd_analysis.seniority_level,
+            "company_name": cc.company_name if cc else None,
+            "sector": cc.sector if cc else None,
+            "contract_type": cd.contract_type if cd else None,
+            "must_have": jd_analysis.requirements.must_have[:10],
+            "top_keywords": all_kws[:15],
+            "culture_indicators": (cc.culture_indicators[:3] if cc else []),
+        }
+
+    def _select_relevant_cv_slices(
+        self, jd_analysis: JDAnalysisResult, master_cv: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return a trimmed master CV containing only the content most relevant to this JD.
+
+        For gemma4:e2b's 512-token effective attention window, injecting the full master CV
+        dilutes the rules at the end of the prompt. Instead we inject:
+          - The best summary variant (already selected by _select_best_summary_variant)
+          - The top 3 experience entries by keyword overlap with the JD
+          - All skill groups (compact — items only, no nested metadata)
+          - Certifications list
+        """
+        all_jd_words = set(
+            " ".join(
+                jd_analysis.requirements.must_have
+                + jd_analysis.ats_keywords.technical
+                + jd_analysis.ats_keywords.domain
+                + [jd_analysis.role_title or ""]
+            ).lower().split()
+        )
+
+        # Score each experience entry by keyword overlap
+        experiences = master_cv.get("experience", [])
+        scored: list[tuple[int, dict]] = []
+        for exp in experiences:
+            text = " ".join(
+                [exp.get("role", ""), exp.get("company", "")]
+                + [a.get("text", "") if isinstance(a, dict) else str(a) for a in exp.get("achievements", [])]
+            ).lower()
+            overlap = len(all_jd_words & set(text.split()))
+            scored.append((overlap, exp))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top_exp = [exp for _, exp in scored[:3]]
+
+        # Compact skills: strip nested metadata, keep category + items
+        raw_skills = master_cv.get("skills", {})
+        compact_skills: list[dict[str, Any]] = []
+        if isinstance(raw_skills, dict):
+            for _key, group in raw_skills.items():
+                if isinstance(group, dict):
+                    compact_skills.append({
+                        "category": group.get("category") or group.get("display_name") or _key,
+                        "items": group.get("items", []),
+                    })
+        elif isinstance(raw_skills, list):
+            compact_skills = raw_skills
+
+        return {
+            "personal": master_cv.get("personal", {}),
+            "summary_variants": master_cv.get("summary_variants", {}),
+            "experience": top_exp,
+            "skills": compact_skills,
+            "certifications": master_cv.get("certifications", []),
+        }
+
     async def tailor(
         self,
         jd_analysis: JDAnalysisResult,
@@ -108,12 +188,14 @@ class CVTailor:
 
         best_summary = self._select_best_summary_variant(jd_analysis)
         skill_instructions = self._skill_loader.instructions("cv-tailoring")
+        cv_slices = self._select_relevant_cv_slices(jd_analysis, master_cv)
+        jd_compact = self._compact_jd(jd_analysis)
 
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
                 "cv_tailoring.j2",
-                master_cv=master_cv,
-                jd_analysis=jd_analysis.model_dump(),
+                master_cv=cv_slices,
+                jd_analysis=jd_compact,
                 variant=variant,
                 custom_instructions=custom_instructions or "",
                 best_summary_variant=best_summary,

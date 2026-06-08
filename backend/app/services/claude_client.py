@@ -87,7 +87,9 @@ class ClaudeClient:
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 text = response.content if isinstance(response.content, str) else str(response.content)
                 record_trace(model_name, duration_ms, text)
-                # Strip Qwen3 / DeepSeek reasoning blocks before JSON parsing
+                # Strip reasoning blocks: Qwen3/DeepSeek <think>...</think>
+                # and Gemma 4 channel form <|channel>...<channel|>
+                text = re.sub(r"<\|channel>.*?<channel\|>", "", text, flags=re.DOTALL)
                 text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
                 cleaned = text.strip()
                 # Strip markdown code fences
@@ -140,6 +142,7 @@ class ClaudeClient:
             + _JSON_INSTRUCTION
         )
         text = await self.complete(augmented_system, user)
+        text = re.sub(r"<\|channel>.*?<channel\|>", "", text, flags=re.DOTALL)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
         cleaned = text.strip()
         if cleaned.startswith("```"):

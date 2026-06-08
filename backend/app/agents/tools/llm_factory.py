@@ -236,6 +236,20 @@ def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     return 0.0
 
 
+_TINY_MODEL_PATTERNS = ("e2b", ":1b", ":3b", "mini", "lite", "nano")
+
+
+def _maybe_add_think_token(system_prompt: str, provider: str, reasoning: bool) -> str:
+    """Prepend <|think|> to system prompt for Ollama reasoning models when enabled.
+
+    Gemma 4 activates chain-of-thought via this token in the system prompt.
+    Other providers use their own native reasoning flags and must not receive it.
+    """
+    if reasoning and provider == "ollama":
+        return f"<|think|>\n{system_prompt}"
+    return system_prompt
+
+
 def _detect_ollama_model(llm_cfg: Any) -> str:
     """Query running Ollama instance and return the name of the first available model.
 
@@ -311,14 +325,28 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
         kwargs["base_url"] = effective_base_url
 
     # Ollama-specific tuning for long-context models like gemma4:
-    # - reasoning=False: disable visible thinking tokens in the response
+    # - reasoning: from profile.yaml llm.reasoning (default False for latency)
     # - request_timeout: hard ceiling to prevent silent hangs on slow CPU inference
     # - num_ctx: Ollama defaults to 4096 for gemma4 but CV/CL prompts are ~4K tokens
     #   input alone, leaving no room for output. Force 16 K for all primary-model calls.
     if llm_cfg.provider == "ollama":
-        kwargs["reasoning"] = False
+        reasoning = getattr(llm_cfg, "reasoning", False)
+        kwargs["reasoning"] = reasoning
         kwargs["request_timeout"] = 300  # 5-minute hard ceiling; prevents silent hangs
         kwargs["num_ctx"] = 16384
+        top_p = getattr(llm_cfg, "top_p", None)
+        top_k = getattr(llm_cfg, "top_k", None)
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        if top_k is not None:
+            kwargs["top_k"] = top_k
+        if not reasoning and any(p in model_name.lower() for p in _TINY_MODEL_PATTERNS):
+            logger.warning(
+                "primary_model '%s' is a small reasoner but llm.reasoning=False. "
+                "Set llm.reasoning: true in profile.yaml for better structured output. "
+                "Consider upgrading to gemma4:e4b for document generation.",
+                model_name,
+            )
 
     return _attach_tracer(init_chat_model(
         model=model_name,
@@ -359,18 +387,25 @@ def get_json_model() -> BaseChatModel:
     llm_cfg = profile.llm
     if llm_cfg.provider == "ollama":
         model_name = llm_cfg.primary_model or _detect_ollama_model(llm_cfg)
+        reasoning = getattr(llm_cfg, "reasoning", False)
         kwargs: dict[str, Any] = {
             "temperature": llm_cfg.temperature,
             "max_retries": llm_cfg.max_retries,
             "format": "json",
             "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
-            "reasoning": False,
+            "reasoning": reasoning,
             "request_timeout": 300,  # 5-minute hard ceiling; prevents silent hangs
             # Ollama defaults to 4096 context for gemma4 but CV/CL prompts consume
             # ~4000 tokens of input, leaving no room for output. Force 16 K so there's
             # always headroom for thinking tokens + the full generated JSON.
             "num_ctx": 16384,
         }
+        top_p = getattr(llm_cfg, "top_p", None)
+        top_k = getattr(llm_cfg, "top_k", None)
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        if top_k is not None:
+            kwargs["top_k"] = top_k
         return _attach_tracer(init_chat_model(
             model=model_name,
             model_provider="ollama",

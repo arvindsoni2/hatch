@@ -108,6 +108,9 @@ class LLMConfig(BaseModel):
     track_costs: bool = False
     monthly_budget: float = 0.0
     currency: str = "USD"  # currency for budget display; override per locale
+    reasoning: bool = False  # enable thinking tokens for Ollama reasoners (e.g. gemma4)
+    top_p: float | None = None  # nucleus sampling; None = use model default
+    top_k: int | None = None  # top-k sampling; None = use model default
 
 
 class PreferencesConfig(BaseModel):
