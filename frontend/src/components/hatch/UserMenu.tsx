@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Moon, Sun } from 'lucide-react';
 import { HatchIcon } from './HatchIcon';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 interface UserMenuProps {
   name: string;
@@ -14,7 +14,7 @@ const QUICK_LINKS: { label: string; icon: string; href: string }[] = [
 ];
 
 const SETTINGS_ITEMS: { label: string; icon: string; href: string }[] = [
-  { label: 'Profile',       icon: 'user',     href: '/settings/profile' },
+  { label: 'Profile & CV',  icon: 'user',     href: '/settings/profile' },
   { label: 'AI Provider',   icon: 'zap',      href: '/settings/ai'      },
   { label: 'Resume',        icon: 'fileText', href: '/settings/resume'  },
   { label: 'System & Logs', icon: 'settings', href: '/settings/system'  },
@@ -39,24 +39,9 @@ const menuRow: React.CSSProperties = {
 
 export function UserMenu({ name, role }: UserMenuProps) {
   const [open, setOpen] = useState(false);
-  const [dark, setDark] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const initials = getInitials(name);
-
-  useEffect(() => {
-    const stored = localStorage.getItem('theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    setDark(stored === 'dark' || (!stored && prefersDark));
-  }, []);
-
-  const toggleTheme = () => {
-    const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle('dark', next);
-    document.documentElement.setAttribute('data-theme', next ? 'dark' : 'light');
-    localStorage.setItem('theme', next ? 'dark' : 'light');
-  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
@@ -175,19 +160,10 @@ export function UserMenu({ name, role }: UserMenuProps) {
             ))}
           </div>
 
-          {/* Theme row */}
-          <div style={{ borderTop: '1px solid var(--border)', padding: '6px 0' }}>
-            <button
-              role="menuitem"
-              onClick={toggleTheme}
-              style={{ ...menuRow, color: 'var(--text)' }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none'; }}
-            >
-              {dark ? <Sun size={15} color="var(--text-dim)" /> : <Moon size={15} color="var(--text-dim)" />}
-              <span style={{ flex: 1 }}>Theme</span>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{dark ? 'Dark' : 'Light'}</span>
-            </button>
+          {/* Appearance row */}
+          <div style={{ borderTop: '1px solid var(--border)', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13, color: 'var(--text)' }}>Appearance</span>
+            <ThemeToggle />
           </div>
 
           {/* Re-run Onboarding */}
