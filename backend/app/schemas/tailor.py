@@ -92,6 +92,7 @@ class TailoredCVResult(BaseModel):
     certifications: list[str] = Field(default_factory=list)
     ats_keywords_embedded: list[str] = Field(default_factory=list)
     tailoring_notes: str = ""
+    blocking_issues: list[str] = Field(default_factory=list)
     fabrication_warnings: list[str] = Field(default_factory=list)
 
 

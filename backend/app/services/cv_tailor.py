@@ -123,46 +123,84 @@ class CVTailor:
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=6000)
         result = _parse_tailored_cv(raw)
 
-        # Fabrication check
-        warnings = self._validate_no_fabrication(result, master_cv)
-        result.fabrication_warnings = warnings
-        if warnings:
-            logger.warning("Fabrication warnings for tailored CV: %s", warnings)
+        # Post-generation validation
+        blocking, advisory = self._validate_no_fabrication(result, master_cv)
+        result.blocking_issues = blocking
+        result.fabrication_warnings = advisory
+        if blocking:
+            logger.warning("Blocking issues in tailored CV (document withheld): %s", blocking)
+        if advisory:
+            logger.warning("Advisory fabrication warnings for tailored CV: %s", advisory)
 
         return result
 
-    def _validate_no_fabrication(self, tailored: TailoredCVResult, master: dict[str, Any]) -> list[str]:
-        """Check tailored achievements against master CV using rapidfuzz.
+    def _validate_no_fabrication(
+        self, tailored: TailoredCVResult, master: dict[str, Any]
+    ) -> tuple[list[str], list[str]]:
+        """Check the tailored CV for placeholder tokens (blocking) and invented content (advisory).
 
-        Any achievement with < FABRICATION_THRESHOLD similarity to all master
-        achievements is flagged as a potential fabrication.
-
-        Args:
-            tailored: The tailored CV result.
-            master: The master CV dict.
+        Blocking issues surface to the Review gate so the user knows why a document is withheld.
+        Advisory warnings are logged but don't block the result.
 
         Returns:
-            List of warning strings for suspicious achievements.
+            (blocking, advisory) — two separate lists of human-readable strings.
         """
+        from .master_cv_validator import _PLACEHOLDER_PATTERNS
+
+        blocking: list[str] = []
+        advisory: list[str] = []
+
+        def _has_ph(text: str) -> bool:
+            return any(pat.search(text) for pat in _PLACEHOLDER_PATTERNS)
+
+        # -- Blocking: placeholder tokens in generated output --
+        if _has_ph(tailored.summary):
+            blocking.append(f"summary: contains placeholder text — {tailored.summary[:80]!r}")
+
+        for idx, skill_group in enumerate(tailored.skills):
+            for item in skill_group.get("items", []):
+                if isinstance(item, str) and _has_ph(item):
+                    blocking.append(f"skills[{idx}].items: placeholder — {item!r}")
+
+        for cert in tailored.certifications:
+            if isinstance(cert, str) and _has_ph(cert):
+                blocking.append(f"certifications: placeholder — {cert!r}")
+
+        for exp in tailored.experience:
+            if _has_ph(exp.role):
+                blocking.append(f"experience.role: placeholder company — {exp.role!r}")
+            if _has_ph(exp.company):
+                blocking.append(f"experience.company: placeholder company — {exp.company!r}")
+
+        # -- Advisory: fuzzy achievement + summary grounding check --
         master_texts: list[str] = []
         for exp in master.get("experience", []):
             for ach in exp.get("achievements", []):
                 master_texts.append(ach.get("text", ""))
 
-        warnings: list[str] = []
+        if master_texts and len(tailored.summary) >= 30:
+            best = max(
+                (fuzz.partial_ratio(tailored.summary, mt) for mt in master_texts), default=0
+            )
+            if best < _FABRICATION_THRESHOLD:
+                advisory.append(
+                    f"Summary low similarity to master CV (score={best}) — "
+                    f"verify no invented content: {tailored.summary[:80]!r}"
+                )
+
         for exp in tailored.experience:
             for achievement in exp.achievements:
                 if len(achievement) < 30:
-                    continue  # Skip short bullets
+                    continue
                 best_score = max(
-                    (fuzz.partial_ratio(achievement, master_text) for master_text in master_texts),
-                    default=0,
+                    (fuzz.partial_ratio(achievement, mt) for mt in master_texts), default=0
                 )
                 if best_score < _FABRICATION_THRESHOLD:
-                    warnings.append(
-                        f"Possible fabrication (score={best_score}): '{achievement[:80]}...'"
+                    advisory.append(
+                        f"Possible fabrication (score={best_score}): {achievement[:80]!r}"
                     )
-        return warnings
+
+        return blocking, advisory
 
 
 def _parse_tailored_cv(raw: dict[str, Any]) -> TailoredCVResult:

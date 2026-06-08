@@ -122,10 +122,16 @@ async def test_no_fabrication_for_real_achievements():
     with patch.object(tailor, "_load_master_cv", return_value=MOCK_MASTER_CV):
         result = await tailor.tailor(JD_ANALYSIS)
 
-    # Achievements are directly derived from master CV — should have no/minimal warnings
-    assert len(result.fabrication_warnings) == 0 or all(
-        "Possible fabrication" in w for w in result.fabrication_warnings
-    )
+    # Achievements are derived from master CV — fabrication_warnings must only contain
+    # recognised advisory formats ("Possible fabrication" for low fuzzy scores or
+    # "Summary low similarity" for the summary check).  No unexpected warning types.
+    _ADVISORY_FORMATS = ("Possible fabrication", "Summary low similarity")
+    assert all(
+        any(w.startswith(fmt) for fmt in _ADVISORY_FORMATS)
+        for w in result.fabrication_warnings
+    ), f"Unexpected advisory format: {result.fabrication_warnings}"
+    # Company PLACEHOLDER names in the fixture → blocking_issues (not advisory)
+    assert all("company" in bi.lower() for bi in result.blocking_issues)
 
 
 @pytest.mark.asyncio
