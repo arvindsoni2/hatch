@@ -63,13 +63,14 @@ class AnalyticsRepository:
         """
         cutoff = datetime.utcnow() - timedelta(weeks=weeks)
 
-        # New applications per ISO week
+        # New applications per ISO week — only user-approved ones (excludes rejected/pending)
         app_result = await self._session.execute(
             select(
                 func.strftime("%Y-%W", Application.created_at).label("week"),
                 func.count(Application.id).label("cnt"),
             )
             .where(Application.created_at >= cutoff)
+            .where(Application.approval_status == "approved")
             .group_by(func.strftime("%Y-%W", Application.created_at))
             .order_by(func.strftime("%Y-%W", Application.created_at))
         )

@@ -44,7 +44,7 @@ function narrativeFor(
     }
     case "scorer": {
       const total = transit?.scout_to_scorer ?? 0;
-      const passed = funnel.scorer;
+      const passed = transit?.scorer_to_tailor ?? 0;
       return {
         text: total > 0
           ? `Ranked ${total} roles — ${passed} cleared your bar`
