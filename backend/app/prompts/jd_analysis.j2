@@ -1,4 +1,4 @@
-You are a UK recruitment analyst specialising in IT contracting. Analyse the job description below and extract structured information for CV tailoring and ATS optimisation.
+You are a recruitment analyst. Analyse the job description below and extract structured information for CV tailoring and ATS optimisation.
 
 Return ONLY valid JSON matching this exact schema:
 
@@ -6,23 +6,22 @@ Return ONLY valid JSON matching this exact schema:
   "role_title": "string — exact job title from JD",
   "seniority_level": "string — junior|mid|senior|lead|principal|director",
   "contract_details": {
-    "type": "string — contract|permanent|fixed-term",
+    "contract_type": "string — contract|permanent|fixed-term",
     "ir35_status": "string — inside|outside|unknown",
     "duration": "string or null",
-    "rate": "string or null — e.g. £600-£650/day",
+    "rate_range": "string or null — e.g. £600-£650/day or £90,000-£110,000",
     "location": "string — remote|hybrid|onsite + city"
   },
   "company_context": {
-    "name": "string or null",
-    "sector": "string — e.g. energy, aviation, financial_services, technology",
-    "size_signals": "string or null — startup|scale-up|enterprise|government",
-    "culture_signals": ["array of strings — e.g. agile, collaborative, fast-paced"]
+    "company_name": "string or null — the hiring organisation's name exactly as written (e.g. 'Mace'). If genuinely absent, use null — never a placeholder.",
+    "sector": "string — e.g. construction, energy, aviation, financial_services, technology",
+    "size": "string or null — startup|scale-up|enterprise|government",
+    "culture_indicators": ["array of strings — e.g. agile, collaborative, fast-paced"]
   },
   "requirements": {
     "must_have": ["array of strings — non-negotiable skills/experience"],
     "nice_to_have": ["array of strings — preferred but not essential"],
-    "years_experience": "number or null",
-    "education": "string or null"
+    "years_experience": "number or null"
   },
   "responsibilities": ["array of strings — key duties, max 8"],
   "ats_keywords": {
@@ -35,7 +34,7 @@ Return ONLY valid JSON matching this exact schema:
   "tone_analysis": {
     "formality": "string — formal|semi-formal|informal",
     "emphasis": "string — technical|leadership|delivery|commercial",
-    "red_flags": ["array — unrealistic requirements, inside IR35 signals, low rate signals"]
+    "red_flags": ["array — unrealistic requirements, problematic contract signals, low rate signals"]
   }
 }
 

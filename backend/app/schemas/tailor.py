@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class ContractDetails(BaseModel):
+    contract_type: str | None = None
     rate_range: str | None = None
     ir35_status: str | None = None
     duration: str | None = None
