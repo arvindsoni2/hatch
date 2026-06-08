@@ -31,6 +31,7 @@ const STATUS_PILL: Record<PrepSession['status'], { label: string; color: string;
 interface PrepScreenProps {
   sessions: PrepSession[];
   openSessionId?: string;
+  onNewSession?: () => void;
 }
 
 function DetailView({ session }: { session: PrepSession }) {
@@ -107,7 +108,7 @@ function DetailView({ session }: { session: PrepSession }) {
   );
 }
 
-export function PrepScreen({ sessions, openSessionId }: PrepScreenProps) {
+export function PrepScreen({ sessions, openSessionId, onNewSession }: PrepScreenProps) {
   const openSession = sessions.find((s) => s.id === openSessionId && s.status === 'ready');
 
   return (
@@ -136,7 +137,7 @@ export function PrepScreen({ sessions, openSessionId }: PrepScreenProps) {
           {/* Sessions sub-header with + New button */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
             <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>SESSIONS</span>
-            <Btn kind="soft" size="sm" icon="plus">New</Btn>
+            <Btn kind="soft" size="sm" icon="plus" onClick={onNewSession}>New</Btn>
           </div>
 
           {sessions.map((s) => {
