@@ -160,10 +160,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS — local development (wildcard + credentials is invalid per spec; use explicit origins)
+    # CORS — origins from ALLOWED_ORIGINS env var (comma-separated), defaults to localhost
+    _origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_origins=_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Accept"],

@@ -39,11 +39,13 @@ class TestSettingsRouter:
         mock_profile.llm.api_key_env = "ANTHROPIC_API_KEY"
 
         # _build_model and load_profile are imported inline — patch at their source modules
+        # Also patch _write_env_key to avoid filesystem writes (data/ may be owned by container)
         with patch("app.agents.tools.llm_factory._build_model", return_value=mock_llm), \
              patch("app.services.profile_service.load_profile", return_value=mock_profile), \
              patch("app.routers.settings.load_profile_raw", return_value={"llm": {}}), \
              patch("app.routers.settings.save_profile_raw"), \
-             patch("app.routers.settings.invalidate_cache"):
+             patch("app.routers.settings.invalidate_cache"), \
+             patch("app.routers.settings._write_env_key"):
             response = await client.put(
                 "/api/v2/settings/env",
                 json={"key_name": "ANTHROPIC_API_KEY", "key_value": "sk-ant-test123"},

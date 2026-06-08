@@ -122,10 +122,11 @@ async def test_llm_connection(data: dict[str, Any]) -> dict[str, Any]:
             kwargs["api_key"] = api_key
         if provider == "ollama":
             from ..agents.tools.profile_loader import load_profile as _lp
+            from ..config import settings as _settings
             try:
-                kwargs["base_url"] = _lp().llm.base_url or "http://localhost:11434"
+                kwargs["base_url"] = _lp().llm.base_url or _settings.OLLAMA_BASE_URL
             except Exception:
-                kwargs["base_url"] = "http://localhost:11434"
+                kwargs["base_url"] = _settings.OLLAMA_BASE_URL
         llm = init_chat_model(model=model_name, model_provider=provider, **kwargs)
         await llm.ainvoke("Reply with the single word OK.")
         return {"ok": True}

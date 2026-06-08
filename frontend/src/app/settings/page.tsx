@@ -687,11 +687,11 @@ function SystemTab({ profileData }: { profileData: ProfileData | null }) {
           <FieldRow label="AI model" value={profileData?.llm?.primary_model ?? "—"} />
           <FieldRow
             label="API documentation"
-            value={<a href="http://localhost:8000/docs" target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline">localhost:8000/docs</a>}
+            value={<a href="/docs" target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline">/docs</a>}
           />
           <FieldRow
             label="OpenAPI spec"
-            value={<a href="http://localhost:8000/openapi.json" target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline">localhost:8000/openapi.json</a>}
+            value={<a href="/openapi.json" target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline">/openapi.json</a>}
           />
           <FieldRow
             label="Agent events &amp; costs"

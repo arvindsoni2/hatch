@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     LANGGRAPH_CHECKPOINT_DB: str = "sqlite:///data/langgraph_checkpoints.db"
     SUPERVISOR_POLL_INTERVAL_SECONDS: int = 60
 
+    # CORS — comma-separated list of allowed origins (set ALLOWED_ORIGINS env var in production)
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
     # Logging
     LOG_LEVEL: str = "INFO"
 

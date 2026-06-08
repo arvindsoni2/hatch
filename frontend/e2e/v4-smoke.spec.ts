@@ -9,7 +9,7 @@ import { test, expect } from "./fixtures";
 test("today screen renders at /today", async ({ page }) => {
   await page.goto("/today");
   await page.waitForLoadState("domcontentloaded");
-  await expect(page.getByText(/Good morning/).first()).toBeVisible();
+  await expect(page.getByText(/Good (morning|afternoon|evening)/).first()).toBeVisible();
   await expect(page.getByText("Agents active")).toBeVisible();
 });
 
@@ -88,7 +88,8 @@ for (const route of ["/today", "/stream", "/tracker", "/prep"]) {
 test("user menu opens and shows theme toggle", async ({ page }) => {
   await page.goto("/today");
   await page.waitForLoadState("domcontentloaded");
-  const avatar = page.getByRole("button", { name: /open user menu/i });
-  await avatar.first().click();
+  // Target topbar's UserMenu specifically (header element) to avoid sidebar's UserMenu at bottom
+  const avatar = page.locator("header").getByRole("button", { name: /open user menu/i });
+  await avatar.click();
   await expect(page.getByRole("button", { name: /toggle dark mode/i })).toBeVisible();
 });

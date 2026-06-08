@@ -123,16 +123,17 @@ describe('StreamScreen', () => {
   it('shows all active jobs by default (All filter)', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={ALL_JOBS} defaultFilter="all" />);
-    expect(screen.getByText('Solutions Architect')).toBeTruthy();
-    expect(screen.getByText('Solution Architect — On-Prem')).toBeTruthy();
-    expect(screen.getByText('Service Architect')).toBeTruthy();
+    // StreamScreen renders dual layouts (mobile + desktop); use getAllByText to handle both
+    expect(screen.getAllByText('Solutions Architect').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Solution Architect — On-Prem').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Service Architect').length).toBeGreaterThan(0);
   });
 
   it('filters to only ready jobs when Ready chip clicked', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={ALL_JOBS} defaultFilter="all" />);
     fireEvent.click(screen.getByText('Ready'));
-    expect(screen.getByText('Solutions Architect')).toBeTruthy();
+    expect(screen.getAllByText('Solutions Architect').length).toBeGreaterThan(0);
     expect(screen.queryByText('Solution Architect — On-Prem')).toBeNull();
   });
 
@@ -147,15 +148,15 @@ describe('StreamScreen', () => {
   it('shows empty state message when no jobs in filter', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={[TAILORING_JOB]} defaultFilter="ready" />);
-    expect(screen.getByText(/Nothing in this stage/i)).toBeTruthy();
+    expect(screen.getAllByText(/Nothing in this stage/i).length).toBeGreaterThan(0);
   });
 
   it('calls onReview when a ready job card is clicked', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     const onReview = vi.fn();
     render(<StreamScreen jobs={[READY_JOB]} defaultFilter="ready" onReview={onReview} />);
-    // Click on the job title area to open review
-    fireEvent.click(screen.getByText('Solutions Architect'));
+    // StreamScreen renders dual layouts; click the first instance of the title
+    fireEvent.click(screen.getAllByText('Solutions Architect')[0]);
     expect(onReview).toHaveBeenCalledWith([READY_JOB.id]);
   });
 });

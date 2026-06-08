@@ -60,10 +60,10 @@ test("user menu avatar is present in top bar", async ({ page }) => {
 // Theme toggle is accessible via user menu dropdown
 test("theme toggle switches data-theme attribute via user menu", async ({ page }) => {
   await page.goto("/today");
-  // Open user menu dropdown first
-  const avatarButton = page.getByRole("button", { name: /open user menu/i });
-  await expect(avatarButton.first()).toBeVisible();
-  await avatarButton.first().click();
+  // Target topbar's UserMenu specifically (header element) to avoid sidebar's UserMenu at bottom
+  const avatarButton = page.locator("header").getByRole("button", { name: /open user menu/i });
+  await expect(avatarButton).toBeVisible();
+  await avatarButton.click();
 
   // Wait for ThemeToggle to be visible in the dropdown + allow useEffect to settle
   const toggleButton = page.getByRole("button", { name: /toggle dark mode/i });

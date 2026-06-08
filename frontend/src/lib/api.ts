@@ -1884,8 +1884,7 @@ export async function revertApplication(appId: string): Promise<Application> {
 }
 
 export async function downloadInterviewIcs(interviewId: string): Promise<void> {
-  const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
-  const url = `${BASE}/api/v2/interviews/${interviewId}/ical`;
+  const url = `/api/v2/interviews/${interviewId}/ical`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to download .ics: ${res.status}`);
   const blob = await res.blob();

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = "";
 import {
   ArrowLeft, Upload, CheckCircle2, AlertCircle, FileText,
   Loader2, RefreshCw, ExternalLink,

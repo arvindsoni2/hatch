@@ -5,6 +5,7 @@ import {
   ScoreDistributionChart,
   DailyCostChart,
 } from "@/components/AnalyticsCharts";
+import { AgentPerformanceTable } from "@/components/AgentPerformanceTable";
 import { BackButton } from "@/components/hatch/BackButton";
 import {
   fetchAnalyticsDashboard,
@@ -16,6 +17,7 @@ import {
   fetchCostsDaily,
   fetchSearchQuality,
   fetchRateLimitStatus,
+  fetchAgentPerformance,
 } from "@/lib/api";
 import Link from "next/link";
 
@@ -48,6 +50,7 @@ export default async function AnalyticsPage() {
     costsDaily,
     searchQuality,
     rateLimitStatus,
+    agentPerf,
   ] = await Promise.all([
     fetchAnalyticsDashboard().catch(() => null),
     fetchAtsCorrelation().catch(() => null),
@@ -58,6 +61,7 @@ export default async function AnalyticsPage() {
     fetchCostsDaily(30).catch(() => null),
     fetchSearchQuality().catch(() => null),
     fetchRateLimitStatus().catch(() => null),
+    fetchAgentPerformance().catch(() => null),
   ]);
 
   const { stats, funnel, trends, sources, avg_days_to_interview } = dashboard ?? {
@@ -285,6 +289,11 @@ export default async function AnalyticsPage() {
             </h2>
             <TrendChart weeks={trends.weeks} />
           </div>
+        </div>
+
+        {/* Section K: Agent Performance */}
+        <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <AgentPerformanceTable initialData={agentPerf} />
         </div>
       </div>
     </main>
