@@ -18,7 +18,7 @@ from ..schemas.tailor import (
     TailorResultBundle,
 )
 from .ats_optimiser import ATSOptimiser
-from .cl_generator import CoverLetterGenerator
+from .cl_generator import CoverLetterGenerator, select_tone_variant
 from .claude_client import ClaudeClient
 from .cv_tailor import CVTailor
 from .docx_cl_builder import DocxCLBuilder
@@ -188,7 +188,8 @@ class TailorService:
         analysis = await self._jd_analyser.analyse(jd_text)
         tailored_cv = await self._cv_tailor.tailor(analysis, variant)
         personal = _load_personal()
-        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, variant)
+        cl_variant = select_tone_variant(analysis)
+        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
 
         version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
         file_path, file_size = self._cl_builder.build(
@@ -364,7 +365,8 @@ class TailorService:
 
         yield sse("generating_cl", 70, "Generating cover letter...")
         personal = _load_personal()
-        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, variant)
+        cl_variant = select_tone_variant(analysis)
+        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
 
         yield sse("building_docx", 85, "Building .docx documents...")
         doc_repo = DocumentRepository(db)

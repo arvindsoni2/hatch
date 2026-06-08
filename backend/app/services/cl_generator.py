@@ -18,6 +18,28 @@ _MAX_WORDS = 350
 _MIN_WORDS = 250
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
+_FORMAL_SECTORS = frozenset(
+    {"construction", "finance", "government", "energy", "defence", "defense",
+     "infrastructure", "utilities", "public sector", "legal", "banking"}
+)
+_CONVERSATIONAL_SECTORS = frozenset(
+    {"technology", "tech", "startup", "creative", "media", "advertising",
+     "design", "gaming", "software", "saas"}
+)
+
+
+def select_tone_variant(jd_analysis: "JDAnalysisResult") -> str:
+    """Return 'A' (formal) or 'B' (conversational) based on JD sector.
+
+    Formal sectors (A): construction, finance, government, energy, defence.
+    Conversational sectors (B): tech, startup, creative.
+    Defaults to 'A' when sector is absent or unrecognised.
+    """
+    sector = (getattr(jd_analysis, "sector", None) or "").lower()
+    if any(s in sector for s in _CONVERSATIONAL_SECTORS):
+        return "B"
+    return "A"
+
 
 def _default_skill_loader() -> SkillLoader:
     return SkillLoader(SkillRegistry(_SKILLS_DIR))
