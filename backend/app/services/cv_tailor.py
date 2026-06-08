@@ -14,6 +14,7 @@ from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredExperie
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .claude_client import ClaudeClient
 from .jd_analyser import _split_jinja_output
+from .master_cv_validator import MasterCVError, normalise_master_cv, validate_master_cv
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,15 @@ class CVTailor:
         Returns:
             TailoredCVResult with validated content.
         """
-        master_cv = self._load_master_cv()
+        master_cv = normalise_master_cv(self._load_master_cv())
+        errors = validate_master_cv(master_cv)
+        if errors:
+            raise MasterCVError(
+                f"Master CV contains {len(errors)} placeholder field(s) — "
+                f"tailoring blocked. Fix before generating documents.\n"
+                + "\n".join(f"  • {e}" for e in errors)
+            )
+
         best_summary = self._select_best_summary_variant(jd_analysis)
         skill_instructions = self._skill_loader.instructions("cv-tailoring")
 
