@@ -57,6 +57,11 @@ echo "    • All scraped jobs, scores, and decisions"
 echo "    • All agent run history and events"
 echo "    • All generated CVs and cover letters"
 echo ""
+echo -e "  ${YELLOW}If you also reset identity (prompted below):${RESET}"
+echo "    • profile.yaml → reset to blank template"
+echo "    • master_cv.json / master_resume.txt → deleted"
+echo "    • api_keys.env → cleared (keys must be re-entered)"
+echo ""
 
 # ── Ask whether to also reset identity files ──────────────────────
 
@@ -124,6 +129,16 @@ delete_file \
   "/app/data/jobpilot.db" \
   "database (jobpilot.db)"
 
+delete_file \
+  "$DATA_DIR/jobpilot.db-shm" \
+  "/app/data/jobpilot.db-shm" \
+  "database WAL shared memory (jobpilot.db-shm)"
+
+delete_file \
+  "$DATA_DIR/jobpilot.db-wal" \
+  "/app/data/jobpilot.db-wal" \
+  "database WAL log (jobpilot.db-wal)"
+
 delete_dir_contents \
   "$DATA_DIR/generated" \
   "/app/data/generated" \
@@ -159,6 +174,23 @@ if [[ "$RESET_PROFILE" =~ ^[Yy]$ ]]; then
     "$DATA_DIR/master_cv.meta.json" \
     "/app/data/master_cv.meta.json" \
     "master_cv.meta.json"
+
+  delete_file \
+    "$DATA_DIR/master_resume.txt" \
+    "/app/data/master_resume.txt" \
+    "master_resume.txt (CV text used for scoring)"
+
+  warn "Clearing api_keys.env — API keys will need to be re-entered in Settings or onboarding."
+  if backend_running; then
+    container_exec sh -c "echo '' > /app/data/api_keys.env 2>/dev/null; true" \
+      && ok "Cleared api_keys.env"
+  elif [ -w "$DATA_DIR/api_keys.env" ]; then
+    : > "$DATA_DIR/api_keys.env" && ok "Cleared api_keys.env"
+  elif sudo -n true 2>/dev/null; then
+    sudo sh -c ": > '$DATA_DIR/api_keys.env'" && ok "Cleared api_keys.env (sudo)"
+  else
+    warn "Cannot clear api_keys.env — clear it manually to remove old API keys."
+  fi
 fi
 
 # ── Restart backend so DB schema is recreated ─────────────────────
@@ -177,7 +209,9 @@ echo ""
 ok "Reset complete."
 echo ""
 if [[ "$RESET_PROFILE" =~ ^[Yy]$ ]]; then
-  warn "Next: edit data/profile.yaml with the new user's details, then upload their CV at http://localhost:3000"
+  warn "Next: open http://localhost:3000/onboarding to set up the new user."
+  warn "Browser tip: clear localStorage for localhost:3000 (DevTools → Application → Storage → Clear site data)"
+  warn "  to avoid the previous session's onboarding progress appearing as 'Resume where you left off'."
 else
   warn "Next: open http://localhost:3000 — all job data has been cleared, your profile is unchanged."
 fi
