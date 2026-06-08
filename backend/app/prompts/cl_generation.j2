@@ -30,6 +30,11 @@ VARIANT B: Write in a slightly more conversational, personable tone while remain
 ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}
 {% endif %}
 
+{% if skill_instructions %}
+## SKILL GUIDANCE
+{{ skill_instructions }}
+
+{% endif %}
 Return ONLY valid JSON:
 
 {

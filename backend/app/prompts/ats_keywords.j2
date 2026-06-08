@@ -8,6 +8,11 @@ TARGET KEYWORDS:
 
 Evaluate each keyword for presence in the CV (exact match and close variants). Check format compliance. Suggest specific improvements.
 
+{% if skill_instructions %}
+## SKILL GUIDANCE
+{{ skill_instructions }}
+
+{% endif %}
 Return ONLY valid JSON:
 
 {

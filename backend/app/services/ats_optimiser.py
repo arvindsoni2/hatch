@@ -4,8 +4,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pathlib import Path
+
 from ..prompts import render_prompt
 from ..schemas.tailor import ATSScoreResult, JDAnalysisResult, KeywordMatch
+from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .claude_client import ClaudeClient
 from .jd_analyser import _split_jinja_output
 
@@ -14,13 +17,19 @@ logger = logging.getLogger(__name__)
 # Weight split: algorithmic keyword match vs Claude semantic analysis
 _ALGO_WEIGHT = 0.40
 _SEMANTIC_WEIGHT = 0.60
+_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+
+def _default_skill_loader() -> SkillLoader:
+    return SkillLoader(SkillRegistry(_SKILLS_DIR))
 
 
 class ATSOptimiser:
     """Scores and optimises CVs for Applicant Tracking Systems."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: ClaudeClient, skill_loader: SkillLoader | None = None) -> None:
         self._client = claude_client
+        self._skill_loader = skill_loader or _default_skill_loader()
 
     async def score(self, cv_text: str, jd_analysis: JDAnalysisResult) -> ATSScoreResult:
         """Compute a blended ATS score: 40% algorithmic + 60% Claude semantic.
@@ -45,12 +54,14 @@ class ATSOptimiser:
         missing_critical = [kw for kw in must_have if not _kw_in_text(kw, cv_text)]
 
         # Semantic component via Claude
+        skill_instructions = self._skill_loader.instructions("ats-optimization")
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
                 "ats_keywords.j2",
                 cv_content=cv_text[:6000],  # Stay within token budget
                 target_keywords=all_keywords,
                 must_have=must_have,
+                skill_instructions=skill_instructions,
             )
         )
         try:

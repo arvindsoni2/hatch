@@ -4,8 +4,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pathlib import Path
+
 from ..prompts import render_prompt
 from ..schemas.tailor import CoverLetterResult, JDAnalysisResult, TailoredCVResult
+from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .claude_client import ClaudeClient
 from .jd_analyser import _split_jinja_output
 
@@ -13,13 +16,19 @@ logger = logging.getLogger(__name__)
 
 _MAX_WORDS = 350
 _MIN_WORDS = 250
+_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+
+def _default_skill_loader() -> SkillLoader:
+    return SkillLoader(SkillRegistry(_SKILLS_DIR))
 
 
 class CoverLetterGenerator:
     """Generates and refines cover letters for job applications."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: ClaudeClient, skill_loader: SkillLoader | None = None) -> None:
         self._client = claude_client
+        self._skill_loader = skill_loader or _default_skill_loader()
 
     async def generate(
         self,
@@ -39,6 +48,8 @@ class CoverLetterGenerator:
         Returns:
             CoverLetterResult, trimmed to <= 350 words.
         """
+        skill_instructions = self._skill_loader.instructions("cover-letter")
+
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
                 "cl_generation.j2",
@@ -46,6 +57,7 @@ class CoverLetterGenerator:
                 tailored_cv=tailored_cv.model_dump(),
                 personal=personal,
                 variant=variant,
+                skill_instructions=skill_instructions,
             )
         )
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=2048)
