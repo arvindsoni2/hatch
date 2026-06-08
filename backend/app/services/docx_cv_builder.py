@@ -88,7 +88,15 @@ def _build_cv_spec(
     return {
         "personal": personal,
         "summary": tailored_cv.summary,
-        "skills": tailored_cv.skills,
+        "skills": [
+            {
+                "display_name": (
+                    s.get("category") or s.get("display_name") or s.get("name") or ""
+                ),
+                "items": s.get("items", []),
+            }
+            for s in tailored_cv.skills
+        ],
         "experience": [
             {
                 "role": exp.role,

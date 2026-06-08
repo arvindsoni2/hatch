@@ -174,13 +174,13 @@ function buildCV(spec) {
   if (skills && skills.length > 0) {
     children.push(sectionHeading("Core Skills"));
     for (const skillGroup of skills) {
-      const groupName = skillGroup.display_name || skillGroup.name || "";
+      const groupName = skillGroup.display_name || skillGroup.category || skillGroup.name || "";
       const items = (skillGroup.items || []).join("  ·  ");
       if (items) {
         children.push(
           new Paragraph({
             children: [
-              new TextRun({ text: groupName + ":  ", bold: true, size: 19, font: FONT, color: HEADING_COLOR }),
+              ...(groupName ? [new TextRun({ text: groupName + ":  ", bold: true, size: 19, font: FONT, color: HEADING_COLOR })] : []),
               new TextRun({ text: items, size: 19, font: FONT, color: DARK_GRAY }),
             ],
             spacing: { line: 276, before: 30, after: 30 },
