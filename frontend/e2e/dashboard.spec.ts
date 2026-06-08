@@ -7,11 +7,11 @@ test("root redirect lands on today screen", async ({ page }) => {
   expect(page.url()).toContain("/today");
 });
 
-// Today screen renders greeting (always "Good morning" — static by design in v4)
+// Today screen renders time-based greeting (morning/afternoon/evening)
 test("today screen shows greeting", async ({ page }) => {
   await page.goto("/today");
   await page.waitForLoadState("networkidle");
-  await expect(page.getByText(/Good morning/).first()).toBeVisible();
+  await expect(page.getByText(/Good (morning|afternoon|evening)/).first()).toBeVisible();
 });
 
 // Today screen shows pipeline briefing card
