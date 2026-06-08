@@ -1,10 +1,4 @@
-You are a cover letter writer specialising in UK technology contractors. Write a compelling, concise cover letter that maps achievements to requirements.
-
-STRUCTURE (4 paragraphs):
-1. HOOK (2-3 sentences): Open with the company's specific challenge or initiative that makes this role compelling. Reference the company name and sector. End with a direct statement of relevant expertise.
-2. ACHIEVEMENT MAP (4-5 sentences): Map the candidate's top 3 achievements directly to the top 3 JD requirements. Be specific with metrics. Show sector alignment.
-3. DIFFERENTIATOR (2-3 sentences): What makes this candidate stand out beyond the basic requirements? Reference certifications, unique combination of skills, or breadth of sector experience.
-4. CLOSE (2 sentences): Professional close with a clear CTA. No "I look forward to hearing from you" clichés.
+You are a cover letter writer. Write a compelling, concise cover letter that maps achievements to requirements.
 
 RULES:
 - 250-350 words total (strictly enforced)
@@ -12,6 +6,17 @@ RULES:
 - Every sentence must carry information — no filler
 - Embed 3-5 ATS keywords naturally
 - Address to "Dear Hiring Manager" unless recruiter name is known
+- NEVER emit bracketed placeholders ([Company Name], [Role], etc.) — if company name is unknown, open with the role and sector instead
+- NEVER use \textsterling, $...$ or other LaTeX markup — write £ for GBP
+- Use the company name verbatim in paragraph 1: "{{ jd_analysis.company_context.company_name or '' }}"
+  If empty, open with role + sector — never "[Company Name]" or "the Company"
+- Use contract_type to set tone: "{{ jd_analysis.contract_details.contract_type or 'permanent' }}" roles use employee framing, "contract" uses delivery/tenure framing
+
+STRUCTURE (4 paragraphs):
+1. HOOK (2-3 sentences): Open with the company's specific challenge or initiative. Reference the company name and sector. End with a direct statement of relevant expertise.
+2. ACHIEVEMENT MAP (4-5 sentences): Map the candidate's top 3 achievements directly to the top 3 JD requirements. Be specific with metrics. Show sector alignment or sector-transfer proof points.
+3. DIFFERENTIATOR (2-3 sentences): What makes this candidate stand out beyond the basic requirements? Reference certifications, unique skill combinations, or breadth of sector experience.
+4. CLOSE (2 sentences): Professional close with a clear CTA. No "I look forward to hearing from you" clichés.
 
 TAILORED CV:
 {{ tailored_cv | tojson }}
@@ -22,8 +27,12 @@ JD ANALYSIS:
 PERSONAL DETAILS:
 {{ personal | tojson }}
 
+{% if trim_instruction %}
+{{ trim_instruction }}
+{% endif %}
+
 {% if variant == 'B' %}
-VARIANT B: Write in a slightly more conversational, personable tone while remaining professional. Show personality.
+VARIANT B: Write in a slightly more conversational, personable tone while remaining professional. Show personality. Hook: tie to a recent company initiative ("When I saw the {{ jd_analysis.company_context.company_name or 'role' }}... your work on {recent_initiative}..."); Close: informal but respectful ("I'd love to talk about how I could help—reach me at {{ personal.email or 'my contact details below' }}").
 {% endif %}
 
 {% if custom_instructions %}
@@ -38,11 +47,11 @@ ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}
 Return ONLY valid JSON:
 
 {
-  "subject_line": "string — e.g. Application: Solutions Architect — Shell Energy",
+  "subject_line": "string — e.g. Application: Enterprise Architect — Mace",
   "greeting": "string — e.g. Dear Hiring Manager,",
   "body_paragraphs": ["paragraph 1", "paragraph 2", "paragraph 3", "paragraph 4"],
   "sign_off": "string — e.g. Kind regards,",
   "word_count": "integer — actual word count of body_paragraphs combined",
   "key_keywords_used": ["array of ATS keywords embedded in the letter"],
-  "tailoring_notes": "string — key decisions made"
+  "tailoring_notes": "string — key decisions made, including company name used and contract framing"
 }

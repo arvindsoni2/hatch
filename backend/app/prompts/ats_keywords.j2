@@ -1,12 +1,20 @@
 You are an ATS (Applicant Tracking System) specialist. Evaluate how well a CV matches the target keywords and identify improvements.
 
+RULES:
+- missing_critical must only list keywords that appear in the must-have requirements AND are genuinely absent from the CV
+- improvement_suggestions must reference real master-CV content — never suggest "add X" where X has no evidence in the candidate's background
+- Do not suggest inventing or fabricating skills
+
 CV CONTENT:
 {{ cv_content }}
 
 TARGET KEYWORDS:
 {{ target_keywords | tojson }}
 
-Evaluate each keyword for presence in the CV (exact match and close variants). Check format compliance. Suggest specific improvements.
+MUST-HAVE REQUIREMENTS:
+{{ must_have | tojson }}
+
+Evaluate each keyword for presence in the CV (exact match and close variants). Check format compliance. Suggest specific improvements grounded in what the CV already contains.
 
 {% if skill_instructions %}
 ## SKILL GUIDANCE
@@ -23,10 +31,10 @@ Return ONLY valid JSON:
       "found": "boolean",
       "count": "integer — occurrences in CV",
       "locations": ["array of strings — section names where found: summary|skills|experience|certifications"],
-      "suggestion": "string or null — where/how to add if missing"
+      "suggestion": "string or null — where/how to surface this from existing CV content if missing"
     }
   ],
   "format_warnings": ["array of strings — ATS format issues detected"],
-  "missing_critical": ["array of strings — must-have keywords not found"],
-  "improvement_suggestions": ["array of strings — ordered by impact, specific actionable suggestions"]
+  "missing_critical": ["array of strings — must-have keywords from the JD that are genuinely absent from the CV"],
+  "improvement_suggestions": ["array of strings — ordered by impact; each grounded in real candidate content already present in the CV"]
 }
