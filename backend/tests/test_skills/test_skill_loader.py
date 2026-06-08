@@ -123,8 +123,11 @@ class TestSkillLoaderInstructions:
         loader = SkillLoader(SkillRegistry(_SKILLS_DIR))
         body = loader.instructions("cv-tailoring")
         assert isinstance(body, str) and body.strip()
-        # Frontmatter delimiters must not appear in the returned string
-        assert "---" not in body
+        # YAML frontmatter block delimiter (--- on its own line) must be stripped.
+        # Note: markdown tables use |---|---| which contains --- as a substring;
+        # the regex checks for a standalone --- line (the YAML marker pattern).
+        import re
+        assert not re.search(r"^---\s*$", body, re.MULTILINE)
 
     def test_instructions_for_missing_skill_returns_empty_string(self):
         """instructions() for an unknown skill returns '' (not an exception)."""
