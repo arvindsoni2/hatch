@@ -63,19 +63,20 @@ describe('UserMenu', () => {
     const { UserMenu } = await import('@/components/hatch/UserMenu');
     render(<UserMenu {...defaultProps} />);
     fireEvent.click(screen.getByRole('button', { name: /open user menu/i }));
-    expect(screen.getByText('Profile & CV')).toBeTruthy();
+    expect(screen.getByText('Profile')).toBeTruthy();
     expect(screen.getByText('AI Provider')).toBeTruthy();
     expect(screen.getByText('System & Logs')).toBeTruthy();
     expect(screen.getByText('Resume')).toBeTruthy();
   });
 
-  it('renders Appearance row with ThemeToggle', async () => {
+  it('renders Theme row as a clickable menu item', async () => {
     const { UserMenu } = await import('@/components/hatch/UserMenu');
     render(<UserMenu {...defaultProps} />);
     fireEvent.click(screen.getByRole('button', { name: /open user menu/i }));
-    expect(screen.getByText('Appearance')).toBeTruthy();
-    // ThemeToggle renders a button with aria-label="Toggle dark mode"
-    expect(screen.getByRole('button', { name: /toggle dark mode/i })).toBeTruthy();
+    expect(screen.getByText('Theme')).toBeTruthy();
+    // The theme row is itself a menuitem button — no inner toggle button
+    const themeBtn = screen.getByRole('menuitem', { name: /theme/i });
+    expect(themeBtn).toBeTruthy();
   });
 
   it('renders Re-run Onboarding at the bottom', async () => {

@@ -1,7 +1,6 @@
 /**
- * ThemeToggle in UserMenu — accessed via the user avatar dropdown in HatchTopBar.
- * (Previously tested ThemeToggle as a standalone button in the top bar;
- *  v4.1 UserMenu moved it into the dropdown for cleaner UX.)
+ * Theme toggle in UserMenu — accessed via the user avatar dropdown in HatchTopBar.
+ * The "Theme" row is a full-width menuitem button that toggles dark/light on click.
  */
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
@@ -24,24 +23,23 @@ describe('HatchTopBar — ThemeToggle (via UserMenu)', () => {
     document.documentElement.classList.add('dark');
   });
 
-  it('renders a "Toggle dark mode" button inside the user menu dropdown', async () => {
+  it('renders a "Theme" menuitem button inside the user menu dropdown', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
     await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
-    // Toggle is inside the dropdown — open it first
     const avatar = screen.getByRole('button', { name: /open user menu/i });
     await act(async () => { fireEvent.click(avatar); });
-    expect(screen.getByRole('button', { name: /toggle dark mode/i })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /theme/i })).toBeTruthy();
   });
 
-  it('switches to light when toggle is clicked from dark', async () => {
+  it('switches to light when Theme button is clicked from dark', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
     await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
 
     const avatar = screen.getByRole('button', { name: /open user menu/i });
     await act(async () => { fireEvent.click(avatar); });
 
-    const toggle = screen.getByRole('button', { name: /toggle dark mode/i });
-    await act(async () => { fireEvent.click(toggle); });
+    const themeBtn = screen.getByRole('menuitem', { name: /theme/i });
+    await act(async () => { fireEvent.click(themeBtn); });
 
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
     expect(document.documentElement.classList.contains('dark')).toBe(false);
@@ -54,9 +52,9 @@ describe('HatchTopBar — ThemeToggle (via UserMenu)', () => {
     const avatar = screen.getByRole('button', { name: /open user menu/i });
     await act(async () => { fireEvent.click(avatar); });
 
-    const toggle = screen.getByRole('button', { name: /toggle dark mode/i });
-    await act(async () => { fireEvent.click(toggle); }); // → light
-    await act(async () => { fireEvent.click(toggle); }); // → dark
+    const themeBtn = screen.getByRole('menuitem', { name: /theme/i });
+    await act(async () => { fireEvent.click(themeBtn); }); // → light
+    await act(async () => { fireEvent.click(themeBtn); }); // → dark
 
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     expect(document.documentElement.classList.contains('dark')).toBe(true);

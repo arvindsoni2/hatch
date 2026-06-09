@@ -32,9 +32,11 @@ interface PrepScreenProps {
   sessions: PrepSession[];
   openSessionId?: string;
   onNewSession?: () => void;
+  onSelectSession?: (id: string) => void;
+  onCalendar?: () => void;
 }
 
-function DetailView({ session }: { session: PrepSession }) {
+function DetailView({ session, onCalendar }: { session: PrepSession; onCalendar?: () => void }) {
   const [openQ, setOpenQ] = useState<number | null>(null);
   const questions = session.questions ?? [];
 
@@ -49,7 +51,7 @@ function DetailView({ session }: { session: PrepSession }) {
             {session.when && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{session.when} · prepped by Coach</div>}
           </div>
         </div>
-        <Btn kind="soft" size="sm" icon="calendar">Add to calendar</Btn>
+        <Btn kind="soft" size="sm" icon="calendar" onClick={onCalendar}>Add to calendar</Btn>
       </div>
 
       {/* Company research */}
@@ -108,8 +110,8 @@ function DetailView({ session }: { session: PrepSession }) {
   );
 }
 
-export function PrepScreen({ sessions, openSessionId, onNewSession }: PrepScreenProps) {
-  const openSession = sessions.find((s) => s.id === openSessionId && s.status === 'ready');
+export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSession, onCalendar }: PrepScreenProps) {
+  const openSession = sessions.find((s) => s.id === openSessionId);
 
   return (
     <div>
@@ -146,6 +148,7 @@ export function PrepScreen({ sessions, openSessionId, onNewSession }: PrepScreen
             return (
               <Card
                 key={s.id}
+                onClick={() => s.status === 'ready' && onSelectSession?.(s.id)}
                 style={{ padding: 15, cursor: s.status === 'ready' ? 'pointer' : 'default', background: active ? 'var(--surface-2)' : 'var(--surface)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -166,7 +169,7 @@ export function PrepScreen({ sessions, openSessionId, onNewSession }: PrepScreen
         {/* Detail pane */}
         {openSession && (
           <div style={{ flex: 1, minWidth: 0 }}>
-            <DetailView session={openSession} />
+            <DetailView session={openSession} onCalendar={onCalendar} />
           </div>
         )}
       </div>

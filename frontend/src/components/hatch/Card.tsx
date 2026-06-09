@@ -5,12 +5,14 @@ interface CardProps {
   style?: React.CSSProperties;
   accent?: boolean;
   className?: string;
+  onClick?: React.MouseEventHandler<HTMLDivElement>;
 }
 
-export function Card({ children, style, accent = false, className }: CardProps) {
+export function Card({ children, style, accent = false, className, onClick }: CardProps) {
   return (
     <div
       className={className}
+      onClick={onClick}
       style={{
         background: 'var(--surface)',
         border: `1px solid ${accent ? 'var(--accent)' : 'var(--border)'}`,

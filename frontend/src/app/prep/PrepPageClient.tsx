@@ -3,30 +3,92 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { PrepScreen } from "@/components/hatch/screens/PrepScreen";
-import type { PrepSession } from "@/components/hatch/screens/PrepScreen";
+import type { PrepSession, PrepQuestion } from "@/components/hatch/screens/PrepScreen";
 import { SessionLauncher } from "@/components/coach/SessionLauncher";
+import { getSession, fetchApplication } from "@/lib/api";
 import type { SessionResponse } from "@/lib/api";
 
 interface PrepPageClientProps {
   sessions: PrepSession[];
 }
 
-export function PrepPageClient({ sessions }: PrepPageClientProps) {
+function normaliseCat(raw: string): PrepQuestion["cat"] {
+  const lower = raw.toLowerCase();
+  if (lower.includes("technical")) return "Technical";
+  if (lower.includes("leadership") || lower.includes("management")) return "Leadership";
+  return "Behavioural";
+}
+
+export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProps) {
   const router = useRouter();
-  const firstReady = sessions.find((s) => s.status === "ready");
-  const [openSessionId] = useState<string | undefined>(firstReady?.id);
+  const firstReady = initialSessions.find((s) => s.status === "ready");
+  const [openSessionId, setOpenSessionId] = useState<string | undefined>(firstReady?.id);
+  const [sessionCache, setSessionCache] = useState<Record<string, SessionResponse>>({});
   const [showLauncher, setShowLauncher] = useState(false);
 
-  const handleSessionCreated = (session: SessionResponse) => {
-    router.push(`/coach/session/${session.id}`);
+  const enrichedSessions: PrepSession[] = initialSessions.map((s) => {
+    const full = sessionCache[s.id];
+    if (!full) return s;
+    return {
+      ...s,
+      questions: full.questions.map((q) => ({
+        q: q.text,
+        cat: normaliseCat(q.category),
+        star: q.model_answer ?? undefined,
+      })),
+    };
+  });
+
+  const handleSelectSession = async (id: string) => {
+    setOpenSessionId(id);
+    if (!sessionCache[id]) {
+      try {
+        const full = await getSession(id);
+        setSessionCache((prev) => ({ ...prev, [id]: full }));
+      } catch {
+        // session detail unavailable — show what we have
+      }
+    }
+  };
+
+  const handleCalendar = async () => {
+    if (!openSessionId) return;
+    const full = sessionCache[openSessionId];
+    const applicationId = full?.application_id;
+    if (!applicationId) {
+      alert("No linked application found for this prep session.");
+      return;
+    }
+    try {
+      const app = await fetchApplication(applicationId);
+      const upcoming = app.interviews
+        .filter((i) => i.scheduled_at)
+        .sort((a, b) => new Date(a.scheduled_at!).getTime() - new Date(b.scheduled_at!).getTime())
+        .find((i) => new Date(i.scheduled_at!) >= new Date());
+      const interview = upcoming ?? app.interviews[0];
+      if (!interview) {
+        alert("No interview rounds found — add an interview round in the application first.");
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = `/api/v2/interviews/${interview.id}/ical`;
+      a.download = "interview.ics";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch {
+      alert("Could not download calendar file.");
+    }
   };
 
   return (
     <>
       <PrepScreen
-        sessions={sessions}
+        sessions={enrichedSessions}
         openSessionId={openSessionId}
         onNewSession={() => setShowLauncher(true)}
+        onSelectSession={handleSelectSession}
+        onCalendar={handleCalendar}
       />
 
       {showLauncher && (
@@ -38,7 +100,7 @@ export function PrepPageClient({ sessions }: PrepPageClientProps) {
             >
               <X className="h-5 w-5" />
             </button>
-            <SessionLauncher onSessionCreated={handleSessionCreated} />
+            <SessionLauncher onSessionCreated={(session) => router.push(`/coach/session/${session.id}`)} />
           </div>
         </div>
       )}

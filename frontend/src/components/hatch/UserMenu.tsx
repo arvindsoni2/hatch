@@ -2,7 +2,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { HatchIcon } from './HatchIcon';
-import { ThemeToggle } from '@/components/ThemeToggle';
 
 interface UserMenuProps {
   name: string;
@@ -14,7 +13,7 @@ const QUICK_LINKS: { label: string; icon: string; href: string }[] = [
 ];
 
 const SETTINGS_ITEMS: { label: string; icon: string; href: string }[] = [
-  { label: 'Profile & CV',  icon: 'user',     href: '/settings/profile' },
+  { label: 'Profile',       icon: 'user',     href: '/settings/profile' },
   { label: 'AI Provider',   icon: 'zap',      href: '/settings/ai'      },
   { label: 'Resume',        icon: 'fileText', href: '/settings/resume'  },
   { label: 'System & Logs', icon: 'settings', href: '/settings/system'  },
@@ -39,9 +38,24 @@ const menuRow: React.CSSProperties = {
 
 export function UserMenu({ name, role }: UserMenuProps) {
   const [open, setOpen] = useState(false);
+  const [isDark, setIsDark] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const initials = getInitials(name);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    setIsDark(stored === 'dark' || (!stored && prefersDark));
+  }, []);
+
+  const handleThemeToggle = () => {
+    const next = !isDark;
+    setIsDark(next);
+    document.documentElement.classList.toggle('dark', next);
+    document.documentElement.setAttribute('data-theme', next ? 'dark' : 'light');
+    localStorage.setItem('theme', next ? 'dark' : 'light');
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
@@ -160,10 +174,18 @@ export function UserMenu({ name, role }: UserMenuProps) {
             ))}
           </div>
 
-          {/* Appearance row */}
-          <div style={{ borderTop: '1px solid var(--border)', padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 13, color: 'var(--text)' }}>Appearance</span>
-            <ThemeToggle />
+          {/* Theme row */}
+          <div style={{ borderTop: '1px solid var(--border)', padding: '6px 0' }}>
+            <button
+              role="menuitem"
+              onClick={handleThemeToggle}
+              style={{ ...menuRow, color: 'var(--text)' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none'; }}
+            >
+              <HatchIcon name={isDark ? 'sun' : 'moon'} size={15} color="var(--text-dim)" />
+              Theme
+            </button>
           </div>
 
           {/* Re-run Onboarding */}
