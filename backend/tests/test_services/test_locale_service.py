@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.locale_service import get_locale, list_locales, LocaleNotFoundError
+from app.services.locale_service import get_locale, list_locales, LocaleNotFoundError, get_coach_fillers
 
 
 class TestLocaleService:
@@ -76,3 +76,44 @@ class TestLocaleService:
                 f"Locale {locale['id']} missing skill_match weight"
             assert "shortlist_threshold" in defaults, \
                 f"Locale {locale['id']} missing shortlist_threshold"
+
+
+class TestLocaleCoachFillers:
+    """Coach filler word lists are available per locale with graceful fallback."""
+
+    def test_get_coach_fillers_returns_list_for_uk(self) -> None:
+        fillers = get_coach_fillers("uk")
+        assert isinstance(fillers, list)
+        assert len(fillers) > 0
+        assert "um" in fillers
+
+    def test_get_coach_fillers_all_active_locales(self) -> None:
+        """Every active locale pack defines a non-empty coach.fillers list."""
+        for locale in list_locales():
+            if locale["id"].startswith("_"):
+                continue
+            fillers = get_coach_fillers(locale["id"])
+            assert isinstance(fillers, list), f"Locale {locale['id']}: coach.fillers is not a list"
+            assert len(fillers) > 0, f"Locale {locale['id']}: coach.fillers is empty"
+
+    def test_get_coach_fillers_fallback_for_unknown_locale(self) -> None:
+        """An unknown locale ID falls back to the default English filler list."""
+        fillers = get_coach_fillers("xx")
+        assert isinstance(fillers, list)
+        assert len(fillers) > 0
+        assert "um" in fillers
+
+    def test_get_coach_fillers_german_locale_includes_german_words(self) -> None:
+        """German locale coach.fillers includes German filler words (äh, also, eigentlich)."""
+        fillers = get_coach_fillers("de")
+        german_fillers = {"äh", "ähm", "also", "eigentlich"}
+        assert german_fillers & set(fillers), \
+            f"German locale should include German fillers but got: {fillers}"
+
+    def test_get_coach_fillers_pack_specific_not_mixed(self) -> None:
+        """get_coach_fillers returns exactly the fillers defined in the locale pack."""
+        uk_fillers = get_coach_fillers("uk")
+        de_fillers = get_coach_fillers("de")
+        # German pack should include äh; UK pack should not
+        assert "äh" in de_fillers
+        assert "äh" not in uk_fillers

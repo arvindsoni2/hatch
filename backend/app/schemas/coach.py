@@ -13,10 +13,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class SpeechMetrics(BaseModel):
     filler_count: int = 0
+    filler_rate: float = 0.0  # fillers per minute (from word timestamps)
     wpm: float = 0.0
     hedging_count: int = 0
     duration_ms: int = 0
     pause_count: int = 0
+    star_coverage: float = 0.0  # 0.0–1.0 fraction of STAR sections detected
 
 
 class VideoMetrics(BaseModel):

@@ -16,6 +16,11 @@ RUN pip install --upgrade pip && \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         -r requirements.txt
 
+# Perception stack — separate layer so it's cached independently of base requirements
+# faster-whisper pulls CTranslate2 (C++ binary wheel, ~50 MB); no PyTorch needed here
+COPY requirements-perception.txt .
+RUN pip install --prefix=/install --no-cache-dir -r requirements-perception.txt
+
 
 # ──────────────────────── Stage 2: Playwright browser install ─────────────────
 FROM python:3.12-slim AS playwright-stage

@@ -97,6 +97,35 @@ class ScoringConfig(BaseModel):
         return v
 
 
+class ASRConfig(BaseModel):
+    provider: Literal["faster_whisper", "qwen3_asr", "web_speech", "deepgram"] = "faster_whisper"
+    model: str = "small"
+    compute_type: str = "int8"
+    language: str = "auto"
+
+
+class VoiceEmotionConfig(BaseModel):
+    provider: Literal["audeering", "emotion2vec", "hume", "none"] = "none"
+    model: str = "wav2vec2-large-robust-12-ft-emotion-msp-dim"
+
+
+class FaceConfig(BaseModel):
+    provider: Literal["mediapipe_browser", "emotiefflib", "hume", "none"] = "mediapipe_browser"
+    enabled: bool = False
+
+
+class TTSConfig(BaseModel):
+    provider: Literal["none", "piper", "kokoro", "qwen3_tts", "elevenlabs"] = "none"
+    voice: str = "en_GB-default"
+
+
+class PerceptionConfig(BaseModel):
+    asr: ASRConfig = Field(default_factory=ASRConfig)
+    voice_emotion: VoiceEmotionConfig = Field(default_factory=VoiceEmotionConfig)
+    face: FaceConfig = Field(default_factory=FaceConfig)
+    tts: TTSConfig = Field(default_factory=TTSConfig)
+
+
 class LLMConfig(BaseModel):
     provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp"] = "ollama"
     triage_model: str = ""
@@ -137,6 +166,7 @@ class Profile(BaseModel):
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
+    perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
 
     def is_complete(self) -> bool:
         """Return True if the profile has enough data for agents to run."""

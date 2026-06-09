@@ -20,6 +20,9 @@ services:
       - SCORE_THRESHOLD=${SCORE_THRESHOLD:-0.75}
       - MAX_TAILOR_BATCH=${MAX_TAILOR_BATCH:-5}
       - AUTO_APPROVE=false
+      # Whisper model cache — persists downloaded models across --build rebuilds
+      # (data/ is already bind-mounted at /app/data, so no extra volume needed)
+      - WHISPER_MODEL_CACHE=/app/data/models
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

@@ -87,3 +87,23 @@ onboarding_defaults:
   scrape_interval_hours: 4
   example_city: "Dublin"
   example_role: "Software Engineer"
+
+coach:
+  fillers:
+    - "um"
+    - "uh"
+    - "er"
+    - "ah"
+    - "hmm"
+    - "basically"
+    - "literally"
+    - "actually"
+    - "like"
+    - "you know"
+    - "sure"
+    - "grand"
+    - "so"
+    - "right"
+    - "i mean"
+    - "kind of"
+    - "sort of"

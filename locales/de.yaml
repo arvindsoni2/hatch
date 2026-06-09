@@ -85,3 +85,22 @@ scoring_defaults:
     compensation_match: 0.20
     location_match: 0.15
   shortlist_threshold: 0.72
+
+coach:
+  fillers:
+    - "äh"
+    - "ähm"
+    - "also"
+    - "eigentlich"
+    - "sozusagen"
+    - "quasi"
+    - "irgendwie"
+    - "naja"
+    - "halt"
+    - "genau"
+    - "im grunde"
+    - "sozusagen"
+    - "um"
+    - "like"
+    - "basically"
+    - "you know"

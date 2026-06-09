@@ -1,0 +1,6 @@
+# Perception stack — ASR, voice emotion, TTS
+# Installed in a separate Docker layer so base image rebuilds don't re-fetch these.
+# Phase A: ASR only (faster-whisper + CTranslate2 CPU backend)
+# Phase B adds: onnxruntime, transformers (audeering voice emotion)
+# Phase E adds: piper-tts or kokoro
+faster-whisper>=1.0.3

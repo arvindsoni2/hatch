@@ -116,6 +116,30 @@ def get_onboarding_defaults(locale_id: str) -> dict[str, Any]:
     return pack.get("onboarding_defaults", {})
 
 
+_DEFAULT_COACH_FILLERS: list[str] = [
+    "um", "uh", "er", "ah", "hmm",
+    "basically", "literally", "actually", "honestly",
+    "you know", "right", "like", "so",
+    "kind of", "sort of",
+]
+
+
+def get_coach_fillers(locale_id: str) -> list[str]:
+    """Return the coach filler word list for *locale_id*.
+
+    Falls back to the default English list when the locale pack doesn't define
+    a coach.fillers key, or when the locale_id is not found.
+    """
+    try:
+        pack = get_locale(locale_id)
+    except LocaleNotFoundError:
+        return list(_DEFAULT_COACH_FILLERS)
+    fillers = pack.get("coach", {}).get("fillers")
+    if not fillers:
+        return list(_DEFAULT_COACH_FILLERS)
+    return list(fillers)
+
+
 def get_legal_fields(locale_id: str) -> list[dict[str, Any]]:
     """Return legal_fields definitions for the onboarding wizard."""
     try:

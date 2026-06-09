@@ -81,3 +81,20 @@ onboarding_defaults:
   scrape_interval_hours: 6
   example_city: "Dubai"
   example_role: "Project Manager"
+
+coach:
+  fillers:
+    - "um"
+    - "uh"
+    - "er"
+    - "ah"
+    - "hmm"
+    - "basically"
+    - "actually"
+    - "you know"
+    - "like"
+    - "so"
+    - "i mean"
+    - "right"
+    - "kind of"
+    - "sort of"

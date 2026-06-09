@@ -91,3 +91,23 @@ scoring_defaults:
     compensation_match: 0.20
     location_match: 0.15
   shortlist_threshold: 0.75
+
+coach:
+  fillers:
+    - "um"
+    - "uh"
+    - "er"
+    - "ah"
+    - "hmm"
+    - "basically"
+    - "literally"
+    - "actually"
+    - "honestly"
+    - "you know"
+    - "right"
+    - "like"
+    - "so"
+    - "kind of"
+    - "sort of"
+    - "i mean"
+    - "well"

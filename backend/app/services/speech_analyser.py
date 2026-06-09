@@ -1,11 +1,20 @@
-"""Speech Analyser — pure Python analysis of transcript for filler words, WPM, hedging."""
+"""Speech Analyser — pure Python analysis of transcript for filler words, WPM, hedging.
+
+Two analysis paths:
+  analyse(transcript, duration_ms)              — text-only path (Web Speech / typed)
+  analyse_from_timestamps(transcript, words)    — timestamp path (faster-whisper)
+
+The timestamp path is more accurate: WPM uses actual spoken duration, pauses are
+detected from real gaps between words, and filler rate is per-minute rather than a
+raw count. Always prefer analyse_from_timestamps when word timestamps are available.
+"""
 from __future__ import annotations
 
 import re
 
 from ..schemas.coach import SpeechMetrics
 
-# Filler words to detect (case-insensitive whole-word matches)
+# ── Default English filler list (used when no locale pack is provided) ────────
 _FILLERS = [
     "um", "uh", "er", "ah", "hmm",
     "basically", "literally", "actually", "honestly",
@@ -21,19 +30,68 @@ _HEDGING = [
     "i'm not sure", "it might", "it could",
 ]
 
-# Compiled patterns
+# Compiled patterns (default English list only)
 _FILLER_PATTERNS = [re.compile(r"\b" + re.escape(f) + r"\b", re.IGNORECASE) for f in _FILLERS]
 _HEDGING_PATTERNS = [re.compile(re.escape(h), re.IGNORECASE) for h in _HEDGING]
 
+# Gaps wider than this (seconds) between consecutive words are counted as long pauses.
+_LONG_PAUSE_THRESHOLD_S: float = 2.0
+
+# STAR section keyword patterns — each section is detected by at least one match.
+_STAR_PATTERNS: dict[str, list[str]] = {
+    "situation": [
+        r"\b(?:i was (?:working|responsible|dealing|managing|leading|tasked|part of))\b",
+        r"\bin my (?:previous|former|last|current) (?:role|job|position|company)\b",
+        r"\b(?:at (?:the time|that point)|when i (?:joined|started|was at))\b",
+        r"\b(?:we were (?:working|building|running|facing|dealing))\b",
+        r"\b(?:there was a (?:situation|challenge|problem|issue|project))\b",
+        r"\b(?:i had been|we had been) (?:working|building|running)\b",
+    ],
+    "task": [
+        r"\b(?:i was (?:tasked|asked|responsible|given))\b",
+        r"\b(?:my (?:goal|role|job|task|objective|responsibility) was)\b",
+        r"\b(?:the challenge (?:was|involved))\b",
+        r"\b(?:needed to|had to (?:ensure|deliver|build|create|fix|resolve))\b",
+    ],
+    "action": [
+        r"\b(?:so i|i (?:decided|started|began|worked|implemented|built|designed|created|led|managed|reached out))\b",
+        r"\b(?:i then|first i|my approach|what i did)\b",
+        r"\b(?:to (?:address|resolve|fix|tackle|solve))\b",
+        r"\b(?:i collaborated|i partnered|i coordinated)\b",
+    ],
+    "result": [
+        r"\b(?:as a result|this (?:resulted|led|meant))\b",
+        r"\b(?:we (?:achieved|delivered|reduced|increased|saved|improved))\b",
+        r"\b(?:i (?:achieved|delivered|reduced|increased|saved|improved))\b",
+        r"\b(?:the outcome|in the end|ultimately|by the end)\b",
+        r"\b(?:this (?:helped|enabled|allowed)|(?:reduced|increased|saved|improved) (?:by|\d))\b",
+    ],
+}
+
+
+def _compute_star_coverage(transcript: str) -> float:
+    """Return fraction [0.0–1.0] of STAR sections detected in *transcript*."""
+    lower = transcript.lower()
+    hits = sum(
+        1 for section_patterns in _STAR_PATTERNS.values()
+        if any(re.search(p, lower) for p in section_patterns)
+    )
+    return round(hits / 4, 2)
+
 
 class SpeechAnalyserService:
-    """Analyses transcripts for speech quality metrics. No Claude API required."""
+    """Analyses transcripts for speech quality metrics. No LLM or API required."""
+
+    # ── Text-only path (Web Speech / typed transcript) ──────────────────────
 
     def analyse(self, transcript: str, duration_ms: int) -> SpeechMetrics:
         """Compute speech metrics from a transcript and duration.
 
+        Use this for text-mode answers where no word timestamps are available.
+        Prefer analyse_from_timestamps() when faster-whisper word timestamps exist.
+
         Args:
-            transcript: Raw transcript text from STT.
+            transcript: Raw transcript text from STT or typed input.
             duration_ms: Answer duration in milliseconds.
 
         Returns:
@@ -42,26 +100,19 @@ class SpeechAnalyserService:
         if not transcript.strip():
             return SpeechMetrics(duration_ms=duration_ms)
 
-        # Filler count
-        filler_count = sum(
-            len(p.findall(transcript)) for p in _FILLER_PATTERNS
-        )
+        filler_count = sum(len(p.findall(transcript)) for p in _FILLER_PATTERNS)
 
-        # Word count and WPM
         words = transcript.split()
         word_count = len(words)
         minutes = duration_ms / 60_000 if duration_ms > 0 else 1
         wpm = word_count / minutes if minutes > 0 else 0.0
 
-        # Hedging count
-        hedging_count = sum(
-            len(p.findall(transcript)) for p in _HEDGING_PATTERNS
-        )
+        hedging_count = sum(len(p.findall(transcript)) for p in _HEDGING_PATTERNS)
 
-        # Pause count: estimate from ellipses, long pauses indicated by "..."
         pause_count = transcript.count("...") + transcript.count("…")
-        # Also count sentence-ending pauses as a proxy (periods followed by space)
         pause_count += len(re.findall(r"[.!?]\s", transcript))
+
+        star_coverage = _compute_star_coverage(transcript)
 
         return SpeechMetrics(
             filler_count=filler_count,
@@ -69,16 +120,80 @@ class SpeechAnalyserService:
             hedging_count=hedging_count,
             duration_ms=duration_ms,
             pause_count=pause_count,
+            star_coverage=star_coverage,
+        )
+
+    # ── Timestamp path (faster-whisper word timestamps) ──────────────────────
+
+    def analyse_from_timestamps(
+        self,
+        transcript: str,
+        words: list[dict],
+        locale_fillers: list[str] | None = None,
+    ) -> SpeechMetrics:
+        """Compute delivery metrics from transcript + word timestamps from ASR.
+
+        This is more accurate than analyse(): WPM uses actual spoken duration,
+        pauses are detected from real timing gaps, and filler rate is normalised
+        per minute rather than a raw count.
+
+        Args:
+            transcript: Raw transcript text from ASR output.
+            words: Word timestamps from ASR: list of {w, start, end} dicts.
+            locale_fillers: Optional locale-specific filler list from the locale pack's
+                coach.fillers key. Falls back to the default English list when None.
+
+        Returns:
+            SpeechMetrics with accurate wpm, filler_rate, pause_count, star_coverage.
+        """
+        if not transcript.strip() or not words:
+            return SpeechMetrics()
+
+        fillers = locale_fillers if locale_fillers is not None else _FILLERS
+        filler_patterns = [
+            re.compile(r"\b" + re.escape(f) + r"\b", re.IGNORECASE) for f in fillers
+        ]
+
+        # Duration from actual word timestamps
+        duration_s = words[-1]["end"] - words[0]["start"]
+        duration_ms = int(duration_s * 1000)
+        minutes = duration_s / 60.0 if duration_s > 0 else 1.0
+
+        # WPM from actual word count / real spoken duration
+        wpm = len(words) / minutes
+
+        # Filler count and per-minute rate
+        filler_count = sum(len(p.findall(transcript)) for p in filler_patterns)
+        filler_rate = round(filler_count / minutes, 2)
+
+        # Long pause detection: gaps between consecutive word timestamps
+        pause_count = sum(
+            1 for i in range(1, len(words))
+            if (words[i]["start"] - words[i - 1]["end"]) > _LONG_PAUSE_THRESHOLD_S
+        )
+
+        hedging_count = sum(len(p.findall(transcript)) for p in _HEDGING_PATTERNS)
+
+        star_coverage = _compute_star_coverage(transcript)
+
+        return SpeechMetrics(
+            filler_count=filler_count,
+            filler_rate=filler_rate,
+            wpm=round(wpm, 1),
+            hedging_count=hedging_count,
+            duration_ms=duration_ms,
+            pause_count=pause_count,
+            star_coverage=star_coverage,
         )
 
     def get_filler_positions(self, transcript: str) -> list[dict]:
-        """Return positions of filler words in the transcript for highlighting.
+        """Return positions of filler words in the transcript for UI highlighting.
 
         Args:
             transcript: Raw transcript text.
 
         Returns:
-            List of {word, start, end} dicts for UI highlighting.
+            List of {word, start, end} dicts sorted by position.
         """
         positions: list[dict] = []
         for filler, pattern in zip(_FILLERS, _FILLER_PATTERNS):
