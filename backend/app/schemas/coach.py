@@ -76,6 +76,7 @@ class SubmitAnswerRequest(BaseModel):
     speech_metrics: SpeechMetrics | None = None
     video_metrics: VideoMetrics | None = None
     duration_ms: int = 0
+    audio_uri: str | None = None  # server-populated for audio submissions; not user-provided
 
 
 # ---------------------------------------------------------------------------

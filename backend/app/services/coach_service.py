@@ -244,14 +244,19 @@ class CoachService:
         )
 
         # Persist recording + evaluation
+        recording_type = (
+            "audio" if request.audio_uri
+            else ("audio" if request.speech_metrics else "text")
+        )
         await session_repo.save_recording(
             session_id=session_id,
             question_id=question_id,
-            recording_type=request.speech_metrics and "audio" or "text",
+            recording_type=recording_type,
             transcript=request.transcript,
             speech_metrics=speech_metrics.model_dump() if speech_metrics else None,
             video_metrics=video_metrics.model_dump() if video_metrics else None,
             evaluation_json=json.dumps(evaluation.model_dump()),
+            audio_uri=request.audio_uri,
         )
         await db.commit()
 

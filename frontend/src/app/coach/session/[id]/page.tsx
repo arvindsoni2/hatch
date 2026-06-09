@@ -21,6 +21,7 @@ import { EvaluationCard } from "@/components/coach/EvaluationCard";
 import { ModelAnswer } from "@/components/coach/ModelAnswer";
 import { CompanyBrief } from "@/components/coach/CompanyBrief";
 import { RecordingControls } from "@/components/coach/RecordingControls";
+import { AnalysingBanner } from "@/components/coach/AnalysingBanner";
 import { Button } from "@/components/ui/button";
 import { Loader2, FlagTriangleRight } from "lucide-react";
 
@@ -225,6 +226,8 @@ export default function SessionPage() {
                   )}
                 </div>
               )}
+
+              <AnalysingBanner visible={sessionState === "submitted" && submitting} />
 
               {evaluation && sessionState === "evaluated" && (
                 <div className="space-y-3">

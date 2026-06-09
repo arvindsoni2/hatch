@@ -4,7 +4,10 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +19,7 @@ from ..schemas.coach import (
     SessionFeedbackReport,
     SessionListItem,
     SessionResponse,
+    SpeechMetrics,
     SubmitAnswerRequest,
 )
 from ..services.async_job_service import AsyncJobService
@@ -232,6 +236,87 @@ async def submit_answer(
 
     AsyncJobService.run(async_job.id, _work())
     return {"job_id": async_job.id, "status": "pending", "type": "submit_answer"}
+
+
+_MAX_AUDIO_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+@router.post("/sessions/{session_id}/submit-audio", status_code=202)
+async def submit_audio(
+    session_id: str,
+    question_id: str = Form(...),
+    audio: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    svc: CoachService = Depends(get_coach_service),
+) -> dict:
+    """Upload an audio recording for a question. Returns 202 + job_id.
+
+    The async job transcribes the audio with faster-whisper, computes delivery
+    metrics, evaluates the answer, and saves a recording with audio_uri set.
+    Poll /api/async-jobs/{job_id} for the AnswerEvaluation result.
+    """
+    ct = audio.content_type or ""
+    if not ct.startswith("audio/"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Audio files only. Got content-type: {ct!r}",
+        )
+
+    audio_bytes = await audio.read()
+    if len(audio_bytes) > _MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio file exceeds 50 MB limit")
+
+    suffix = Path(audio.filename or "answer.webm").suffix or ".audio"
+    recordings_dir = Path(os.getenv("DATA_DIR", "./data")) / "recordings" / session_id
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = recordings_dir / f"{question_id}{suffix}"
+    audio_path.write_bytes(audio_bytes)
+    audio_path_str = str(audio_path)
+
+    async_job = await AsyncJobService.create(db, "submit_audio")
+    await db.commit()
+
+    async def _work() -> None:
+        from ..database import AsyncSessionLocal  # noqa: PLC0415
+        async with AsyncSessionLocal() as job_db:
+            try:
+                from ..agents.tools.perception_factory import get_transcriber  # noqa: PLC0415
+                from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+                from ..services.locale_service import get_coach_fillers  # noqa: PLC0415
+                from ..services.speech_analyser import SpeechAnalyserService  # noqa: PLC0415
+
+                transcriber = get_transcriber()
+                result = transcriber.transcribe(audio_path_str)
+
+                try:
+                    locale_id = load_profile().locale
+                    fillers: list[str] | None = get_coach_fillers(locale_id)
+                except Exception:
+                    fillers = None
+
+                analyser = SpeechAnalyserService()
+                words_dicts = [
+                    {"w": w.w, "start": w.start, "end": w.end}
+                    for w in result.words
+                ]
+                speech_metrics: SpeechMetrics = analyser.analyse_from_timestamps(
+                    result.text, words_dicts, locale_fillers=fillers
+                )
+
+                req = SubmitAnswerRequest(
+                    transcript=result.text,
+                    speech_metrics=speech_metrics,
+                    duration_ms=speech_metrics.duration_ms,
+                    audio_uri=audio_path_str,
+                )
+                evaluation = await svc.submit_answer(session_id, question_id, req, job_db)
+                await AsyncJobService._finish(async_job.id, evaluation.model_dump_json(), None)
+            except Exception as exc:
+                logger.error("submit_audio job %s failed: %s", async_job.id, exc)
+                await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _work())
+    return {"job_id": async_job.id, "status": "pending", "type": "submit_audio"}
 
 
 # ---------------------------------------------------------------------------

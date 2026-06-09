@@ -920,6 +920,21 @@ export async function submitAnswer(
   );
 }
 
+export async function submitAudio(
+  sessionId: string,
+  questionId: string,
+  audioBlob: Blob,
+  filename?: string
+): Promise<AsyncJobRef> {
+  const form = new FormData();
+  form.append("question_id", questionId);
+  form.append("audio", audioBlob, filename ?? "answer.webm");
+  return apiFetch<AsyncJobRef>(
+    `/api/coach/sessions/${sessionId}/submit-audio`,
+    { method: "POST", body: form }
+  );
+}
+
 export async function skipQuestion(
   sessionId: string,
   questionId: string
