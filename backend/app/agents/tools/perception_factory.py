@@ -55,8 +55,13 @@ def get_transcriber():
 def get_voice_emotion_analyser():
     """Return the configured voice emotion analyser from profile.yaml → perception.voice_emotion.
 
-    Phase B implementation. Raises PerceptionNotAvailableError for all providers
-    until Phase B is implemented.
+    Implements Phase B: audeering wav2vec2 dimensional regression on CPU.
+
+    The analyser implements:
+        analyse(audio: np.ndarray, sampling_rate: int) -> VoiceToneResult
+
+    Raises:
+        PerceptionNotAvailableError: if the provider is disabled or not installed.
     """
     profile = load_profile()
     cfg = profile.perception.voice_emotion
@@ -64,11 +69,22 @@ def get_voice_emotion_analyser():
     if cfg.provider == "none":
         raise PerceptionNotAvailableError(
             "Voice emotion analysis is disabled (perception.voice_emotion.provider = 'none'). "
-            "Set to 'audeering' and install requirements-perception.txt for Phase B."
+            "Set to 'audeering' and install requirements-perception.txt."
         )
 
+    if cfg.provider == "audeering":
+        try:
+            from app.services.voice_emotion_analyser import AudeeringEmotionAnalyser  # noqa: PLC0415
+        except ImportError as exc:
+            raise PerceptionNotAvailableError(
+                "audeering voice emotion requires 'transformers' and 'torch'. "
+                "Run: pip install -r requirements-perception.txt"
+            ) from exc
+        return AudeeringEmotionAnalyser(model_name=cfg.model, device="cpu")
+
     raise PerceptionNotAvailableError(
-        f"Voice emotion provider '{cfg.provider}' is not implemented yet (Phase B)."
+        f"Voice emotion provider '{cfg.provider}' is not supported. "
+        "Supported: audeering, none."
     )
 
 

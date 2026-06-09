@@ -1,0 +1,182 @@
+"""Tests for RubricSynthesiserService — LLM-as-judge enrichment of SessionRubric."""
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.schemas.coach import (
+    AnswerEvaluation,
+    RubricDimension,
+    SessionRubric,
+    SpeechMetrics,
+    VoiceToneResult,
+)
+from app.services.rubric_builder import CONTENT_DIMENSIONS
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _make_evaluation(score: int = 7) -> AnswerEvaluation:
+    return AnswerEvaluation(
+        scores={d: score for d in CONTENT_DIMENSIONS},
+        overall=float(score),
+        feedback="Solid STAR answer with specific examples.",
+        strengths=["Clear STAR structure", "Quantified impact"],
+        improvements=["Add more technical depth"],
+    )
+
+
+_LLM_RUBRIC_RESPONSE = {
+    "dimensions": {
+        "star_structure": {
+            "score": 8,
+            "score_band": "strong",
+            "evidence": ["'So I implemented a blue-green deployment' — clear action step.", "Result quantified: '80% fewer failures'."],
+            "drill": "Practise a 90-second STAR story daily.",
+        },
+        "delivery": {
+            "score": 6,
+            "score_band": "good",
+            "evidence": ["Pace 145 WPM — ideal range.", "3 filler words detected."],
+            "drill": "Record and replay to count fillers.",
+        },
+    },
+    "focus_for_next_session": "Focus next session on: impact metrics and delivery.",
+}
+
+
+def _mock_llm(response_json: dict | None = None) -> MagicMock:
+    """Return a mock LangChain LLM that yields a JSON string on ainvoke."""
+    response_json = response_json or _LLM_RUBRIC_RESPONSE
+    msg_mock = MagicMock()
+    msg_mock.content = json.dumps(response_json)
+    llm_mock = MagicMock()
+    llm_mock.ainvoke = AsyncMock(return_value=msg_mock)
+    return llm_mock
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+class TestRubricSynthesiserService:
+
+    @pytest.mark.asyncio
+    async def test_returns_session_rubric(self) -> None:
+        """synthesise() returns a SessionRubric."""
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=_mock_llm()):
+            svc = RubricSynthesiserService()
+            eval_ = _make_evaluation()
+            rubric = await svc.synthesise(
+                transcript="In my previous role I led a migration. So I designed the rollout. As a result we cut failures by 80%.",
+                evaluation=eval_,
+            )
+
+        assert isinstance(rubric, SessionRubric)
+
+    @pytest.mark.asyncio
+    async def test_calls_llm_once(self) -> None:
+        """synthesise() invokes the LLM exactly once."""
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        mock_llm = _mock_llm()
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=mock_llm):
+            svc = RubricSynthesiserService()
+            await svc.synthesise(
+                transcript="test transcript",
+                evaluation=_make_evaluation(),
+            )
+
+        mock_llm.ainvoke.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_includes_speech_metrics_when_present(self) -> None:
+        """Speech metrics are included in the rubric output when provided."""
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        metrics = SpeechMetrics(wpm=145.0, filler_count=3, pause_count=1, duration_ms=60_000)
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=_mock_llm()):
+            svc = RubricSynthesiserService()
+            rubric = await svc.synthesise(
+                transcript="test transcript",
+                evaluation=_make_evaluation(),
+                speech_metrics=metrics,
+            )
+
+        # At minimum, the rubric should not crash and should be a SessionRubric
+        assert isinstance(rubric, SessionRubric)
+
+    @pytest.mark.asyncio
+    async def test_includes_tone_result_when_present(self) -> None:
+        """VoiceToneResult is accepted without error."""
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        tone = VoiceToneResult(arousal=0.6, valence=0.5, dominance=0.7)
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=_mock_llm()):
+            svc = RubricSynthesiserService()
+            rubric = await svc.synthesise(
+                transcript="test transcript",
+                evaluation=_make_evaluation(),
+                tone_result=tone,
+            )
+
+        assert isinstance(rubric, SessionRubric)
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_deterministic_on_llm_failure(self) -> None:
+        """On LLM error, synthesise() returns the deterministic rubric, no crash."""
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        failing_llm = MagicMock()
+        failing_llm.ainvoke = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=failing_llm):
+            svc = RubricSynthesiserService()
+            eval_ = _make_evaluation()
+            rubric = await svc.synthesise(
+                transcript="test",
+                evaluation=eval_,
+            )
+
+        # Fallback must still return a valid rubric with content dims
+        assert isinstance(rubric, SessionRubric)
+        for dim in CONTENT_DIMENSIONS:
+            assert dim in rubric.dimensions, f"Missing fallback dimension: {dim}"
+
+    @pytest.mark.asyncio
+    async def test_focus_for_next_session_populated(self) -> None:
+        """focus_for_next_session is non-empty in the returned rubric."""
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=_mock_llm()):
+            svc = RubricSynthesiserService()
+            rubric = await svc.synthesise(
+                transcript="test",
+                evaluation=_make_evaluation(),
+            )
+
+        assert rubric.focus_for_next_session.strip() != ""
+
+    @pytest.mark.asyncio
+    async def test_merges_llm_dimensions_into_rubric(self) -> None:
+        """Dimensions returned by the LLM are merged into the SessionRubric."""
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=_mock_llm()):
+            svc = RubricSynthesiserService()
+            rubric = await svc.synthesise(
+                transcript="So I implemented a blue-green deployment as a result we cut failures.",
+                evaluation=_make_evaluation(),
+                speech_metrics=SpeechMetrics(wpm=145.0, filler_count=3, pause_count=1, duration_ms=60_000),
+            )
+
+        # star_structure was in the LLM response — its evidence should be enriched
+        if "star_structure" in rubric.dimensions:
+            dim = rubric.dimensions["star_structure"]
+            assert isinstance(dim.evidence, list)

@@ -24,6 +24,7 @@ from .feedback_generator import FeedbackGeneratorService
 from .mock_interviewer import MockInterviewerService
 from .model_answer_gen import ModelAnswerGeneratorService
 from .question_generator import QuestionGeneratorService, _load_candidate_summary
+from .rubric_synthesiser import RubricSynthesiserService
 from .speech_analyser import SpeechAnalyserService
 from .video_analyser import VideoAnalyserService
 
@@ -43,6 +44,7 @@ class CoachService:
         self._video_analyser = VideoAnalyserService()
         self._mock_interviewer = MockInterviewerService()
         self._feedback_gen = FeedbackGeneratorService(self._claude)
+        self._rubric_synthesiser = RubricSynthesiserService()
 
     async def research_company(
         self, company_name: str, sector: str | None, db: AsyncSession
@@ -244,6 +246,16 @@ class CoachService:
             video_metrics=video_metrics,
             model_answer=question.model_answer,
         )
+
+        # Fuse: LLM-as-judge enrichment of the rubric (falls back silently on failure)
+        try:
+            evaluation.rubric = await self._rubric_synthesiser.synthesise(
+                transcript=request.transcript,
+                evaluation=evaluation,
+                speech_metrics=speech_metrics,
+            )
+        except Exception as exc:
+            logger.warning("Rubric synthesis skipped: %s", exc)
 
         # Persist recording + evaluation
         recording_type = (

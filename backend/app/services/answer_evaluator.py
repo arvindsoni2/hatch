@@ -5,9 +5,10 @@ import logging
 from typing import Any
 
 from ..prompts import render_prompt
-from ..schemas.coach import AnswerEvaluation, SpeechMetrics
+from ..schemas.coach import AnswerEvaluation, SpeechMetrics, VoiceToneResult
 from .claude_client import ClaudeClient
 from .jd_analyser import _split_jinja_output
+from .rubric_builder import build_rubric
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class AnswerEvaluatorService:
         speech_metrics: SpeechMetrics | None = None,
         video_metrics: Any | None = None,
         model_answer: str | None = None,
+        tone_result: VoiceToneResult | None = None,
     ) -> AnswerEvaluation:
         """Score an interview answer on 6 STAR dimensions.
 
@@ -79,7 +81,13 @@ class AnswerEvaluatorService:
                 improvements=["Please retry the evaluation."],
             )
 
-        return _parse_evaluation(raw, speech_metrics)
+        evaluation = _parse_evaluation(raw, speech_metrics)
+        evaluation.rubric = build_rubric(
+            evaluation,
+            speech_metrics=speech_metrics,
+            tone_result=tone_result,
+        )
+        return evaluation
 
 
 def _parse_evaluation(raw: dict[str, Any], speech_metrics: SpeechMetrics | None) -> AnswerEvaluation:

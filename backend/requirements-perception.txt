@@ -1,9 +1,12 @@
 # Perception stack — ASR, voice emotion, TTS
 # Installed in a separate Docker layer so base image rebuilds don't re-fetch these.
-# Phase A: ASR only (faster-whisper + CTranslate2 CPU backend)
-# Phase B adds: onnxruntime, transformers (audeering voice emotion)
+# Phase A: ASR (faster-whisper + CTranslate2 CPU backend)
+# Phase B: voice emotion (transformers + torch for audeering wav2vec2)
 # Phase E adds: piper-tts or kokoro
 faster-whisper>=1.0.3
 # tokenizers 0.20.x has a broken Rust build on some Linux platforms (DecodeStream missing),
 # which breaks transformers 4.46.x GPT2TokenizerFast at import time. Pin to 0.19.x.
 tokenizers>=0.19.0,<0.20
+# Phase B — audeering dimensional voice emotion (wav2vec2 regression, CPU)
+transformers>=4.35.0
+torch>=2.0.0

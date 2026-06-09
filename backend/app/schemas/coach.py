@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -26,6 +28,19 @@ class VideoMetrics(BaseModel):
     head_stability: float = Field(default=0.0, ge=0.0, le=1.0)
     expression: str = "neutral"
     gesture_freq: float = 0.0
+
+
+class VoiceToneResult(BaseModel):
+    """Dimensional speech-emotion output from audeering (or compatible) analyser.
+
+    arousal   — energy / activation (0=calm, 1=excited)
+    valence   — positive vs negative affect (0=negative, 1=positive)
+    dominance — assertiveness / confidence (0=submissive, 1=dominant)
+    """
+    arousal: float = Field(default=0.0, ge=0.0, le=1.0)
+    valence: float = Field(default=0.0, ge=0.0, le=1.0)
+    dominance: float = Field(default=0.0, ge=0.0, le=1.0)
+    sample_count: int = 0  # number of audio samples analysed
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +100,30 @@ class SubmitAnswerRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+ScoreBand = Literal["strong", "good", "needs_work", "weak"]
+
+
+class RubricDimension(BaseModel):
+    """One dimension in the session rubric — score + band + evidence + drill."""
+    score: int = Field(default=0, ge=0, le=10)
+    score_band: ScoreBand = "needs_work"
+    evidence: list[str] = Field(default_factory=list, description="1-2 concrete examples from the answer")
+    drill: str = ""  # recommended practice drill for improvement
+
+
+class SessionRubric(BaseModel):
+    """Full per-dimension rubric for a session answer.
+
+    Dimensions appear only when the underlying signal exists:
+    - content dims (relevance, star_structure, …): always present after LLM eval
+    - delivery: only when SpeechMetrics / word timestamps are available
+    - vocal_confidence: only when VoiceToneResult is available
+    - presence: only when face data is available (Phase D opt-in)
+    """
+    dimensions: dict[str, RubricDimension] = Field(default_factory=dict)
+    focus_for_next_session: str = ""
+
+
 class AnswerEvaluation(BaseModel):
     scores: dict[str, int] = Field(
         default_factory=dict,
@@ -96,6 +135,7 @@ class AnswerEvaluation(BaseModel):
     improvements: list[str] = Field(default_factory=list)
     follow_up_question: str | None = None
     speech_coaching: list[str] = Field(default_factory=list)
+    rubric: SessionRubric | None = None
 
 
 # ---------------------------------------------------------------------------

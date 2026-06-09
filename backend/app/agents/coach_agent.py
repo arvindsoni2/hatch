@@ -12,6 +12,7 @@ from ..models.cost_tracking import CostTracking
 from ..models.job import JobPosting
 from ..schemas.coach import CreateSessionRequest
 from ..services.coach_service import CoachService
+from ..services.rubric_synthesiser import RubricSynthesiserService
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
 from .tools.llm_factory import estimate_cost, estimate_tokens
@@ -33,6 +34,8 @@ class CoachAgent(BaseAgent):
         super().__init__()
         self._coach = CoachService()
         self._bus = EventBus.instance()
+        # fuse step — enriches rubric with transcript-quoted evidence after analysis
+        self._rubric_synthesiser = RubricSynthesiserService()
 
     # ── Main entry point ──────────────────────────────────────────────
 

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   getSession,
   submitAnswer,
+  submitAudio,
   endSession,
   researchCompany,
   getAsyncJob,
@@ -17,15 +18,16 @@ import {
 import { QuestionNav } from "@/components/coach/QuestionNav";
 import { QuestionPanel } from "@/components/coach/QuestionPanel";
 import { VoiceRecorder } from "@/components/coach/VoiceRecorder";
+import { AudioBlobRecorder } from "@/components/coach/AudioBlobRecorder";
 import { EvaluationCard } from "@/components/coach/EvaluationCard";
 import { ModelAnswer } from "@/components/coach/ModelAnswer";
 import { CompanyBrief } from "@/components/coach/CompanyBrief";
-import { RecordingControls } from "@/components/coach/RecordingControls";
+import { CoachModalitySelector, CoachMode } from "@/components/coach/CoachModalitySelector";
 import { AnalysingBanner } from "@/components/coach/AnalysingBanner";
 import { Button } from "@/components/ui/button";
 import { Loader2, FlagTriangleRight } from "lucide-react";
 
-type RecordingMode = "audio" | "video" | "text";
+type RecordingMode = CoachMode;
 type SessionState = "idle" | "recording" | "submitted" | "evaluated";
 
 export default function SessionPage() {
@@ -99,6 +101,33 @@ export default function SessionPage() {
     await handleAnswer(textAnswer, { filler_count: 0, wpm: 0, hedging_count: 0, duration_ms: 0, pause_count: 0 }, 0);
     setTextAnswer("");
   };
+
+  const handleAudioSubmit = useCallback(
+    async (blob: Blob, durationMs: number) => {
+      if (!currentQuestion || !session) return;
+      setSubmitting(true);
+      setSessionState("submitted");
+      try {
+        const jobRef = await submitAudio(session.id, currentQuestion.id, blob);
+        let eval_: AnswerEvaluation | null = null;
+        while (!eval_) {
+          const job = await getAsyncJob<AnswerEvaluation>(jobRef.job_id);
+          if (job.status === "done" && job.result) { eval_ = job.result; break; }
+          if (job.status === "failed") throw new Error(job.error ?? "Analysis failed");
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        setEvaluation(eval_);
+        setAnsweredIds((prev) => { const next = new Set(prev); next.add(currentQuestion.id); return next; });
+        setSessionState("evaluated");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Audio submission failed");
+        setSessionState("idle");
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [currentQuestion, session]
+  );
 
   const handleNext = () => {
     if (!session) return;
@@ -196,9 +225,9 @@ export default function SessionPage() {
                 <div className="rounded-xl border border-slate-700 bg-slate-800 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-slate-400">Your Answer</p>
-                    <RecordingControls
+                    <CoachModalitySelector
                       mode={recordingMode}
-                      onChange={setRecordingMode}
+                      onModeChange={setRecordingMode}
                       disabled={submitting}
                     />
                   </div>
@@ -221,6 +250,8 @@ export default function SessionPage() {
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Submit Answer"}
                       </Button>
                     </div>
+                  ) : recordingMode === "voice" ? (
+                    <AudioBlobRecorder onSubmit={handleAudioSubmit} disabled={submitting} />
                   ) : (
                     <VoiceRecorder onSubmit={handleAnswer} disabled={submitting} />
                   )}
