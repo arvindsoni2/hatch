@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { PrepScreen } from "@/components/hatch/screens/PrepScreen";
@@ -19,12 +19,40 @@ function normaliseCat(raw: string): PrepQuestion["cat"] {
   return "Behavioural";
 }
 
+function buildIcs(title: string, company: string, isoDate: string): string {
+  const start = new Date(isoDate);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//JobPilot//Coach//EN",
+    "BEGIN:VEVENT",
+    `UID:${Date.now()}@jobpilot`,
+    `DTSTART:${fmt(start)}`,
+    `DTEND:${fmt(end)}`,
+    `SUMMARY:${title} Interview — ${company}`,
+    "DESCRIPTION:Interview prep session from Coach",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+
 export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProps) {
   const router = useRouter();
   const firstReady = initialSessions.find((s) => s.status === "ready");
   const [openSessionId, setOpenSessionId] = useState<string | undefined>(firstReady?.id);
   const [sessionCache, setSessionCache] = useState<Record<string, SessionResponse>>({});
   const [showLauncher, setShowLauncher] = useState(false);
+
+  // Auto-fetch detail for the initially-selected session (state setter never triggers handleSelectSession)
+  useEffect(() => {
+    if (!openSessionId || sessionCache[openSessionId]) return;
+    getSession(openSessionId)
+      .then((full) => setSessionCache((prev) => ({ ...prev, [openSessionId]: full })))
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSessionId]);
 
   const enrichedSessions: PrepSession[] = initialSessions.map((s) => {
     const full = sessionCache[s.id];
@@ -54,13 +82,29 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
   const handleCalendar = async () => {
     if (!openSessionId) return;
     const full = sessionCache[openSessionId];
-    const applicationId = full?.application_id;
-    if (!applicationId) {
-      alert("No linked application found for this prep session.");
+
+    // Manual session (no linked application) — generate ICS client-side from stored interview_date
+    if (!full?.application_id) {
+      if (!full?.interview_date) {
+        alert("No interview date on record — create a new session and enter the interview date to use this feature.");
+        return;
+      }
+      const ics = buildIcs(full.role_title, full.company_name, full.interview_date);
+      const blob = new Blob([ics], { type: "text/calendar" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "interview.ics";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
       return;
     }
+
+    // Application-linked session — fetch from backend iCal endpoint
     try {
-      const app = await fetchApplication(applicationId);
+      const app = await fetchApplication(full.application_id);
       const upcoming = app.interviews
         .filter((i) => i.scheduled_at)
         .sort((a, b) => new Date(a.scheduled_at!).getTime() - new Date(b.scheduled_at!).getTime())

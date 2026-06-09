@@ -16,6 +16,7 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
   const [companyName, setCompanyName] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
   const [jdText, setJdText] = useState("");
+  const [interviewDate, setInterviewDate] = useState("");
   const [questionCount, setQuestionCount] = useState(10);
   const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">("medium");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -45,6 +46,7 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
       company_name: companyName,
       role_title: roleTitle,
       jd_text: jdText || null,
+      interview_date: interviewDate || null,
       config: {
         question_count: questionCount,
         categories: selectedCategories,
@@ -101,6 +103,15 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
               rows={4}
               placeholder="Paste the JD here for tailored questions..."
               className={inputCls + " resize-none"}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-600">Interview Date <span className="font-normal text-slate-400">(optional — for calendar)</span></label>
+            <input
+              type="datetime-local"
+              value={interviewDate}
+              onChange={(e) => setInterviewDate(e.target.value)}
+              className={inputCls}
             />
           </div>
           <Button
@@ -186,6 +197,9 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
             <p><span className="font-medium text-slate-500">Difficulty:</span> {difficulty}</p>
             {selectedCategories.length > 0 && (
               <p><span className="font-medium text-slate-500">Categories:</span> {selectedCategories.join(", ")}</p>
+            )}
+            {interviewDate && (
+              <p><span className="font-medium text-slate-500">Interview:</span> {new Date(interviewDate).toLocaleString()}</p>
             )}
           </div>
           {error && (

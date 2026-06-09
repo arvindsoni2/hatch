@@ -182,6 +182,7 @@ class CoachService:
         ]
 
         from ..schemas.coach import SessionQuestionRead
+        cfg = session.config or {}
         return SessionResponse(
             id=session.id,
             application_id=session.application_id,
@@ -191,6 +192,7 @@ class CoachService:
             overall_score=None,
             questions=[SessionQuestionRead.model_validate(sq) for sq in saved_questions],
             created_at=session.created_at,
+            interview_date=cfg.get("interview_date"),
         )
 
     async def submit_answer(
@@ -382,6 +384,7 @@ class CoachService:
 
         questions = await session_repo.get_questions(session_id)
         from ..schemas.coach import SessionQuestionRead
+        cfg = session.config or {}
         return SessionResponse(
             id=session.id,
             application_id=session.application_id,
@@ -391,6 +394,7 @@ class CoachService:
             overall_score=session.overall_score,
             questions=[SessionQuestionRead.model_validate(q) for q in questions],
             created_at=session.created_at,
+            interview_date=cfg.get("interview_date"),
         )
 
     async def get_next_question(

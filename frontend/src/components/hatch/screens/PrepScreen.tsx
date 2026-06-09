@@ -125,16 +125,9 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
           On mobile the detail replaces the list (when openSession is set).
           On desktop both panels are visible side-by-side via CSS. */}
       <div style={{ display: 'flex', gap: 24, minHeight: '60vh', alignItems: 'flex-start' }}>
-        {/* Session list — hidden on mobile when a session is open */}
+        {/* Session list — hidden on mobile when a session is open; always visible on md+ */}
         <div
-          style={{
-            display: openSession ? 'none' : 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            width: '100%',
-            flexShrink: 0,
-          }}
-          className={openSession ? 'md:flex md:w-80' : ''}
+          className={openSession ? 'hidden md:flex md:flex-col md:gap-2 md:w-80 md:flex-shrink-0' : 'flex flex-col gap-2 w-full flex-shrink-0'}
         >
           {/* Sessions sub-header with + New button */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>

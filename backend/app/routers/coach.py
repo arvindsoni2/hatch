@@ -98,11 +98,14 @@ async def create_session(
     """
     from ..repositories.session_repository import SessionRepository
     session_repo = SessionRepository(db)
+    config_dict = request.config.model_dump()
+    if request.interview_date:
+        config_dict["interview_date"] = request.interview_date
     stub = await session_repo.create_session(
         application_id=request.application_id,
         company_name=request.company_name,
         role_title=request.role_title,
-        config=request.config.model_dump(),
+        config=config_dict,
     )
     session_id = stub.id
 

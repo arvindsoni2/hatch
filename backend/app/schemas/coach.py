@@ -46,6 +46,7 @@ class CreateSessionRequest(BaseModel):
     company_name: str
     role_title: str
     jd_text: str | None = None
+    interview_date: str | None = None  # ISO date string, stored in config JSON
     config: SessionConfig = Field(default_factory=SessionConfig)
 
 
@@ -126,6 +127,7 @@ class SessionResponse(BaseModel):
     overall_score: float | None = None
     questions: list[SessionQuestionRead] = Field(default_factory=list)
     created_at: datetime
+    interview_date: str | None = None  # set for manual sessions without an application_id
 
 
 class SessionListItem(BaseModel):

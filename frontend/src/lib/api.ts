@@ -760,6 +760,7 @@ export interface CreateSessionRequest {
   company_name: string;
   role_title: string;
   jd_text?: string | null;
+  interview_date?: string | null;
   config: SessionConfig;
 }
 
@@ -804,6 +805,7 @@ export interface SessionResponse {
   overall_score: number | null;
   questions: SessionQuestion[];
   created_at: string;
+  interview_date?: string | null;
 }
 
 export interface SessionListItem {
