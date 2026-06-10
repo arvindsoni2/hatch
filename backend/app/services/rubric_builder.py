@@ -37,6 +37,7 @@ _DRILL_MAP: dict[str, str] = {
     "impact_metrics": "For every outcome, add a number: %, £/$, time saved, scale. Practise 'so what?' follow-throughs.",
     "delivery": "Record yourself answering mock questions; count fillers with a tally. Aim to halve the count weekly.",
     "vocal_confidence": "Power-pose warm-up before interviews; practise speaking slower and louder on recorded drills.",
+    "presence": "Practice maintaining eye contact with camera; record 2 minutes speaking without looking away.",
 }
 
 
@@ -171,20 +172,49 @@ def build_content_dimensions(evaluation: AnswerEvaluation) -> dict[str, RubricDi
 
 # ── Top-level builder ─────────────────────────────────────────────────────────
 
+# ── Presence dimension (Phase D — from face summary data) ─────────────────────
+
+def build_presence_dimension(face_summary: dict) -> RubricDimension:
+    """Build the 'presence' rubric dimension from FaceSummary data (Phase D).
+
+    Args:
+        face_summary: Dict with keys eye_contact_pct (0.0-1.0), head_stability (lower=better).
+
+    Returns:
+        RubricDimension for the 'presence' dimension.
+    """
+    eye_contact = face_summary.get("eye_contact_pct", 0.0)
+    stability = face_summary.get("head_stability", 1.0)
+
+    evidence: list[str] = [
+        f"Eye contact: {eye_contact:.0%}",
+        f"Head stability: {'good' if stability < 0.3 else 'needs work'} (stddev {stability:.2f})",
+    ]
+
+    presence_score = min(10, int((eye_contact * 7) + ((1 - min(stability, 1.0)) * 3)))
+    return RubricDimension(
+        score=presence_score,
+        score_band=score_to_band(presence_score),
+        evidence=evidence[:2],
+        drill=_DRILL_MAP["presence"],
+    )
+
+
 def build_rubric(
     evaluation: AnswerEvaluation,
     speech_metrics: SpeechMetrics | None = None,
     tone_result: VoiceToneResult | None = None,
+    face_summary: dict | None = None,
 ) -> SessionRubric:
     """Build a complete SessionRubric from available signals.
 
     Dimensions appear only when the underlying signal exists.
-    presence is never added here (Phase D, requires face data).
 
     Args:
         evaluation: The LLM-produced AnswerEvaluation.
         speech_metrics: Optional — adds 'delivery' dimension when present.
         tone_result: Optional — adds 'vocal_confidence' dimension when present.
+        face_summary: Optional (Phase D) — adds 'presence' dimension when present.
 
     Returns:
         SessionRubric with populated dimensions and focus_for_next_session.
@@ -202,7 +232,9 @@ def build_rubric(
     if tone_result is not None:
         dimensions["vocal_confidence"] = build_tone_dimension(tone_result)
 
-    # presence is deliberately absent — Phase D adds it when face data is present
+    # Presence — Phase D opt-in, only when face data is present
+    if face_summary is not None:
+        dimensions["presence"] = build_presence_dimension(face_summary)
 
     # Focus: find the 1-2 weakest dimensions
     sorted_dims = sorted(dimensions.items(), key=lambda kv: kv[1].score)

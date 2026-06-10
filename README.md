@@ -22,7 +22,7 @@ Discover → Score → Tailor → Track → Coach — fully automated, human-in-
 
 ## What is Hatch?
 
-> **Status:** Active development — v4 complete. Full pipeline (Scout → Score → Tailor → Coach) with two-step assisted apply, Agent Skills layer, and Direction A UX (Today · Stream · Tracker · Prep). 427 backend + 207 frontend tests green.
+> **Status:** Active development — v4 + Coach Multimodal Uplift (Phases A & B) complete. Full pipeline (Scout → Score → Tailor → Coach) with two-step assisted apply, Agent Skills layer, Direction A UX, server-side ASR, delivery metrics, vocal-tone analysis, and multi-dimensional session rubric. 579 backend + 317 frontend tests green.
 
 Hatch is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
 
@@ -71,7 +71,9 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | **Async notification bell** | Tailor and Coach run in the background; a persistent notification bell fires when jobs complete or fail, with error detail on failure |
 | **Tailor history panel** | Per-job document history: all generated CV and cover letter variants listed with ATS score, download link, and regeneration button |
 | **Manual JD tailoring** | Paste any job description from any website — Hatch auto-creates the job and application records, then generates tailored documents without requiring a scraper |
-| **Interview coaching** | Company research, 12 categorised questions, STAR model answers mapped to your proof points |
+| **Multimodal interview coach** | Three capture modes — **Text**, **Voice**, and **Video** (Phase D opt-in). Voice mode uses server-side `faster-whisper` ASR for precise delivery metrics (WPM, fillers, pauses, STAR coverage) and dimensional vocal-tone analysis (arousal · valence · dominance via `audeering/wav2vec2`). An LLM-as-judge rubric synthesiser produces a session rubric with per-dimension scores, transcript-quoted evidence, and a recommended drill. |
+| **Session rubric** | Multi-dimensional scoring: content, STAR structure, technical depth, conciseness, impact metrics, delivery, and vocal confidence. Dimensions only appear when the signal exists — no empty or zeroed rows. Focus-for-next-session guidance generated automatically. |
+| **Perception factory** | Provider-agnostic perception layer (`perception_factory.py`) mirrors the LLM factory. Swap ASR, voice-emotion, or face providers via `profile.yaml → perception` — no code changes. Perception deps are in a separate `requirements-perception.txt` Docker layer for lean installs. |
 | **JD gap analysis** | Per-job skill gap card: matched skills, missing skills, JD-only keywords, match %, actionable recommendations |
 | **LLM trace panel** | Per-call latency, token counts, and response preview — visible in the debug panel for local troubleshooting |
 | **Calendar export** | Download any interview round as an `.ics` file — one click to add to Google Calendar, Outlook, or Apple Calendar |
@@ -138,6 +140,17 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | `scrapers/indeed_india.py` | **New** | Indeed India scraper (`in.indeed.com`) |
 | `examples/` | **New** | Example profiles for each supported locale (UK, India, Ireland, UAE) |
 | `skills/` | **New (v4)** | 7 agent skills: `cv-tailoring`, `cover-letter`, `ats-optimization`, `company-research`, `interview-prep`, `screening-answers`, `form-mapping` — SKILL.md + scripts + resources |
+| `agents/tools/perception_factory.py` | **New (Coach A/B)** | Provider-agnostic perception layer: `get_transcriber()`, `get_voice_emotion_analyser()`, `get_face_analyser()`, `get_tts()` — mirrors `llm_factory.py` |
+| `services/transcriber.py` | **New (Coach A)** | `faster-whisper` CTranslate2 wrapper; returns `{text, language, words:[{w,start,end}]}`; `int8` quantised, CPU-default |
+| `services/speech_analyser.py` | **Updated (Coach A)** | Derives WPM, filler rate, pause count, STAR section coverage from word timestamps; per-locale filler lexicons from `locales/*.yaml → coach.fillers` |
+| `services/voice_emotion_analyser.py` | **New (Coach B)** | `AudeeringEmotionAnalyser` wrapping `audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim`; returns arousal / valence / dominance in [0,1] |
+| `services/rubric_builder.py` | **New (Coach B)** | Deterministic rubric builder; `score_to_band()`, per-dimension constructors; delivery and vocal_confidence only added when signal present; `presence` never added without face data |
+| `services/rubric_synthesiser.py` | **New (Coach B)** | LLM-as-judge rubric enrichment via `get_json_model()`; lazy LLM init; silent fallback to deterministic baseline on any failure |
+| `schemas/coach.py` | **Updated (Coach B)** | `VoiceToneResult`, `RubricDimension`, `SessionRubric`, `ScoreBand` added; `AnswerEvaluation` gains `rubric` field |
+| `components/coach/CoachModalitySelector.tsx` | **New (Coach B)** | Text / Voice picker with async browser mic-capability detection (`enumerateDevices`); disabled modes show plain-language reason; extensible for Phase D video via `phaseGate: "D"` |
+| `components/coach/AudioBlobRecorder.tsx` | **New (Coach B)** | `MediaRecorder`-based blob capture → `submit-audio` endpoint; shows recording timer, size/duration, and submit button |
+| `components/coach/AnalysingBanner.tsx` | **New (Coach A)** | Processing-time UX — "Analysing your answer…" banner while async job is in flight; clears on result |
+| `routers/coach.py` `submit-audio` | **New (Coach A)** | `POST /api/coach/sessions/{id}/submit-audio` — multipart audio blob; validates MIME + size cap; saves to `data/recordings/`; returns 202 + job_id |
 | `services/assisted_apply.py` | **Updated (v4)** | `prepare_application` returns full `ApplicationPackage` (docs + prefill + screening answers + paste-map); no submit path |
 | `routers/jobs.py` `/{id}/approve` | **New (v4)** | Two-step approve: tailor → assemble package → `ready_to_apply`; returns `ApplicationPackage` |
 | `routers/applications.py` v4 | **New (v4)** | `/package`, `/mark-applied`, `/reject`, `/revert` endpoints for the assisted apply flow |
@@ -294,6 +307,27 @@ compensation:
     notice_period_days: 30           # India: notice period in days
 ```
 
+### Perception (Coach multimodal)
+
+```yaml
+perception:
+  asr:
+    provider: faster_whisper    # faster_whisper | qwen3_asr | web_speech | deepgram
+    model: small                # small | medium | large-v3
+    compute_type: int8          # int8 | int8_float16 | float32
+    language: auto              # auto-detect; or BCP-47 language code
+  voice_emotion:
+    provider: audeering         # audeering | emotion2vec | hume | none
+    model: wav2vec2-large-robust-12-ft-emotion-msp-dim
+  face:
+    provider: mediapipe_browser # mediapipe_browser | emotiefflib | hume | none
+    enabled: false              # opt-in — Phase D; face data never leaves the browser
+  tts:
+    provider: none              # none | piper | kokoro | qwen3_tts | elevenlabs
+```
+
+Perception models are downloaded on first use (hundreds of MB) and cached in the `data/models/` volume — they survive `podman-compose build --pull` rebuilds. The perception stack lives in a separate `requirements-perception.txt` Docker layer; a slim install (scorer/tailor only) can omit it.
+
 ### Preferences
 
 ```yaml
@@ -336,6 +370,20 @@ preferences:
 - **Does:** Company research, 12 categorised questions, STAR model answers. Multiple coach sessions are queued and processed in order — each session is tracked as an async job with notification on completion
 - **User context:** Skills and proof points injected from `profile.yaml`
 - **LLM:** Primary model
+
+#### Multimodal pipeline (Phase A + B)
+
+The coach now supports three capture modes selectable per session:
+
+| Mode | Capture path | Perception layers | Rubric dimensions |
+|------|-------------|-------------------|-------------------|
+| **Text** | Typed answer or Web Speech → `submit-answer` | None | content, STAR structure, conciseness, impact, technical depth |
+| **Voice** | `AudioBlobRecorder` → `submit-audio` → `faster-whisper` | ASR + delivery metrics + vocal tone (audeering) | All above + **delivery** (WPM/fillers/pauses) + **vocal confidence** (arousal/valence/dominance) |
+| **Video** *(Phase D, opt-in)* | Audio + webcam; face analysis in-browser (MediaPipe) | ASR + tone + face summary | All above + **presence** (eye contact/engagement) |
+
+After transcription and metric computation, `RubricSynthesiserService` (LLM-as-judge) enriches the deterministic rubric with transcript-quoted evidence and a "focus for next session" directive. It falls back silently to the deterministic rubric if the LLM call fails.
+
+**Perception is provider-agnostic.** ASR and voice-emotion providers are configured in `profile.yaml → perception` and loaded via `perception_factory.py` — the same pattern as the LLM factory.
 
 ### Supervisor (LangGraph StateGraph)
 
@@ -390,6 +438,13 @@ GET    /api/applications/{id}/package    Re-fetch package for the application-re
 POST   /api/applications/{id}/mark-applied  Confirm submission → applied (step 2)
 POST   /api/applications/{id}/reject     Reject → rejected
 POST   /api/applications/{id}/revert     Undo approve → ready_to_apply → ready
+
+# Coach
+GET    /api/coach/sessions/{id}          Session details + questions
+POST   /api/coach/sessions/{id}/submit-answer   Text answer → 202 + job_id
+POST   /api/coach/sessions/{id}/submit-audio    Audio blob (multipart) → ASR → 202 + job_id
+POST   /api/coach/sessions/{id}/end     End session → report generation → 202 + job_id
+GET    /api/async-jobs/{job_id}         Poll async job status (done | running | failed)
 
 # Interviews
 GET    /api/v2/interviews/{id}/ical      Download interview round as .ics calendar file

@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 import { PrepScreen } from "@/components/hatch/screens/PrepScreen";
 import type { PrepSession, PrepQuestion } from "@/components/hatch/screens/PrepScreen";
 import { SessionLauncher } from "@/components/coach/SessionLauncher";
-import { getSession, fetchApplication } from "@/lib/api";
+import { getSession, fetchApplication, abandonSession } from "@/lib/api";
 import type { SessionResponse } from "@/lib/api";
 
 interface PrepPageClientProps {
@@ -41,6 +41,7 @@ function buildIcs(title: string, company: string, isoDate: string): string {
 export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProps) {
   const router = useRouter();
   const firstReady = initialSessions.find((s) => s.status === "ready");
+  const [sessions, setSessions] = useState<PrepSession[]>(initialSessions);
   const [openSessionId, setOpenSessionId] = useState<string | undefined>(firstReady?.id);
   const [sessionCache, setSessionCache] = useState<Record<string, SessionResponse>>({});
   const [showLauncher, setShowLauncher] = useState(false);
@@ -54,7 +55,18 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSessionId]);
 
-  const enrichedSessions: PrepSession[] = initialSessions.map((s) => {
+  const handleDeleteSession = async (id: string) => {
+    if (!confirm("Remove this prep session? This cannot be undone.")) return;
+    try {
+      await abandonSession(id);
+    } catch {
+      // best-effort — remove from UI regardless
+    }
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    if (openSessionId === id) setOpenSessionId(undefined);
+  };
+
+  const enrichedSessions: PrepSession[] = sessions.map((s) => {
     const full = sessionCache[s.id];
     if (!full) return s;
     return {
@@ -133,6 +145,8 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
         onNewSession={() => setShowLauncher(true)}
         onSelectSession={handleSelectSession}
         onCalendar={handleCalendar}
+        onPractice={(id) => router.push(`/coach/session/${id}`)}
+        onDeleteSession={handleDeleteSession}
       />
 
       {showLauncher && (

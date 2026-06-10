@@ -43,6 +43,7 @@ export function NotificationBell() {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setOpen(false);
+        setJobs([]);
       }
     }
     document.addEventListener("mousedown", handleClick);
@@ -50,13 +51,20 @@ export function NotificationBell() {
   }, []);
 
   function handleOpen() {
-    setOpen((prev) => !prev);
+    setOpen((prev) => {
+      const opening = !prev;
+      if (opening) {
+        localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
+      } else {
+        setJobs([]);
+      }
+      return opening;
+    });
   }
 
   function handleMarkRead() {
     setOpen(false);
     setJobs([]);
-    localStorage.setItem(LAST_SEEN_KEY, new Date().toISOString());
   }
 
   return (

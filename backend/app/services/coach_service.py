@@ -11,6 +11,7 @@ from ..schemas.coach import (
     AnswerEvaluation,
     CompanyResearchResponse,
     CreateSessionRequest,
+    PlanFollowUpResponse,
     QuestionPresentation,
     SessionFeedbackReport,
     SessionListItem,
@@ -21,11 +22,13 @@ from .answer_evaluator import AnswerEvaluatorService
 from .claude_client import ClaudeClient
 from .company_researcher import CompanyResearchService
 from .feedback_generator import FeedbackGeneratorService
+from .followup_planner import FollowUpPlannerService
 from .mock_interviewer import MockInterviewerService
 from .model_answer_gen import ModelAnswerGeneratorService
 from .question_generator import QuestionGeneratorService, _load_candidate_summary
 from .rubric_synthesiser import RubricSynthesiserService
 from .speech_analyser import SpeechAnalyserService
+from .technical_drills import TechnicalDrillsService
 from .video_analyser import VideoAnalyserService
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,8 @@ class CoachService:
         self._mock_interviewer = MockInterviewerService()
         self._feedback_gen = FeedbackGeneratorService(self._claude)
         self._rubric_synthesiser = RubricSynthesiserService()
+        self._drills = TechnicalDrillsService(self._claude)
+        self._followup_planner = FollowUpPlannerService()
 
     async def research_company(
         self, company_name: str, sector: str | None, db: AsyncSession
@@ -183,6 +188,13 @@ class CoachService:
             for sq in saved_questions
         ]
 
+        # Build technical drills for any technical/domain questions
+        drills = []
+        try:
+            drills = await self._drills.build_drills(saved_questions)
+        except Exception as exc:
+            logger.warning("TechnicalDrillsService failed — proceeding without drills: %s", exc)
+
         from ..schemas.coach import SessionQuestionRead
         cfg = session.config or {}
         return SessionResponse(
@@ -195,6 +207,7 @@ class CoachService:
             questions=[SessionQuestionRead.model_validate(sq) for sq in saved_questions],
             created_at=session.created_at,
             interview_date=cfg.get("interview_date"),
+            technical_drills=drills,
         )
 
     async def submit_answer(
@@ -407,6 +420,51 @@ class CoachService:
             questions=[SessionQuestionRead.model_validate(q) for q in questions],
             created_at=session.created_at,
             interview_date=cfg.get("interview_date"),
+        )
+
+    async def plan_followup_session(
+        self, session_id: str, db: AsyncSession
+    ) -> PlanFollowUpResponse:
+        """Plan a follow-up session targeting the weakest rubric dimensions.
+
+        Args:
+            session_id: ID of the completed session.
+            db: Active DB session.
+
+        Returns:
+            PlanFollowUpResponse with new session ID and focus areas.
+        """
+        from ..repositories.session_repository import SessionRepository
+        from ..schemas.coach import SessionRubric
+        session_repo = SessionRepository(db)
+
+        session = await session_repo.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Load rubric from DB if stored
+        rubric = None
+        if session.rubric and isinstance(session.rubric, dict):
+            try:
+                rubric = SessionRubric.model_validate(session.rubric)
+            except Exception as exc:
+                logger.warning("Could not parse stored rubric: %s", exc)
+
+        if rubric is None:
+            rubric = SessionRubric()  # empty — no focus areas
+
+        new_session_id, focus_areas = await self._followup_planner.plan(
+            parent_session=session,
+            rubric=rubric,
+            db=db,
+        )
+        await db.commit()
+
+        focus_text = " and ".join(focus_areas) if focus_areas else "general practice"
+        return PlanFollowUpResponse(
+            followup_session_id=new_session_id,
+            focus_areas=focus_areas,
+            message=f"Follow-up session created focusing on: {focus_text}.",
         )
 
     async def get_next_question(

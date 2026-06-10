@@ -22,7 +22,7 @@ function sessionToPrep(s: SessionListItem): PrepSession {
 
 export default async function PrepPage() {
   const raw = await listSessions(20).catch((): SessionListItem[] => []);
-  const sessions = raw.map(sessionToPrep);
+  const sessions = raw.filter((s) => s.status !== "abandoned").map(sessionToPrep);
 
   return <PrepPageClient sessions={sessions} />;
 }

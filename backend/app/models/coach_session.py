@@ -69,12 +69,33 @@ class InterviewSession(Base):
     feedback_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
+    # Phase C columns
+    coach_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)  # text|voice|video
+    rubric: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    parent_session_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("interview_sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    focus_areas: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
     questions: Mapped[list[SessionQuestion]] = relationship(
         "SessionQuestion", back_populates="session", cascade="all, delete-orphan",
         order_by="SessionQuestion.order_in_session"
     )
     recordings: Mapped[list[SessionRecording]] = relationship(
         "SessionRecording", back_populates="session", cascade="all, delete-orphan"
+    )
+    # Self-referential parent/children for session chains (Phase C)
+    children: Mapped[list[InterviewSession]] = relationship(
+        "InterviewSession",
+        foreign_keys="[InterviewSession.parent_session_id]",
+        back_populates="parent",
+    )
+    parent: Mapped[InterviewSession | None] = relationship(
+        "InterviewSession",
+        foreign_keys="[InterviewSession.parent_session_id]",
+        back_populates="children",
+        remote_side="InterviewSession.id",
     )
 
 

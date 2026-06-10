@@ -34,9 +34,11 @@ interface PrepScreenProps {
   onNewSession?: () => void;
   onSelectSession?: (id: string) => void;
   onCalendar?: () => void;
+  onPractice?: (id: string) => void;
+  onDeleteSession?: (id: string) => void;
 }
 
-function DetailView({ session, onCalendar }: { session: PrepSession; onCalendar?: () => void }) {
+function DetailView({ session, onCalendar, onPractice }: { session: PrepSession; onCalendar?: () => void; onPractice?: () => void }) {
   const [openQ, setOpenQ] = useState<number | null>(null);
   const questions = session.questions ?? [];
 
@@ -51,7 +53,10 @@ function DetailView({ session, onCalendar }: { session: PrepSession; onCalendar?
             {session.when && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{session.when} · prepped by Coach</div>}
           </div>
         </div>
-        <Btn kind="soft" size="sm" icon="calendar" onClick={onCalendar}>Add to calendar</Btn>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Btn kind="primary" size="sm" icon="mic" onClick={onPractice}>Practice</Btn>
+          <Btn kind="soft" size="sm" icon="calendar" onClick={onCalendar}>Add to calendar</Btn>
+        </div>
       </div>
 
       {/* Company research */}
@@ -110,7 +115,7 @@ function DetailView({ session, onCalendar }: { session: PrepSession; onCalendar?
   );
 }
 
-export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSession, onCalendar }: PrepScreenProps) {
+export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSession, onCalendar, onPractice, onDeleteSession }: PrepScreenProps) {
   const openSession = sessions.find((s) => s.id === openSessionId);
 
   return (
@@ -153,6 +158,17 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
                     </div>
                   </div>
                   <Chip color={p.color} bg={p.soft}>{p.label}</Chip>
+                  {onDeleteSession && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id); }}
+                      title="Delete session"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6, color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--danger, #ef4444)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                    >
+                      <HatchIcon name="trash" size={15} color="currentColor" />
+                    </button>
+                  )}
                 </div>
               </Card>
             );
@@ -162,7 +178,7 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
         {/* Detail pane */}
         {openSession && (
           <div style={{ flex: 1, minWidth: 0 }}>
-            <DetailView session={openSession} onCalendar={onCalendar} />
+            <DetailView session={openSession} onCalendar={onCalendar} onPractice={openSession ? () => onPractice?.(openSession.id) : undefined} />
           </div>
         )}
       </div>

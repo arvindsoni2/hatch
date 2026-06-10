@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -156,6 +155,31 @@ class SessionQuestionRead(BaseModel):
     order_in_session: int
 
 
+class TechnicalDrill(BaseModel):
+    """A worked-example drill for a technical question."""
+    question_id: str
+    question_text: str
+    walkthrough: str       # worked example
+    drill_prompt: str      # "explain your approach out loud" prompt
+    category: str
+
+
+class ProgressTrendItem(BaseModel):
+    """Per-session progress data for a session chain."""
+    session_id: str
+    created_at: datetime
+    overall_score: float | None
+    rubric_scores: dict[str, int]   # dim_name → score
+    focus_areas: list[str]
+
+
+class PlanFollowUpResponse(BaseModel):
+    """Response after planning a follow-up session."""
+    followup_session_id: str
+    focus_areas: list[str]
+    message: str
+
+
 class SessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -168,6 +192,13 @@ class SessionResponse(BaseModel):
     questions: list[SessionQuestionRead] = Field(default_factory=list)
     created_at: datetime
     interview_date: str | None = None  # set for manual sessions without an application_id
+    # Phase C fields
+    coach_mode: str | None = None
+    rubric: SessionRubric | None = None
+    signals: dict | None = None
+    parent_session_id: str | None = None
+    focus_areas: list[str] | None = None
+    technical_drills: list[TechnicalDrill] = Field(default_factory=list)
 
 
 class SessionListItem(BaseModel):

@@ -926,11 +926,15 @@ export async function submitAudio(
   sessionId: string,
   questionId: string,
   audioBlob: Blob,
-  filename?: string
+  filename?: string,
+  faceSummary?: { eye_contact_pct: number; avg_arousal: number; head_stability: number; engagement_trend: string } | null
 ): Promise<AsyncJobRef> {
   const form = new FormData();
   form.append("question_id", questionId);
   form.append("audio", audioBlob, filename ?? "answer.webm");
+  if (faceSummary) {
+    form.append("face_summary", JSON.stringify(faceSummary));
+  }
   return apiFetch<AsyncJobRef>(
     `/api/coach/sessions/${sessionId}/submit-audio`,
     { method: "POST", body: form }
@@ -961,6 +965,67 @@ export async function abandonSession(sessionId: string): Promise<void> {
   await apiFetch<void>(`/api/coach/sessions/${sessionId}`, {
     method: "DELETE",
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Coach Module — Phase C types + API
+// ═══════════════════════════════════════════════════════════════
+
+export interface TechnicalDrill {
+  question_id: string;
+  question_text: string;
+  walkthrough: string;
+  drill_prompt: string;
+  category: string;
+}
+
+export interface ProgressTrendItem {
+  session_id: string;
+  created_at: string;
+  overall_score: number | null;
+  rubric_scores: Record<string, number>;
+  focus_areas: string[];
+}
+
+export interface PlanFollowUpResponse {
+  followup_session_id: string;
+  focus_areas: string[];
+  message: string;
+}
+
+export interface CoachCapabilities {
+  face_analysis: boolean;
+  tts: boolean;
+}
+
+/** Plan a follow-up session targeting the weakest rubric dimensions. */
+export async function planFollowUpSession(sessionId: string): Promise<PlanFollowUpResponse> {
+  return apiFetch<PlanFollowUpResponse>(
+    `/api/coach/sessions/${sessionId}/plan-followup`,
+    { method: "POST" }
+  );
+}
+
+/** Return per-session progress trend for the session chain. */
+export async function getProgressTrend(sessionId: string): Promise<ProgressTrendItem[]> {
+  return apiFetch<ProgressTrendItem[]>(`/api/coach/progress/${sessionId}/trend`);
+}
+
+/** Return which perception capabilities are enabled. */
+export async function getCoachCapabilities(): Promise<CoachCapabilities> {
+  return apiFetch<CoachCapabilities>("/api/coach/capabilities");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Coach Module — Phase E (TTS)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Returns the URL for streaming TTS audio of a question.
+ * Use as `<audio src={getTTSQuestionUrl(...)}>` — no fetch needed.
+ */
+export function getTTSQuestionUrl(sessionId: string, questionId: string): string {
+  return `/api/coach/sessions/${sessionId}/tts-question?question_id=${questionId}`;
 }
 
 // ─── V2 Types ───────────────────────────────────────────────────────────────

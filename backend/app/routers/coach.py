@@ -15,6 +15,8 @@ from ..database import get_db
 from ..schemas.coach import (
     CompanyResearchResponse,
     CreateSessionRequest,
+    PlanFollowUpResponse,
+    ProgressTrendItem,
     QuestionPresentation,
     SessionFeedbackReport,
     SessionListItem,
@@ -249,6 +251,7 @@ async def submit_audio(
     session_id: str,
     question_id: str = Form(...),
     audio: UploadFile = File(...),
+    face_summary: Optional[str] = Form(default=None),  # JSON-encoded FaceSummary (Phase D)
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
 ) -> dict:
@@ -275,6 +278,15 @@ async def submit_audio(
     audio_path = recordings_dir / f"{question_id}{suffix}"
     audio_path.write_bytes(audio_bytes)
     audio_path_str = str(audio_path)
+
+    # Parse face_summary JSON if provided (Phase D)
+    face_summary_dict: dict | None = None
+    if face_summary:
+        import json as _json  # noqa: PLC0415
+        try:
+            face_summary_dict = _json.loads(face_summary)
+        except Exception:
+            logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
 
     async_job = await AsyncJobService.create(db, "submit_audio")
     await db.commit()
@@ -306,9 +318,20 @@ async def submit_audio(
                     result.text, words_dicts, locale_fillers=fillers
                 )
 
+                from ..schemas.coach import VideoMetrics  # noqa: PLC0415
+                video_metrics_obj: VideoMetrics | None = None
+                if face_summary_dict:
+                    video_metrics_obj = VideoMetrics(
+                        eye_contact_pct=face_summary_dict.get("eye_contact_pct", 0.0) * 100,
+                        head_stability=min(1.0, face_summary_dict.get("head_stability", 0.0)),
+                        expression="neutral",
+                        gesture_freq=0.0,
+                    )
+
                 req = SubmitAnswerRequest(
                     transcript=result.text,
                     speech_metrics=speech_metrics,
+                    video_metrics=video_metrics_obj,
                     duration_ms=speech_metrics.duration_ms,
                     audio_uri=audio_path_str,
                 )
@@ -391,3 +414,102 @@ async def get_application_progress(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Phase C — Follow-up sessions + progress trend
+# ---------------------------------------------------------------------------
+
+
+@router.post("/sessions/{session_id}/plan-followup", response_model=PlanFollowUpResponse)
+async def plan_followup_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    svc: CoachService = Depends(get_coach_service),
+) -> PlanFollowUpResponse:
+    """Plan a follow-up session targeting the weakest rubric dimensions.
+
+    Creates a new session linked to this one via parent_session_id, with
+    focus_areas set to the 1-2 lowest-scoring rubric dimensions.
+    """
+    return await svc.plan_followup_session(session_id, db)
+
+
+@router.get("/progress/{session_id}/trend", response_model=list[ProgressTrendItem])
+async def get_progress_trend(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> list[ProgressTrendItem]:
+    """Return per-session progress trend for the session chain containing session_id."""
+    from ..repositories.session_repository import SessionRepository
+    repo = SessionRepository(db)
+    trend_data = await repo.get_progress_trend(session_id)
+    return [
+        ProgressTrendItem(
+            session_id=item["session_id"],
+            created_at=item["created_at"],
+            overall_score=item["overall_score"],
+            rubric_scores=item["rubric_scores"],
+            focus_areas=item["focus_areas"],
+        )
+        for item in trend_data
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Phase D — Capabilities endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.get("/capabilities")
+async def get_capabilities() -> dict:
+    """Return which perception capabilities are enabled per profile.yaml."""
+    try:
+        from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+        profile = load_profile()
+        return {
+            "face_analysis": profile.perception.face.enabled,
+            "tts": profile.perception.tts.provider != "none",
+        }
+    except Exception:
+        return {"face_analysis": False, "tts": False}
+
+
+# ---------------------------------------------------------------------------
+# Phase E — TTS question synthesis
+# ---------------------------------------------------------------------------
+
+
+@router.post("/sessions/{session_id}/tts-question")
+async def synthesise_question(
+    session_id: str,
+    question_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return WAV audio of the question text via configured TTS provider.
+
+    Returns 503 if TTS is disabled or the piper binary is not available.
+    """
+    from .._exceptions import PerceptionNotAvailableError  # noqa: PLC0415
+    from ..agents.tools.perception_factory import get_tts  # noqa: PLC0415
+    from ..repositories.session_repository import SessionRepository  # noqa: PLC0415
+
+    try:
+        tts = get_tts()
+    except PerceptionNotAvailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+    repo = SessionRepository(db)
+    q = await repo.get_question(question_id)
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    try:
+        audio_bytes = await tts.synthesise(q.text)
+    except PerceptionNotAvailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as exc:
+        logger.error("TTS synthesis failed: %s", exc)
+        raise HTTPException(status_code=500, detail="TTS synthesis failed") from exc
+
+    return Response(content=audio_bytes, media_type="audio/wav")

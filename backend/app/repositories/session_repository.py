@@ -13,6 +13,9 @@ from ..schemas.coach import SessionListItem
 logger = logging.getLogger(__name__)
 
 
+
+
+
 class SessionRepository:
     """All database operations for interview sessions, questions, and recordings."""
 
@@ -253,3 +256,124 @@ class SessionRepository:
             .order_by(SessionRecording.created_at)
         )
         return list(result.scalars().all())
+
+    # ──────────────────────── Phase C: Session chains ────────────────────────
+
+    async def update_session_phase_c(
+        self,
+        session_id: str,
+        coach_mode: str | None = None,
+        rubric: dict | None = None,
+        signals: dict | None = None,
+        focus_areas: list | None = None,
+    ) -> None:
+        """Update Phase C columns on a session.
+
+        Args:
+            session_id: UUID of the session.
+            coach_mode: Recording mode (text|voice|video).
+            rubric: Serialised SessionRubric dict.
+            signals: Supplementary signal data dict.
+            focus_areas: List of dimension names to focus on.
+        """
+        values: dict = {}
+        if coach_mode is not None:
+            values["coach_mode"] = coach_mode
+        if rubric is not None:
+            values["rubric"] = rubric
+        if signals is not None:
+            values["signals"] = signals
+        if focus_areas is not None:
+            values["focus_areas"] = focus_areas
+        if not values:
+            return
+        await self._session.execute(
+            update(InterviewSession)
+            .where(InterviewSession.id == session_id)
+            .values(**values)
+        )
+
+    async def get_session_chain(self, session_id: str) -> list[InterviewSession]:
+        """Return this session + all ancestors/descendants in the chain, oldest first.
+
+        Traverses upward to find the root session, then collects all descendants
+        in creation order.
+
+        Args:
+            session_id: UUID of any session in the chain.
+
+        Returns:
+            Ordered list of InterviewSession ORM objects (oldest first).
+        """
+        # Load the starting session
+        result = await self._session.execute(
+            select(InterviewSession).where(InterviewSession.id == session_id)
+        )
+        current = result.scalar_one_or_none()
+        if not current:
+            return []
+
+        # Walk up to the root
+        root = current
+        visited: set[str] = {current.id}
+        while root.parent_session_id and root.parent_session_id not in visited:
+            visited.add(root.parent_session_id)
+            r2 = await self._session.execute(
+                select(InterviewSession).where(InterviewSession.id == root.parent_session_id)
+            )
+            parent = r2.scalar_one_or_none()
+            if not parent:
+                break
+            root = parent
+
+        # BFS/DFS from root to collect all descendants
+        chain: list[InterviewSession] = []
+        queue = [root]
+        seen: set[str] = set()
+        while queue:
+            node = queue.pop(0)
+            if node.id in seen:
+                continue
+            seen.add(node.id)
+            chain.append(node)
+            # Load children
+            children_result = await self._session.execute(
+                select(InterviewSession).where(
+                    InterviewSession.parent_session_id == node.id
+                ).order_by(InterviewSession.created_at)
+            )
+            children = list(children_result.scalars().all())
+            queue.extend(children)
+
+        # Sort by created_at to ensure oldest first
+        chain.sort(key=lambda s: s.created_at)
+        return chain
+
+    async def get_progress_trend(self, session_id: str) -> list[dict]:
+        """Return per-skill scores across the session chain.
+
+        Args:
+            session_id: UUID of any session in the chain.
+
+        Returns:
+            List of dicts with session_id, created_at, overall_score,
+            rubric_scores, and focus_areas for each session in the chain.
+        """
+        chain = await self.get_session_chain(session_id)
+        trend = []
+        for s in chain:
+            rubric_scores: dict[str, int] = {}
+            if s.rubric and isinstance(s.rubric, dict):
+                dims = s.rubric.get("dimensions", {})
+                if isinstance(dims, dict):
+                    for dim_name, dim_data in dims.items():
+                        if isinstance(dim_data, dict):
+                            rubric_scores[dim_name] = dim_data.get("score", 0)
+            trend.append({
+                "session_id": s.id,
+                "created_at": s.created_at,
+                "overall_score": s.overall_score,
+                "rubric_scores": rubric_scores,
+                "focus_areas": s.focus_areas or [],
+            })
+        return trend

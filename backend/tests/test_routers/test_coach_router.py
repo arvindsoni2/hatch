@@ -220,3 +220,97 @@ async def test_skip_question_not_found_returns_404(client: AsyncClient) -> None:
     )
     assert response.status_code == 404
     assert "Question not found" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Phase C: plan-followup + progress trend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_plan_followup_returns_200_or_404() -> None:
+    """POST /api/coach/sessions/{id}/plan-followup returns 200 with mock service."""
+    from app.schemas.coach import PlanFollowUpResponse
+
+    sample_followup = PlanFollowUpResponse(
+        followup_session_id="new-session-uuid",
+        focus_areas=["star_structure", "delivery"],
+        message="Follow-up session created focusing on: star structure and delivery.",
+    )
+
+    with patch("app.routers.coach.CoachService") as MockSvc:
+        instance = MockSvc.return_value
+        instance.plan_followup_session = AsyncMock(return_value=sample_followup)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post("/api/coach/sessions/session-uuid-001/plan-followup")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["followup_session_id"] == "new-session-uuid"
+    assert "star_structure" in data["focus_areas"]
+
+
+@pytest.mark.asyncio
+async def test_plan_followup_session_not_found_returns_404() -> None:
+    """POST /api/coach/sessions/{id}/plan-followup returns 404 when session not found."""
+    from fastapi import HTTPException
+
+    with patch("app.routers.coach.CoachService") as MockSvc:
+        instance = MockSvc.return_value
+        instance.plan_followup_session = AsyncMock(
+            side_effect=HTTPException(status_code=404, detail="Session not found")
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post("/api/coach/sessions/nonexistent-id/plan-followup")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_progress_trend_returns_list(client: AsyncClient) -> None:
+    """GET /api/coach/progress/{session_id}/trend returns a list (empty for fresh DB)."""
+    response = await client.get("/api/coach/progress/nonexistent-session-id/trend")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+# ---------------------------------------------------------------------------
+# Phase D: capabilities endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_capabilities_returns_dict() -> None:
+    """GET /api/coach/capabilities returns face_analysis and tts flags."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/api/coach/capabilities")
+    assert response.status_code == 200
+    data = response.json()
+    assert "face_analysis" in data
+    assert "tts" in data
+    assert isinstance(data["face_analysis"], bool)
+    assert isinstance(data["tts"], bool)
+
+
+# ---------------------------------------------------------------------------
+# Phase E: TTS endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tts_question_returns_503_when_disabled(client: AsyncClient) -> None:
+    """POST /api/coach/sessions/{id}/tts-question returns 503 when TTS is disabled."""
+    from app._exceptions import PerceptionNotAvailableError
+
+    # get_tts is imported locally inside the endpoint via
+    # 'from ..agents.tools.perception_factory import get_tts'.
+    # We patch the source module where it lives.
+    with patch(
+        "app.agents.tools.perception_factory.get_tts",
+        side_effect=PerceptionNotAvailableError("TTS is disabled"),
+    ):
+        response = await client.post(
+            "/api/coach/sessions/session-uuid-001/tts-question",
+            params={"question_id": "q-uuid-001"},
+        )
+    assert response.status_code == 503

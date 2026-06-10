@@ -111,7 +111,10 @@ def get_face_analyser():
 def get_tts():
     """Return the TTS provider from profile.yaml → perception.tts.
 
-    Phase E implementation. Raises PerceptionNotAvailableError until Phase E.
+    Phase E: piper provider is now implemented.
+
+    Raises:
+        PerceptionNotAvailableError: if TTS is disabled or piper binary not found.
     """
     profile = load_profile()
     cfg = profile.perception.tts
@@ -122,6 +125,12 @@ def get_tts():
             "Set to 'piper' and install piper-tts for Phase E."
         )
 
+    if cfg.provider == "piper":
+        from app.services.tts_service import PiperTTSService  # noqa: PLC0415
+        voice = getattr(cfg, "voice", "en_GB-alan-medium") or "en_GB-alan-medium"
+        return PiperTTSService(voice=voice)
+
     raise PerceptionNotAvailableError(
-        f"TTS provider '{cfg.provider}' is not implemented yet (Phase E)."
+        f"TTS provider '{cfg.provider}' is not supported. "
+        "Supported: piper, none."
     )
