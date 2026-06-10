@@ -8,10 +8,15 @@ import { trackFromJob } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { MatchScoreBadge } from "@/components/MatchScoreBadge";
+import { formatJobRateFull } from "@/lib/currency";
+import { EmptyState, type EmptyStateCause } from "@/components/ui/EmptyState";
 
 interface JobTableProps {
   jobs: Job[];
   className?: string;
+  currencySymbol?: string;
+  emptyCause?: EmptyStateCause;
+  onEmptyAction?: () => void;
 }
 
 type TrackState = "idle" | "loading" | "done" | "exists";
@@ -38,22 +43,12 @@ function SourceCell({ source }: { source: string }) {
   return <Badge variant="source">{labels[source] ?? source}</Badge>;
 }
 
-function RateCell({ job }: { job: Job }) {
-  if (!job.rate_text && !job.rate_min) {
-    return <span className="text-slate-400">—</span>;
-  }
-
-  const displayText =
-    job.rate_text ??
-    (job.rate_min && job.rate_max && job.rate_min !== job.rate_max
-      ? `£${job.rate_min.toLocaleString()}–£${job.rate_max.toLocaleString()}`
-      : job.rate_min
-        ? `£${job.rate_min.toLocaleString()}`
-        : null);
-
+function RateCell({ job, currencySymbol = "£" }: { job: Job; currencySymbol?: string }) {
+  const displayText = formatJobRateFull(job.rate_text, job.rate_min, job.rate_max, currencySymbol);
+  if (!displayText) return <span className="text-slate-400">—</span>;
   return (
     <span className="font-medium text-emerald-700 whitespace-nowrap">
-      {displayText ?? "—"}
+      {displayText}
     </span>
   );
 }
@@ -119,16 +114,9 @@ function TrackButton({ jobId }: { jobId: string }) {
   );
 }
 
-export function JobTable({ jobs, className }: JobTableProps) {
+export function JobTable({ jobs, className, currencySymbol = "£", emptyCause = "no-results", onEmptyAction }: JobTableProps) {
   if (jobs.length === 0) {
-    return (
-      <div className="rounded-xl border border-slate-200 bg-white p-12 text-center">
-        <p className="text-slate-500 text-lg">No jobs found.</p>
-        <p className="text-slate-400 text-sm mt-1">
-          Try adjusting your filters or click &quot;Scrape Now&quot; to fetch fresh listings.
-        </p>
-      </div>
-    );
+    return <EmptyState cause={emptyCause} onAction={onEmptyAction} className={className} />;
   }
 
   return (
@@ -213,7 +201,7 @@ export function JobTable({ jobs, className }: JobTableProps) {
 
                 {/* Rate */}
                 <td className="px-4 py-3 text-sm">
-                  <RateCell job={job} />
+                  <RateCell job={job} currencySymbol={currencySymbol} />
                 </td>
 
                 {/* Contract status */}

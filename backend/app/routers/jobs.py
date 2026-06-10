@@ -70,10 +70,18 @@ def get_job_service(db: AsyncSession = Depends(get_db)) -> JobService:
 async def health_check() -> dict[str, object]:
     """Simple health check endpoint used by Docker healthcheck.
 
-    Returns:
-        JSON with status 'ok' and current UTC timestamp.
+    Returns JSON with status, timestamp, and optional ram_gb hint for onboarding.
     """
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    result: dict[str, object] = {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    try:
+        with open("/proc/meminfo") as _f:
+            for _line in _f:
+                if _line.startswith("MemTotal:"):
+                    result["ram_gb"] = round(int(_line.split()[1]) / 1_048_576)
+                    break
+    except Exception:
+        pass
+    return result
 
 
 # ──────────────────────── Job Endpoints ────────────────────────

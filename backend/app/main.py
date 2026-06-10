@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import logging.config
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -141,7 +143,79 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Content-Security-Policy: report-only mode so we catch violations without
+        # breaking the app. Switch to Content-Security-Policy once violations are clean.
+        # MediaPipe CDN and inline theme bootstrap script must be in the allowlist first.
+        csp = (
+            "default-src 'self'; "
+            "connect-src 'self' https://cdn.jsdelivr.net; "
+            "img-src 'self' data: blob:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+            "media-src 'self' blob:; "
+            "frame-ancestors 'none'"
+        )
+        response.headers["Content-Security-Policy-Report-Only"] = csp
         return response
+
+
+_MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-client token-bucket rate limiter for mutating endpoints.
+
+    Only active when HATCH_AUTH_TOKEN is non-empty (disabled for localhost dev ergonomics).
+    Clients are identified by their remote host IP.
+    """
+
+    def __init__(self, app, limit_per_minute: int, enabled: bool) -> None:
+        super().__init__(app)
+        self._limit = limit_per_minute
+        self._enabled = enabled
+        self._buckets: dict[str, list[float]] = defaultdict(list)
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if not self._enabled or request.method not in _MUTATING_METHODS:
+            return await call_next(request)
+
+        client = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        window_start = now - 60.0
+        bucket = self._buckets[client]
+        # Evict timestamps outside the 1-minute window
+        self._buckets[client] = [t for t in bucket if t > window_start]
+        if len(self._buckets[client]) >= self._limit:
+            from fastapi.responses import JSONResponse  # noqa: PLC0415
+            return JSONResponse({"detail": "Rate limit exceeded"}, status_code=429)
+        self._buckets[client].append(now)
+        return await call_next(request)
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """Optional bearer-token gate — active only when HATCH_AUTH_TOKEN is non-empty.
+
+    Exemptions: OPTIONS (CORS preflight) and /api/health always pass through.
+    All other /api/* paths require Authorization: Bearer <token>.
+    """
+
+    def __init__(self, app, token: str) -> None:
+        super().__init__(app)
+        self._token = token
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if not self._token:
+            return await call_next(request)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        if request.url.path in ("/api/health", "/api/healthz"):
+            return await call_next(request)
+        if request.url.path.startswith("/api/"):
+            auth = request.headers.get("Authorization", "")
+            if auth != f"Bearer {self._token}":
+                from fastapi.responses import JSONResponse  # noqa: PLC0415
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return await call_next(request)
 
 
 def create_app() -> FastAPI:
@@ -162,14 +236,32 @@ def create_app() -> FastAPI:
 
     # CORS — origins from ALLOWED_ORIGINS env var (comma-separated), defaults to localhost
     _origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+    if "*" in _origins:
+        logger.warning(
+            "SECURITY: ALLOWED_ORIGINS contains '*' — restrict to explicit origins in production."
+        )
+    _loopback_prefixes = ("http://localhost", "http://127.0.0.1", "http://[::1]")
+    if not settings.HATCH_AUTH_TOKEN and any(
+        not any(o.startswith(p) for p in _loopback_prefixes) for o in _origins
+    ):
+        logger.warning(
+            "SECURITY: ALLOWED_ORIGINS includes non-loopback origins but HATCH_AUTH_TOKEN is "
+            "empty. Set HATCH_AUTH_TOKEN to protect your API from unauthenticated access."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
-        allow_credentials=True,
+        allow_credentials=False,  # bearer token in Authorization header; no cookies
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Accept"],
+        allow_headers=["Content-Type", "Accept", "Authorization"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(AuthMiddleware, token=settings.HATCH_AUTH_TOKEN)
+    app.add_middleware(
+        RateLimitMiddleware,
+        limit_per_minute=settings.RATE_LIMIT_PER_MINUTE,
+        enabled=bool(settings.HATCH_AUTH_TOKEN),  # disabled for localhost dev
+    )
 
     # Routers
     app.include_router(health_router)
@@ -195,7 +287,10 @@ def create_app() -> FastAPI:
     app.include_router(settings_router)
     app.include_router(scoring_router)
     app.include_router(async_jobs_router)
-    app.include_router(debug_router)
+    if _debug:
+        app.include_router(debug_router)
+    else:
+        logger.info("Debug router disabled (LOG_LEVEL != DEBUG). Set LOG_LEVEL=DEBUG to enable.")
 
     return app
 

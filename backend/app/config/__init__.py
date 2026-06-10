@@ -24,11 +24,14 @@ settings = _mod.settings
 
 # ──────────────────────── Master profile ────────────────────────
 
-_PROFILE_PATH = Path(__file__).parent / "master_profile.yaml"
+_PROFILE_DIR = Path(__file__).parent
+_PROFILE_PATH = _PROFILE_DIR / "master_profile.yaml"
+_PROFILE_EXAMPLE_PATH = _PROFILE_DIR / "master_profile.example.yaml"
 
 
 @functools.lru_cache(maxsize=1)
 def load_master_profile() -> dict[str, Any]:
-    """Load and cache the master profile YAML."""
-    with _PROFILE_PATH.open() as fh:
+    """Load and cache the master profile YAML, falling back to the example."""
+    path = _PROFILE_PATH if _PROFILE_PATH.exists() else _PROFILE_EXAMPLE_PATH
+    with path.open() as fh:
         return yaml.safe_load(fh)

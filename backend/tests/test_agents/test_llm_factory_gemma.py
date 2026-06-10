@@ -62,18 +62,22 @@ def test_strip_both_think_and_channel_forms():
 # ---------------------------------------------------------------------------
 
 def test_reasoning_flag_true_prepends_think_token():
-    """When llm.reasoning=True and provider=ollama, <|think|> must appear in system prompt."""
+    """For gemma4 + reasoning=True, <|think|> must appear in system prompt."""
     from app.agents.tools.llm_factory import _maybe_add_think_token
 
-    result = _maybe_add_think_token("You are a CV writer.", provider="ollama", reasoning=True)
+    result = _maybe_add_think_token(
+        "You are a CV writer.", provider="ollama", reasoning=True, model_name="gemma4:e2b"
+    )
     assert "<|think|>" in result
 
 
 def test_reasoning_flag_false_does_not_prepend_think_token():
-    """When llm.reasoning=False, system prompt must not be modified."""
+    """For gemma4 + reasoning=False, system prompt must not be modified."""
     from app.agents.tools.llm_factory import _maybe_add_think_token
 
-    result = _maybe_add_think_token("You are a CV writer.", provider="ollama", reasoning=False)
+    result = _maybe_add_think_token(
+        "You are a CV writer.", provider="ollama", reasoning=False, model_name="gemma4:e2b"
+    )
     assert "<|think|>" not in result
 
 

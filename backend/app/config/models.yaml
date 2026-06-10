@@ -1,0 +1,57 @@
+# ── Hatch model cost catalog ──────────────────────────────────────────────────
+# Per-million-token pricing in USD (approximate estimates — update as providers
+# change their pricing). Used by CostTrackingCallback to estimate spend.
+#
+# Each entry is a fragment matched against the model name (case-insensitive,
+# substring match). First match wins. Ollama models have $0 cost.
+#
+# Format:
+#   <fragment>:
+#     input_per_1m: <float>
+#     output_per_1m: <float>
+
+cost_table:
+  # ── Google Gemini ───────────────────────────────────────────────────────────
+  gemini-2.0-flash:
+    input_per_1m: 0.075
+    output_per_1m: 0.30
+  gemini-2.5-flash:
+    input_per_1m: 0.075
+    output_per_1m: 0.30
+  gemini-3.0-flash:
+    input_per_1m: 0.075
+    output_per_1m: 0.30
+  gemini-2.0-pro:
+    input_per_1m: 1.25
+    output_per_1m: 5.00
+  gemini-2.5-pro:
+    input_per_1m: 1.25
+    output_per_1m: 5.00
+  gemini-3.0-pro:
+    input_per_1m: 1.25
+    output_per_1m: 5.00
+  gemini-1.5-flash:
+    input_per_1m: 0.075
+    output_per_1m: 0.30
+  gemini-1.5-pro:
+    input_per_1m: 1.25
+    output_per_1m: 5.00
+
+  # ── Anthropic Claude ────────────────────────────────────────────────────────
+  claude-haiku:
+    input_per_1m: 0.80
+    output_per_1m: 4.00
+  claude-sonnet:
+    input_per_1m: 3.00
+    output_per_1m: 15.00
+  claude-opus:
+    input_per_1m: 15.00
+    output_per_1m: 75.00
+
+  # ── OpenAI GPT ──────────────────────────────────────────────────────────────
+  gpt-4o-mini:
+    input_per_1m: 0.15
+    output_per_1m: 0.60
+  gpt-4o:
+    input_per_1m: 2.50
+    output_per_1m: 10.00

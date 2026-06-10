@@ -276,7 +276,7 @@ The locale pack (`locales/<id>.yaml`) determines:
 | Anthropic | `anthropic` | `claude-haiku-4-5-20251001` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
 | OpenAI | `openai` | `gpt-4o-mini` | `gpt-4o` | `OPENAI_API_KEY` |
 | Google | `google` | `gemini-2.0-flash` | `gemini-2.5-pro` | `GOOGLE_API_KEY` |
-| Ollama (free) | `ollama` | `phi3:mini` | `gemma4:e2b` | — (set `base_url`) |
+| Ollama (free) | `ollama` | `gemma4:e2b` | `qwen3:4b` | — (set `base_url`) |
 | Azure OpenAI | `azure` | deployment name | deployment name | `AZURE_OPENAI_API_KEY` |
 | AWS Bedrock | `aws_bedrock` | model ID | model ID | AWS credentials |
 
@@ -284,13 +284,32 @@ The locale pack (`locales/<id>.yaml`) determines:
 # profile.yaml — switch to Ollama for zero API cost
 llm:
   provider: "ollama"
-  triage_model: "phi3:mini"    # 3.8B — fast background job classification
-  primary_model: "gemma4:e2b"  # 4B instruction-tuned — CV/CL generation and JD analysis
+  triage_model: "gemma4:e2b"  # edge-optimised — fast background classification
+  primary_model: "qwen3:4b"   # dense 4B Q4 — CV/CL generation and JD analysis
   base_url: "http://host.containers.internal:11434"  # use localhost if running outside Docker
   track_costs: false
 ```
 
-> **Ollama model tip:** The installer pulls both `gemma4:e2b` (primary) and `phi3:mini` (triage) automatically on first run — no manual `ollama pull` needed. The two models serve different roles: `phi3:mini` runs fast background classification every 30 minutes; `gemma4:e2b` handles the heavier CV tailoring and JD analysis tasks. Thinking mode is automatically disabled on both to avoid multi-minute response delays. The Settings page auto-discovers all locally-pulled models so you can swap them without editing YAML.
+> **Ollama model tip:** Thinking mode is automatically managed per model family — qwen3 has thinking ON by default (Hatch disables it for speed); gemma4 has it OFF by default (Hatch enables it only for deep analysis). The Settings page auto-discovers all locally-pulled models so you can swap them without editing YAML. See `examples/profile_local_free.yaml` for a complete zero-cost configuration.
+
+### Choosing local models
+
+Pull at least two models — one large (primary) and one small (triage):
+
+```bash
+ollama pull qwen3:4b && ollama pull gemma4:e2b
+```
+
+The onboarding wizard auto-detects what you have and pre-selects the best available option. It also reads your machine's RAM and shows which tier you can run.
+
+| RAM | Recommended primary | Notes |
+|-----|---------------------|-------|
+| 32 GB+ | `qwen3:30b-a3b` | MoE 30B — ~3B active params; best quality |
+| 16–32 GB | `gemma4:26b-a4b` | MoE 26B — ~4B active params; strong alternative |
+| 8–16 GB | `qwen3:4b` | Dense 4B Q4 — solid default for most laptops |
+| < 8 GB | `gemma4:e2b` | Edge-optimised; use as triage on all tiers |
+
+All tiers use `gemma4:e2b` as the **triage model** (fast background classification). The primary model handles the heavier work: CV tailoring, cover letter generation, and coaching analysis. CPU-only — no GPU required.
 
 ### Scoring
 

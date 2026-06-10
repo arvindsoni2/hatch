@@ -140,6 +140,34 @@ def get_coach_fillers(locale_id: str) -> list[str]:
     return list(fillers)
 
 
+_DEFAULT_COACH_VOICE = "en_GB-alan-medium"
+_DEFAULT_ASR_LANGUAGE = "en"
+
+
+def get_coach_voice(locale_id: str) -> str:
+    """Return the Piper TTS voice identifier for *locale_id*.
+
+    Falls back to en_GB-alan-medium when the locale pack doesn't define coach.voice.
+    """
+    try:
+        pack = get_locale(locale_id)
+    except LocaleNotFoundError:
+        return _DEFAULT_COACH_VOICE
+    return pack.get("coach", {}).get("voice") or _DEFAULT_COACH_VOICE
+
+
+def get_coach_asr_language(locale_id: str) -> str:
+    """Return the Whisper ASR language hint (BCP-47 language code) for *locale_id*.
+
+    Falls back to 'en' when the locale pack doesn't define coach.asr_language.
+    """
+    try:
+        pack = get_locale(locale_id)
+    except LocaleNotFoundError:
+        return _DEFAULT_ASR_LANGUAGE
+    return pack.get("coach", {}).get("asr_language") or _DEFAULT_ASR_LANGUAGE
+
+
 def get_legal_fields(locale_id: str) -> list[dict[str, Any]]:
     """Return legal_fields definitions for the onboarding wizard."""
     try:
@@ -147,3 +175,22 @@ def get_legal_fields(locale_id: str) -> list[dict[str, Any]]:
     except LocaleNotFoundError:
         return []
     return pack.get("legal_fields", [])
+
+
+_LOCALE_TIMEZONES: dict[str, str] = {
+    "uk": "Europe/London",
+    "ie": "Europe/Dublin",
+    "de": "Europe/Berlin",
+    "in": "Asia/Kolkata",
+    "ae": "Asia/Dubai",
+    "us": "America/New_York",
+}
+_DEFAULT_TIMEZONE = "UTC"
+
+
+def get_digest_timezone(locale_id: str) -> str:
+    """Return the IANA timezone for digest scheduling, derived from locale.
+
+    Falls back to UTC when the locale has no mapping.
+    """
+    return _LOCALE_TIMEZONES.get(locale_id, _DEFAULT_TIMEZONE)

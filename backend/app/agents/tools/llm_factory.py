@@ -9,6 +9,7 @@ in agent code. Always go through this module.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -17,7 +18,10 @@ import urllib.request
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
@@ -26,6 +30,24 @@ from langchain_core.outputs import LLMResult
 from .profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
+
+_MODELS_YAML = Path(__file__).parent.parent.parent / "config" / "models.yaml"
+
+
+@functools.lru_cache(maxsize=1)
+def _load_cost_table() -> dict[str, tuple[float, float]]:
+    """Load per-million-token pricing from config/models.yaml."""
+    try:
+        with _MODELS_YAML.open() as fh:
+            data = yaml.safe_load(fh)
+        table: dict[str, tuple[float, float]] = {}
+        for fragment, entry in (data.get("cost_table") or {}).items():
+            table[fragment] = (float(entry["input_per_1m"]), float(entry["output_per_1m"]))
+        return table
+    except Exception:
+        logger.warning("Could not load %s — cost estimates will be zero.", _MODELS_YAML)
+        return {}
+
 
 try:
     from langchain_core.callbacks import BaseCallbackHandler as _BaseCallbackHandler
@@ -47,24 +69,6 @@ class _LLMTrace:
 
 _trace_counter: int = 0
 _trace_buffer: deque[_LLMTrace] = deque(maxlen=100)
-
-# Per-million-token pricing (USD) for common models — approximate estimates
-_COST_TABLE: dict[str, tuple[float, float]] = {
-    # model_fragment: (input_per_1M, output_per_1M)
-    "gemini-2.0-flash": (0.075, 0.30),
-    "gemini-2.5-flash": (0.075, 0.30),
-    "gemini-3.0-flash": (0.075, 0.30),
-    "gemini-2.0-pro": (1.25, 5.00),
-    "gemini-2.5-pro": (1.25, 5.00),
-    "gemini-3.0-pro": (1.25, 5.00),
-    "gemini-1.5-flash": (0.075, 0.30),
-    "gemini-1.5-pro": (1.25, 5.00),
-    "claude-haiku": (0.80, 4.00),
-    "claude-sonnet": (3.00, 15.00),
-    "claude-opus": (15.00, 75.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4o": (2.50, 10.00),
-}
 
 
 class CostTrackingCallback(_BaseCallbackHandler):  # type: ignore[misc]
@@ -225,9 +229,9 @@ def estimate_tokens(text: str) -> int:
 
 
 def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
-    """Return approximate USD cost for a model call based on known pricing."""
+    """Return approximate USD cost for a model call based on config/models.yaml pricing."""
     model_lower = model.lower()
-    for fragment, (in_rate, out_rate) in _COST_TABLE.items():
+    for fragment, (in_rate, out_rate) in _load_cost_table().items():
         if fragment in model_lower:
             return round(
                 (tokens_in / 1_000_000) * in_rate + (tokens_out / 1_000_000) * out_rate,
@@ -236,17 +240,33 @@ def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     return 0.0
 
 
-_TINY_MODEL_PATTERNS = ("e2b", ":1b", ":3b", "mini", "lite", "nano")
+_TINY_MODEL_PATTERNS = ("e2b", ":0.6b", ":1b", ":1.7b", ":3b", "mini", "lite", "nano")
+
+# Recommended Ollama defaults for CPU-only consumer hardware (see LLM-1/LLM-2 spec)
+_OLLAMA_RECOMMENDED_ORDER = [
+    "qwen3:30b-a3b",   # MoE, ~3B active — best quality on 32 GB
+    "gemma4:26b-a4b",  # MoE, ~4B active — strong alternative on 16–32 GB
+    "qwen3:4b",        # dense 4B Q4 — default primary for 8–16 GB
+    "gemma4:e2b",      # edge-optimised triage model
+]
 
 
-def _maybe_add_think_token(system_prompt: str, provider: str, reasoning: bool) -> str:
-    """Prepend <|think|> to system prompt for Ollama reasoning models when enabled.
+def _maybe_add_think_token(system_prompt: str, provider: str, reasoning: bool, model_name: str = "") -> str:
+    """Inject thinking-mode control into the system prompt (model-family-aware).
 
-    Gemma 4 activates chain-of-thought via this token in the system prompt.
-    Other providers use their own native reasoning flags and must not receive it.
+    - gemma4: thinking is OFF by default; prepend <|think|> only when reasoning=True
+    - qwen3:  thinking is ON by default; prepend /no_think when reasoning=False
+    - others: no-op
     """
-    if reasoning and provider == "ollama":
-        return f"<|think|>\n{system_prompt}"
+    if provider != "ollama":
+        return system_prompt
+    m = model_name.lower()
+    if m.startswith("gemma4"):
+        if reasoning:
+            return f"<|think|>\n{system_prompt}"
+    elif m.startswith("qwen3"):
+        if not reasoning:
+            return f"/no_think\n{system_prompt}"
     return system_prompt
 
 
@@ -264,15 +284,24 @@ def _detect_ollama_model(llm_cfg: Any) -> str:
             req = urllib.request.urlopen(f"{url}/api/tags", timeout=3)
             models = json.loads(req.read()).get("models", [])
             if models:
-                name = models[0]["name"]
+                available = [m["name"] for m in models]
+                # Prefer recommended models in priority order over arbitrary first
+                for rec in _OLLAMA_RECOMMENDED_ORDER:
+                    for a in available:
+                        if a == rec or a.startswith(rec.split(":")[0] + ":"):
+                            logger.info("Auto-detected Ollama model '%s' from %s", a, url)
+                            return a
+                name = available[0]
                 logger.info("Auto-detected Ollama model '%s' from %s", name, url)
                 return name
         except Exception:
             continue
     raise ValueError(
         "No model configured (triage_model / primary_model in profile.yaml is empty) "
-        "and no Ollama models found. Pull a model first: 'ollama pull phi3:mini', "
-        "then select it in Settings → AI Provider."
+        "and no Ollama models found. Pull a model first:\n"
+        "  ollama pull qwen3:4b      # recommended primary (CPU-optimised, 8–16 GB RAM)\n"
+        "  ollama pull gemma4:e2b   # recommended triage (fast, low memory)\n"
+        "Then select the models in Settings → AI Provider."
     )
 
 
@@ -324,16 +353,20 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     if effective_base_url:
         kwargs["base_url"] = effective_base_url
 
-    # Ollama-specific tuning for long-context models like gemma4:
-    # - reasoning: from profile.yaml llm.reasoning (default False for latency)
+    # Ollama-specific tuning:
     # - request_timeout: hard ceiling to prevent silent hangs on slow CPU inference
-    # - num_ctx: Ollama defaults to 4096 for gemma4 but CV/CL prompts are ~4K tokens
-    #   input alone, leaving no room for output. Force 16 K for all primary-model calls.
+    # - num_ctx: Ollama defaults to 4096 but CV/CL prompts consume ~4K tokens alone
+    # - thinking-mode is model-family-aware (gemma4 vs qwen3 — see _maybe_add_think_token)
     if llm_cfg.provider == "ollama":
         reasoning = getattr(llm_cfg, "reasoning", False)
-        kwargs["reasoning"] = reasoning
         kwargs["request_timeout"] = 300  # 5-minute hard ceiling; prevents silent hangs
         kwargs["num_ctx"] = 16384
+        # qwen3: thinking is ON by default; must explicitly disable unless reasoning=True
+        if model_name.lower().startswith("qwen3"):
+            kwargs["think"] = reasoning
+        else:
+            # gemma4 and others: reasoning token injected via _maybe_add_think_token
+            kwargs["reasoning"] = reasoning
         top_p = getattr(llm_cfg, "top_p", None)
         top_k = getattr(llm_cfg, "top_k", None)
         if top_p is not None:
@@ -342,9 +375,8 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
             kwargs["top_k"] = top_k
         if not reasoning and any(p in model_name.lower() for p in _TINY_MODEL_PATTERNS):
             logger.warning(
-                "primary_model '%s' is a small reasoner but llm.reasoning=False. "
-                "Set llm.reasoning: true in profile.yaml for better structured output. "
-                "Consider upgrading to gemma4:e4b for document generation.",
+                "primary_model '%s' is a small model but llm.reasoning=False. "
+                "Consider upgrading to qwen3:4b (primary) or gemma4:e2b (triage).",
                 model_name,
             )
 
@@ -393,13 +425,17 @@ def get_json_model() -> BaseChatModel:
             "max_retries": llm_cfg.max_retries,
             "format": "json",
             "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
-            "reasoning": reasoning,
             "request_timeout": 300,  # 5-minute hard ceiling; prevents silent hangs
-            # Ollama defaults to 4096 context for gemma4 but CV/CL prompts consume
-            # ~4000 tokens of input, leaving no room for output. Force 16 K so there's
-            # always headroom for thinking tokens + the full generated JSON.
+            # Ollama defaults to 4096 context but CV/CL prompts consume ~4000 tokens.
+            # Force 16 K to leave headroom for thinking tokens + the full generated JSON.
             "num_ctx": 16384,
         }
+        # qwen3 uses the `think` kwarg (ON by default, we disable unless reasoning=True)
+        # gemma4/others use the `reasoning` kwarg (OFF by default)
+        if model_name.lower().startswith("qwen3"):
+            kwargs["think"] = reasoning
+        else:
+            kwargs["reasoning"] = reasoning
         top_p = getattr(llm_cfg, "top_p", None)
         top_k = getattr(llm_cfg, "top_k", None)
         if top_p is not None:

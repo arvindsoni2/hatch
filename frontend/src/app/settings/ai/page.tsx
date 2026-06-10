@@ -65,6 +65,76 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: "Ollama (local, free)",
 }
 
+const FREE_PROVIDERS = new Set(["ollama"])
+
+// ── Spend readout ─────────────────────────────────────────────────
+
+interface MonthlyCost {
+  total: number;
+  by_agent: Record<string, number>;
+  month: string;
+}
+
+function SpendReadout({ provider }: { provider?: string }) {
+  const [cost, setCost] = useState<MonthlyCost | null>(null)
+  useEffect(() => {
+    fetch(`${API_BASE}/api/v2/analytics/costs/monthly`)
+      .then((r) => r.json())
+      .then((d) => setCost(d as MonthlyCost))
+      .catch(() => {})
+  }, [])
+
+  const isFree = provider ? FREE_PROVIDERS.has(provider) : false
+
+  return (
+    <SectionCard title="LLM Spend">
+      <div className="flex items-start gap-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[22px] font-[600] text-[var(--text)] tabular-nums">
+              {cost ? `$${cost.total.toFixed(4)}` : "—"}
+            </span>
+            <span className="text-sm text-[var(--text-dim)]">this month</span>
+            {isFree && (
+              <span className="inline-flex items-center rounded-full bg-green-100 text-green-800 px-2 py-0.5 text-xs font-medium">
+                FREE
+              </span>
+            )}
+            {provider && !isFree && (
+              <span className="inline-flex items-center rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-xs font-medium">
+                PAID
+              </span>
+            )}
+          </div>
+          {cost && cost.total > 0 && Object.keys(cost.by_agent).length > 0 && (
+            <div className="mt-3 space-y-1">
+              {Object.entries(cost.by_agent)
+                .sort(([, a], [, b]) => b - a)
+                .map(([agent, spend]) => (
+                  <div key={agent} className="flex items-center gap-2 text-[12px]">
+                    <span className="w-28 text-[var(--text-dim)] truncate capitalize">{agent.replace(/_/g, " ")}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--accent)] rounded-full"
+                        style={{ width: `${Math.min(100, (spend / cost.total) * 100).toFixed(1)}%` }}
+                      />
+                    </div>
+                    <span className="w-14 text-right text-[var(--text-dim)] tabular-nums">${spend.toFixed(4)}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+          {isFree && (
+            <p className="text-[12px] text-[var(--text-dim)] mt-2">
+              Ollama runs locally — no API charges. Set <code className="bg-[var(--surface-2)] rounded px-1">track_costs: false</code> in profile.yaml to hide this panel.
+            </p>
+          )}
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ── Page ───────────────────────────────────────────────────────────
 
 export default function AiSettingsPage() {
@@ -202,9 +272,12 @@ export default function AiSettingsPage() {
               return (
                 <div key={provider} className="flex items-center justify-between py-2.5">
                   <div className="flex items-center gap-2.5">
-                    <span className={`h-2 w-2 rounded-full shrink-0 ${info?.set ? "bg-green-500" : "bg-[var(--border-strong)]"}`} />
+                    <span className={`h-2 w-2 rounded-full shrink-0 ${info?.set || FREE_PROVIDERS.has(provider) ? "bg-green-500" : "bg-[var(--border-strong)]"}`} />
                     <span className="text-sm font-medium text-fg">{label}</span>
                     {isActive && <Badge variant="green">active</Badge>}
+                    {FREE_PROVIDERS.has(provider)
+                      ? <Badge variant="green">free</Badge>
+                      : <Badge variant="amber">paid</Badge>}
                   </div>
                   <div className="flex items-center gap-2 text-right">
                     {info?.masked && (
@@ -337,6 +410,9 @@ export default function AiSettingsPage() {
           )}
         </SectionCard>
       )}
+
+      {/* LLM spend readout */}
+      <SpendReadout provider={currentProvider} />
 
       {/* Scoring strategy */}
       <SectionCard title="Scoring Strategy">

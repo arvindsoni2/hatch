@@ -78,7 +78,7 @@ class TestLlmFactory:
         mock_model = MagicMock()
         mock_profile = MagicMock()
         mock_profile.llm.provider = "ollama"
-        mock_profile.llm.primary_model = "phi3:mini"
+        mock_profile.llm.primary_model = "qwen3:4b"
         mock_profile.llm.temperature = 0.3
         mock_profile.llm.max_retries = 3
         mock_profile.llm.api_key_env = ""
@@ -92,7 +92,7 @@ class TestLlmFactory:
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs.get("format") == "json"
-        assert call_kwargs.get("model") == "phi3:mini"
+        assert call_kwargs.get("model") == "qwen3:4b"
         assert call_kwargs.get("model_provider") == "ollama"
         # _attach_tracer wraps the model via .with_config() for latency callbacks
         assert result is mock_model.with_config.return_value
@@ -190,6 +190,69 @@ class TestLlamaCppProvider:
         inner = _unwrap(model)
         assert isinstance(inner, ChatOpenAI)
         assert inner.model_kwargs.get("response_format") == {"type": "json_object"}
+
+
+class TestModelAwareThinking:
+    """LLM-2: qwen3 thinking is ON by default; gemma4 is OFF by default."""
+
+    def test_maybe_add_think_token_qwen3_adds_no_think_when_reasoning_false(self):
+        """_maybe_add_think_token prepends /no_think for qwen3 when reasoning=False."""
+        from app.agents.tools.llm_factory import _maybe_add_think_token
+        result = _maybe_add_think_token("Evaluate the response.", "ollama", False, "qwen3:4b")
+        assert result.startswith("/no_think")
+
+    def test_maybe_add_think_token_qwen3_no_prefix_when_reasoning_true(self):
+        """_maybe_add_think_token does NOT add /no_think for qwen3 when reasoning=True."""
+        from app.agents.tools.llm_factory import _maybe_add_think_token
+        result = _maybe_add_think_token("Evaluate the response.", "ollama", True, "qwen3:4b")
+        assert not result.startswith("/no_think")
+
+    def test_maybe_add_think_token_gemma4_adds_think_when_reasoning_true(self):
+        """_maybe_add_think_token prepends <|think|> for gemma4 when reasoning=True."""
+        from app.agents.tools.llm_factory import _maybe_add_think_token
+        result = _maybe_add_think_token("Score this answer.", "ollama", True, "gemma4:e2b")
+        assert result.startswith("<|think|>")
+
+    def test_maybe_add_think_token_gemma4_no_prefix_when_reasoning_false(self):
+        """_maybe_add_think_token is a no-op for gemma4 when reasoning=False."""
+        from app.agents.tools.llm_factory import _maybe_add_think_token
+        result = _maybe_add_think_token("Score this answer.", "ollama", False, "gemma4:e2b")
+        assert result == "Score this answer."
+
+    def test_maybe_add_think_token_non_ollama_is_noop(self):
+        """_maybe_add_think_token is always a no-op for non-Ollama providers."""
+        from app.agents.tools.llm_factory import _maybe_add_think_token
+        result = _maybe_add_think_token("prompt", "anthropic", True, "claude-sonnet-4-6")
+        assert result == "prompt"
+
+    def test_build_model_qwen3_passes_think_false(self):
+        """For qwen3 models, _build_model passes think=False when reasoning=False."""
+        mock_model = MagicMock()
+        mock_profile = MagicMock()
+        mock_profile.llm.provider = "ollama"
+        mock_profile.llm.primary_model = "qwen3:4b"
+        mock_profile.llm.temperature = 0.3
+        mock_profile.llm.max_retries = 3
+        mock_profile.llm.api_key_env = ""
+        mock_profile.llm.base_url = "http://localhost:11434"
+        mock_profile.llm.reasoning = False
+        mock_profile.llm.top_p = None
+        mock_profile.llm.top_k = None
+
+        with patch("app.agents.tools.llm_factory.load_profile", return_value=mock_profile), \
+             patch("app.agents.tools.llm_factory.init_chat_model", return_value=mock_model) as mock_init:
+            from app.agents.tools.llm_factory import get_primary_model
+            get_primary_model()
+
+        call_kwargs = mock_init.call_args.kwargs
+        assert call_kwargs.get("think") is False
+        assert "reasoning" not in call_kwargs  # qwen3 uses think=, not reasoning=
+
+    def test_tiny_model_patterns_include_qwen3_small_variants(self):
+        """_TINY_MODEL_PATTERNS flags qwen3:1.7b as tiny but not qwen3:4b."""
+        from app.agents.tools.llm_factory import _TINY_MODEL_PATTERNS
+        assert any(p in "qwen3:1.7b" for p in _TINY_MODEL_PATTERNS)
+        assert not any(p in "qwen3:4b" for p in _TINY_MODEL_PATTERNS)
 
 
 class TestThinkBlockStripping:

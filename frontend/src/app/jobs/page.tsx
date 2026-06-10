@@ -144,7 +144,7 @@ export default function JobsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Inbox</h1>
-          <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
+          <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }} aria-live="polite" aria-atomic="true">
             {showArchived
               ? `Archived jobs — ${total.toLocaleString()} total`
               : !showAll
@@ -267,8 +267,8 @@ export default function JobsPage() {
 
       {/* Results */}
       {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
+        <div className="flex items-center justify-center py-16" role="status" aria-live="polite" aria-label="Loading jobs">
+          <Loader2 className="h-8 w-8 animate-spin text-brand-500" aria-hidden="true" />
           <span className="ml-3 text-slate-500">Loading jobs…</span>
         </div>
       ) : error ? (

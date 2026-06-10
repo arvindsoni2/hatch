@@ -209,8 +209,8 @@ class DigestService:
         Returns:
             True if sent, False if skipped.
         """
-        if not settings.SMTP_USER or not settings.NOTIFICATION_EMAIL:
-            logger.info("Digest: SMTP_USER or NOTIFICATION_EMAIL not set — skipping.")
+        if not settings.SMTP_HOST or not settings.SMTP_USER or not settings.NOTIFICATION_EMAIL:
+            logger.info("Digest: SMTP not configured (SMTP_HOST/SMTP_USER/NOTIFICATION_EMAIL) — skipping.")
             return False
 
         payload = await self.build_digest(db)

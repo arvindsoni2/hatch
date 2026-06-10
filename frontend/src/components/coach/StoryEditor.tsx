@@ -126,7 +126,7 @@ export function StoryEditor({ initialData, onSave, onCancel, saving }: Props) {
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="e.g. £500K Mobile Platform at Northern Powergrid"
+          placeholder="e.g. Cut onboarding time 40% at [Company]"
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
       </div>
@@ -140,7 +140,7 @@ export function StoryEditor({ initialData, onSave, onCancel, saving }: Props) {
           type="text"
           value={summary}
           onChange={(e) => setSummary(e.target.value.slice(0, 200))}
-          placeholder="Delivered £500K savings by modernising a legacy mobile platform"
+          placeholder="Describe the result — quantify with %, £/$/₹, or time saved"
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
         <p className="text-right text-xs text-slate-400 mt-0.5">{summary.length}/200</p>

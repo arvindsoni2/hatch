@@ -112,7 +112,7 @@ async def test_llm_connection(data: dict[str, Any]) -> dict[str, Any]:
         "openai": "gpt-4o-mini",
         "google": "gemini-2.0-flash",
         "azure": "gpt-4o-mini",
-        "ollama": "phi3:mini",
+        "ollama": "qwen3:4b",
     }
     model_name = model_map.get(provider, "claude-haiku-4-5-20251001")
 

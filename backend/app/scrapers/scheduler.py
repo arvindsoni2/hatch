@@ -247,19 +247,20 @@ def create_scheduler(
             hour, minute = (int(p) for p in settings.DIGEST_TIME.split(":"))
         except ValueError:
             hour, minute = 7, 0
+        # Derive timezone from locale when DIGEST_TIMEZONE is not explicitly set
+        if settings.DIGEST_TIMEZONE:
+            tz = settings.DIGEST_TIMEZONE
+        else:
+            from ..services.locale_service import get_digest_timezone  # noqa: PLC0415
+            tz = get_digest_timezone(settings.LOCALE)
         scheduler.add_job(
             run_digest,
-            CronTrigger(hour=hour, minute=minute, timezone=settings.DIGEST_TIMEZONE),
+            CronTrigger(hour=hour, minute=minute, timezone=tz),
             args=[digest_service, db_factory],
             id="daily_digest",
             name="Send daily digest",
             replace_existing=True,
         )
-        logger.info(
-            "Scheduled daily digest at %02d:%02d %s.",
-            hour,
-            minute,
-            settings.DIGEST_TIMEZONE,
-        )
+        logger.info("Scheduled daily digest at %02d:%02d %s.", hour, minute, tz)
 
     return scheduler

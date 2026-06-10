@@ -1,0 +1,40 @@
+# master_profile.example.yaml — generic template
+# Copy to master_profile.yaml and fill in your own details.
+# master_profile.yaml is gitignored; this example is safe to commit.
+
+candidate:
+  name: "Your Name"
+  title: "Your Professional Title"
+  years_experience: 10
+  location: "Your City, Country"
+  remote_preference: "hybrid_or_remote"
+
+rate:
+  min_daily: 400
+  max_daily: 600
+  currency: "GBP"
+  ir35_status: "outside"
+
+skills:
+  primary:
+    - "Your primary skill 1"
+    - "Your primary skill 2"
+    - "Your primary skill 3"
+  secondary:
+    - "Supporting skill 1"
+    - "Supporting skill 2"
+
+domains:
+  preferred:
+    - "Industry A"
+    - "Industry B"
+
+proof_points:
+  - id: "example_achievement_1"
+    summary: "Quantified achievement at [Company] — e.g. cut delivery time 40%"
+    context: "Your Employer"
+    metrics: "e.g. 40% faster, saved £X/year"
+
+certifications:
+  - "Certification 1"
+  - "Certification 2"

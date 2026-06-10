@@ -45,7 +45,7 @@ _FREE_TIER_PROVIDERS = {"google_genai", "ollama"}
 
 def _write_env_key(key_name: str, key_value: str) -> None:
     """Append or replace a key in data/api_keys.env."""
-    _API_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _API_KEYS_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines: list[str] = []
     if _API_KEYS_FILE.exists():
         lines = _API_KEYS_FILE.read_text().splitlines()
@@ -61,6 +61,7 @@ def _write_env_key(key_name: str, key_value: str) -> None:
     if not updated:
         new_lines.append(f"{key_name}={key_value}")
     _API_KEYS_FILE.write_text("\n".join(new_lines) + "\n")
+    os.chmod(_API_KEYS_FILE, 0o600)
 
 
 def _load_env_file() -> None:

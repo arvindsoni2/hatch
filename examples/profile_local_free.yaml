@@ -1,0 +1,107 @@
+# ── JobPilot v2 Example Profile — Local-Free (Ollama, $0/month) ───────────────
+# Uses Ollama running on your machine — no API keys, no cloud spend.
+# Before starting Hatch, pull the recommended models:
+#
+#   ollama pull qwen3:4b && ollama pull gemma4:e2b
+#
+# See "Choosing local models" in README.md for RAM tier guidance.
+# Copy to data/profile.yaml and fill in your own details.
+
+candidate:
+  name: "Your Name"
+  title: "Your Job Title"
+  years_experience: 5
+  summary: >
+    Brief professional summary — 2-3 sentences. Focus on your domain,
+    key technologies, and what makes you distinctive in the job market.
+
+search:
+  target_roles:
+    - "Your Primary Role"
+    - "Related Role Title"
+  locations:
+    - city: "Your City"
+      country: "UK"
+      radius_miles: 30
+      remote_preference: "hybrid"
+    - city: "Remote"
+      country: "UK"
+      radius_miles: 0
+      remote_preference: "remote"
+  contract_type: "contract"  # or "permanent"
+
+compensation:
+  min_rate: 400
+  max_rate: 600
+  rate_type: "daily"     # or "hourly", "annual"
+  currency: "GBP"
+  ir35_preference: "outside"  # or "inside", "either"
+
+skills:
+  primary:
+    - "Your primary skill"
+    - "Another core skill"
+  secondary:
+    - "Supporting skill"
+    - "Tool or framework"
+  certifications:
+    - "Any relevant certification"
+
+domains:
+  preferred:
+    - "Your preferred industry"
+  excluded:
+    - "Industry you'd avoid"
+
+proof_points:
+  - id: "achievement_one"
+    summary: "Brief description of a key achievement"
+    context: "Company / project context"
+    metrics: "Quantified result — %, £, time saved, users impacted"
+    tags: ["relevant", "tag"]
+
+master_cv_path: "./data/master_cv.json"
+
+job_boards:
+  - name: "reed"
+    enabled: true
+    scraper: "ReedScraper"
+    search_params:
+      keywords: ["your role title"]
+      location: "Your City"
+  - name: "cwjobs"
+    enabled: true
+    scraper: "CWJobsScraper"
+    search_params:
+      keywords: ["your role title"]
+      location: "Your City"
+
+scoring:
+  weights:
+    skill_match: 0.35
+    experience_match: 0.30
+    rate_match: 0.20
+    location_match: 0.15
+  shortlist_threshold: 0.70
+
+llm:
+  # Ollama — runs entirely on your machine, $0 API spend, no key required.
+  # Hatch auto-detects the best installed model. Pull at least one model first:
+  #   ollama pull qwen3:4b && ollama pull gemma4:e2b
+  provider: "ollama"
+  triage_model: "gemma4:e2b"    # fast, small — for quick relevance filtering
+  primary_model: "qwen3:4b"     # larger — for tailoring, coaching, analysis
+  api_key_env: ""
+  base_url: "http://host.containers.internal:11434"  # container deployment
+  # base_url: "http://localhost:11434"               # direct host install
+  temperature: 0.3
+  max_retries: 3
+  track_costs: false   # no costs to track with Ollama
+  monthly_budget: 0
+  currency: "GBP"
+
+preferences:
+  scrape_interval_hours: 4
+  max_tailor_batch: 5
+  follow_up_days: [5, 10, 15]
+  locale: "en-GB"

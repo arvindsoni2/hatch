@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import os
@@ -30,6 +31,25 @@ from ..services.coach_service import CoachService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/coach", tags=["coach"])
+
+# Strict allowlist: server-generated UUIDs and slug IDs only (no path separators)
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# Map content-type → file extension (never trust the user-supplied filename)
+_AUDIO_CT_TO_EXT: dict[str, str] = {
+    "audio/webm": ".webm",
+    "audio/wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/ogg": ".ogg",
+}
+
+
+def _require_safe_id(value: str, field: str) -> None:
+    if not _SAFE_ID_RE.match(value):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}: must be alphanumeric/dash/underscore only")
 
 
 def get_coach_service() -> CoachService:
@@ -261,7 +281,10 @@ async def submit_audio(
     metrics, evaluates the answer, and saves a recording with audio_uri set.
     Poll /api/async-jobs/{job_id} for the AnswerEvaluation result.
     """
-    ct = audio.content_type or ""
+    _require_safe_id(session_id, "session_id")
+    _require_safe_id(question_id, "question_id")
+
+    ct = (audio.content_type or "").split(";")[0].strip().lower()
     if not ct.startswith("audio/"):
         raise HTTPException(
             status_code=400,
@@ -272,10 +295,13 @@ async def submit_audio(
     if len(audio_bytes) > _MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio file exceeds 50 MB limit")
 
-    suffix = Path(audio.filename or "answer.webm").suffix or ".audio"
+    suffix = _AUDIO_CT_TO_EXT.get(ct, ".audio")
     recordings_dir = Path(os.getenv("DATA_DIR", "./data")) / "recordings" / session_id
     recordings_dir.mkdir(parents=True, exist_ok=True)
     audio_path = recordings_dir / f"{question_id}{suffix}"
+    resolved = audio_path.resolve()
+    if not resolved.is_relative_to(recordings_dir.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid audio path")
     audio_path.write_bytes(audio_bytes)
     audio_path_str = str(audio_path)
 

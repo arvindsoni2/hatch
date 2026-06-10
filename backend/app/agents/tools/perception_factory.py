@@ -33,11 +33,14 @@ def get_transcriber():
 
     if cfg.provider == "faster_whisper":
         from app.services.transcriber import FasterWhisperTranscriber  # noqa: PLC0415
+        from app.services.locale_service import get_coach_asr_language  # noqa: PLC0415
         download_root = os.getenv("WHISPER_MODEL_CACHE") or None
+        # Language hint: prefer explicit profile setting, then locale default
+        language = cfg.language or get_coach_asr_language(profile.locale)
         return FasterWhisperTranscriber(
             model_size=cfg.model,
             compute_type=cfg.compute_type,
-            language=cfg.language,
+            language=language,
             device="cpu",
             download_root=download_root,
         )
@@ -127,7 +130,9 @@ def get_tts():
 
     if cfg.provider == "piper":
         from app.services.tts_service import PiperTTSService  # noqa: PLC0415
-        voice = getattr(cfg, "voice", "en_GB-alan-medium") or "en_GB-alan-medium"
+        from app.services.locale_service import get_coach_voice  # noqa: PLC0415
+        # Voice: prefer explicit profile setting, then locale default, then en_GB fallback
+        voice = getattr(cfg, "voice", None) or get_coach_voice(profile.locale)
         return PiperTTSService(voice=voice)
 
     raise PerceptionNotAvailableError(

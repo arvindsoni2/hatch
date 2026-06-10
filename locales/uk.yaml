@@ -93,6 +93,8 @@ scoring_defaults:
   shortlist_threshold: 0.75
 
 coach:
+  voice: "en_GB-alan-medium"
+  asr_language: "en"
   fillers:
     - "um"
     - "uh"

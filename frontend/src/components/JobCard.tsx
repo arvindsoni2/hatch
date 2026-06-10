@@ -8,6 +8,7 @@ import type { Job } from "@/lib/api";
 import { trackFromJob } from "@/lib/api";
 import { ScoreBadge } from "@/components/ScoreBadge";
 import { cn } from "@/lib/utils";
+import { formatJobRateFull } from "@/lib/currency";
 
 const SOURCE_LABELS: Record<string, string> = {
   contractoruk: "ContractorUK",
@@ -19,23 +20,16 @@ const SOURCE_LABELS: Record<string, string> = {
   linkedin: "LinkedIn",
 };
 
-function formatRate(job: Job): string | null {
-  if (job.rate_text) return job.rate_text;
-  if (job.rate_min && job.rate_max && job.rate_min !== job.rate_max)
-    return `£${job.rate_min.toLocaleString()}–£${job.rate_max.toLocaleString()}`;
-  if (job.rate_min) return `£${job.rate_min.toLocaleString()}`;
-  return null;
-}
-
 interface JobCardProps {
   job: Job;
   threshold?: number;
+  currencySymbol?: string;
 }
 
-export function JobCard({ job, threshold = 0.75 }: JobCardProps) {
+export function JobCard({ job, threshold = 0.75, currencySymbol = "£" }: JobCardProps) {
   const [trackState, setTrackState] = useState<"idle" | "loading" | "done" | "exists">("idle");
 
-  const rate = formatRate(job);
+  const rate = formatJobRateFull(job.rate_text, job.rate_min, job.rate_max, currencySymbol);
   // Prefer legal_fields (locale-neutral); fall back to ir35_status for legacy data
   const legalLabel = (() => {
     const fields = job.legal_fields ?? (job.ir35_status ? { ir35_status: job.ir35_status } : {});

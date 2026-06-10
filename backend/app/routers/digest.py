@@ -66,12 +66,14 @@ async def digest_status() -> dict[str, object]:
         Dict with enabled flag and configuration.
     """
     from ..config import settings  # noqa: PLC0415
+    from ..services.locale_service import get_digest_timezone  # noqa: PLC0415
+    tz = settings.DIGEST_TIMEZONE or get_digest_timezone(settings.LOCALE)
     return {
         "enabled": settings.DIGEST_ENABLED,
         "time": settings.DIGEST_TIME,
-        "timezone": settings.DIGEST_TIMEZONE,
+        "timezone": tz,
         "frequency": settings.DIGEST_FREQUENCY,
-        "smtp_configured": bool(settings.SMTP_USER),
+        "smtp_configured": bool(settings.SMTP_HOST and settings.SMTP_USER),
         "recipient": settings.NOTIFICATION_EMAIL or None,
     }
 

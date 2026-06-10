@@ -8,5 +8,9 @@ faster-whisper>=1.0.3
 # which breaks transformers 4.46.x GPT2TokenizerFast at import time. Pin to 0.19.x.
 tokenizers>=0.19.0,<0.20
 # Phase B — audeering dimensional voice emotion (wav2vec2 regression, CPU)
+# SEC-9 MIGRATION NOTE: transformers 5.x (expected late 2026) will remove
+# the Pipeline API fallback and change model loading. Track:
+# https://github.com/huggingface/transformers/releases
+# When upgrading, audit perception_factory.py, voice_emotion_analyser.py.
 transformers>=4.35.0
 torch>=2.0.0

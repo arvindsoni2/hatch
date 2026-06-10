@@ -28,6 +28,7 @@ CLAUDE_Phase2.md
 secrets/
 env-v2-additions.txt
 backend/data/api_keys.env
+backend/app/config/master_profile.yaml
 data/generated/
 # ──────────────────────── Python ────────────────────────
 __pycache__/

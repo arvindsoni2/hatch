@@ -1,106 +1,104 @@
-id: "de"
-name: "Germany"
-flag: "🇩🇪"
-
-currency: "EUR"
-currency_symbol: "€"
-default_rate_type: "annual"
-
+id: de
+name: Germany
+flag: 🇩🇪
+currency: EUR
+currency_symbol: €
+default_rate_type: annual
 rate_types:
-  - id: "annual"
-    label: "Annual salary (Brutto)"
-    example: "€90,000/yr"
-  - id: "monthly"
-    label: "Monthly salary (Brutto)"
-    example: "€7,500/mo"
-  - id: "daily"
-    label: "Daily rate (Tagessatz)"
-    example: "€800/day"
-
+- id: annual
+  label: Annual salary (Brutto)
+  example: €90,000/yr
+- id: monthly
+  label: Monthly salary (Brutto)
+  example: €7,500/mo
+- id: daily
+  label: Daily rate (Tagessatz)
+  example: €800/day
 legal_fields:
-  - id: "work_permit"
-    label: "Work permit"
-    help: "German employers must confirm your right to work in the EU — used to avoid surfacing roles you legally can't take."
-    type: "select"
-    options:
-      - value: "eu_citizen"
-        label: "EU / EEA citizen"
-      - value: "blue_card"
-        label: "EU Blue Card holder"
-      - value: "work_permit"
-        label: "German work permit"
-      - value: "requires_sponsorship"
-        label: "Requires visa sponsorship"
-    default: "eu_citizen"
-  - id: "language"
-    label: "German language level"
-    help: "Most German employers require at least B2 German even for tech roles — this filters jobs where language would block you."
-    type: "select"
-    options:
-      - value: "native"
-        label: "Native / C2"
-      - value: "professional"
-        label: "Professional / C1"
-      - value: "conversational"
-        label: "Conversational / B2"
-      - value: "basic"
-        label: "Basic / A2–B1"
-      - value: "none"
-        label: "None (English only)"
-    default: "none"
+- id: work_permit
+  label: Work permit
+  help: German employers must confirm your right to work in the EU — used to avoid
+    surfacing roles you legally can't take.
+  type: select
+  options:
+  - value: eu_citizen
+    label: EU / EEA citizen
+  - value: blue_card
+    label: EU Blue Card holder
+  - value: work_permit
+    label: German work permit
+  - value: requires_sponsorship
+    label: Requires visa sponsorship
+  default: eu_citizen
+- id: language
+  label: German language level
+  help: Most German employers require at least B2 German even for tech roles — this
+    filters jobs where language would block you.
+  type: select
+  options:
+  - value: native
+    label: Native / C2
+  - value: professional
+    label: Professional / C1
+  - value: conversational
+    label: Conversational / B2
+  - value: basic
+    label: Basic / A2–B1
+  - value: none
+    label: None (English only)
+  default: none
+scoring_context: 'When scoring location_match, consider work permit validity. Candidate
+  work permit: {work_permit}. If the job requires EU citizenship or a German permit
+  and the candidate does not have one, score location_match as 0. German language:
+  {language} — if the job requires German (B2+) and the candidate is "none" or "basic",
+  penalise location_match.
 
-scoring_context: >
-  When scoring location_match, consider work permit validity.
-  Candidate work permit: {work_permit}.
-  If the job requires EU citizenship or a German permit and the candidate does not have one, score location_match as 0.
-  German language: {language} — if the job requires German (B2+) and the candidate is "none" or "basic", penalise location_match.
-
+  '
 job_boards:
-  - id: "linkedin"
-    name: "LinkedIn"
-    enabled: true
-    scraper: "LinkedInScraper"
-  - id: "xing"
-    name: "XING"
-    enabled: true
-    scraper: "XINGScraper"
-  - id: "stepstone"
-    name: "StepStone"
-    enabled: true
-    scraper: "StepStoneScraper"
-  - id: "indeed_de"
-    name: "Indeed (DE)"
-    enabled: false
-    scraper: "IndeedScraper"
-
+- id: linkedin
+  name: LinkedIn
+  enabled: true
+  scraper: LinkedInScraper
+- id: xing
+  name: XING
+  enabled: true
+  scraper: XINGScraper
+- id: stepstone
+  name: StepStone
+  enabled: true
+  scraper: StepStoneScraper
+- id: indeed_de
+  name: Indeed (DE)
+  enabled: false
+  scraper: IndeedScraper
 onboarding_defaults:
-  contract_type: "permanent"
-  remote_preference: "hybrid"
+  contract_type: permanent
+  remote_preference: hybrid
   scrape_interval_hours: 6
-
 scoring_defaults:
   weights:
     skill_match: 0.35
-    experience_match: 0.30
-    compensation_match: 0.20
+    experience_match: 0.3
+    compensation_match: 0.2
     location_match: 0.15
   shortlist_threshold: 0.72
-
 coach:
   fillers:
-    - "äh"
-    - "ähm"
-    - "also"
-    - "eigentlich"
-    - "sozusagen"
-    - "quasi"
-    - "irgendwie"
-    - "naja"
-    - "halt"
-    - "genau"
-    - "im grunde"
-    - "sozusagen"
-    - "um"
-    - "like"
-    - "basically"
-    - "you know"
+  - äh
+  - ähm
+  - also
+  - eigentlich
+  - sozusagen
+  - quasi
+  - irgendwie
+  - naja
+  - halt
+  - genau
+  - im grunde
+  - sozusagen
+  - um
+  - like
+  - basically
+  - you know
+  voice: de_DE-thorsten-medium
+  asr_language: de

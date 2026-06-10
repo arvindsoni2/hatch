@@ -108,10 +108,9 @@ class CVTailor:
     def _select_relevant_cv_slices(
         self, jd_analysis: JDAnalysisResult, master_cv: dict[str, Any]
     ) -> dict[str, Any]:
-        """Return a trimmed master CV containing only the content most relevant to this JD.
+        """Return a trimmed master CV containing only content relevant to this JD.
 
-        For gemma4:e2b's 512-token effective attention window, injecting the full master CV
-        dilutes the rules at the end of the prompt. Instead we inject:
+        Keeps prompt size manageable for all models (local and cloud alike):
           - The best summary variant (already selected by _select_best_summary_variant)
           - The top 3 experience entries by keyword overlap with the JD
           - All skill groups (compact — items only, no nested metadata)

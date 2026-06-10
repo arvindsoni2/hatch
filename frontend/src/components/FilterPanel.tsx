@@ -19,6 +19,8 @@ interface FilterPanelProps {
   filters: FilterValues;
   onFilterChange: (filters: FilterValues) => void;
   onScrapeComplete?: (results: ScrapeResult[]) => void;
+  currencySymbol?: string;
+  rateUnit?: string;
 }
 
 const SOURCES = [
@@ -43,6 +45,8 @@ export function FilterPanel({
   filters,
   onFilterChange,
   onScrapeComplete,
+  currencySymbol = "£",
+  rateUnit = "day",
 }: FilterPanelProps) {
   const [isScraping, startScrapeTransition] = useTransition();
   const [scrapeMessage, setScrapeMessage] = useState<string | null>(null);
@@ -116,7 +120,7 @@ export function FilterPanel({
         {/* Min Rate */}
         <Input
           type="number"
-          placeholder="Min rate (£/day)"
+          placeholder={`Min rate (${currencySymbol}/${rateUnit})`}
           value={filters.min_rate}
           onChange={(e) => handleChange("min_rate", e.target.value)}
           min={0}

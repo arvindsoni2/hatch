@@ -1,11 +1,43 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, CheckCircle, XCircle, Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Field, Choice, ToggleRow, Seg } from "./OnboardingPrimitives";
 import type { LocaleBoard } from "@/lib/api";
 import { fetchOllamaModels } from "@/lib/api";
+
+// Mirrors backend _OLLAMA_RECOMMENDED_ORDER for pre-selection (best quality first).
+const OLLAMA_RECOMMENDED_ORDER = [
+  "qwen3:30b-a3b",
+  "gemma4:26b-a4b",
+  "qwen3:4b",
+  "gemma4:e2b",
+];
+const OLLAMA_PULL_CMD = "ollama pull qwen3:4b && ollama pull gemma4:e2b";
+
+function pickRecommended(available: string[]): { primary: string; triage: string } {
+  const match = (rec: string, a: string) =>
+    a === rec || a.startsWith(rec.split(":")[0] + ":");
+  const primary = OLLAMA_RECOMMENDED_ORDER.find((r) => available.some((a) => match(r, a)));
+  const primaryName = primary
+    ? (available.find((a) => match(primary, a)) ?? available[0])
+    : available[0];
+  const triagePick = [...OLLAMA_RECOMMENDED_ORDER]
+    .reverse()
+    .find((r) => available.some((a) => match(r, a)));
+  const triageName = triagePick
+    ? (available.find((a) => match(triagePick, a)) ?? primaryName)
+    : primaryName;
+  return { primary: primaryName, triage: triageName };
+}
+
+function ramTier(gb: number): string {
+  if (gb >= 32) return "qwen3:30b-a3b (best quality)";
+  if (gb >= 16) return "gemma4:26b-a4b";
+  if (gb >= 8) return "qwen3:4b (recommended)";
+  return "gemma4:e2b (edge-optimised)";
+}
 
 export const LLM_PROVIDERS = [
   { id: "google_genai", label: "Google Gemini",   sub: "Free tier available — great default",  keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
@@ -52,6 +84,8 @@ export function StepAIProvider({
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
+  const [ramGb, setRamGb] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const loadOllamaModels = async () => {
     setOllamaLoading(true);
@@ -76,8 +110,14 @@ export function StepAIProvider({
     let triage = p.triageDefault;
     if (providerId === "ollama") {
       const models = await loadOllamaModels();
-      primary = models[0] ?? "";
-      triage = models.length > 1 ? models[1] : (models[0] ?? "");
+      if (models.length > 0) {
+        const picked = pickRecommended(models);
+        primary = picked.primary;
+        triage = picked.triage;
+      } else {
+        primary = "";
+        triage = "";
+      }
     }
     onLlmChange({
       ...llm,
@@ -90,10 +130,22 @@ export function StepAIProvider({
     onTestApiKeyChange("");
   };
 
+  const handleCopyPullCmd = () => {
+    void navigator.clipboard.writeText(OLLAMA_PULL_CMD).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   useEffect(() => {
     if (llm.provider === "ollama" && ollamaModels.length === 0) {
       void loadOllamaModels();
     }
+    // Fetch RAM hint once for model tier guidance
+    void fetch("/api/health")
+      .then((r) => r.json())
+      .then((d: { ram_gb?: number }) => { if (d.ram_gb) setRamGb(d.ram_gb); })
+      .catch(() => undefined);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -177,6 +229,13 @@ export function StepAIProvider({
             />
           </Field>
 
+          {ramGb !== null && (
+            <p className="text-[12.5px] text-[var(--text-dim)] mb-2">
+              Your machine has <strong>{ramGb} GB</strong> RAM — recommended primary:{" "}
+              <code className="text-[var(--text)]">{ramTier(ramGb)}</code>
+            </p>
+          )}
+
           <Field label="Primary model" hint="Used for tailoring, coaching, and detailed analysis.">
             {ollamaLoading ? (
               <div className="flex items-center gap-2 text-sm text-[var(--text-dim)]">
@@ -185,7 +244,35 @@ export function StepAIProvider({
             ) : ollamaError ? (
               <p className="text-sm text-[var(--danger)]">{ollamaError}</p>
             ) : ollamaModels.length === 0 ? (
-              <p className="text-sm text-[var(--text-dim)]">No models found — pull a model with <code>ollama pull &lt;model&gt;</code> first.</p>
+              <div className="space-y-2">
+                <p className="text-sm text-[var(--text-dim)]">
+                  No models found. Pull the recommended models first:
+                </p>
+                <div
+                  data-testid="ollama-pull-cmd"
+                  className="flex items-center justify-between gap-2 rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2"
+                >
+                  <code className="text-[12px] text-[var(--text)] flex-1 break-all">{OLLAMA_PULL_CMD}</code>
+                  <button
+                    type="button"
+                    onClick={handleCopyPullCmd}
+                    title="Copy command"
+                    className="flex-shrink-0 text-[var(--text-dim)] hover:text-[var(--text)] transition-colors"
+                  >
+                    {copied ? <CheckCircle className="h-4 w-4 text-[var(--success)]" /> : <Copy className="h-4 w-4" />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-[var(--text-dim)]">
+                  CPU-only, no GPU required. Then click <strong>Refresh</strong> below.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void loadOllamaModels()}
+                  className="text-sm underline text-[var(--accent)] hover:opacity-80"
+                >
+                  Refresh model list
+                </button>
+              </div>
             ) : (
               <select
                 value={llm.primary_model}

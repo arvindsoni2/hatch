@@ -117,3 +117,32 @@ class TestLocaleCoachFillers:
         # German pack should include äh; UK pack should not
         assert "äh" in de_fillers
         assert "äh" not in uk_fillers
+
+
+class TestCoachVoiceASR:
+    """HC-4: TTS voice and ASR language sourced from locale pack."""
+
+    def test_get_coach_voice_uk_returns_alan(self) -> None:
+        from app.services.locale_service import get_coach_voice
+        assert get_coach_voice("uk") == "en_GB-alan-medium"
+
+    def test_get_coach_voice_india_returns_kavya(self) -> None:
+        from app.services.locale_service import get_coach_voice
+        voice = get_coach_voice("in")
+        assert "kavya" in voice or "en_IN" in voice
+
+    def test_get_coach_voice_unknown_locale_returns_default(self) -> None:
+        from app.services.locale_service import get_coach_voice
+        assert get_coach_voice("xx") == "en_GB-alan-medium"
+
+    def test_get_coach_asr_language_uk_returns_en(self) -> None:
+        from app.services.locale_service import get_coach_asr_language
+        assert get_coach_asr_language("uk") == "en"
+
+    def test_get_coach_asr_language_germany_returns_de(self) -> None:
+        from app.services.locale_service import get_coach_asr_language
+        assert get_coach_asr_language("de") == "de"
+
+    def test_get_coach_asr_language_unknown_locale_returns_en(self) -> None:
+        from app.services.locale_service import get_coach_asr_language
+        assert get_coach_asr_language("xx") == "en"

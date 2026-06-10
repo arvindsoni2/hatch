@@ -49,12 +49,13 @@ class Settings(BaseSettings):
     # Auto-apply permanently disabled — manual approval only per PRD non-goals
     AUTO_APPLY_ENABLED: bool = False
 
-    # Daily digest email
+    # Daily digest email — SMTP_HOST empty disables email sending gracefully
     DIGEST_ENABLED: bool = True
     DIGEST_TIME: str = "07:00"
-    DIGEST_TIMEZONE: str = "Europe/London"
+    # Leave empty to derive from locale (uk→Europe/London, in→Asia/Kolkata, etc.)
+    DIGEST_TIMEZONE: str = ""
     DIGEST_FREQUENCY: str = "daily"
-    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASS: str = ""
@@ -78,9 +79,19 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
 
-    # Job matching preferences
-    PRIORITY_KEYWORDS: str = "solutions architect,cloud architect"
-    PRIORITY_MIN_RATE: int = 500
+    # Optional bearer-token auth for non-localhost deploys.
+    # When empty (default) auth is disabled — localhost use is frictionless.
+    # Set HATCH_AUTH_TOKEN=<secret> in .env when exposing beyond localhost.
+    HATCH_AUTH_TOKEN: str = ""
+
+    # Per-client rate limit on mutating endpoints (POST/PUT/PATCH/DELETE).
+    # Only active when HATCH_AUTH_TOKEN is non-empty (disabled for localhost dev).
+    # Default 600/min is generous for a single-user app; lower for exposed deploys.
+    RATE_LIMIT_PER_MINUTE: int = 600
+
+    # Job matching preferences — empty by default; source from profile/master_profile
+    PRIORITY_KEYWORDS: str = ""
+    PRIORITY_MIN_RATE: int = 0
 
     # Rotating User-Agent pool
     USER_AGENTS: list[str] = [

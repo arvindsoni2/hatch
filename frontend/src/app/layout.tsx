@@ -7,6 +7,8 @@ import { HatchMobileBar } from "@/components/hatch/HatchMobileBar";
 import { OnboardingGate } from "@/components/OnboardingGate";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { InstallPrompt } from "@/components/InstallPrompt";
+import { QueryProvider } from "@/components/QueryProvider";
+import { CommandPalette } from "@/components/CommandPalette";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -62,6 +64,7 @@ export default function RootLayout({
         className={`${inter.variable} font-sans antialiased`}
         style={{ background: "var(--bg)", color: "var(--text)" }}
       >
+        <QueryProvider>
         <OnboardingGate />
         <OfflineIndicator />
 
@@ -80,6 +83,8 @@ export default function RootLayout({
         </div>
 
         <InstallPrompt />
+        <CommandPalette />
+        </QueryProvider>
       </body>
     </html>
   );

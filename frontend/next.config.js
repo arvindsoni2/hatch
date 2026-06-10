@@ -43,6 +43,15 @@ const nextConfig = {
     ];
   },
   async headers() {
+    const csp = [
+      "default-src 'self'",
+      "connect-src 'self' https://cdn.jsdelivr.net",
+      "img-src 'self' data: blob:",
+      "style-src 'self' 'unsafe-inline'",
+      "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'",
+      "media-src 'self' blob:",
+      "frame-ancestors 'none'",
+    ].join("; ");
     return [
       {
         source: "/(.*)",
@@ -51,6 +60,7 @@ const nextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "X-XSS-Protection", value: "1; mode=block" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Content-Security-Policy-Report-Only", value: csp },
         ],
       },
     ];

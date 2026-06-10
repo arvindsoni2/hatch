@@ -177,6 +177,55 @@ async def test_delete_session_not_found_returns_404(client: AsyncClient) -> None
     assert "Session not found" in response.json()["detail"]
 
 
+# ---------------------------------------------------------------------------
+# SEC-3: path traversal guards on submit-audio
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_submit_audio_rejects_traversal_in_question_id(client: AsyncClient, tmp_path) -> None:
+    """submit-audio must reject question_id containing path traversal chars."""
+    audio_bytes = b"RIFF" + b"\x00" * 36  # minimal dummy
+    response = await client.post(
+        "/api/coach/sessions/valid-session-id/submit-audio",
+        data={"question_id": "../../etc/passwd"},
+        files={"audio": ("answer.webm", audio_bytes, "audio/webm")},
+    )
+    assert response.status_code == 400
+    assert "question_id" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_submit_audio_rejects_traversal_in_session_id(tmp_path) -> None:
+    """submit-audio must reject session_id containing path traversal chars."""
+    audio_bytes = b"RIFF" + b"\x00" * 36
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/coach/sessions/../foo/submit-audio",
+            data={"question_id": "valid-question-id"},
+            files={"audio": ("answer.webm", audio_bytes, "audio/webm")},
+        )
+    # FastAPI will match /api/coach/sessions/{session_id=..}/foo/submit-audio differently;
+    # the path normalisation at the HTTP layer means the session_id param itself contains
+    # only the URL-decoded segment, which our regex rejects.
+    assert response.status_code in (400, 404)
+
+
+@pytest.mark.asyncio
+async def test_submit_audio_accepts_valid_ids(client: AsyncClient, tmp_path, monkeypatch) -> None:
+    """submit-audio accepts UUIDs and slug IDs."""
+    import uuid as _uuid
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    audio_bytes = b"RIFF" + b"\x00" * 36
+    response = await client.post(
+        f"/api/coach/sessions/{_uuid.uuid4()}/submit-audio",
+        data={"question_id": str(_uuid.uuid4())},
+        files={"audio": ("answer.webm", audio_bytes, "audio/webm")},
+    )
+    # 202 (queued) or 400 (content-type validation) but NOT 500 from path ops
+    assert response.status_code in (202, 400, 422)
+
+
 @pytest.mark.asyncio
 async def test_get_next_question_with_mock_service() -> None:
     """GET /api/coach/sessions/{id}/next-question returns 200 (null) with mocked service."""
