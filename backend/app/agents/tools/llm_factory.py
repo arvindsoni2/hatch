@@ -277,8 +277,8 @@ def _detect_ollama_model(llm_cfg: Any) -> str:
     address. Raises ValueError with a helpful message if Ollama is unreachable or
     has no models pulled.
     """
-    base = (llm_cfg.base_url or "http://host.containers.internal:11434").rstrip("/")
-    candidates = list({base, "http://host.containers.internal:11434", "http://localhost:11434"})
+    base = (llm_cfg.base_url or "http://host.docker.internal:11434").rstrip("/")
+    candidates = list({base, "http://host.docker.internal:11434", "http://localhost:11434"})
     for url in candidates:
         try:
             req = urllib.request.urlopen(f"{url}/api/tags", timeout=3)
@@ -346,9 +346,9 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
             kwargs["api_key"] = api_key
 
     # base_url is used for Ollama and Azure endpoints.
-    # Ollama falls back to host.containers.internal so it works from inside containers
+    # Ollama falls back to host.docker.internal so it works from inside containers
     # even when profile.yaml was saved without an explicit base_url.
-    _ollama_default = "http://host.containers.internal:11434"
+    _ollama_default = "http://host.docker.internal:11434"
     effective_base_url = llm_cfg.base_url or (_ollama_default if llm_cfg.provider == "ollama" else None)
     if effective_base_url:
         kwargs["base_url"] = effective_base_url
