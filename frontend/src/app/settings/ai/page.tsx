@@ -78,9 +78,9 @@ interface MonthlyCost {
 function SpendReadout({ provider }: { provider?: string }) {
   const [cost, setCost] = useState<MonthlyCost | null>(null)
   useEffect(() => {
-    fetch(`${API_BASE}/api/v2/analytics/costs/monthly`)
-      .then((r) => r.json())
-      .then((d) => setCost(d as MonthlyCost))
+    fetch(`${API_BASE}/api/analytics/costs/monthly`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: MonthlyCost | null) => { if (d) setCost(d) })
       .catch(() => {})
   }, [])
 
@@ -92,7 +92,7 @@ function SpendReadout({ provider }: { provider?: string }) {
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[22px] font-[600] text-[var(--text)] tabular-nums">
-              {cost ? `$${cost.total.toFixed(4)}` : "—"}
+              {cost?.total != null ? `$${cost.total.toFixed(4)}` : "—"}
             </span>
             <span className="text-sm text-[var(--text-dim)]">this month</span>
             {isFree && (

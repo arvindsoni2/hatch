@@ -24,7 +24,9 @@ const withPWA = require("@ducanh2912/next-pwa").default({
   ],
 });
 
-const BACKEND_URL = process.env.API_URL || "http://127.0.0.1:8000";
+// In container builds API_URL is injected as a Docker build arg; fall back to
+// the Compose service name so the rewrite works even if the arg is missing.
+const BACKEND_URL = process.env.API_URL || "http://backend:8000";
 
 const nextConfig = {
   reactStrictMode: true,

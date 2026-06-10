@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pull the default Ollama model used by Hatch.
-# Run once before 'podman compose up' if Ollama has no models yet.
+# Run once before 'docker compose up' if Ollama has no models yet.
 set -euo pipefail
 
 MODEL="${HATCH_OLLAMA_MODEL:-phi3:mini}"
@@ -29,4 +29,4 @@ fi
 echo "[hatch] Pulling '$MODEL' via Ollama (~2.3 GB for phi3:mini)…"
 echo "[hatch] Set HATCH_OLLAMA_MODEL=<name> to pull a different model."
 ollama pull "$MODEL"
-echo "[hatch] Done. Run 'podman compose up -d' to start Hatch."
+echo "[hatch] Done. Run 'docker compose up -d' to start Hatch."

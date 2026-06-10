@@ -20,30 +20,18 @@ error() { echo -e "${RED}[jobpilot]${RESET} $*" >&2; exit 1; }
 # ── Detect compose / container runtime ────────────────────────────
 
 COMPOSE=""
-if command -v podman-compose &>/dev/null; then
-  COMPOSE="podman-compose"
-elif docker compose version &>/dev/null 2>&1; then
+if docker compose version &>/dev/null 2>&1; then
   COMPOSE="docker compose"
 elif command -v docker-compose &>/dev/null; then
   COMPOSE="docker-compose"
 fi
 
 backend_running() {
-  if command -v podman &>/dev/null; then
-    podman ps --format "{{.Names}}" 2>/dev/null | grep -q "jobpilot-backend"
-  elif command -v docker &>/dev/null; then
-    docker ps --format "{{.Names}}" 2>/dev/null | grep -q "jobpilot-backend"
-  else
-    return 1
-  fi
+  docker ps --format "{{.Names}}" 2>/dev/null | grep -q "jobpilot-backend"
 }
 
 container_exec() {
-  if command -v podman &>/dev/null; then
-    podman exec jobpilot-backend "$@"
-  else
-    docker exec jobpilot-backend "$@"
-  fi
+  docker exec jobpilot-backend "$@"
 }
 
 # ── Banner ─────────────────────────────────────────────────────────
@@ -96,7 +84,7 @@ delete_file() {
     sudo rm -f "$host_path" && ok "Deleted $label (sudo)"
   else
     warn "Cannot delete $label — containers are not running and the file is not writable."
-    warn "Run 'podman-compose up -d' first, then re-run this script."
+    warn "Run 'docker compose up -d' first, then re-run this script."
     return 1
   fi
 }

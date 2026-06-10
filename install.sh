@@ -26,24 +26,14 @@ check_cmd() {
 
 info "Checking prerequisites…"
 
-# Docker (or Podman acting as docker)
-if command -v podman &>/dev/null; then
-  if ! command -v docker &>/dev/null; then
-    info "Podman detected — creating docker alias"
-    export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/podman/podman.sock"
-  fi
-else
-  check_cmd docker "Install from https://docs.docker.com/get-docker/"
-fi
+check_cmd docker "Install from https://docs.docker.com/get-docker/"
 
 if docker compose version &>/dev/null 2>&1; then
   COMPOSE="docker compose"
 elif command -v docker-compose &>/dev/null; then
   COMPOSE="docker-compose"
-elif command -v podman-compose &>/dev/null; then
-  COMPOSE="podman-compose"
 else
-  error "docker compose / podman-compose not found. Install Docker Desktop or 'pip install podman-compose'."
+  error "docker compose not found. Install Docker Desktop (https://docs.docker.com/get-docker/) or the Compose plugin."
 fi
 ok "Compose command: $COMPOSE"
 
@@ -216,7 +206,7 @@ llm:
   provider: "ollama"
   triage_model: ""
   primary_model: ""
-  base_url: "http://host.containers.internal:11434"
+  base_url: "http://host.docker.internal:11434"
   api_key_env: ""
   temperature: 0.3
   max_retries: 3
@@ -241,7 +231,7 @@ d = yaml.safe_load(p.read_text())
 # Always point at Ollama for zero-config start
 d.setdefault("llm", {})
 d["llm"]["provider"] = "ollama"
-d["llm"]["base_url"] = "http://host.containers.internal:11434"
+d["llm"]["base_url"] = "http://host.docker.internal:11434"
 d["llm"]["api_key_env"] = ""
 d["llm"]["track_costs"] = False
 d["llm"]["monthly_budget"] = 0.0

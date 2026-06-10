@@ -112,16 +112,12 @@ export function FaceCapture({ active, onSummaryReady }: FaceCaptureProps) {
       try {
         // Dynamic import of @mediapipe/tasks-vision from CDN.
         // Uses a script-tag approach to avoid bundler interception.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let mpModule: any;
+        let mpModule: any; // `any` is intentional — MediaPipe types are CDN-only
         // Check if already loaded (e.g. via script tag)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if ((window as any).__mediapipe_tasks_vision) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           mpModule = (window as any).__mediapipe_tasks_vision;
         } else {
           // Dynamic import from CDN — ignored by bundler at build time
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           mpModule = await (Function('url', 'return import(url)') as any)(`${MEDIAPIPE_CDN}/vision_bundle.mjs`);
         }
 
@@ -167,7 +163,6 @@ export function FaceCapture({ active, onSummaryReady }: FaceCaptureProps) {
           if (!video || video.readyState < 2) return;
 
           try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const result = (faceLandmarker as any).detectForVideo(video, performance.now());
             if (result?.faceBlendshapes?.length) {
               const blendshapes: Array<{ categoryName: string; score: number }> =

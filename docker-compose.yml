@@ -31,6 +31,10 @@ services:
       - ./data:/app/data:z
       # Bind-mount locales/ so new locale packs are picked up without rebuild
       - ./locales:/app/locales:ro,z
+    # Allow the backend container to reach Ollama running on the host.
+    # On Linux, host.docker.internal is not automatic — host-gateway maps it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
