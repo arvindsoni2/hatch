@@ -91,5 +91,5 @@ test("user menu opens and shows theme toggle", async ({ page }) => {
   // Target topbar's UserMenu specifically (header element) to avoid sidebar's UserMenu at bottom
   const avatar = page.locator("header").getByRole("button", { name: /open user menu/i });
   await avatar.click();
-  await expect(page.getByRole("button", { name: /toggle dark mode/i })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /theme/i })).toBeVisible();
 });

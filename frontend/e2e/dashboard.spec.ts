@@ -66,7 +66,7 @@ test("theme toggle switches data-theme attribute via user menu", async ({ page }
   await avatarButton.click();
 
   // Wait for ThemeToggle to be visible in the dropdown + allow useEffect to settle
-  const toggleButton = page.getByRole("button", { name: /toggle dark mode/i });
+  const toggleButton = page.getByRole("menuitem", { name: /theme/i });
   await expect(toggleButton).toBeVisible();
   await page.waitForTimeout(200);
 

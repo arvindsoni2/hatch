@@ -22,7 +22,7 @@ Discover → Score → Tailor → Track → Coach — fully automated, human-in-
 
 ## What is Hatch?
 
-> **Status:** Active development — v4 + Coach Multimodal Uplift (Phases A & B) complete. Full pipeline (Scout → Score → Tailor → Coach) with two-step assisted apply, Agent Skills layer, Direction A UX, server-side ASR, delivery metrics, vocal-tone analysis, and multi-dimensional session rubric. 579 backend + 317 frontend tests green.
+> **Status:** Active development — v4 + Coach Multimodal Uplift (Phases A–E) complete. Full pipeline (Scout → Score → Tailor → Coach) with two-step assisted apply, Agent Skills layer, Direction A UX, server-side ASR, delivery metrics, vocal-tone analysis, multi-dimensional session rubric, follow-up session chaining, on-device face analysis (MediaPipe), and optional Piper TTS. 598 backend + 336 frontend tests green.
 
 Hatch is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
 
@@ -71,9 +71,12 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | **Async notification bell** | Tailor and Coach run in the background; a persistent notification bell fires when jobs complete or fail, with error detail on failure |
 | **Tailor history panel** | Per-job document history: all generated CV and cover letter variants listed with ATS score, download link, and regeneration button |
 | **Manual JD tailoring** | Paste any job description from any website — Hatch auto-creates the job and application records, then generates tailored documents without requiring a scraper |
-| **Multimodal interview coach** | Three capture modes — **Text**, **Voice**, and **Video** (Phase D opt-in). Voice mode uses server-side `faster-whisper` ASR for precise delivery metrics (WPM, fillers, pauses, STAR coverage) and dimensional vocal-tone analysis (arousal · valence · dominance via `audeering/wav2vec2`). An LLM-as-judge rubric synthesiser produces a session rubric with per-dimension scores, transcript-quoted evidence, and a recommended drill. |
-| **Session rubric** | Multi-dimensional scoring: content, STAR structure, technical depth, conciseness, impact metrics, delivery, and vocal confidence. Dimensions only appear when the signal exists — no empty or zeroed rows. Focus-for-next-session guidance generated automatically. |
-| **Perception factory** | Provider-agnostic perception layer (`perception_factory.py`) mirrors the LLM factory. Swap ASR, voice-emotion, or face providers via `profile.yaml → perception` — no code changes. Perception deps are in a separate `requirements-perception.txt` Docker layer for lean installs. |
+| **Multimodal interview coach** | Three capture modes — **Text**, **Voice**, and **Video** (opt-in with explicit consent). Voice uses server-side `faster-whisper` ASR for delivery metrics (WPM, fillers, pauses, STAR coverage) and dimensional vocal-tone analysis (arousal · valence · dominance via `audeering/wav2vec2`). Video adds in-browser MediaPipe Face Landmarker — blendshapes + head pose + eye-contact proxy; raw video never leaves the device. |
+| **Session rubric** | Multi-dimensional scoring: content, STAR structure, technical depth, conciseness, impact metrics, delivery, vocal confidence, and presence (when face data available). Dimensions only appear when the signal exists. LLM-as-judge synthesiser adds transcript-quoted evidence and a focus-for-next-session directive. |
+| **Follow-up session chaining** | After a session completes, plan a follow-up session targeting the 1–2 weakest rubric dimensions. Sessions form a chain via `parent_session_id`; a progress trend view tracks per-skill deltas across the chain. |
+| **Technical drills** | For Technical/Domain questions, the coach generates worked-example walkthroughs and "say it out loud" drill prompts — "show, don't tell" practice rather than bare Q&A. |
+| **Coach voice (TTS)** | Optional Piper TTS (CPU-real-time) speaks question prompts and feedback summaries. Disabled by default; enabled via `perception.tts.provider: piper` in `profile.yaml`. |
+| **Perception factory** | Provider-agnostic perception layer (`perception_factory.py`) mirrors the LLM factory. Swap ASR, voice-emotion, face, or TTS providers via `profile.yaml → perception` — no code changes. Perception deps are in a separate `requirements-perception.txt` Docker layer for lean installs. |
 | **JD gap analysis** | Per-job skill gap card: matched skills, missing skills, JD-only keywords, match %, actionable recommendations |
 | **LLM trace panel** | Per-call latency, token counts, and response preview — visible in the debug panel for local troubleshooting |
 | **Calendar export** | Download any interview round as an `.ics` file — one click to add to Google Calendar, Outlook, or Apple Calendar |
@@ -147,10 +150,18 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 | `services/rubric_builder.py` | **New (Coach B)** | Deterministic rubric builder; `score_to_band()`, per-dimension constructors; delivery and vocal_confidence only added when signal present; `presence` never added without face data |
 | `services/rubric_synthesiser.py` | **New (Coach B)** | LLM-as-judge rubric enrichment via `get_json_model()`; lazy LLM init; silent fallback to deterministic baseline on any failure |
 | `schemas/coach.py` | **Updated (Coach B)** | `VoiceToneResult`, `RubricDimension`, `SessionRubric`, `ScoreBand` added; `AnswerEvaluation` gains `rubric` field |
-| `components/coach/CoachModalitySelector.tsx` | **New (Coach B)** | Text / Voice picker with async browser mic-capability detection (`enumerateDevices`); disabled modes show plain-language reason; extensible for Phase D video via `phaseGate: "D"` |
+| `components/coach/CoachModalitySelector.tsx` | **Updated (Coach D)** | Text / Voice / Video picker; fetches `/api/coach/capabilities`; video gated on face_analysis capability + webcam; triggers ConsentGate on first video selection |
 | `components/coach/AudioBlobRecorder.tsx` | **New (Coach B)** | `MediaRecorder`-based blob capture → `submit-audio` endpoint; shows recording timer, size/duration, and submit button |
 | `components/coach/AnalysingBanner.tsx` | **New (Coach A)** | Processing-time UX — "Analysing your answer…" banner while async job is in flight; clears on result |
-| `routers/coach.py` `submit-audio` | **New (Coach A)** | `POST /api/coach/sessions/{id}/submit-audio` — multipart audio blob; validates MIME + size cap; saves to `data/recordings/`; returns 202 + job_id |
+| `components/coach/ConsentGate.tsx` | **New (Coach D)** | Explicit consent screen for face analysis; explains on-device processing, data minimisation; one-time accept stored in `localStorage` |
+| `components/coach/FaceCapture.tsx` | **New (Coach D)** | MediaPipe Face Landmarker via CDN at ~2fps; accumulates blendshape samples; computes `FaceSummary` (eye_contact_pct, head_stability, engagement_trend); 160×90 webcam preview; raw video never leaves the browser |
+| `routers/coach.py` `submit-audio` | **New (Coach A)** | `POST /api/coach/sessions/{id}/submit-audio` — multipart audio blob + optional face_summary JSON; validates MIME + size cap; saves to `data/recordings/`; returns 202 + job_id |
+| `routers/coach.py` Phase C + D + E | **New (Coach C–E)** | `POST plan-followup`, `GET progress/{id}/trend`, `GET capabilities`, `POST tts-question` |
+| `services/technical_drills.py` | **New (Coach C)** | LLM-generated worked-example walkthroughs + "say it out loud" drill prompts for Technical/Domain questions; graceful degradation on LLM failure |
+| `services/followup_planner.py` | **New (Coach C)** | Identifies 1–2 weakest rubric dimensions; creates child `InterviewSession` with `parent_session_id` + `focus_areas` and copied question set |
+| `services/tts_service.py` | **New (Coach E)** | `PiperTTSService` wrapping `piper` CLI; raw PCM wrapped in WAV container; raises `PerceptionNotAvailableError` if binary absent |
+| `services/rubric_builder.py` `presence` | **Updated (Coach D)** | `build_presence_dimension()` from `FaceSummary`; dimension only added when face data is present |
+| Alembic migration `20260610_0001` | **New (Coach C)** | Adds `coach_mode`, `rubric`, `signals`, `parent_session_id`, `focus_areas` to `interview_sessions` |
 | `services/assisted_apply.py` | **Updated (v4)** | `prepare_application` returns full `ApplicationPackage` (docs + prefill + screening answers + paste-map); no submit path |
 | `routers/jobs.py` `/{id}/approve` | **New (v4)** | Two-step approve: tailor → assemble package → `ready_to_apply`; returns `ApplicationPackage` |
 | `routers/applications.py` v4 | **New (v4)** | `/package`, `/mark-applied`, `/reject`, `/revert` endpoints for the assisted apply flow |
@@ -323,7 +334,8 @@ perception:
     provider: mediapipe_browser # mediapipe_browser | emotiefflib | hume | none
     enabled: false              # opt-in — Phase D; face data never leaves the browser
   tts:
-    provider: none              # none | piper | kokoro | qwen3_tts | elevenlabs
+    provider: none              # none | piper (real-time CPU) | kokoro | qwen3_tts | elevenlabs
+    voice: en_GB-alan-medium    # piper voice name; see piper model card for options
 ```
 
 Perception models are downloaded on first use (hundreds of MB) and cached in the `data/models/` volume — they survive `podman-compose build --pull` rebuilds. The perception stack lives in a separate `requirements-perception.txt` Docker layer; a slim install (scorer/tailor only) can omit it.
@@ -371,19 +383,25 @@ preferences:
 - **User context:** Skills and proof points injected from `profile.yaml`
 - **LLM:** Primary model
 
-#### Multimodal pipeline (Phase A + B)
+#### Multimodal pipeline (Phases A–E complete)
 
-The coach now supports three capture modes selectable per session:
+The coach supports three capture modes selectable per session:
 
 | Mode | Capture path | Perception layers | Rubric dimensions |
 |------|-------------|-------------------|-------------------|
 | **Text** | Typed answer or Web Speech → `submit-answer` | None | content, STAR structure, conciseness, impact, technical depth |
 | **Voice** | `AudioBlobRecorder` → `submit-audio` → `faster-whisper` | ASR + delivery metrics + vocal tone (audeering) | All above + **delivery** (WPM/fillers/pauses) + **vocal confidence** (arousal/valence/dominance) |
-| **Video** *(Phase D, opt-in)* | Audio + webcam; face analysis in-browser (MediaPipe) | ASR + tone + face summary | All above + **presence** (eye contact/engagement) |
+| **Video** *(opt-in, explicit consent required)* | Audio + webcam; MediaPipe Face Landmarker runs in-browser | ASR + tone; only `FaceSummary` (eye_contact_pct, head_stability, engagement_trend) sent to server | All above + **presence** (eye contact/engagement) |
 
 After transcription and metric computation, `RubricSynthesiserService` (LLM-as-judge) enriches the deterministic rubric with transcript-quoted evidence and a "focus for next session" directive. It falls back silently to the deterministic rubric if the LLM call fails.
 
-**Perception is provider-agnostic.** ASR and voice-emotion providers are configured in `profile.yaml → perception` and loaded via `perception_factory.py` — the same pattern as the LLM factory.
+**Follow-up session chaining (Phase C):** After a session completes, a "Plan follow-up" button creates a linked child session targeting the 1–2 weakest rubric dimensions. Sessions form a chain via `parent_session_id`; a progress trend panel shows per-skill score deltas across the chain. For Technical/Domain questions, `TechnicalDrillsService` generates worked-example walkthroughs and "say it out loud" drill prompts.
+
+**On-device face analysis (Phase D):** When video mode is selected, a `ConsentGate` must be explicitly accepted. `FaceCapture.tsx` runs MediaPipe Face Landmarker at ~2fps in the browser; raw video frames never leave the device. Only an aggregate `FaceSummary` is posted alongside the audio, unlocking the `presence` rubric dimension.
+
+**Coach voice (Phase E):** Optional Piper TTS speaks question prompts. Disabled by default (`perception.tts.provider: none`). Enable by setting `provider: piper` and ensuring the `piper` binary is in PATH.
+
+**Perception is provider-agnostic.** ASR, voice-emotion, face, and TTS providers are configured in `profile.yaml → perception` and loaded via `perception_factory.py` — the same pattern as the LLM factory.
 
 ### Supervisor (LangGraph StateGraph)
 
@@ -440,10 +458,17 @@ POST   /api/applications/{id}/reject     Reject → rejected
 POST   /api/applications/{id}/revert     Undo approve → ready_to_apply → ready
 
 # Coach
-GET    /api/coach/sessions/{id}          Session details + questions
+GET    /api/coach/sessions              List sessions (filter by status)
+GET    /api/coach/sessions/{id}         Session details + questions + technical drills
+DELETE /api/coach/sessions/{id}         Remove session (marks abandoned)
 POST   /api/coach/sessions/{id}/submit-answer   Text answer → 202 + job_id
 POST   /api/coach/sessions/{id}/submit-audio    Audio blob (multipart) → ASR → 202 + job_id
 POST   /api/coach/sessions/{id}/end     End session → report generation → 202 + job_id
+GET    /api/coach/sessions/{id}/report  Full session feedback report
+POST   /api/coach/sessions/{id}/plan-followup   Create follow-up session targeting weakest dimensions
+POST   /api/coach/sessions/{id}/tts-question    WAV audio of question text (503 if TTS disabled)
+GET    /api/coach/progress/{session_id}/trend   Per-skill score trend across session chain
+GET    /api/coach/capabilities          Feature flags: face_analysis, tts (from profile.yaml)
 GET    /api/async-jobs/{job_id}         Poll async job status (done | running | failed)
 
 # Interviews
