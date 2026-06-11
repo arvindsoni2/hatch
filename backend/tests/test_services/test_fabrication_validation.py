@@ -55,12 +55,15 @@ def _make_placeholder_result() -> TailoredCVResult:
 _MASTER_CV = {
     "experience": [
         {
+            "role": "Senior Architect",
+            "company": "Acme Corp",
             "achievements": [
                 {"text": "Led cloud migration saving £200K annually via platform consolidation."},
                 {"text": "Delivered £500K cost reduction via cloud architecture at Northern Powergrid."},
-            ]
+            ],
         }
-    ]
+    ],
+    "certifications": ["AWS Solutions Architect"],
 }
 
 

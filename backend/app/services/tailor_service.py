@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from fastapi import HTTPException
@@ -24,24 +23,60 @@ from .cv_tailor import CVTailor
 from .docx_cl_builder import DocxCLBuilder
 from .docx_cv_builder import DocxCVBuilder
 from .jd_analyser import JDAnalyser
+from .master_cv_store import MasterCVMissingError, load_master_cv
 
 logger = logging.getLogger(__name__)
 
 # ATS score threshold — re-tailor if below this
 _ATS_THRESHOLD = 75
 
-# Master CV personal section path
-_MASTER_CV_PATH = Path(__file__).parent.parent / "templates" / "master_cv.json"
+
+def _load_master_cv() -> dict[str, Any]:
+    return load_master_cv()
 
 
 def _load_personal() -> dict[str, Any]:
-    with _MASTER_CV_PATH.open() as fh:
-        return json.load(fh).get("personal", {})
+    return load_master_cv().get("personal", {})
 
 
-def _load_master_cv() -> dict[str, Any]:
-    with _MASTER_CV_PATH.open() as fh:
-        return json.load(fh)
+def _master_cv_text(master: dict[str, Any]) -> str:
+    """Flatten master CV to a single lowercased string for keyword containment checks."""
+    parts: list[str] = []
+    for exp in master.get("experience", []):
+        if isinstance(exp, dict):
+            parts.extend([exp.get("role", ""), exp.get("company", "")])
+            for ach in exp.get("achievements", []):
+                parts.append(ach.get("text", "") if isinstance(ach, dict) else str(ach))
+    skills = master.get("skills", {})
+    if isinstance(skills, dict):
+        for grp in skills.values():
+            if isinstance(grp, dict):
+                parts.extend(grp.get("items", []))
+    elif isinstance(skills, list):
+        for grp in skills:
+            if isinstance(grp, dict):
+                parts.extend(grp.get("items", []))
+    parts.extend(master.get("certifications", []))
+    return " ".join(str(p) for p in parts if p).lower()
+
+
+def _partition_ats_keywords(
+    missing_critical: list[str], master_text: str
+) -> tuple[list[str], list[str]]:
+    """Split missing ATS keywords into those grounded in master CV vs genuine gaps.
+
+    Returns:
+        (grounded, gaps) — grounded keywords can be reinforced in re-tailoring;
+        gaps are honest skill gaps the user needs to fill themselves.
+    """
+    grounded: list[str] = []
+    gaps: list[str] = []
+    for kw in missing_critical:
+        if kw.lower() in master_text:
+            grounded.append(kw)
+        else:
+            gaps.append(kw)
+    return grounded, gaps
 
 
 class TailorService:
@@ -128,19 +163,62 @@ class TailorService:
         analysis = await self._jd_analyser.analyse(jd_text)
         tailored_cv = await self._cv_tailor.tailor(analysis, variant, custom_instructions)
 
-        # ATS score check
+        # G-3: blocking grounding issues withhold the document entirely
+        if tailored_cv.blocking_issues:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Tailored CV failed grounding checks — document withheld.",
+                    "issues": tailored_cv.blocking_issues,
+                    "hint": "Fix the issues in your master CV or re-run tailoring.",
+                },
+            )
+
+        # ATS score check + G-6 grounded retry
         cv_text = _cv_to_plain_text(tailored_cv)
         ats_result = await self._ats_optimiser.score(cv_text, analysis)
 
         if ats_result.overall_score < _ATS_THRESHOLD:
             logger.info(
-                "ATS score %d < %d — applying improvements and re-tailoring",
+                "ATS score %d < %d — applying grounded improvements and re-tailoring",
                 ats_result.overall_score, _ATS_THRESHOLD,
             )
-            improvements = "\n".join(self._ats_optimiser.suggest_improvements(ats_result))
+            master_text = _master_cv_text(_load_master_cv())
+            grounded, gaps = _partition_ats_keywords(ats_result.missing_critical, master_text)
+            if gaps:
+                logger.info(
+                    "G-6: ATS retry — %d keyword(s) are genuine skill gaps (not in master CV), "
+                    "excluded from re-tailor instructions: %s",
+                    len(gaps), gaps,
+                )
+            if grounded:
+                grounded_instruction = (
+                    f"Increase coverage of these keywords which the candidate already has: "
+                    f"{', '.join(grounded)}. Do not introduce any other new terms."
+                )
+            else:
+                grounded_instruction = (
+                    "Improve flow and ATS formatting. "
+                    "Do not introduce any keywords not already in the master CV."
+                )
+            other_suggestions = [
+                s for s in self._ats_optimiser.suggest_improvements(ats_result)
+                if not s.startswith("CRITICAL:")
+            ]
+            improvements = "\n".join([grounded_instruction] + other_suggestions[:3])
             tailored_cv = await self._cv_tailor.tailor(
                 analysis, variant, f"{custom_instructions or ''}\n{improvements}"
             )
+            # G-3: also check the re-tailored result
+            if tailored_cv.blocking_issues:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "Re-tailored CV still failed grounding checks — document withheld.",
+                        "issues": tailored_cv.blocking_issues,
+                        "hint": "Fix the issues in your master CV or re-run tailoring.",
+                    },
+                )
             cv_text = _cv_to_plain_text(tailored_cv)
             ats_result = await self._ats_optimiser.score(cv_text, analysis)
 
@@ -187,6 +265,18 @@ class TailorService:
         doc_repo = DocumentRepository(db)
         analysis = await self._jd_analyser.analyse(jd_text)
         tailored_cv = await self._cv_tailor.tailor(analysis, variant)
+
+        # G-3: blocking grounding issues withhold the document entirely
+        if tailored_cv.blocking_issues:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Tailored CV failed grounding checks — cover letter withheld.",
+                    "issues": tailored_cv.blocking_issues,
+                    "hint": "Fix the issues in your master CV or re-run tailoring.",
+                },
+            )
+
         personal = _load_personal()
         cl_variant = select_tone_variant(analysis)
         cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
@@ -352,14 +442,52 @@ class TailorService:
         yield sse("tailoring_cv", 40, "Tailoring CV with Claude...")
         tailored_cv = await self._cv_tailor.tailor(analysis, variant)
 
+        # G-3: blocking grounding issues withhold the document
+        if tailored_cv.blocking_issues:
+            yield sse(
+                "error",
+                0,
+                json.dumps({
+                    "error": "Tailored CV failed grounding checks — document withheld.",
+                    "issues": tailored_cv.blocking_issues,
+                }),
+            )
+            return
+
         yield sse("scoring_ats", 55, "Running ATS scoring...")
         cv_text = _cv_to_plain_text(tailored_cv)
         ats_result = await self._ats_optimiser.score(cv_text, analysis)
 
         if ats_result.overall_score < _ATS_THRESHOLD:
             yield sse("improving_cv", 65, f"ATS score {ats_result.overall_score} — optimising...")
-            improvements = "\n".join(self._ats_optimiser.suggest_improvements(ats_result))
+            master_text = _master_cv_text(_load_master_cv())
+            grounded, gaps = _partition_ats_keywords(ats_result.missing_critical, master_text)
+            if grounded:
+                grounded_instruction = (
+                    f"Increase coverage of these keywords which the candidate already has: "
+                    f"{', '.join(grounded)}. Do not introduce any other new terms."
+                )
+            else:
+                grounded_instruction = (
+                    "Improve flow and ATS formatting. "
+                    "Do not introduce any keywords not already in the master CV."
+                )
+            other_suggestions = [
+                s for s in self._ats_optimiser.suggest_improvements(ats_result)
+                if not s.startswith("CRITICAL:")
+            ]
+            improvements = "\n".join([grounded_instruction] + other_suggestions[:3])
             tailored_cv = await self._cv_tailor.tailor(analysis, variant, improvements)
+            if tailored_cv.blocking_issues:
+                yield sse(
+                    "error",
+                    0,
+                    json.dumps({
+                        "error": "Re-tailored CV still failed grounding checks — document withheld.",
+                        "issues": tailored_cv.blocking_issues,
+                    }),
+                )
+                return
             cv_text = _cv_to_plain_text(tailored_cv)
             ats_result = await self._ats_optimiser.score(cv_text, analysis)
 

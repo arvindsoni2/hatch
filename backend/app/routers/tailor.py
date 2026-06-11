@@ -16,6 +16,7 @@ from ..schemas.tailor import (
     TailorRequest,
 )
 from ..services.async_job_service import AsyncJobService
+from ..services.master_cv_store import MasterCVMissingError, resolve_master_cv_path
 from ..services.tailor_service import TailorService
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,18 @@ async def analyse_jd_text(
 # ---------------------------------------------------------------------------
 
 
+def _require_master_cv() -> None:
+    """Raise HTTP 409 if no confirmed master CV exists yet."""
+    if not resolve_master_cv_path().exists():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No master CV found. Upload your CV in Settings → Resume "
+                "before generating documents."
+            ),
+        )
+
+
 @router.post("/generate-cv", status_code=202)
 async def generate_cv(
     request: TailorRequest,
@@ -91,6 +104,7 @@ async def generate_cv(
     jd_text = request.jd_text or ""
     if not jd_text:
         raise HTTPException(status_code=422, detail="jd_text is required")
+    _require_master_cv()
 
     async_job = await AsyncJobService.create(db, "tailor_generate_cv")
     await db.commit()
@@ -116,6 +130,7 @@ async def generate_cover_letter(
 ) -> dict:
     """Kick off cover letter generation. Poll /api/async-jobs/{job_id} for result."""
     jd_text = request.jd_text or ""
+    _require_master_cv()
     async_job = await AsyncJobService.create(db, "tailor_generate_cl")
     await db.commit()
 
@@ -145,6 +160,7 @@ async def generate_all(
     automatically in the pipeline so documents are always tracked.
     """
     jd_text = request.jd_text or ""
+    _require_master_cv()
     async_job = await AsyncJobService.create(db, "tailor_generate")
     await db.commit()
 

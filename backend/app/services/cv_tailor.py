@@ -3,35 +3,25 @@ from __future__ import annotations
 
 import json
 import logging
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-from rapidfuzz import fuzz
 
 from ..prompts import render_prompt
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredExperience
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .claude_client import ClaudeClient
 from .jd_analyser import _split_jinja_output
+from .master_cv_store import MasterCVMissingError, load_master_cv  # noqa: F401
 from .master_cv_validator import MasterCVError, normalise_master_cv, validate_master_cv
 
 logger = logging.getLogger(__name__)
 
-_MASTER_CV_PATH = Path(__file__).parent.parent / "templates" / "master_cv.json"
 _FABRICATION_THRESHOLD = 70  # rapidfuzz score below this → warning
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
 
 def _default_skill_loader() -> SkillLoader:
     return SkillLoader(SkillRegistry(_SKILLS_DIR))
-
-
-@lru_cache(maxsize=1)
-def _load_master_cv_cached() -> dict[str, Any]:
-    """Load and cache master CV JSON. Cached for process lifetime."""
-    with _MASTER_CV_PATH.open() as fh:
-        return json.load(fh)
 
 
 class CVTailor:
@@ -42,8 +32,8 @@ class CVTailor:
         self._skill_loader = skill_loader or _default_skill_loader()
 
     def _load_master_cv(self) -> dict[str, Any]:
-        """Return the cached master CV dict."""
-        return _load_master_cv_cached()
+        """Return the master CV, loaded via the central store (mtime-cached)."""
+        return load_master_cv()
 
     def _select_best_summary_variant(self, jd_analysis: JDAnalysisResult) -> str:
         """Pick the most relevant summary variant based on keyword overlap.
@@ -218,70 +208,13 @@ class CVTailor:
     def _validate_no_fabrication(
         self, tailored: TailoredCVResult, master: dict[str, Any]
     ) -> tuple[list[str], list[str]]:
-        """Check the tailored CV for placeholder tokens (blocking) and invented content (advisory).
-
-        Blocking issues surface to the Review gate so the user knows why a document is withheld.
-        Advisory warnings are logged but don't block the result.
+        """Delegate to the entity-level grounding validator (G-5).
 
         Returns:
             (blocking, advisory) — two separate lists of human-readable strings.
         """
-        from .master_cv_validator import _PLACEHOLDER_PATTERNS
-
-        blocking: list[str] = []
-        advisory: list[str] = []
-
-        def _has_ph(text: str) -> bool:
-            return any(pat.search(text) for pat in _PLACEHOLDER_PATTERNS)
-
-        # -- Blocking: placeholder tokens in generated output --
-        if _has_ph(tailored.summary):
-            blocking.append(f"summary: contains placeholder text — {tailored.summary[:80]!r}")
-
-        for idx, skill_group in enumerate(tailored.skills):
-            for item in skill_group.get("items", []):
-                if isinstance(item, str) and _has_ph(item):
-                    blocking.append(f"skills[{idx}].items: placeholder — {item!r}")
-
-        for cert in tailored.certifications:
-            if isinstance(cert, str) and _has_ph(cert):
-                blocking.append(f"certifications: placeholder — {cert!r}")
-
-        for exp in tailored.experience:
-            if _has_ph(exp.role):
-                blocking.append(f"experience.role: placeholder company — {exp.role!r}")
-            if _has_ph(exp.company):
-                blocking.append(f"experience.company: placeholder company — {exp.company!r}")
-
-        # -- Advisory: fuzzy achievement + summary grounding check --
-        master_texts: list[str] = []
-        for exp in master.get("experience", []):
-            for ach in exp.get("achievements", []):
-                master_texts.append(ach.get("text", ""))
-
-        if master_texts and len(tailored.summary) >= 30:
-            best = max(
-                (fuzz.partial_ratio(tailored.summary, mt) for mt in master_texts), default=0
-            )
-            if best < _FABRICATION_THRESHOLD:
-                advisory.append(
-                    f"Summary low similarity to master CV (score={best}) — "
-                    f"verify no invented content: {tailored.summary[:80]!r}"
-                )
-
-        for exp in tailored.experience:
-            for achievement in exp.achievements:
-                if len(achievement) < 30:
-                    continue
-                best_score = max(
-                    (fuzz.partial_ratio(achievement, mt) for mt in master_texts), default=0
-                )
-                if best_score < _FABRICATION_THRESHOLD:
-                    advisory.append(
-                        f"Possible fabrication (score={best_score}): {achievement[:80]!r}"
-                    )
-
-        return blocking, advisory
+        from .grounding_validator import validate  # noqa: PLC0415
+        return validate(tailored, master)
 
 
 def _parse_tailored_cv(raw: dict[str, Any]) -> TailoredCVResult:

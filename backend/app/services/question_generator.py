@@ -1,19 +1,16 @@
 """Question Generator Service — generates weighted interview questions via Claude."""
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from ..prompts import render_prompt
 from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, SessionConfig
 from .claude_client import ClaudeClient
 from .jd_analyser import _split_jinja_output
+from .master_cv_store import load_master_cv
 
 logger = logging.getLogger(__name__)
-
-_MASTER_CV_PATH = Path(__file__).parent.parent / "templates" / "master_cv.json"
 
 _CATEGORY_WEIGHTS = {
     "Technical": 0.30,
@@ -26,22 +23,26 @@ _CATEGORY_WEIGHTS = {
 
 
 def _load_candidate_summary() -> str:
-    """Load a condensed candidate summary from master CV for prompt context."""
+    """Load a condensed candidate summary from the master CV for prompt context."""
     try:
-        with _MASTER_CV_PATH.open() as fh:
-            cv = json.load(fh)
+        cv = load_master_cv()
         personal = cv.get("personal", {})
         summary_variants = cv.get("summary_variants", {})
         summary = next(iter(summary_variants.values()), "")
-        skills_text = "; ".join(
-            cat.get("display_name", "") + ": " + ", ".join(cat.get("items", [])[:5])
-            for cat in cv.get("skills", {}).values()
-        )
+        skills = cv.get("skills", {})
+        if isinstance(skills, dict):
+            skills_text = "; ".join(
+                cat.get("display_name", "") + ": " + ", ".join(cat.get("items", [])[:5])
+                for cat in skills.values()
+                if isinstance(cat, dict)
+            )
+        else:
+            skills_text = ""
         name = personal.get("full_name", "Candidate")
         return f"{name}\n\nSummary: {summary[:500]}\n\nKey Skills: {skills_text[:500]}"
     except Exception as exc:
-        logger.warning("Failed to load master CV: %s", exc)
-        return "Senior Solutions Architect with 20+ years experience in cloud, data, and AI architectures."
+        logger.warning("Failed to load master CV for question generation: %s", exc)
+        return "Candidate"
 
 
 class QuestionGeneratorService:

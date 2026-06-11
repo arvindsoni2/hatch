@@ -1,8 +1,20 @@
 """Tests that tailor endpoints return 202 + job_id instead of blocking."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _mock_master_cv_present(tmp_path):
+    """Pretend a master CV file exists so pre-flight check doesn't return 409."""
+    fake_path = tmp_path / "master_cv.json"
+    fake_path.write_text("{}")
+    mock_path = MagicMock()
+    mock_path.exists.return_value = True
+    with patch("app.routers.tailor.resolve_master_cv_path", return_value=mock_path):
+        yield
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,8 @@
 """Feedback Generator — produces comprehensive session feedback reports via Claude."""
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from ..prompts import render_prompt
@@ -16,16 +14,14 @@ from ..schemas.coach import (
 )
 from .claude_client import ClaudeClient
 from .jd_analyser import _split_jinja_output
+from .master_cv_store import load_master_cv
 
 logger = logging.getLogger(__name__)
-
-_MASTER_CV_PATH = Path(__file__).parent.parent / "templates" / "master_cv.json"
 
 
 def _load_candidate_name() -> str:
     try:
-        with _MASTER_CV_PATH.open() as fh:
-            cv = json.load(fh)
+        cv = load_master_cv()
         return cv.get("personal", {}).get("full_name", "Candidate")
     except Exception:
         return "Candidate"
