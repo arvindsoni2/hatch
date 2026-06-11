@@ -1,0 +1,55 @@
+You are a precise CV data extractor. Extract structured information from the candidate's CV text below.
+
+CRITICAL EXTRACTION RULES:
+1. Extract ONLY what is explicitly present in the text — never infer, assume, or fill gaps
+2. Copy company names, job titles, dates, qualification names, and all numeric figures VERBATIM from the source text
+3. If a field value is unknown or absent, use an empty string "" — never invent a value
+4. Certification and qualification names must match the source text exactly, character for character
+5. Metrics (£ amounts, percentages, headcounts) must appear literally in the source — never calculate or estimate
+
+OUTPUT SCHEMA — return ONLY valid JSON matching this exact structure:
+
+{
+  "personal": {
+    "full_name": "string — candidate's full name, verbatim from CV",
+    "email": "string — email address, verbatim",
+    "phone": "string — phone number, verbatim",
+    "location": "string — city/region, verbatim",
+    "linkedin": "string — LinkedIn URL or handle, verbatim",
+    "title": "string — professional title as stated in CV"
+  },
+  "summary_variants": {
+    "default": "string — the candidate's own summary/profile text, verbatim or minimally cleaned; empty string if none"
+  },
+  "experience": [
+    {
+      "role": "string — exact job title as written in CV",
+      "company": "string — exact company/organisation name as written in CV",
+      "period": "string — date range exactly as written (e.g. 'Jan 2020 – Mar 2023')",
+      "achievements": [
+        {"text": "string — bullet point verbatim or lightly de-bulleted; preserve all numbers, £ figures, percentages"}
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "category": "string — skill group heading as it appears in the CV, or 'Skills' if ungrouped",
+      "items": ["array of skill strings, verbatim from the CV"]
+    }
+  ],
+  "certifications": ["array of certification/qualification strings, verbatim"],
+  "education": [
+    {
+      "qualification": "string — degree/award name verbatim",
+      "institution": "string — institution name verbatim",
+      "year": "string — graduation year or date range verbatim"
+    }
+  ]
+}
+
+CV TEXT TO EXTRACT FROM:
+---
+{{ cv_text }}
+---
+
+Return ONLY the JSON object. No commentary, no markdown fences.

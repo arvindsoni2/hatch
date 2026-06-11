@@ -1718,16 +1718,34 @@ export interface ResumeStatus {
   proof_points_count: number;
 }
 
+export interface ParsePreviewResponse {
+  parsed_cv: Record<string, unknown>;
+  warnings: string[];
+  filename: string;
+  raw_text_saved: boolean;
+}
+
 export async function fetchResumeStatus(): Promise<ResumeStatus> {
   return apiFetch<ResumeStatus>("/api/resume/status");
 }
 
-export async function uploadResume(file: File): Promise<ResumeStatus> {
+export async function uploadResume(file: File): Promise<ParsePreviewResponse> {
   const formData = new FormData();
   formData.append("file", file);
-  return apiFetch<ResumeStatus>("/api/resume/upload", {
+  return apiFetch<ParsePreviewResponse>("/api/resume/upload", {
     method: "POST",
     body: formData,
+  });
+}
+
+export async function confirmCv(
+  parsedCv: Record<string, unknown>,
+  filename?: string
+): Promise<ResumeStatus> {
+  return apiFetch<ResumeStatus>("/api/resume/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parsed_cv: parsedCv, filename }),
   });
 }
 

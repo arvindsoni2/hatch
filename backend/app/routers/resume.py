@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from ..agents.tools.profile_loader import load_profile
+from ..services.master_cv_store import invalidate_cache
 
 router = APIRouter(prefix="/api/resume", tags=["resume"])
 
@@ -174,6 +175,20 @@ class ResumeStatus(BaseModel):
     proof_points_count: int = 0
 
 
+class ParsePreviewResponse(BaseModel):
+    """Returned by /upload — parsed CV preview for user review before confirming."""
+    parsed_cv: dict[str, Any]
+    warnings: list[str]
+    filename: str
+    raw_text_saved: bool
+
+
+class ConfirmCVRequest(BaseModel):
+    """Body for /confirm — the (possibly user-edited) parsed CV JSON."""
+    parsed_cv: dict[str, Any]
+    filename: str | None = None
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/status", response_model=ResumeStatus)
@@ -233,15 +248,19 @@ async def get_resume_status() -> ResumeStatus:
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
-@router.post("/upload", response_model=ResumeStatus)
-async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
-    """Upload a .docx or .pdf CV. Parses into structured JSON and stores at data/master_cv.json."""
+@router.post("/upload", response_model=ParsePreviewResponse)
+async def upload_resume(file: UploadFile = File(...)) -> ParsePreviewResponse:
+    """Upload a .docx or .pdf CV.
+
+    Extracts text, runs structured LLM parsing with verbatim grounding checks,
+    and returns the preview for user review. Does NOT persist the CV —
+    call POST /resume/confirm to save it.
+    """
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()
     if suffix not in (".docx", ".pdf"):
         raise HTTPException(status_code=422, detail="Only .docx and .pdf files are supported.")
 
-    # Read up to MAX+1 bytes so we can detect oversized files without OOM
     content = await file.read(_MAX_UPLOAD_BYTES + 1)
     if len(content) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="File too large. Maximum upload size is 10 MB.")
@@ -264,46 +283,94 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
-    sections = _parse_sections(text)
-    skills = _extract_skills(text)
-    exp_count = _count_experience_items(sections)
+    # Persist raw text for semantic scoring (separate from structured CV)
+    raw_text_saved = False
+    try:
+        from ..services.resume_store import save_resume_text  # noqa: PLC0415
+        save_resume_text(text)
+        raw_text_saved = True
+    except Exception as _exc:
+        import logging as _logging  # noqa: PLC0415
+        _logging.getLogger(__name__).warning("Could not save resume text for scoring: %s", _exc)
 
-    cv_json: dict[str, Any] = {
-        "_source": filename,
-        "_parsed_at": datetime.utcnow().isoformat(),
-        "_raw_sections": sections,
-        # Promote normalised sections to top-level so status checks find them
-        **{k: v for k, v in sections.items() if not k.startswith("_")},
-    }
-    if skills:
-        cv_json["skills"] = {"extracted": {"display_name": "Skills", "items": skills}}
+    # Structured LLM parse — returns preview without persisting
+    try:
+        from ..services.claude_client import ClaudeClient  # noqa: PLC0415
+        from ..services.cv_parser import parse_cv_text  # noqa: PLC0415
+        parse_result = await parse_cv_text(text, ClaudeClient())
+        parsed_cv = parse_result.parsed
+        warnings = parse_result.warnings
+    except Exception as exc:
+        # Fallback: return heuristic-parsed sections so the user sees something
+        sections = _parse_sections(text)
+        skills = _extract_skills(text)
+        parsed_cv = {
+            "personal": {},
+            "summary_variants": {"default": sections.get("summary") or sections.get("profile") or ""},
+            "experience": [],
+            "skills": [{"category": "Skills", "items": skills}] if skills else [],
+            "certifications": [],
+            "education": [],
+        }
+        warnings = [f"LLM parse failed, using heuristic extraction: {exc}"]
 
+    return ParsePreviewResponse(
+        parsed_cv=parsed_cv,
+        warnings=warnings,
+        filename=filename,
+        raw_text_saved=raw_text_saved,
+    )
+
+
+@router.post("/confirm", response_model=ResumeStatus)
+async def confirm_cv(body: ConfirmCVRequest) -> ResumeStatus:
+    """Persist the (user-reviewed, possibly edited) parsed CV JSON.
+
+    Validates the CV structure, writes to master_cv_path, invalidates the
+    in-process cache so subsequent tailor calls see the new content immediately.
+    """
+    from ..services.master_cv_validator import validate_master_cv  # noqa: PLC0415
+
+    cv_data = body.parsed_cv
+    validation_errors = validate_master_cv(cv_data)
+    if validation_errors:
+        # Advisory only — still save. Blocking errors are surfaced at tailor time.
+        import logging as _logging  # noqa: PLC0415
+        _logging.getLogger(__name__).warning("Master CV validation warnings: %s", validation_errors)
+
+    _data_dir().mkdir(parents=True, exist_ok=True)
     cv_path = _cv_path()
-    cv_path.write_text(json.dumps(cv_json, indent=2, ensure_ascii=False))
+    cv_path.write_text(json.dumps(cv_data, indent=2, ensure_ascii=False))
+    invalidate_cache()
+
+    filename = body.filename or "master_cv.json"
+    exp_count = len(cv_data.get("experience", []))
+    skills_flat: list[str] = []
+    for grp in cv_data.get("skills", []):
+        if isinstance(grp, dict):
+            skills_flat.extend(grp.get("items", []))
 
     meta = {
         "filename": filename,
         "uploaded_at": datetime.utcnow().isoformat(),
         "experience_count": exp_count,
+        "confirmed": True,
     }
     _meta_path().write_text(json.dumps(meta))
 
-    # Persist plain resume text for semantic scoring
-    try:
-        from ..services.resume_store import save_resume_text
-        save_resume_text(text)
-    except Exception as _exc:
-        import logging as _logging
-        _logging.getLogger(__name__).warning("Could not save resume text for scoring: %s", _exc)
-
     sections_present: dict[str, bool] = {
-        "personal": bool(sections.get("header") or sections.get("contact") or sections.get("personal")),
-        "summary": bool(sections.get("summary") or sections.get("profile")),
-        "experience": bool(sections.get("experience") or sections.get("employment")),
-        "skills": bool(skills or sections.get("skills")),
-        "education": bool(sections.get("education")),
-        "certifications": bool(sections.get("certifications")),
+        "personal": bool(cv_data.get("personal")),
+        "summary": bool(cv_data.get("summary_variants")),
+        "experience": bool(cv_data.get("experience")),
+        "skills": bool(cv_data.get("skills")),
+        "education": bool(cv_data.get("education")),
+        "certifications": bool(cv_data.get("certifications")),
     }
+
+    try:
+        proof_count = len(load_profile().proof_points)
+    except Exception:
+        proof_count = 0
 
     return ResumeStatus(
         exists=True,
@@ -311,9 +378,9 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeStatus:
         uploaded_at=meta["uploaded_at"],
         parsed=True,
         sections=sections_present,
-        skills_count=len(skills),
+        skills_count=len(skills_flat),
         experience_count=exp_count,
-        proof_points_count=len(load_profile().proof_points),
+        proof_points_count=proof_count,
     )
 
 
