@@ -6,19 +6,19 @@ CRITICAL RULES:
 3. You may rephrase, reorder, and emphasise — but not invent
 4. Embed ATS keywords naturally — not awkwardly stuffed
 5. Maximum 2 pages worth of content (max 4 achievements per role, max 3 detailed roles)
-6. Every achievement must include a quantified metric
+6. Reword bullets from the master CV; if a bullet has no metric, do NOT invent one — rephrase without a number
 7. Use the contract_type to frame the candidate correctly: "permanent" roles need employee framing, not "contractor"; "contract" roles should reference delivery tenure and daily/hourly rate context
+
+ANTI-EXAMPLE — do not do this:
+  Master: "Improved deployment process at AcmeCo, saving time"
+  BAD tailored: "Reduced deployment time by 40% at AcmeCo, achieving 99.9% uptime" ← invented metric, never do this
+  GOOD tailored: "Streamlined deployment pipeline at AcmeCo, accelerating release cadence" ← rephrased without inventing a number
 
 SECTOR TRANSFER GUIDANCE:
 If the candidate's experience is in different sectors than the target (e.g. energy/aviation vs construction), do NOT claim sector-specific experience they don't have. Instead, surface transferable proof points: regulated-industry delivery, large-programme governance, data-platform consolidation, stakeholder management at scale. Frame these in the target sector's language.
 
-SKILL CATEGORY LABELS — use these exact display names (non-empty):
-- "Cloud & Infrastructure"
-- "Data & AI"
-- "Architecture & Design"
-- "Delivery & Leadership"
-- "Security & Compliance"
-(Add a category only if the candidate genuinely has skills for it)
+SKILL CATEGORY LABELS:
+Use the candidate's existing skill group names from the master CV. Do not introduce new category names that do not appear in the master CV. Only include a category if the candidate genuinely has skills for it.
 
 MASTER CV (relevant slices only):
 {{ master_cv | tojson }}
@@ -35,7 +35,7 @@ JD SUMMARY:
 {% endif %}
 
 {% if best_summary_variant %}
-BEST CANDIDATE SUMMARY VARIANT (use as base, don't reproduce verbatim):
+BEST CANDIDATE SUMMARY VARIANT (use as base, rephrase to embed 2-3 JD keywords that are ALREADY present in the candidate's skills or experience — do not add keywords not in the master CV):
 {{ best_summary_variant }}
 {% endif %}
 
@@ -47,10 +47,6 @@ VARIANT B INSTRUCTION: Prioritise keyword density and direct matching. Lead ever
 ADDITIONAL INSTRUCTIONS: {{ custom_instructions }}
 {% endif %}
 
-WORKED EXAMPLE of a well-tailored bullet (follow this style):
-  Master: "Saved costs via mobile platform"
-  Tailored: "Delivered £500K annual operational savings by designing hybrid cloud field-mobility platform serving 2,000+ engineers — AWS/ECS, SAFe delivery."
-
 {% if skill_instructions %}
 ## SKILL GUIDANCE
 {{ skill_instructions }}
@@ -59,22 +55,22 @@ WORKED EXAMPLE of a well-tailored bullet (follow this style):
 Return ONLY valid JSON matching this schema:
 
 {
-  "summary": "string — rewritten 3-4 sentence summary targeting top 3 JD requirements; embed 2-3 ATS keywords; include metrics; no bracketed placeholders",
+  "summary": "string — rewritten 3-4 sentence summary targeting top 3 JD requirements; embed 2-3 ATS keywords already present in the master CV; no invented metrics; no bracketed placeholders",
   "skills": [
     {
-      "category": "string — non-empty display name from the approved list above",
-      "items": ["array of skill strings, max 8, ordered by JD relevance"]
+      "category": "string — use the candidate's existing category name from the master CV",
+      "items": ["array of skill strings from the master CV, max 8, ordered by JD relevance"]
     }
   ],
   "experience": [
     {
-      "role": "string",
-      "company": "string — use the real company name from the master CV",
-      "period": "string",
-      "achievements": ["array of 3-4 bullet strings, each with metric, ordered by JD relevance"]
+      "role": "string — copy verbatim from master CV",
+      "company": "string — copy verbatim from master CV",
+      "period": "string — copy verbatim from master CV",
+      "achievements": ["array of 3-4 bullet strings, rephrased from master CV bullets; if no metric exists in the master, do not add one"]
     }
   ],
-  "certifications": ["array of certification strings, ordered by JD relevance"],
-  "ats_keywords_embedded": ["array — keywords successfully embedded in the CV"],
+  "certifications": ["array of certification strings from master CV, ordered by JD relevance"],
+  "ats_keywords_embedded": ["array — keywords successfully embedded in the CV that were already present in the master CV"],
   "tailoring_notes": "string — brief explanation of key tailoring decisions and any sector-transfer choices made"
 }
