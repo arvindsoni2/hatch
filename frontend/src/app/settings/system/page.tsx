@@ -4,8 +4,8 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
-  ArrowLeft, RefreshCw, Download, RotateCcw, CheckCircle2,
-  AlertTriangle, Clock, Loader2, Trash2, Zap,
+  ArrowLeft, RefreshCw, Download, RotateCcw,
+  Loader2, Trash2, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { API_BASE } from "@/lib/api";
@@ -207,6 +207,61 @@ export default function SystemLogPage() {
             </Button>
           </div>
         </div>
+
+        {traces.length > 0 && (() => {
+          const byModel: Record<string, { durations: number[]; tokensOut: number[]; cost: number }> = {};
+          for (const t of traces) {
+            if (!byModel[t.model]) byModel[t.model] = { durations: [], tokensOut: [], cost: 0 };
+            byModel[t.model].durations.push(t.duration_ms);
+            byModel[t.model].tokensOut.push(t.tokens_out);
+            byModel[t.model].cost += t.cost_usd;
+          }
+          const rows = Object.entries(byModel).map(([model, d]) => {
+            const sorted = [...d.durations].sort((a, b) => a - b);
+            const avg = sorted.reduce((s, v) => s + v, 0) / sorted.length;
+            const median = sorted[Math.floor(sorted.length / 2)];
+            const avgToksOut = d.tokensOut.reduce((s, v) => s + v, 0) / d.tokensOut.length;
+            const tps = avg > 0 ? (avgToksOut / avg) * 1000 : 0;
+            return { model, calls: sorted.length, avg, median, tps, cost: d.cost };
+          });
+          return (
+            <div className="border-b border-border px-4 py-3">
+              <p className="text-xs font-semibold text-muted mb-2 uppercase tracking-wide">Per-model summary</p>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-muted">
+                    <th className="text-left font-medium pb-1.5">Model</th>
+                    <th className="text-right font-medium pb-1.5">Calls</th>
+                    <th className="text-right font-medium pb-1.5">Avg latency</th>
+                    <th className="text-right font-medium pb-1.5">Median latency</th>
+                    <th className="text-right font-medium pb-1.5">Tokens/sec</th>
+                    <th className="text-right font-medium pb-1.5">Total cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.model} className="border-t border-border/50">
+                      <td className="py-1.5 pr-4 font-mono font-medium" style={{ color: 'var(--text)' }}>{r.model}</td>
+                      <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-dim)' }}>{r.calls}</td>
+                      <td className="py-1.5 text-right tabular-nums">
+                        <span className={`rounded px-1.5 py-0.5 font-semibold ${r.avg < 2000 ? 'bg-green-100 text-green-700' : r.avg < 10000 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                          {r.avg >= 1000 ? `${(r.avg / 1000).toFixed(1)}s` : `${Math.round(r.avg)}ms`}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-right tabular-nums">
+                        <span className={`rounded px-1.5 py-0.5 font-semibold ${r.median < 2000 ? 'bg-green-100 text-green-700' : r.median < 10000 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                          {r.median >= 1000 ? `${(r.median / 1000).toFixed(1)}s` : `${Math.round(r.median)}ms`}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-dim)' }}>{r.tps.toFixed(1)} tok/s</td>
+                      <td className="py-1.5 text-right tabular-nums" style={{ color: 'var(--text-dim)' }}>{r.cost > 0 ? `$${r.cost.toFixed(5)}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
 
         {traces.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted">
