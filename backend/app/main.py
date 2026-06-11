@@ -287,10 +287,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_router)
     app.include_router(scoring_router)
     app.include_router(async_jobs_router)
-    if _debug:
-        app.include_router(debug_router)
-    else:
-        logger.info("Debug router disabled (LOG_LEVEL != DEBUG). Set LOG_LEVEL=DEBUG to enable.")
+    app.include_router(debug_router)
 
     return app
 

@@ -129,7 +129,7 @@ export function HatchSidebar({ activeTab }: HatchSidebarProps) {
                 strokeWidth={active ? 2.3 : 2}
               />
               <span>{label}</span>
-              {badge > 0 && (
+              {false && badge > 0 && (
                 <span
                   className="ml-auto font-mono"
                   style={{
