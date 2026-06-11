@@ -27,6 +27,7 @@ from ..models.job import JobPosting
 from ..models.cost_tracking import CostTracking
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
+from langchain_core.exceptions import OutputParserException
 from .tools.llm_factory import get_triage_model, get_primary_model, estimate_tokens, estimate_cost
 from .tools.local_scorer import score_locally, LocalScoreResult
 from .tools.profile_loader import load_profile
@@ -235,6 +236,15 @@ class ScorerAgent(BaseAgent):
                     skipped += 1
                 else:
                     scored += 1
+            except OutputParserException as exc:
+                self._log.warning(
+                    "LLM returned non-JSON for event %s — falling back to local score. "
+                    "Raw output: %.120s",
+                    event["id"], str(exc),
+                )
+                result_tag = await self._persist_local_score(event, job, local_score, db, profile)
+                await self._bus.mark_completed(event["id"], db)
+                scored += 1
             except Exception as exc:
                 self._log.exception("Scoring error for event %s: %s", event["id"], exc)
                 await self._bus.mark_failed(event["id"], str(exc), db)
@@ -297,6 +307,16 @@ class ScorerAgent(BaseAgent):
                 await self._bus.mark_completed(event["id"], db)
                 skipped += 1 if tag == "skipped" else 0
                 scored += 1 if tag != "skipped" else 0
+            except OutputParserException as exc:
+                self._log.warning(
+                    "LLM returned non-JSON for event %s — falling back to local score. "
+                    "Raw output: %.120s",
+                    event["id"], str(exc),
+                )
+                local_score = score_locally(job, profile)
+                tag = await self._persist_local_score(event, job, local_score, db, profile)
+                await self._bus.mark_completed(event["id"], db)
+                scored += 1
             except Exception as exc:
                 self._log.exception("Scoring error for event %s: %s", event["id"], exc)
                 await self._bus.mark_failed(event["id"], str(exc), db)

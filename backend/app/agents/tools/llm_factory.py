@@ -361,6 +361,7 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
         reasoning = getattr(llm_cfg, "reasoning", False)
         kwargs["request_timeout"] = 300  # 5-minute hard ceiling; prevents silent hangs
         kwargs["num_ctx"] = 16384
+        kwargs["format"] = "json"  # token-level JSON constraint — prevents markdown output
         # qwen3: thinking is ON by default; must explicitly disable unless reasoning=True
         if model_name.lower().startswith("qwen3"):
             kwargs["think"] = reasoning
