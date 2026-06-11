@@ -17,36 +17,18 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "interview_sessions",
-        sa.Column("coach_mode", sa.String(16), nullable=True),
-    )
-    op.add_column(
-        "interview_sessions",
-        sa.Column("rubric", sa.JSON(), nullable=True),
-    )
-    op.add_column(
-        "interview_sessions",
-        sa.Column("signals", sa.JSON(), nullable=True),
-    )
-    op.add_column(
-        "interview_sessions",
-        sa.Column(
-            "parent_session_id",
-            sa.String(36),
-            sa.ForeignKey("interview_sessions.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-    )
-    op.add_column(
-        "interview_sessions",
-        sa.Column("focus_areas", sa.JSON(), nullable=True),
-    )
+    with op.batch_alter_table("interview_sessions") as batch_op:
+        batch_op.add_column(sa.Column("coach_mode", sa.String(16), nullable=True))
+        batch_op.add_column(sa.Column("rubric", sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column("signals", sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column("parent_session_id", sa.String(36), nullable=True))
+        batch_op.add_column(sa.Column("focus_areas", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("interview_sessions", "focus_areas")
-    op.drop_column("interview_sessions", "parent_session_id")
-    op.drop_column("interview_sessions", "signals")
-    op.drop_column("interview_sessions", "rubric")
-    op.drop_column("interview_sessions", "coach_mode")
+    with op.batch_alter_table("interview_sessions") as batch_op:
+        batch_op.drop_column("focus_areas")
+        batch_op.drop_column("parent_session_id")
+        batch_op.drop_column("signals")
+        batch_op.drop_column("rubric")
+        batch_op.drop_column("coach_mode")
