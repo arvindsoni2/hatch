@@ -38,9 +38,10 @@ interface ReviewOverlayProps {
   onAction: (action: 'approve' | 'reject') => void;
   onClose: () => void;
   isLoading?: boolean;
+  loadingMessage?: string;
 }
 
-export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false }: ReviewOverlayProps) {
+export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false, loadingMessage }: ReviewOverlayProps) {
   const [tab, setTab] = useState<'cv' | 'cl'>('cv');
   const job = queue[idx];
   if (!job) return null;
@@ -172,12 +173,27 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
         </div>
 
         {/* Sticky action bar */}
+        {isLoading && loadingMessage && (
+          <div style={{
+            padding: '8px 18px',
+            borderTop: '1px solid var(--border)',
+            background: 'var(--bg-elevated)',
+            fontSize: 13,
+            color: 'var(--text-muted)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1.5s ease-in-out infinite' }} />
+            {loadingMessage}
+          </div>
+        )}
         <div style={{
           flexShrink: 0,
           display: 'flex',
           gap: 10,
           padding: '12px 18px',
-          borderTop: '1px solid var(--border)',
+          borderTop: isLoading && loadingMessage ? 'none' : '1px solid var(--border)',
           background: 'var(--bg-elevated)',
         }}>
           <Btn kind="ghost" icon="x" disabled={isLoading} onClick={() => onAction('reject')}>Reject</Btn>

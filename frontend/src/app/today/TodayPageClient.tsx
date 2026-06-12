@@ -1,10 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { TodayScreen } from "@/components/hatch/screens/TodayScreen";
 import { ReviewOverlay } from "@/components/hatch/ReviewOverlay";
 import { ApplicationReadyCard } from "@/components/hatch/ApplicationReadyCard";
 import { AgentActivityPanel } from "@/components/hatch/AgentActivityPanel";
-import { approveJob, rejectApplication, markApplied, revertApplication } from "@/lib/api";
+import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob } from "@/lib/api";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 import type { ApplicationPackage, AgentPerformance } from "@/lib/api";
 
@@ -31,23 +31,76 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
   const [reviewIdx, setReviewIdx] = useState(0);
   const [packages, setPackages] = useState<Record<string, ApplicationPackage>>({});
   const [approving, setApproving] = useState(false);
+  const [approvingMessage, setApprovingMessage] = useState<string>("");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startPolling = useCallback((asyncJobId: string, jobId: string, jobTitle: string, company: string | null) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const asyncJob = await getAsyncJob<ApplicationPackage>(asyncJobId);
+        if (asyncJob.status === "done" && asyncJob.result) {
+          clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setApproving(false);
+          setApprovingMessage("");
+          const pkg = asyncJob.result;
+          setPackages((prev) => ({ ...prev, [jobId]: pkg }));
+          setLocalJobs((prev) =>
+            prev.map((j) =>
+              j.id === jobId
+                ? { ...j, state: "ready_to_apply" as const, jobUrl: pkg.job_url ?? undefined }
+                : j
+            )
+          );
+          // Browser notification
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+            new Notification("Application ready", {
+              body: `Your CV and cover letter for ${jobTitle}${company ? ` at ${company}` : ""} are ready to review.`,
+            });
+          }
+        } else if (asyncJob.status === "failed") {
+          clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setApproving(false);
+          setApprovingMessage("");
+          // Revert to ready so the user can retry
+          setLocalJobs((prev) => prev.map((j) => j.id === jobId ? { ...j, state: "ready" as const } : j));
+        }
+      } catch {
+        // network hiccup — keep polling
+      }
+    }, 5000);
+  }, []);
 
   async function handleAction(action: "approve" | "reject") {
     const job = reviewQueue[reviewIdx];
     if (!job) return;
     if (action === "approve") {
       setApproving(true);
-      const pkg = await approveJob(job.jobPostingId ?? job.id).catch(() => null);
-      setApproving(false);
-      if (pkg) {
-        setPackages((prev) => ({ ...prev, [job.id]: pkg }));
+      setApprovingMessage("Preparing your CV and cover letter… this may take a few minutes.");
+      try {
+        const ref = await approveJob(job.jobPostingId ?? job.id);
+        // Request notification permission if not already granted
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+          Notification.requestPermission();
+        }
+        // Advance the review queue immediately — user doesn't need to wait
+        if (reviewIdx < reviewQueue.length - 1) {
+          setReviewIdx((i) => i + 1);
+        } else {
+          setReviewQueue([]);
+        }
+        // Mark job as tailoring (docs being generated) in local state
         setLocalJobs((prev) =>
-          prev.map((j) =>
-            j.id === job.id
-              ? { ...j, state: "ready_to_apply" as const, jobUrl: pkg.job_url ?? undefined }
-              : j
-          )
+          prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const } : j)
         );
+        startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
+        return; // don't call advance queue again below
+      } catch {
+        setApproving(false);
+        setApprovingMessage("");
       }
     } else {
       await rejectApplication(job.id).catch(() => {});
@@ -138,6 +191,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
           onAction={handleAction}
           onClose={() => { if (!approving) setReviewQueue([]); }}
           isLoading={approving}
+          loadingMessage={approvingMessage}
         />
       )}
     </>

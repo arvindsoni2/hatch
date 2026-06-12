@@ -1989,8 +1989,15 @@ export async function prepareApplication(applicationId: string): Promise<Applica
   });
 }
 
-export async function approveJob(jobId: string): Promise<ApplicationPackage> {
-  return apiFetch<ApplicationPackage>(`/api/jobs/${jobId}/approve`, { method: "POST" });
+export interface ApproveJobRef {
+  async_job_id: string
+  job_id: string
+  status: "preparing"
+  message: string
+}
+
+export async function approveJob(jobId: string): Promise<ApproveJobRef> {
+  return apiFetch<ApproveJobRef>(`/api/jobs/${jobId}/approve`, { method: "POST" });
 }
 
 export async function getApplicationPackage(appId: string): Promise<ApplicationPackage> {

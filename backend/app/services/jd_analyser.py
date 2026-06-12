@@ -127,11 +127,18 @@ class JDAnalyser:
         # Flatten CV skills from all categories
         cv_skills: set[str] = set()
         for skill_cat in master_cv.get("skills", {}).values():
+            if not isinstance(skill_cat, dict):
+                continue
             for item in skill_cat.get("items", []):
-                cv_skills.add(item.lower())
+                if isinstance(item, str):
+                    cv_skills.add(item.lower())
         # Also add tags from experience achievements
         for exp in master_cv.get("experience", []):
+            if not isinstance(exp, dict):
+                continue
             for ach in exp.get("achievements", []):
+                if not isinstance(ach, dict):
+                    continue
                 for tag in ach.get("tags", []):
                     cv_skills.add(tag.lower())
 

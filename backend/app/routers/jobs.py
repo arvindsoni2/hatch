@@ -308,6 +308,7 @@ async def rescore_unscored(
     for job in unscored:
         await bus.emit(
             "job_discovered",
+            "rescore",
             {
                 "job_id": job.id,
                 "title": job.title,
@@ -477,33 +478,36 @@ async def get_job_decisions(
 # ──────────────────────── Hatch v4: Two-step assisted apply ────────────────────────
 
 
-@router.post("/{job_id}/approve")
+@router.post("/{job_id}/approve", status_code=202)
 async def approve_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Approve a job for application: tailor docs + assemble package → ready_to_apply.
+    """Approve a job: kick off async CV+CL preparation and return immediately.
 
-    This endpoint prepares application materials for human review.
-    It does NOT submit anything or fill forms autonomously.
-    Status transitions: * → preparing → ready_to_apply.
+    LLM document generation can take several minutes on local hardware. This
+    endpoint sets the application status to "preparing", fires a background
+    async_job, and returns 202 with an async_job_id the client can poll.
 
-    Args:
-        job_id: UUID of the job posting to approve.
+    Poll GET /api/async-jobs/{async_job_id} for status. When status="done",
+    result_json contains the ApplicationPackage.
+
+    Status transitions: * → preparing (immediate) → ready_to_apply (background).
 
     Returns:
-        ApplicationPackage JSON: job_id, job_url, cv_path, cover_letter_path,
-        prefill_map, screening_answers, paste_map.
+        202 dict with async_job_id, job_id, status="preparing".
 
     Raises:
         HTTPException 404: Job not found.
     """
+    import json as _json_local
     from sqlalchemy import select, update
     from datetime import datetime
 
     from ..models.job import JobPosting
     from ..models.application import Application
     from ..services.assisted_apply import AssistedApplyService
+    from ..services.async_job_service import AsyncJobService
 
     # 1. Verify job exists
     job_result = await db.execute(
@@ -513,7 +517,7 @@ async def approve_job(
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
 
-    # 2. Find or create the linked Application
+    # 2. Find or create the linked Application, set status → "preparing"
     app_result = await db.execute(
         select(Application).where(
             Application.job_id == job_id,
@@ -524,44 +528,68 @@ async def approve_job(
     if app_obj is None:
         app_obj = Application(
             job_id=job_id,
-            status="approved",
+            status="preparing",
             priority="normal",
             is_active=True,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
         db.add(app_obj)
-        await db.commit()
-        await db.refresh(app_obj)
     else:
         await db.execute(
             update(Application)
             .where(Application.id == app_obj.id)
-            .values(status="approved", updated_at=datetime.utcnow())
+            .values(status="preparing", updated_at=datetime.utcnow())
         )
-        await db.commit()
 
-    # 3. Prepare the application package
-    service = AssistedApplyService()
-    package = await service.prepare_application(job_id=job_id, db=db)
-
-    # 4. Guarantee final status is ready_to_apply (idempotent if prepare_application
-    # already set it; a safety net when prepare_application is mocked in tests)
-    await db.execute(
-        update(Application)
-        .where(Application.job_id == job_id)
-        .values(status="ready_to_apply", updated_at=datetime.utcnow())
-    )
+    # 3. Create async_job before commit so both land in the same transaction
+    async_job = await AsyncJobService.create(db, "prepare_application")
     await db.commit()
 
+    # 4. Background task: run prepare_application in its own DB session
+    async def _prepare() -> None:
+        from ..database import AsyncSessionLocal  # noqa: PLC0415
+        from sqlalchemy import update as sa_update  # noqa: PLC0415
+
+        try:
+            async with AsyncSessionLocal() as own_db:
+                service = AssistedApplyService()
+                package = await service.prepare_application(job_id=job_id, db=own_db)
+                # Guarantee ready_to_apply regardless of what prepare_application set
+                await own_db.execute(
+                    sa_update(Application)
+                    .where(Application.job_id == job_id)
+                    .values(status="ready_to_apply", updated_at=datetime.utcnow())
+                )
+                await own_db.commit()
+                result = {
+                    "job_id": package.job_id,
+                    "job_url": package.job_url,
+                    "cv_path": package.cv_path,
+                    "cover_letter_path": package.cover_letter_path,
+                    "cv_document_id": package.cv_document_id,
+                    "cl_document_id": package.cl_document_id,
+                    "prefill_map": package.prefill_map,
+                    "screening_answers": package.screening_answers,
+                    "paste_map": package.paste_map,
+                }
+                await AsyncJobService._finish(async_job.id, _json_local.dumps(result), None)
+        except Exception as exc:
+            from ..database import AsyncSessionLocal as _ASL  # noqa: PLC0415
+            async with _ASL() as err_db:
+                await err_db.execute(
+                    sa_update(Application)
+                    .where(Application.job_id == job_id)
+                    .values(status="approved", updated_at=datetime.utcnow())
+                )
+                await err_db.commit()
+            await AsyncJobService._finish(async_job.id, None, str(exc))
+
+    AsyncJobService.run(async_job.id, _prepare())
+
     return {
-        "job_id": package.job_id,
-        "job_url": package.job_url,
-        "cv_path": package.cv_path,
-        "cover_letter_path": package.cover_letter_path,
-        "cv_document_id": package.cv_document_id,
-        "cl_document_id": package.cl_document_id,
-        "prefill_map": package.prefill_map,
-        "screening_answers": package.screening_answers,
-        "paste_map": package.paste_map,
+        "async_job_id": async_job.id,
+        "job_id": job_id,
+        "status": "preparing",
+        "message": "Hatch is preparing your CV and cover letter. This may take a few minutes.",
     }
