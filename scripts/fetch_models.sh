@@ -8,13 +8,13 @@ MODELS_DIR="${MODELS_DIR:-$(dirname "$0")/../data/models}"
 mkdir -p "$MODELS_DIR"
 
 # ── Pinned sources ────────────────────────────────────────────────────────────
-# Prefer official Qwen HuggingFace repos. sha256 verified after download.
-PRIMARY_REPO="Qwen/Qwen3.5-4B-Instruct-GGUF"
-PRIMARY_FILE="Qwen3.5-4B-Instruct-Q4_K_M.gguf"
+# Public bartowski quantizations — no HF token required.
+PRIMARY_REPO="bartowski/Qwen2.5-3B-Instruct-GGUF"
+PRIMARY_FILE="Qwen2.5-3B-Instruct-Q4_K_M.gguf"
 PRIMARY_SHA256="PLACEHOLDER_VERIFY_AND_FILL_BEFORE_PROD"
 
-TRIAGE_REPO="Qwen/Qwen3.5-0.8B-GGUF"
-TRIAGE_FILE="Qwen3.5-0.8B-Q8_0.gguf"
+TRIAGE_REPO="bartowski/Qwen2.5-0.5B-Instruct-GGUF"
+TRIAGE_FILE="Qwen2.5-0.5B-Instruct-Q8_0.gguf"
 TRIAGE_SHA256="PLACEHOLDER_VERIFY_AND_FILL_BEFORE_PROD"
 
 # ── Helper ────────────────────────────────────────────────────────────────────

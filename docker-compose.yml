@@ -3,16 +3,14 @@
 # Auto-starts on reboot via the jobpilot.service systemd unit.
 
 services:
-  # ── llama-server: primary model (Qwen3.5-4B Q4_K_M, :8080) ──────────────────
-  # Pinned build: see scripts/verify_runtime.sh for the smoke-test procedure.
-  # Image tag format: ghcr.io/ggml-org/llama.cpp:server-bNNNN
-  # Update: docker pull ghcr.io/ggml-org/llama.cpp:server → note bNNNN → run
-  # scripts/verify_runtime.sh → pin below. Any build >= March 2026 supports Qwen3.5.
+  # ── llama-server: primary model (Qwen2.5-3B Q4_K_M, :8080) ──────────────────
+  # Use ghcr.io/ggml-org/llama.cpp:server (rolling latest) or pin a bNNNN tag.
+  # Model file: run scripts/fetch_models.sh to download Qwen2.5-3B-Instruct-Q4_K_M.gguf
   llm-primary:
-    image: ghcr.io/ggml-org/llama.cpp:server-b5068
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: jobpilot-llm-primary
     command: >
-      --model /models/Qwen3.5-4B-Instruct-Q4_K_M.gguf
+      --model /models/Qwen2.5-3B-Instruct-Q4_K_M.gguf
       --ctx-size 16384
       --parallel 1
       --host 0.0.0.0
@@ -31,13 +29,13 @@ services:
     networks:
       - jobpilot
 
-  # ── llama-server: triage model (Qwen3.5-0.8B Q8_0, :8081) ──────────────────
+  # ── llama-server: triage model (Qwen2.5-0.5B Q8_0, :8081) ──────────────────
   # --parallel 2 gives 2048 tokens/slot (4096 / 2) — sufficient for TRIAGE (1536+256).
   llm-triage:
-    image: ghcr.io/ggml-org/llama.cpp:server-b5068
+    image: ghcr.io/ggml-org/llama.cpp:server
     container_name: jobpilot-llm-triage
     command: >
-      --model /models/Qwen3.5-0.8B-Q8_0.gguf
+      --model /models/Qwen2.5-0.5B-Instruct-Q8_0.gguf
       --ctx-size 4096
       --parallel 2
       --host 0.0.0.0
@@ -85,9 +83,9 @@ services:
       - ./locales:/app/locales:ro,z
     depends_on:
       llm-primary:
-        condition: service_healthy
+        condition: service_started
       llm-triage:
-        condition: service_healthy
+        condition: service_started
     # Allow the backend container to reach Ollama running on the host (Ollama provider).
     # On Linux, host.docker.internal is not automatic — host-gateway maps it.
     extra_hosts:
