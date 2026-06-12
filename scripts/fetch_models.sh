@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Idempotent download of the two Qwen2.5 GGUFs used by llm-primary and llm-triage.
+# Idempotent download of the two Qwen3 GGUFs used by llm-primary and llm-triage.
+# Source: unsloth quantizations on HuggingFace (public, no auth required).
 # Run once before 'docker compose up'.
 # Offline path: manually drop the files into data/models/ and skip this script.
 set -euo pipefail
@@ -8,18 +9,16 @@ MODELS_DIR="${MODELS_DIR:-$(dirname "$0")/../data/models}"
 mkdir -p "$MODELS_DIR"
 
 # ── Pinned sources ────────────────────────────────────────────────────────────
-# Public bartowski quantizations — no HF token required.
-PRIMARY_REPO="bartowski/Qwen2.5-3B-Instruct-GGUF"
-PRIMARY_FILE="Qwen2.5-3B-Instruct-Q4_K_M.gguf"
-PRIMARY_SHA256="PLACEHOLDER_VERIFY_AND_FILL_BEFORE_PROD"
+# unsloth quantizations — no HF token required.
+PRIMARY_URL="https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_0.gguf"
+PRIMARY_FILE="Qwen3-4B-Q4_0.gguf"
 
-TRIAGE_REPO="bartowski/Qwen2.5-0.5B-Instruct-GGUF"
-TRIAGE_FILE="Qwen2.5-0.5B-Instruct-Q8_0.gguf"
-TRIAGE_SHA256="PLACEHOLDER_VERIFY_AND_FILL_BEFORE_PROD"
+TRIAGE_URL="https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf"
+TRIAGE_FILE="Qwen3-0.6B-Q4_0.gguf"
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 download_if_missing() {
-  local repo="$1" filename="$2" sha256="$3"
+  local url="$1" filename="$2"
   local dest="$MODELS_DIR/$filename"
 
   if [[ -f "$dest" ]]; then
@@ -27,28 +26,17 @@ download_if_missing() {
     return
   fi
 
-  echo "[fetch_models] Downloading $filename from $repo …"
-  # huggingface-cli is the preferred tool; fall back to wget
-  if command -v huggingface-cli &>/dev/null; then
-    huggingface-cli download "$repo" "$filename" --local-dir "$MODELS_DIR"
+  echo "[fetch_models] Downloading $filename …"
+  if command -v wget &>/dev/null; then
+    wget -q --show-progress "$url" -O "$dest"
   else
-    wget -q --show-progress \
-      "https://huggingface.co/${repo}/resolve/main/${filename}" \
-      -O "$dest"
+    curl -L --progress-bar "$url" -o "$dest"
   fi
-
-  # sha256 verification (skip if placeholder not filled)
-  if [[ "$sha256" != PLACEHOLDER* ]]; then
-    echo "[fetch_models] Verifying sha256 for $filename …"
-    echo "${sha256}  ${dest}" | sha256sum --check --quiet
-    echo "[fetch_models] $filename verified OK."
-  else
-    echo "[fetch_models] WARNING: sha256 not pinned for $filename — fill in fetch_models.sh before production use."
-  fi
+  echo "[fetch_models] $filename downloaded."
 }
 
 # ── Download ──────────────────────────────────────────────────────────────────
-download_if_missing "$PRIMARY_REPO" "$PRIMARY_FILE" "$PRIMARY_SHA256"
-download_if_missing "$TRIAGE_REPO"  "$TRIAGE_FILE"  "$TRIAGE_SHA256"
+download_if_missing "$PRIMARY_URL" "$PRIMARY_FILE"
+download_if_missing "$TRIAGE_URL"  "$TRIAGE_FILE"
 
 echo "[fetch_models] Done. Run 'docker compose up -d' to start Hatch."

@@ -3,14 +3,14 @@
 # Auto-starts on reboot via the jobpilot.service systemd unit.
 
 services:
-  # ── llama-server: primary model (Qwen2.5-3B Q4_K_M, :8080) ──────────────────
+  # ── llama-server: primary model (Qwen3-4B Q4_0, :8080) ─────────────────────
   # Use ghcr.io/ggml-org/llama.cpp:server (rolling latest) or pin a bNNNN tag.
-  # Model file: run scripts/fetch_models.sh to download Qwen2.5-3B-Instruct-Q4_K_M.gguf
+  # Model file: run scripts/fetch_models.sh to download Qwen3-4B-Q4_0.gguf
   llm-primary:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: jobpilot-llm-primary
     command: >
-      --model /models/Qwen2.5-3B-Instruct-Q4_K_M.gguf
+      --model /models/Qwen3-4B-Q4_0.gguf
       --ctx-size 16384
       --parallel 1
       --host 0.0.0.0
@@ -29,13 +29,13 @@ services:
     networks:
       - jobpilot
 
-  # ── llama-server: triage model (Qwen2.5-0.5B Q8_0, :8081) ──────────────────
+  # ── llama-server: triage model (Qwen3-0.6B Q4_0, :8081) ────────────────────
   # --parallel 2 gives 2048 tokens/slot (4096 / 2) — sufficient for TRIAGE (1536+256).
   llm-triage:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: jobpilot-llm-triage
     command: >
-      --model /models/Qwen2.5-0.5B-Instruct-Q8_0.gguf
+      --model /models/Qwen3-0.6B-Q4_0.gguf
       --ctx-size 4096
       --parallel 2
       --host 0.0.0.0

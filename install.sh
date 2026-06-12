@@ -55,14 +55,14 @@ cd "$INSTALL_DIR"
 
 # ── Download AI model files ────────────────────────────────────────
 # Hatch uses bundled llama.cpp containers — no Ollama, no API key required.
-# Two small GGUF models are downloaded from HuggingFace (public, no auth):
-#   Primary:  Qwen2.5-3B-Instruct-Q4_K_M.gguf  (~721 MB)  port 8080
-#   Triage:   Qwen2.5-0.5B-Instruct-Q8_0.gguf  (~507 MB)  port 8081
+# Two GGUF models are downloaded from HuggingFace (unsloth, public, no auth):
+#   Primary:  Qwen3-4B-Q4_0.gguf   (~2.6 GB)  port 8080
+#   Triage:   Qwen3-0.6B-Q4_0.gguf (~400 MB)  port 8081
 
 mkdir -p data/models
 
-PRIMARY_FILE="data/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
-TRIAGE_FILE="data/models/Qwen2.5-0.5B-Instruct-Q8_0.gguf"
+PRIMARY_FILE="data/models/Qwen3-4B-Q4_0.gguf"
+TRIAGE_FILE="data/models/Qwen3-0.6B-Q4_0.gguf"
 
 if [ -f "$PRIMARY_FILE" ] && [ -f "$TRIAGE_FILE" ]; then
   ok "AI model files already present — skipping download."
@@ -121,8 +121,8 @@ scoring:
   shortlist_threshold: 0.75
 llm:
   provider: "llamacpp"
-  triage_model: "qwen2.5-0.5b-instruct-q8_0"
-  primary_model: "qwen2.5-3b-instruct-q4_k_m"
+  triage_model: "qwen3-0.6b-q4_0"
+  primary_model: "qwen3-4b-q4_0"
   base_url: "http://llm-primary:8080/v1"
   triage_base_url: "http://llm-triage:8081/v1"
   api_key_env: ""

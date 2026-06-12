@@ -6,7 +6,7 @@ set -euo pipefail
 
 IMAGE="${1:-ghcr.io/ggml-org/llama.cpp:server}"
 MODELS_DIR="$(dirname "$0")/../data/models"
-TRIAGE_MODEL="Qwen2.5-0.5B-Instruct-Q8_0.gguf"
+TRIAGE_MODEL="Qwen3-0.6B-Q4_0.gguf"
 
 if [[ ! -f "$MODELS_DIR/$TRIAGE_MODEL" ]]; then
   echo "[verify_runtime] $TRIAGE_MODEL not found in $MODELS_DIR."
