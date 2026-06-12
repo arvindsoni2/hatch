@@ -40,7 +40,7 @@ from .routers.async_jobs import router as async_jobs_router
 from .routers.debug import router as debug_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
-from .services.claude_client import ClaudeClient
+from .services.llm_client import LLMClient
 from .services.job_classifier import JobClassifier
 from .services.job_service import JobService
 from .services.email_generator import EmailGenerator
@@ -92,8 +92,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # AI classifier — provider-agnostic via llm_factory
     job_classifier = JobClassifier()
 
-    # Email generation still uses ClaudeClient directly (Anthropic-only for now)
-    claude_client = ClaudeClient()
+    # Email generation still uses LLMClient directly (Anthropic-only for now)
+    claude_client = LLMClient()
     email_gen = EmailGenerator(claude_client)
     reminder_svc = ReminderService(reminder_repo, email_generator=email_gen)
 
@@ -124,6 +124,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     orchestrator.start()
     app.state.orchestrator = orchestrator
     logger.info("Agent orchestrator started.")
+
+    # ── Startup context assertion (llamacpp only) ─────────────────
+    try:
+        from .agents.tools.context_checker import assert_context_budgets  # noqa: PLC0415
+        from .agents.tools.profile_loader import load_profile  # noqa: PLC0415
+        _profile = load_profile()
+        await assert_context_budgets(_profile.llm)
+    except Exception:
+        logger.debug("Context budget check skipped (profile not loaded or non-llamacpp).")
 
     yield  # Application running
 

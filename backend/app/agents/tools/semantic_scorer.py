@@ -62,7 +62,7 @@ def score_semantic(job: Any, profile: Any, resume_text: str) -> SemanticScoreRes
     Returns:
         SemanticScoreResult with scores and deferred flag.
     """
-    from .local_scorer import score_locally, _rate_match, _location_match, _experience_match, _normalise
+    from .local_scorer import score_locally, _rate_match, _location_match, _experience_match, _normalise, _skill_match
 
     description = getattr(job, "description", None) or ""
     needs_enrichment = getattr(job, "needs_enrichment", False)
@@ -114,6 +114,7 @@ def score_semantic(job: Any, profile: Any, resume_text: str) -> SemanticScoreRes
     rate_score = _rate_match(jd_lower, profile)
     loc_score = _location_match(jd_lower, profile)
     exp_score = _experience_match(jd_lower, profile, job_title=job_title)
+    _, kw_matches, kw_misses = _skill_match(jd_lower, profile)
 
     # ── Blend dimensions using profile weights ────────────────────────────────
     weights = profile.scoring.weights
@@ -135,7 +136,7 @@ def score_semantic(job: Any, profile: Any, resume_text: str) -> SemanticScoreRes
         semantic_fit=round(semantic_fit, 4),
         scoring_method="semantic",
         reasoning=f"semantic cosine={semantic_fit:.3f}",
-        keyword_matches=[],
-        keyword_misses=[],
+        keyword_matches=kw_matches[:15],
+        keyword_misses=kw_misses[:10],
         deferred=False,
     )

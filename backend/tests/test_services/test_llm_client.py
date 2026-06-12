@@ -1,21 +1,21 @@
-"""Tests for ClaudeClient — complete_json uses JSON-mode model for Ollama."""
+"""Tests for LLMClient — complete_json uses JSON-mode model for Ollama."""
 from __future__ import annotations
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-class TestClaudeClient:
+class TestLLMClient:
 
     async def test_complete_json_uses_get_json_model(self):
         """complete_json() calls get_json_model(), not get_primary_model()."""
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content='{"key": "value"}'))
 
-        with patch("app.services.claude_client.get_json_model", return_value=mock_llm) as mock_factory, \
-             patch("app.services.claude_client.get_primary_model") as mock_primary:
-            from app.services.claude_client import ClaudeClient
-            client = ClaudeClient()
+        with patch("app.services.llm_client.get_json_model", return_value=mock_llm) as mock_factory, \
+             patch("app.services.llm_client.get_primary_model") as mock_primary:
+            from app.services.llm_client import LLMClient
+            client = LLMClient()
             result = await client.complete_json("sys", "user")
 
         mock_factory.assert_called_once()
@@ -36,9 +36,9 @@ class TestClaudeClient:
         mock_llm = MagicMock()
         mock_llm.ainvoke = flaky_invoke
 
-        with patch("app.services.claude_client.get_json_model", return_value=mock_llm):
-            from app.services.claude_client import ClaudeClient
-            client = ClaudeClient()
+        with patch("app.services.llm_client.get_json_model", return_value=mock_llm):
+            from app.services.llm_client import LLMClient
+            client = LLMClient()
             result = await client.complete_json("sys", "user")
 
         assert result == {"ok": True}
@@ -49,9 +49,9 @@ class TestClaudeClient:
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="not json"))
 
-        with patch("app.services.claude_client.get_json_model", return_value=mock_llm):
-            from app.services.claude_client import ClaudeClient
-            client = ClaudeClient()
+        with patch("app.services.llm_client.get_json_model", return_value=mock_llm):
+            from app.services.llm_client import LLMClient
+            client = LLMClient()
             with pytest.raises(ValueError, match="3 attempts"):
                 await client.complete_json("sys", "user")
 
@@ -60,9 +60,9 @@ class TestClaudeClient:
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content='```json\n{"key": "val"}\n```'))
 
-        with patch("app.services.claude_client.get_json_model", return_value=mock_llm):
-            from app.services.claude_client import ClaudeClient
-            client = ClaudeClient()
+        with patch("app.services.llm_client.get_json_model", return_value=mock_llm):
+            from app.services.llm_client import LLMClient
+            client = LLMClient()
             result = await client.complete_json("sys", "user")
 
         assert result == {"key": "val"}

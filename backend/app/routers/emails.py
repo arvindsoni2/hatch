@@ -23,7 +23,7 @@ from ..schemas.email import (
     FollowUpEmailRead,
 )
 from ..services.async_job_service import AsyncJobService
-from ..services.claude_client import ClaudeClient
+from ..services.llm_client import LLMClient
 from ..services.email_generator import EmailGenerator
 from ..services.email_sender import EmailRateLimitError, EmailSender
 
@@ -35,7 +35,7 @@ _email_sender = EmailSender()
 
 
 def _get_email_generator() -> EmailGenerator:
-    return EmailGenerator(ClaudeClient())
+    return EmailGenerator(LLMClient())
 
 
 def _to_read(email: FollowUpEmail, job_title: str = "", company: str = "") -> FollowUpEmailRead:

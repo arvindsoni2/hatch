@@ -11,7 +11,7 @@ import logging
 
 from ..models.coach_session import SessionQuestion
 from ..schemas.coach import TechnicalDrill
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ Produce the JSON drill object as instructed."""
 class TechnicalDrillsService:
     """Build worked-example drills for technical / domain questions."""
 
-    def __init__(self, claude: ClaudeClient) -> None:
+    def __init__(self, claude: LLMClient) -> None:
         self._claude = claude
 
     async def build_drills(self, questions: list[SessionQuestion]) -> list[TechnicalDrill]:

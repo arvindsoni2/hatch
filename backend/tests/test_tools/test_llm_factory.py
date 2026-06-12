@@ -20,6 +20,7 @@ class TestLlmFactory:
         mock_profile.llm.max_retries = 3
         mock_profile.llm.api_key_env = "ANTHROPIC_API_KEY"
         mock_profile.llm.base_url = None
+        mock_profile.llm.triage_base_url = None  # no triage URL → no model_copy
 
         with patch("app.agents.tools.llm_factory.load_profile", return_value=mock_profile), \
              patch("app.agents.tools.llm_factory.init_chat_model", return_value=mock_model) as mock_init:
@@ -133,15 +134,26 @@ class TestLlmFactory:
                 get_json_model()
 
 
-def _make_llm_cfg(provider: str, base_url: str = "http://llamacpp:8080/v1") -> MagicMock:
+def _make_llm_cfg(
+    provider: str,
+    base_url: str = "http://llamacpp:8080/v1",
+    triage_base_url: str = "http://llamacpp:8081/v1",
+) -> MagicMock:
     cfg = MagicMock()
     cfg.provider = provider
-    cfg.primary_model = "Qwen3-14B-Instruct"
-    cfg.triage_model = "Qwen3-14B-Instruct"
+    cfg.primary_model = "qwen3.5-4b-instruct-q4_k_m"
+    cfg.triage_model = "qwen3.5-0.8b-q8_0"
     cfg.temperature = 0.3
     cfg.max_retries = 2
     cfg.base_url = base_url
+    cfg.triage_base_url = triage_base_url
     cfg.api_key_env = ""
+    # model_copy(update={...}) must return a properly configured mock so _build_model
+    # still sees the correct provider after triage URL routing
+    def _model_copy(*, update: dict | None = None, **kwargs: object) -> MagicMock:
+        new_url = (update or {}).get("base_url", base_url)
+        return _make_llm_cfg(provider, base_url=str(new_url), triage_base_url=triage_base_url)
+    cfg.model_copy.side_effect = _model_copy
     return cfg
 
 
@@ -190,6 +202,46 @@ class TestLlamaCppProvider:
         inner = _unwrap(model)
         assert isinstance(inner, ChatOpenAI)
         assert inner.model_kwargs.get("response_format") == {"type": "json_object"}
+
+    def test_get_triage_model_llamacpp_uses_triage_base_url(self):
+        """get_triage_model for llamacpp routes to triage_base_url, not base_url."""
+        from langchain_openai import ChatOpenAI
+        from app.agents.tools.llm_factory import get_triage_model
+
+        cfg = _make_llm_cfg(
+            "llamacpp",
+            base_url="http://llm-primary:8080/v1",
+            triage_base_url="http://llm-triage:8081/v1",
+        )
+        profile = MagicMock()
+        profile.llm = cfg
+
+        with patch("app.agents.tools.llm_factory.load_profile", return_value=profile):
+            model = get_triage_model()
+
+        inner = _unwrap(model)
+        assert isinstance(inner, ChatOpenAI)
+        assert inner.openai_api_base == "http://llm-triage:8081/v1"
+
+    def test_get_triage_model_llamacpp_fallback_when_triage_url_empty(self):
+        """get_triage_model falls back to base_url when triage_base_url is empty."""
+        from langchain_openai import ChatOpenAI
+        from app.agents.tools.llm_factory import get_triage_model
+
+        cfg = _make_llm_cfg(
+            "llamacpp",
+            base_url="http://llm-primary:8080/v1",
+            triage_base_url="",
+        )
+        profile = MagicMock()
+        profile.llm = cfg
+
+        with patch("app.agents.tools.llm_factory.load_profile", return_value=profile):
+            model = get_triage_model()
+
+        inner = _unwrap(model)
+        assert isinstance(inner, ChatOpenAI)
+        assert inner.openai_api_base == "http://llm-primary:8080/v1"
 
 
 class TestModelAwareThinking:
@@ -261,16 +313,16 @@ class TestThinkBlockStripping:
         import asyncio
         from unittest.mock import AsyncMock
 
-        from app.services.claude_client import ClaudeClient
+        from app.services.llm_client import LLMClient
 
         raw = '<think>Let me think about this carefully.</think>\n{"key": "value"}'
         mock_response = MagicMock()
         mock_response.content = raw
 
         async def run():
-            client = ClaudeClient()
+            client = LLMClient()
             with patch(
-                "app.services.claude_client.get_json_model",
+                "app.services.llm_client.get_json_model",
                 return_value=MagicMock(ainvoke=AsyncMock(return_value=mock_response)),
             ):
                 result = await client.complete_json("system", "user")

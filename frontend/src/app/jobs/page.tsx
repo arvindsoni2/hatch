@@ -15,6 +15,7 @@ import { JobCard } from "@/components/JobCard";
 import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { ChevronLeft, ChevronRight, Loader2, Eye, Archive, Zap } from "lucide-react";
 
 const PAGE_SIZE = 50;
@@ -279,39 +280,13 @@ export default function JobsPage() {
           </Button>
         </div>
       ) : jobs.length === 0 ? (
-        <div className="rounded-xl p-12 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-          {showArchived ? (
-            <p style={{ color: "var(--text-muted)" }}>No archived jobs. Jobs older than your configured threshold will appear here after running the archive.</p>
-          ) : showAll ? (
-            <p style={{ color: "var(--text-muted)" }}>No jobs found. Try adjusting your filters or trigger a scrape.</p>
-          ) : (
-            <div className="space-y-3 max-w-md mx-auto">
-              <p className="font-medium" style={{ color: "var(--text)" }}>No high-match jobs right now.</p>
-              {insights?.recommendation ? (
-                <div className="rounded-lg px-4 py-3 text-sm text-left" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
-                  <p style={{ color: "var(--text-dim)" }}>{insights.recommendation}</p>
-                  {insights.in_band_below > 0 && (
-                    <button
-                      onClick={() => setShowAll(true)}
-                      className="mt-2 text-sm font-medium underline"
-                      style={{ color: "var(--accent)" }}
-                    >
-                      Show {insights.in_band_below} near-match job{insights.in_band_below !== 1 ? "s" : ""}
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                  Your threshold is {thresholdPct}%. Try{" "}
-                  <button onClick={() => setShowAll(true)} className="underline" style={{ color: "var(--accent)" }}>
-                    showing all jobs
-                  </button>{" "}
-                  or trigger a scrape to get fresh results.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+        (() => {
+          if (showArchived) return <EmptyState cause="generic" />;
+          if (showAll) return <EmptyState cause="no-results" onAction={() => setShowAll(false)} />;
+          if ((insights?.total_jobs_in_db ?? 0) === 0) return <EmptyState cause="no-scrape" />;
+          if ((insights?.total_scored ?? 0) === 0) return <EmptyState cause="scraped-unscored" onAction={() => void loadJobs()} />;
+          return <EmptyState cause="no-results" onAction={() => setShowAll(true)} />;
+        })()
       ) : (
         <>
           <div className="space-y-2">

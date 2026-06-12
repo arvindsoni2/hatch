@@ -47,7 +47,7 @@ _KNOWN_TECH = [
     "react", "reactjs", "nodejs", "node.js", "fastapi", "django", "flask",
     "postgresql", "mysql", "mongodb", "redis", "elasticsearch",
     "spark", "kafka", "airflow", "dbt", "snowflake", "databricks",
-    "langchain", "openai", "llm", "rag", "vector database", "chromadb",
+    "langchain", "openai", "llm", "rag", "vector database",
     "rest api", "graphql", "grpc", "microservices", "event-driven",
     "sql", "nosql", "etl", "elt", "data warehouse", "data lake",
     "agile", "scrum", "kanban", "safe", "itil", "prince2", "pmp",

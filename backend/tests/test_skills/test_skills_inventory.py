@@ -59,11 +59,6 @@ class TestSkillsInventory:
         loader = SKILLS_DIR / "skill_loader.py"
         assert loader.exists(), "app/skills/skill_loader.py is missing."
 
-    def test_skill_wrappers_module_exists(self):
-        """app/skills/wrappers.py must exist and import cleanly."""
-        wrappers = SKILLS_DIR / "wrappers.py"
-        assert wrappers.exists(), "app/skills/wrappers.py is missing."
-
     def test_skill_registry_importable(self):
         """SkillRegistry must be importable from app.skills.skill_loader."""
         mod = importlib.import_module("app.skills.skill_loader")

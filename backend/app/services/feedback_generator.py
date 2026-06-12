@@ -12,7 +12,8 @@ from ..schemas.coach import (
     QuestionEvaluationSummary,
     SessionFeedbackReport,
 )
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import FEEDBACK
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import load_master_cv
 
@@ -30,7 +31,7 @@ def _load_candidate_name() -> str:
 class FeedbackGeneratorService:
     """Generates comprehensive post-session feedback reports."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
     async def generate_report(
@@ -108,7 +109,7 @@ class FeedbackGeneratorService:
         )
 
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=4096)
+            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=FEEDBACK.max_output)
         except Exception as exc:
             logger.warning("Session report generation failed: %s — using fallback", exc)
             raw = {}

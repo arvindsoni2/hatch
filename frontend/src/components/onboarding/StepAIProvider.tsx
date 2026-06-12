@@ -1,49 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Loader2, CheckCircle, XCircle, Copy } from "lucide-react";
+import { Loader2, CheckCircle, XCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Field, Choice, ToggleRow, Seg } from "./OnboardingPrimitives";
 import type { LocaleBoard } from "@/lib/api";
-import { fetchOllamaModels } from "@/lib/api";
 
-// Mirrors backend _OLLAMA_RECOMMENDED_ORDER for pre-selection (best quality first).
-const OLLAMA_RECOMMENDED_ORDER = [
-  "qwen3:30b-a3b",
-  "gemma4:26b-a4b",
-  "qwen3:4b",
-  "gemma4:e2b",
-];
-const OLLAMA_PULL_CMD = "ollama pull qwen3:4b && ollama pull gemma4:e2b";
-
-function pickRecommended(available: string[]): { primary: string; triage: string } {
-  const match = (rec: string, a: string) =>
-    a === rec || a.startsWith(rec.split(":")[0] + ":");
-  const primary = OLLAMA_RECOMMENDED_ORDER.find((r) => available.some((a) => match(r, a)));
-  const primaryName = primary
-    ? (available.find((a) => match(primary, a)) ?? available[0])
-    : available[0];
-  const triagePick = [...OLLAMA_RECOMMENDED_ORDER]
-    .reverse()
-    .find((r) => available.some((a) => match(r, a)));
-  const triageName = triagePick
-    ? (available.find((a) => match(triagePick, a)) ?? primaryName)
-    : primaryName;
-  return { primary: primaryName, triage: triageName };
-}
-
-function ramTier(gb: number): string {
-  if (gb >= 32) return "qwen3:30b-a3b (best quality)";
-  if (gb >= 16) return "gemma4:26b-a4b";
-  if (gb >= 8) return "qwen3:4b (recommended)";
-  return "gemma4:e2b (edge-optimised)";
-}
+// Model name constants shared with fetch_models.sh (single source of truth for display/traces).
+export const LLAMACPP_PRIMARY_MODEL = "qwen3.5-4b-instruct-q4_k_m";
+export const LLAMACPP_TRIAGE_MODEL  = "qwen3.5-0.8b-q8_0";
 
 export const LLM_PROVIDERS = [
-  { id: "google_genai", label: "Google Gemini",   sub: "Free tier available — great default",  keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
-  { id: "anthropic",    label: "Anthropic Claude", sub: "Strongest tailoring quality",          keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
-  { id: "openai",       label: "OpenAI",           sub: "GPT-4o family",                        keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
-  { id: "ollama",       label: "Ollama (local)",   sub: "Runs on your machine — $0, no key",    keyEnv: "",                  triageDefault: "",                          primaryDefault: "" },
+  { id: "llamacpp",     label: "Local AI (free)",    sub: "llama.cpp bundled in this stack — no API key, no cost, privacy-first", keyEnv: "", triageDefault: LLAMACPP_TRIAGE_MODEL, primaryDefault: LLAMACPP_PRIMARY_MODEL },
+  { id: "google_genai", label: "Google Gemini",      sub: "Free tier available",                                                   keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
+  { id: "anthropic",    label: "Anthropic Claude",   sub: "Strongest tailoring quality",                                           keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
+  { id: "openai",       label: "OpenAI",             sub: "GPT-4o family",                                                         keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
 ];
 
 export interface LLMData {
@@ -52,6 +22,7 @@ export interface LLMData {
   primary_model: string;
   api_key_env: string;
   base_url: string | null;
+  triage_base_url: string;
   temperature: number;
   max_retries: number;
   track_costs: boolean;
@@ -81,75 +52,29 @@ export function StepAIProvider({
   boards, enabledBoards, onEnabledBoardsChange,
   scrapeIntervalHours, onScrapeIntervalChange,
 }: StepAIProviderProps) {
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [ollamaLoading, setOllamaLoading] = useState(false);
-  const [ollamaError, setOllamaError] = useState<string | null>(null);
-  const [ramGb, setRamGb] = useState<number | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const loadOllamaModels = async () => {
-    setOllamaLoading(true);
-    setOllamaError(null);
-    try {
-      const result = await fetchOllamaModels();
-      setOllamaModels(result.models);
-      if (result.error) setOllamaError("Ollama unreachable — is it running?");
-      return result.models;
-    } catch {
-      setOllamaError("Could not fetch Ollama models");
-      return [];
-    } finally {
-      setOllamaLoading(false);
-    }
-  };
-
-  const handleProviderChange = async (providerId: string) => {
+  const handleProviderChange = (providerId: string) => {
     const p = LLM_PROVIDERS.find((x) => x.id === providerId);
     if (!p) return;
-    let primary = p.primaryDefault;
-    let triage = p.triageDefault;
-    if (providerId === "ollama") {
-      const models = await loadOllamaModels();
-      if (models.length > 0) {
-        const picked = pickRecommended(models);
-        primary = picked.primary;
-        triage = picked.triage;
-      } else {
-        primary = "";
-        triage = "";
-      }
+    let baseUrl: string | null = null;
+    let triageBaseUrl = "";
+
+    if (providerId === "llamacpp") {
+      baseUrl = "http://llm-primary:8080/v1";
+      triageBaseUrl = "http://llm-triage:8081/v1";
     }
     onLlmChange({
       ...llm,
       provider: providerId,
-      triage_model: triage,
-      primary_model: primary,
+      triage_model: p.triageDefault,
+      primary_model: p.primaryDefault,
       api_key_env: p.keyEnv,
-      base_url: providerId === "ollama" ? "http://host.containers.internal:11434" : null,
+      base_url: baseUrl,
+      triage_base_url: triageBaseUrl,
     });
     onTestApiKeyChange("");
   };
 
-  const handleCopyPullCmd = () => {
-    void navigator.clipboard.writeText(OLLAMA_PULL_CMD).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  useEffect(() => {
-    if (llm.provider === "ollama" && ollamaModels.length === 0) {
-      void loadOllamaModels();
-    }
-    // Fetch RAM hint once for model tier guidance
-    void fetch("/api/health")
-      .then((r) => r.json())
-      .then((d: { ram_gb?: number }) => { if (d.ram_gb) setRamGb(d.ram_gb); })
-      .catch(() => undefined);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const needsKey = llm.provider !== "ollama";
+  const needsKey = llm.provider !== "llamacpp";
 
   return (
     <div className="ob-fadein px-5 pb-4">
@@ -172,7 +97,7 @@ export function StepAIProvider({
             <Choice
               key={p.id}
               on={llm.provider === p.id}
-              onClick={() => void handleProviderChange(p.id)}
+              onClick={() => handleProviderChange(p.id)}
               title={p.label}
               sub={p.sub}
             />
@@ -219,83 +144,35 @@ export function StepAIProvider({
         </Field>
       )}
 
-      {llm.provider === "ollama" && (
-        <>
-          <Field label="Ollama base URL" hint="Container deployment: use http://host.containers.internal:11434. Direct host install: http://localhost:11434.">
-            <Input
-              value={llm.base_url || ""}
-              onChange={(e) => onLlmChange({ ...llm, base_url: e.target.value || "http://host.containers.internal:11434" })}
-              placeholder="http://host.containers.internal:11434"
-            />
-          </Field>
-
-          {ramGb !== null && (
-            <p className="text-[12.5px] text-[var(--text-dim)] mb-2">
-              Your machine has <strong>{ramGb} GB</strong> RAM — recommended primary:{" "}
-              <code className="text-[var(--text)]">{ramTier(ramGb)}</code>
-            </p>
+      {llm.provider === "llamacpp" && (
+        <div className="mt-3 rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] font-[550] text-[var(--text)]">Bundled AI services</span>
+            <button
+              type="button"
+              onClick={onTestConnection}
+              disabled={testingConnection}
+              className="text-[12px] underline text-[var(--accent)] disabled:opacity-50"
+            >
+              {testingConnection ? "Checking…" : "Check reachability"}
+            </button>
+          </div>
+          {connectionResult && !connectionResult.ok && (
+            <div className="flex items-start gap-2 text-sm text-[var(--danger)]" style={{ background: "var(--danger-soft)", borderRadius: "var(--r-field,8px)", padding: "8px 12px" }}>
+              <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>AI services unreachable. Start them with: <code className="font-mono text-[11.5px]">docker compose up -d</code></span>
+            </div>
           )}
-
-          <Field label="Primary model" hint="Used for tailoring, coaching, and detailed analysis.">
-            {ollamaLoading ? (
-              <div className="flex items-center gap-2 text-sm text-[var(--text-dim)]">
-                <Loader2 className="h-4 w-4 animate-spin" /> Fetching installed models…
-              </div>
-            ) : ollamaError ? (
-              <p className="text-sm text-[var(--danger)]">{ollamaError}</p>
-            ) : ollamaModels.length === 0 ? (
-              <div className="space-y-2">
-                <p className="text-sm text-[var(--text-dim)]">
-                  No models found. Pull the recommended models first:
-                </p>
-                <div
-                  data-testid="ollama-pull-cmd"
-                  className="flex items-center justify-between gap-2 rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2"
-                >
-                  <code className="text-[12px] text-[var(--text)] flex-1 break-all">{OLLAMA_PULL_CMD}</code>
-                  <button
-                    type="button"
-                    onClick={handleCopyPullCmd}
-                    title="Copy command"
-                    className="flex-shrink-0 text-[var(--text-dim)] hover:text-[var(--text)] transition-colors"
-                  >
-                    {copied ? <CheckCircle className="h-4 w-4 text-[var(--success)]" /> : <Copy className="h-4 w-4" />}
-                  </button>
-                </div>
-                <p className="text-[11px] text-[var(--text-dim)]">
-                  CPU-only, no GPU required. Then click <strong>Refresh</strong> below.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void loadOllamaModels()}
-                  className="text-sm underline text-[var(--accent)] hover:opacity-80"
-                >
-                  Refresh model list
-                </button>
-              </div>
-            ) : (
-              <select
-                value={llm.primary_model}
-                onChange={(e) => onLlmChange({ ...llm, primary_model: e.target.value })}
-                className="w-full rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-              >
-                {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            )}
-          </Field>
-
-          <Field label="Triage model" hint="Fast model for quick relevance filtering (can be the same as primary).">
-            {!ollamaLoading && ollamaModels.length > 0 && (
-              <select
-                value={llm.triage_model}
-                onChange={(e) => onLlmChange({ ...llm, triage_model: e.target.value })}
-                className="w-full rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
-              >
-                {ollamaModels.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            )}
-          </Field>
-        </>
+          {connectionResult && connectionResult.ok && (
+            <div className="flex items-center gap-2 text-sm text-[var(--success)]" style={{ background: "var(--success-soft)", borderRadius: "var(--r-field,8px)", padding: "8px 12px" }}>
+              <CheckCircle className="h-4 w-4" /> AI services are running.
+            </div>
+          )}
+          <p className="text-[12px] text-[var(--text-dim)]">
+            Primary: <code className="text-[var(--text)]">{llm.primary_model}</code> on port 8080 ·
+            Triage: <code className="text-[var(--text)]">{llm.triage_model}</code> on port 8081
+          </p>
+        </div>
       )}
 
       {boards.length > 0 && (

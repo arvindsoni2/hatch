@@ -127,11 +127,12 @@ class PerceptionConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp"] = "ollama"
-    triage_model: str = ""
-    primary_model: str = ""
+    provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp"] = "llamacpp"
+    triage_model: str = "qwen3.5-0.8b-q8_0"
+    primary_model: str = "qwen3.5-4b-instruct-q4_k_m"
     api_key_env: str = ""
-    base_url: str | None = None
+    base_url: str | None = "http://llm-primary:8080/v1"
+    triage_base_url: str = "http://llm-triage:8081/v1"  # separate endpoint for the triage model; falls back to base_url if empty
     temperature: float = 0.3
     max_retries: int = 3
     track_costs: bool = False

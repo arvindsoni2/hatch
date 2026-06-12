@@ -19,7 +19,7 @@ from ..models.application import Application, InterviewRound
 from ..models.follow_up_email import FollowUpEmail
 from ..models.job import JobPosting
 from ..schemas.email import GeneratedEmail
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +50,10 @@ class EmailGenerator:
     """Generates personalised recruiter emails using Claude.
 
     Attributes:
-        claude: ClaudeClient instance for API calls.
+        claude: LLMClient instance for API calls.
     """
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: LLMClient) -> None:
         self.claude = claude_client
         self._jinja = Environment(
             loader=FileSystemLoader(str(_TEMPLATES_DIR)),

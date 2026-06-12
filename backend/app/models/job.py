@@ -26,6 +26,7 @@ class JobPosting(Base):
     __table_args__ = (
         Index("idx_job_postings_ghost_score", "ghost_score"),
         Index("idx_job_postings_ghost_verdict", "ghost_verdict"),
+        Index("idx_job_postings_active_scraped", "is_active", "scraped_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)

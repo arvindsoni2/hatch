@@ -51,9 +51,14 @@ export default function OnboardingPage() {
 
   // Step 6 — AI provider
   const [llm, setLlm] = useState<LLMData>({
-    provider: "google_genai", triage_model: "gemini-2.5-flash-lite", primary_model: "gemini-2.5-flash",
-    api_key_env: "GOOGLE_API_KEY", base_url: null, temperature: 0.3, max_retries: 3,
-    track_costs: true, monthly_budget: 15, currency: "USD",
+    provider: "llamacpp",
+    triage_model: "qwen3.5-0.8b-q8_0",
+    primary_model: "qwen3.5-4b-instruct-q4_k_m",
+    api_key_env: "",
+    base_url: "http://llm-primary:8080/v1",
+    triage_base_url: "http://llm-triage:8081/v1",
+    temperature: 0.3, max_retries: 3,
+    track_costs: false, monthly_budget: 0, currency: "USD",
   });
   const [testApiKey, setTestApiKey] = useState("");
   const [testingConnection, setTestingConnection] = useState(false);
@@ -77,7 +82,13 @@ export default function OnboardingPage() {
         if (parsed.domains) setDomains(parsed.domains);
         if (parsed.proofPoints) setProofPoints(parsed.proofPoints);
         if (parsed.selectedLocale) setSelectedLocale(parsed.selectedLocale);
-        if (parsed.llm) setLlm(parsed.llm);
+        if (parsed.llm) {
+          // Migrate old "ollama" sessions to the bundled llamacpp provider.
+          const restoredLlm = parsed.llm.provider === "ollama"
+            ? { ...parsed.llm, provider: "llamacpp", base_url: "http://llm-primary:8080/v1", triage_base_url: "http://llm-triage:8081/v1", primary_model: "qwen3.5-4b-instruct-q4_k_m", triage_model: "qwen3.5-0.8b-q8_0", api_key_env: "" }
+            : parsed.llm;
+          setLlm(restoredLlm);
+        }
         if (typeof parsed.step === "number" && parsed.step > 0 && parsed.step < SUCCESS) {
           setStep(parsed.step);
         }
@@ -191,7 +202,7 @@ export default function OnboardingPage() {
     setError("");
     try {
       await saveProfile(buildProfile());
-      if (testApiKey && llm.provider !== "ollama") {
+      if (testApiKey && llm.provider !== "llamacpp") {
         await saveApiKey(llm.api_key_env, testApiKey).catch(() => {});
       }
       await triggerAgent("scout").catch(() => {});

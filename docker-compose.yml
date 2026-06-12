@@ -3,6 +3,59 @@
 # Auto-starts on reboot via the jobpilot.service systemd unit.
 
 services:
+  # ── llama-server: primary model (Qwen3.5-4B Q4_K_M, :8080) ──────────────────
+  # Pinned build: see scripts/verify_runtime.sh for the smoke-test procedure.
+  # Image tag format: ghcr.io/ggml-org/llama.cpp:server-bNNNN
+  # Update: docker pull ghcr.io/ggml-org/llama.cpp:server → note bNNNN → run
+  # scripts/verify_runtime.sh → pin below. Any build >= March 2026 supports Qwen3.5.
+  llm-primary:
+    image: ghcr.io/ggml-org/llama.cpp:server-b5068
+    container_name: jobpilot-llm-primary
+    command: >
+      --model /models/Qwen3.5-4B-Instruct-Q4_K_M.gguf
+      --ctx-size 16384
+      --parallel 1
+      --host 0.0.0.0
+      --port 8080
+    volumes:
+      - ./data/models:/models:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    networks:
+      - jobpilot
+
+  # ── llama-server: triage model (Qwen3.5-0.8B Q8_0, :8081) ──────────────────
+  # --parallel 2 gives 2048 tokens/slot (4096 / 2) — sufficient for TRIAGE (1536+256).
+  llm-triage:
+    image: ghcr.io/ggml-org/llama.cpp:server-b5068
+    container_name: jobpilot-llm-triage
+    command: >
+      --model /models/Qwen3.5-0.8B-Q8_0.gguf
+      --ctx-size 4096
+      --parallel 2
+      --host 0.0.0.0
+      --port 8081
+    volumes:
+      - ./data/models:/models:ro
+    ports:
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - jobpilot
+
   backend:
     build:
       context: ./backend
@@ -13,7 +66,6 @@ services:
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/jobpilot.db
       - LANGGRAPH_CHECKPOINT_DB=sqlite+aiosqlite:///./data/langgraph_checkpoints.db
-      - CHROMA_PERSIST_DIR=/app/data/chroma
       - PLAYWRIGHT_HEADLESS=true
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SCRAPE_INTERVAL_HOURS=${SCRAPE_INTERVAL_HOURS:-4}
@@ -31,7 +83,12 @@ services:
       - ./data:/app/data:z
       # Bind-mount locales/ so new locale packs are picked up without rebuild
       - ./locales:/app/locales:ro,z
-    # Allow the backend container to reach Ollama running on the host.
+    depends_on:
+      llm-primary:
+        condition: service_healthy
+      llm-triage:
+        condition: service_healthy
+    # Allow the backend container to reach Ollama running on the host (Ollama provider).
     # On Linux, host.docker.internal is not automatic — host-gateway maps it.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -70,12 +127,6 @@ services:
     restart: unless-stopped
     networks:
       - jobpilot
-
-  # llamacpp service removed — Ollama (host) is used instead.
-  # The GHCR llama.cpp images available are 2024 builds that predate Qwen3 support.
-  # Model file is kept in ./models/Qwen3-14B-Q4_K_M.gguf for future use.
-  # To re-enable: pull a 2025+ llama.cpp image that supports qwen3 architecture,
-  # restore this block, and set profile.yaml llm.provider = llamacpp.
 
 networks:
   jobpilot:

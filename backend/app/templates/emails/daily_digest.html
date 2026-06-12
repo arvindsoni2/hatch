@@ -133,19 +133,6 @@
   </div>
   {% endif %}
 
-  {% if auto_apply_results %}
-  <!-- Auto-Apply Results -->
-  <div class="section">
-    <div class="section-title">Auto-Apply Results (last 24h)</div>
-    {% for r in auto_apply_results %}
-    <div class="followup-item">
-      <div class="followup-title">{{ r.job_title or r.job_url }}</div>
-      <div style="font-size:12px; color:#6b7280;">{{ r.platform or '' }} &bull; {{ r.status }}</div>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
   <!-- Footer -->
   <div class="footer">
     Sent by JobPilot &bull; <a href="http://localhost:3000" style="color:#6b7280;">Open Dashboard</a>

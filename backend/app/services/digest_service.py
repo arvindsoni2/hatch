@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.application import Application, FollowUp, InterviewRound
-from ..models.auto_apply import ApplicationAttempt
 from ..models.job import JobPosting
 
 logger = logging.getLogger(__name__)
@@ -40,8 +39,7 @@ class DigestService:
             db: Async SQLAlchemy session.
 
         Returns:
-            Dict with keys: date, stats, top_jobs, follow_ups, interviews,
-            auto_apply_results.
+            Dict with keys: date, stats, top_jobs, follow_ups, interviews.
         """
         now = datetime.now(timezone.utc)
         yesterday = now - timedelta(hours=24)
@@ -159,30 +157,12 @@ class DigestService:
             for i in interviews_list
         ]
 
-        # Auto-apply results last 24h
-        auto_result = await db.execute(
-            select(ApplicationAttempt)
-            .where(ApplicationAttempt.created_at >= yesterday)
-            .order_by(ApplicationAttempt.created_at.desc())
-            .limit(10)
-        )
-        auto_apply_results = [
-            {
-                "job_url": a.job_url,
-                "job_title": None,  # Would require join — left as URL for now
-                "platform": a.platform,
-                "status": a.status,
-            }
-            for a in auto_result.scalars().all()
-        ]
-
         return {
             "date": now.strftime("%A, %d %B %Y"),
             "stats": stats,
             "top_jobs": top_jobs,
             "follow_ups": follow_ups,
             "interviews": interviews,
-            "auto_apply_results": auto_apply_results,
         }
 
     async def preview_html(self, db: AsyncSession) -> str:

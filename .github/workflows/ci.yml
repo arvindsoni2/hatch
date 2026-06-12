@@ -15,9 +15,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt -r backend/requirements-test.txt
+        run: pip install -r backend/requirements-dev.txt
       - name: Run backend tests
         run: cd backend && pytest --cov=app --cov-report=xml -q
+      - name: Dead-code gates (import graph + vulture)
+        run: |
+          pip install vulture
+          python scripts/dead_code_check.py
+          vulture backend/app --min-confidence 90
       - name: Audit Python dependencies
         # Non-blocking until the current tree is fully clean; remove || true to enforce
         run: pip install pip-audit && pip-audit -r backend/requirements.txt || true
@@ -33,6 +38,8 @@ jobs:
         run: cd frontend && npm ci
       - name: Run frontend tests
         run: cd frontend && npx vitest run
+      - name: Dead export gate (knip)
+        run: cd frontend && npx knip
       - name: Audit npm dependencies
         # Non-blocking until the current tree is fully clean; remove || true to enforce
         run: cd frontend && npm audit --audit-level=high || true

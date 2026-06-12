@@ -1941,10 +1941,32 @@ export interface ScoringInsights {
   avg_score: number | null;
   distribution: ScoreBucket[];
   recommendation: string | null;
+  total_jobs_in_db: number;
+  total_scored: number;
 }
 
 export async function fetchScoringInsights(): Promise<ScoringInsights> {
   return apiFetch<ScoringInsights>("/api/v2/scoring/insights");
+}
+
+export interface JobScoreRead {
+  id: string;
+  job_id: string;
+  overall_score: number;
+  skill_match: number | null;
+  experience_match: number | null;
+  rate_match: number | null;
+  location_match: number | null;
+  reasoning: string | null;
+  scored_at: string;
+}
+
+export async function fetchJobScore(jobId: string): Promise<JobScoreRead | null> {
+  try {
+    return await apiFetch<JobScoreRead>(`/api/v2/scoring/${jobId}`);
+  } catch {
+    return null;
+  }
 }
 
 // ── Assisted Apply ──────────────────────────────────────────────────────────

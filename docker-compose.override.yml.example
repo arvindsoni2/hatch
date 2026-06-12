@@ -1,0 +1,30 @@
+# docker-compose.override.yml.example
+# Copy to docker-compose.override.yml and edit as needed.
+# docker-compose.yml + docker-compose.override.yml are merged automatically by compose.
+
+# ── CPU thread tuning ─────────────────────────────────────────────────────────
+# llama.cpp self-detects threads by default. If you apply cpus:/cpuset: limits
+# to the LLM containers, auto-detection sees HOST core count, not the limit.
+# Set --threads N to match your cpus: value in that case.
+#
+# Example: constrain each LLM container to 4 cores and tell llama.cpp to match:
+services:
+  llm-primary:
+    # cpus: "4"
+    command: >
+      --model /models/Qwen3.5-4B-Instruct-Q4_K_M.gguf
+      --ctx-size 16384
+      --parallel 1
+      --host 0.0.0.0
+      --port 8080
+      --threads 4
+
+  llm-triage:
+    # cpus: "2"
+    command: >
+      --model /models/Qwen3.5-0.8B-Q8_0.gguf
+      --ctx-size 4096
+      --parallel 2
+      --host 0.0.0.0
+      --port 8081
+      --threads 2

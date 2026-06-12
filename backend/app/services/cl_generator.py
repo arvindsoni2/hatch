@@ -9,7 +9,8 @@ from pathlib import Path
 from ..prompts import render_prompt
 from ..schemas.tailor import CoverLetterResult, JDAnalysisResult, TailoredCVResult
 from ..skills.skill_loader import SkillLoader, SkillRegistry
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import CL_BODY, CL_SNIPPET
 from .jd_analyser import _split_jinja_output
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ def _default_skill_loader() -> SkillLoader:
 class CoverLetterGenerator:
     """Generates and refines cover letters for job applications."""
 
-    def __init__(self, claude_client: ClaudeClient, skill_loader: SkillLoader | None = None) -> None:
+    def __init__(self, claude_client: LLMClient, skill_loader: SkillLoader | None = None) -> None:
         self._client = claude_client
         self._skill_loader = skill_loader or _default_skill_loader()
 
@@ -82,7 +83,7 @@ class CoverLetterGenerator:
                 skill_instructions=skill_instructions,
             )
         )
-        raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=2048)
+        raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CL_BODY.max_output)
         result = _parse_cover_letter(raw)
 
         # Trim loop: if over word limit, regenerate with tighter instruction
@@ -99,7 +100,7 @@ class CoverLetterGenerator:
                     f"STRICTLY keep total body to {_MAX_WORDS} words max.",
                 )
             )
-            raw2: dict[str, Any] = await self._client.complete_json(system_prompt2, user_prompt2, max_tokens=2048)
+            raw2: dict[str, Any] = await self._client.complete_json(system_prompt2, user_prompt2, max_tokens=CL_BODY.max_output)
             result = _parse_cover_letter(raw2)
 
         return result
@@ -136,7 +137,7 @@ class CoverLetterGenerator:
             f"Key keywords: {', '.join(jd_analysis.ats_keywords.technical[:10])}\n\n"
             f"Return JSON: {{\"paragraph\": \"<rewritten paragraph>\"}}"
         )
-        raw: dict[str, Any] = await self._client.complete_json(system, user, max_tokens=512)
+        raw: dict[str, Any] = await self._client.complete_json(system, user, max_tokens=CL_SNIPPET.max_output)
         new_para = raw.get("paragraph", current_para)
 
         new_paragraphs = list(paragraphs)

@@ -5,7 +5,7 @@ import {
   ArrowLeft, ExternalLink, Search, Brain, FileText,
   CheckCircle2, AlertTriangle, Clock, DollarSign,
 } from "lucide-react";
-import { fetchJob, fetchJobDecisions, type DecisionStep } from "@/lib/api";
+import { fetchJob, fetchJobDecisions, fetchJobScore, type DecisionStep } from "@/lib/api";
 import { ScoreRationale } from "@/components/ScoreRationale";
 
 export const revalidate = 60;
@@ -128,9 +128,10 @@ function StepCard({ step }: { step: DecisionStep }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default async function JobDetailPage({ params }: { params: { id: string } }) {
-  const [job, decisions] = await Promise.all([
+  const [job, decisions, jobScore] = await Promise.all([
     fetchJob(params.id).catch(() => null),
     fetchJobDecisions(params.id).catch(() => null),
+    fetchJobScore(params.id).catch(() => null),
   ]);
 
   if (!job) notFound();
@@ -190,6 +191,11 @@ export default async function JobDetailPage({ params }: { params: { id: string }
             {matchPct != null && (
               <span className={`text-3xl font-bold tabular-nums ${scoreColor}`}>
                 {matchPct}%
+              </span>
+            )}
+            {jobScore?.scored_at && (
+              <span className="text-xs text-slate-400">
+                Scored {formatDistanceToNow(new Date(jobScore.scored_at), { addSuffix: true })}
               </span>
             )}
             {job.url && (

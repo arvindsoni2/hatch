@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
+from ..models.job import JobPosting
 from ..models.job_score import JobScore
+from ..schemas.job_score import JobScoreRead
 from ..agents.tools.profile_loader import load_profile
 
 router = APIRouter(prefix="/api/v2/scoring", tags=["scoring"])
@@ -28,6 +30,8 @@ class ScoringInsights(BaseModel):
     avg_score: float | None
     distribution: list[ScoreBucket]
     recommendation: str | None
+    total_jobs_in_db: int       # COUNT(*) — have we ever scraped anything?
+    total_scored: int           # count of rows in job_scores
 
 
 @router.get("/insights", response_model=ScoringInsights)
@@ -45,6 +49,14 @@ async def get_scoring_insights(db: AsyncSession = Depends(get_db)) -> ScoringIns
 
     since = datetime.utcnow() - timedelta(days=7)
 
+    # Total jobs ever scraped (no is_active filter — answers "have you scraped anything?")
+    total_jobs_result = await db.execute(select(func.count()).select_from(JobPosting))
+    total_jobs_in_db = total_jobs_result.scalar_one() or 0
+
+    # Total rows in job_scores table
+    total_scored_result = await db.execute(select(func.count()).select_from(JobScore))
+    total_scored = total_scored_result.scalar_one() or 0
+
     # All scores in the last 7 days
     result = await db.execute(
         select(JobScore.overall_score).where(JobScore.scored_at >= since)
@@ -60,6 +72,8 @@ async def get_scoring_insights(db: AsyncSession = Depends(get_db)) -> ScoringIns
             avg_score=None,
             distribution=[],
             recommendation="No jobs have been scored in the last 7 days. Trigger a scrape to get started.",
+            total_jobs_in_db=total_jobs_in_db,
+            total_scored=total_scored,
         )
 
     band_low = threshold - 0.15
@@ -104,4 +118,16 @@ async def get_scoring_insights(db: AsyncSession = Depends(get_db)) -> ScoringIns
         avg_score=avg,
         distribution=distribution,
         recommendation=recommendation,
+        total_jobs_in_db=total_jobs_in_db,
+        total_scored=total_scored,
     )
+
+
+@router.get("/{job_id}", response_model=JobScoreRead)
+async def get_job_score(job_id: str, db: AsyncSession = Depends(get_db)) -> JobScoreRead:
+    """Return the stored score for a specific job, or 404 if not yet scored."""
+    result = await db.execute(select(JobScore).where(JobScore.job_id == job_id))
+    score = result.scalars().first()
+    if score is None:
+        raise HTTPException(status_code=404, detail="Score not found for this job")
+    return JobScoreRead.model_validate(score)

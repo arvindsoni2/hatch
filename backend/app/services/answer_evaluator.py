@@ -6,7 +6,8 @@ from typing import Any
 
 from ..prompts import render_prompt
 from ..schemas.coach import AnswerEvaluation, SpeechMetrics, VoiceToneResult
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import ANSWER_EVAL
 from .jd_analyser import _split_jinja_output
 from .rubric_builder import build_rubric
 
@@ -23,7 +24,7 @@ _EVAL_DIMENSIONS = [
 class AnswerEvaluatorService:
     """Evaluates interview answers using the STAR rubric via Claude."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
     async def evaluate(
@@ -70,7 +71,7 @@ class AnswerEvaluatorService:
         )
 
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=2048)
+            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=ANSWER_EVAL.max_output)
         except Exception as exc:
             logger.warning("Answer evaluation failed: %s — returning default scores", exc)
             return AnswerEvaluation(

@@ -34,12 +34,12 @@ def _rebuild_app(log_level: str):
 
 
 @pytest.mark.asyncio
-async def test_debug_router_not_mounted_at_info_level() -> None:
-    """GET /api/debug/llm-traces returns 404 when LOG_LEVEL=INFO."""
+async def test_debug_router_mounted_at_info_level() -> None:
+    """GET /api/debug/llm-traces returns 200 at INFO level (always mounted)."""
     application = _rebuild_app("INFO")
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as ac:
         r = await ac.get("/api/debug/llm-traces")
-    assert r.status_code == 404
+    assert r.status_code == 200
 
 
 @pytest.mark.asyncio

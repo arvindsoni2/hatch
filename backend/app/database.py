@@ -40,7 +40,7 @@ def _set_wal_mode(dbapi_connection: object, _connection_record: object) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA busy_timeout=30000")  # 30s busy timeout
+    cursor.execute("PRAGMA busy_timeout=5000")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
@@ -74,7 +74,6 @@ async def init_db() -> None:
     from .models import activity as _act_models  # noqa: F401
     from .models import document as _doc_models  # noqa: F401
     from .models import coach_session as _coach_models  # noqa: F401
-    from .models import auto_apply as _auto_apply_models  # noqa: F401
     from .models import recruiter as _recruiter_models  # noqa: F401
     from .models import follow_up_email as _email_models  # noqa: F401
     from .models import agency_reputation as _agency_models  # noqa: F401

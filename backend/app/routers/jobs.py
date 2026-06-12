@@ -71,6 +71,7 @@ async def health_check() -> dict[str, object]:
     """Simple health check endpoint used by Docker healthcheck.
 
     Returns JSON with status, timestamp, and optional ram_gb hint for onboarding.
+    Includes degraded details when llama-server slot context is too small for the budgets.
     """
     result: dict[str, object] = {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
     try:
@@ -79,6 +80,14 @@ async def health_check() -> dict[str, object]:
                 if _line.startswith("MemTotal:"):
                     result["ram_gb"] = round(int(_line.split()[1]) / 1_048_576)
                     break
+    except Exception:
+        pass
+    try:
+        from ..agents.tools.context_checker import get_degraded_details  # noqa: PLC0415
+        degraded = get_degraded_details()
+        if degraded:
+            result["degraded"] = "context_budget_exceeds_slot"
+            result["degraded_details"] = degraded
     except Exception:
         pass
     return result

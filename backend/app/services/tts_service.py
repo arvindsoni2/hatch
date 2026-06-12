@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-import struct
 import wave
 from io import BytesIO
 

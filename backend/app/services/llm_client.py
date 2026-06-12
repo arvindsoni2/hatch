@@ -1,10 +1,8 @@
 """Provider-agnostic LLM client wrapping llm_factory.
 
-Replaces the previous Anthropic-SDK-specific ClaudeClient. All services
-that previously called ClaudeClient (email_generator, digest_service,
-feedback_generator, etc.) continue to work unchanged via the same
-complete() / complete_json() / complete_structured() interface, but now
-honour whatever provider is configured in profile.yaml.
+All services that previously used ClaudeClient continue to work via the same
+complete() / complete_json() / complete_structured() interface, honouring
+whatever provider is configured in profile.yaml.
 """
 from __future__ import annotations
 
@@ -16,6 +14,7 @@ import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel as PydanticBaseModel
 
 from ..agents.tools.llm_factory import get_json_model, get_primary_model, record_trace
 from ..agents.tools.profile_loader import load_profile
@@ -28,7 +27,7 @@ _JSON_INSTRUCTION = (
 )
 
 
-class ClaudeClient:
+class LLMClient:
     """Provider-agnostic LLM client using the LLM factory.
 
     Interface is backwards-compatible with the previous Anthropic-specific
@@ -41,7 +40,6 @@ class ClaudeClient:
         api_key: str | None = None,  # kept for call-site compatibility; ignored
         model: str | None = None,    # kept for compatibility; profile.yaml controls model
         temperature: float = 0.3,
-        max_concurrent: int = 10,
     ) -> None:
         self._temperature = temperature
 
@@ -69,8 +67,13 @@ class ClaudeClient:
         system: str,
         user: str,
         max_tokens: int = 4096,
+        schema: type[PydanticBaseModel] | None = None,
     ) -> dict[str, Any]:
         """Send a completion request and parse the response as JSON.
+
+        schema: when provided on the llamacpp path, upgrades response_format
+        from json_object to json_schema (grammar-enforced). Pass-through only;
+        the parse-and-retry loop below is unchanged.
 
         Retries up to 3 times if the response is not valid JSON.
         Uses get_json_model() to pass format="json" to Ollama for token-level
@@ -80,7 +83,7 @@ class ClaudeClient:
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                llm = get_json_model()
+                llm = get_json_model(schema=schema)
                 messages = [SystemMessage(content=system + _JSON_INSTRUCTION), HumanMessage(content=user)]
                 t0 = time.monotonic()
                 response = await llm.ainvoke(messages)

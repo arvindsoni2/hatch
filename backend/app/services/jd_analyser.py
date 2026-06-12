@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..prompts import render_prompt
 from ..schemas.tailor import ATSKeywords, JDAnalysisResult, SkillMatchResult
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def _validate_url(url: str) -> None:
 class JDAnalyser:
     """Analyses job descriptions using the Claude API."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
     async def analyse(self, job_description: str, job_url: str | None = None) -> JDAnalysisResult:

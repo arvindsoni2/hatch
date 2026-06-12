@@ -118,6 +118,15 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
     return () => clearInterval(id);
   }, []);
 
+  const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
+
+  const agentRoutes: Record<string, string> = {
+    scout: "/stream",
+    scorer: "/stream",
+    tailor: "/tracker",
+    coach: "/prep",
+  };
+
   const agentMap = new Map((data?.agents ?? []).map((a) => [a.agent.toLowerCase(), a]));
   const defaultFunnel: FunnelCounts = funnel ?? { scout: 0, scorer: 0, tailor: 0, coach: 0 };
 
@@ -150,20 +159,24 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
         const row = agentMap.get(key);
         const { text, chip, chipColor, chipBg } = narrativeFor(key, row, defaultFunnel, transit, coachSessions);
         const timeStr = formatTimestamp(row?.last_run_at ?? null);
-        const isCoach = key === "coach";
+        const route = agentRoutes[key];
+        const isHovered = hoveredAgent === key;
 
         return (
           <div
             key={key}
-            onClick={isCoach ? () => router.push("/prep") : undefined}
+            onClick={() => router.push(route)}
+            onMouseEnter={() => setHoveredAgent(key)}
+            onMouseLeave={() => setHoveredAgent(null)}
             style={{
               display: "flex",
               gap: 10,
               padding: "10px 12px",
               borderRadius: 10,
-              background: "var(--surface)",
+              background: isHovered ? "var(--surface-hover, var(--border))" : "var(--surface)",
               border: "1px solid var(--border)",
-              cursor: isCoach ? "pointer" : "default",
+              cursor: "pointer",
+              transition: "background 0.15s ease",
             }}
           >
             <AgentBadge agent={key as never} size={30} />

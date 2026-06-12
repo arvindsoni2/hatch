@@ -26,7 +26,10 @@ import yaml
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.outputs import LLMResult
+from langchain_core.runnables import Runnable
+from pydantic import BaseModel
 
+from .context_budgets import PRIMARY_CTX
 from .profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
@@ -125,10 +128,10 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
         self._model = model_name
         self._t0: float = 0.0
 
-    def on_chat_model_start(self, serialized: dict, messages: list, **kwargs: Any) -> None:
+    def on_chat_model_start(self, _serialized: dict, messages: list, **kwargs: Any) -> None:
         self._t0 = time.monotonic()
 
-    def on_llm_start(self, serialized: dict, prompts: list, **kwargs: Any) -> None:
+    def on_llm_start(self, _serialized: dict, _prompts: list, **kwargs: Any) -> None:
         self._t0 = time.monotonic()
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
@@ -316,7 +319,11 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
                 "Set triage_model / primary_model in profile.yaml → llm section."
             )
 
-    # llamacpp exposes an OpenAI-compatible API — use ChatOpenAI directly
+    # llamacpp exposes an OpenAI-compatible API — use ChatOpenAI directly.
+    # - timeout=300: Qwen3.5-4B on U-series CPU can take 4-8 min/call; prevents silent hangs.
+    # - num_ctx is NOT passed: the server --ctx-size flag governs context length.
+    # - thinking/reasoning: Qwen3.5 thinking is controlled via extra_body chat_template_kwargs;
+    #   must NOT touch _maybe_add_think_token (that is the Ollama gemma4 mechanism only).
     if llm_cfg.provider == "llamacpp":
         if not llm_cfg.base_url:
             raise ValueError(
@@ -324,12 +331,18 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
                 "(e.g. 'http://llamacpp:8080/v1')"
             )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        reasoning = getattr(llm_cfg, "reasoning", False)
+        extra_body: dict[str, Any] = {
+            "chat_template_kwargs": {"enable_thinking": bool(reasoning)},
+        }
         return _attach_tracer(ChatOpenAI(
             model=model_name,
             base_url=llm_cfg.base_url,
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
+            timeout=300,
+            model_kwargs={"extra_body": extra_body},
         ), model_name)
 
     provider = llm_cfg.provider
@@ -360,7 +373,7 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     if llm_cfg.provider == "ollama":
         reasoning = getattr(llm_cfg, "reasoning", False)
         kwargs["request_timeout"] = 300  # 5-minute hard ceiling; prevents silent hangs
-        kwargs["num_ctx"] = 16384
+        kwargs["num_ctx"] = PRIMARY_CTX
         kwargs["format"] = "json"  # token-level JSON constraint — prevents markdown output
         # qwen3: thinking is ON by default; must explicitly disable unless reasoning=True
         if model_name.lower().startswith("qwen3"):
@@ -391,11 +404,15 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
 def get_triage_model() -> BaseChatModel:
     """Return the fast/cheap triage model configured in profile.yaml.
 
-    Used for: pre-filtering job listings, quick relevance checks.
-    Default: Haiku / GPT-4o-mini / Gemini Flash (depends on provider).
+    For llamacpp: routes to triage_base_url (the dedicated triage server on :8081).
+    Falls back to base_url when triage_base_url is unset — fold-onto-primary mode.
     """
     profile = load_profile()
-    return _build_model(profile.llm.triage_model, profile.llm)
+    llm_cfg = profile.llm
+    triage_url = getattr(llm_cfg, "triage_base_url", "") or llm_cfg.base_url
+    if triage_url != llm_cfg.base_url:
+        llm_cfg = llm_cfg.model_copy(update={"base_url": triage_url})
+    return _build_model(profile.llm.triage_model, llm_cfg)
 
 
 def get_primary_model() -> BaseChatModel:
@@ -408,8 +425,25 @@ def get_primary_model() -> BaseChatModel:
     return _build_model(profile.llm.primary_model, profile.llm)
 
 
-def get_json_model() -> BaseChatModel:
+def with_schema(llm: BaseChatModel, schema: type[BaseModel]) -> Runnable:
+    """Wrap llm.with_structured_output using the per-provider correct method.
+
+    - llamacpp: method='json_schema' (grammar-backed, structurally valid)
+    - all other providers: LangChain default (function-calling / tool-use)
+    """
+    profile = load_profile()
+    if profile.llm.provider == "llamacpp":
+        return llm.with_structured_output(schema, method="json_schema")
+    return llm.with_structured_output(schema)
+
+
+def get_json_model(schema: type[BaseModel] | None = None) -> BaseChatModel:
     """Return the primary model configured for JSON-constrained output.
+
+    schema: when provided on the llamacpp path, upgrades response_format from
+    json_object to json_schema (grammar-enforced). Return type is unchanged
+    (a chat model emitting JSON text); complete_json()'s parse-and-retry loop
+    is untouched.
 
     For Ollama providers, passes format='json' to enable constrained token
     sampling — only valid JSON tokens are sampled at the model level.
@@ -429,7 +463,7 @@ def get_json_model() -> BaseChatModel:
             "request_timeout": 300,  # 5-minute hard ceiling; prevents silent hangs
             # Ollama defaults to 4096 context but CV/CL prompts consume ~4000 tokens.
             # Force 16 K to leave headroom for thinking tokens + the full generated JSON.
-            "num_ctx": 16384,
+            "num_ctx": PRIMARY_CTX,
         }
         # qwen3 uses the `think` kwarg (ON by default, we disable unless reasoning=True)
         # gemma4/others use the `reasoning` kwarg (OFF by default)
@@ -455,12 +489,24 @@ def get_json_model() -> BaseChatModel:
                 "(e.g. 'http://llamacpp:8080/v1')"
             )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        if schema is not None:
+            response_format: dict = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.__name__,
+                    "schema": schema.model_json_schema(),
+                    "strict": True,
+                },
+            }
+        else:
+            response_format = {"type": "json_object"}
         return _attach_tracer(ChatOpenAI(
             model=llm_cfg.primary_model,
             base_url=llm_cfg.base_url,
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
-            model_kwargs={"response_format": {"type": "json_object"}},
+            timeout=300,
+            model_kwargs={"response_format": response_format},
         ), llm_cfg.primary_model)
     return _build_model(llm_cfg.primary_model, llm_cfg)

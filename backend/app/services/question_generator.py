@@ -6,7 +6,8 @@ from typing import Any
 
 from ..prompts import render_prompt
 from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, SessionConfig
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import QUESTION_GEN
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import load_master_cv
 
@@ -48,7 +49,7 @@ def _load_candidate_summary() -> str:
 class QuestionGeneratorService:
     """Generates weighted interview questions tailored to company and role."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
     async def generate(
@@ -87,7 +88,7 @@ class QuestionGeneratorService:
             )
         )
 
-        raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=4096)
+        raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=QUESTION_GEN.max_output)
 
         # Handle both bare array and {"questions": [...]} wrapper
         if isinstance(raw, list):

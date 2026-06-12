@@ -7,6 +7,7 @@ import { ExternalLink, BookmarkPlus, Check, Loader2, GitCompareArrows } from "lu
 import type { Job } from "@/lib/api";
 import { trackFromJob } from "@/lib/api";
 import { ScoreBadge } from "@/components/ScoreBadge";
+import { GhostBadge } from "@/components/GhostBadge";
 import { cn } from "@/lib/utils";
 import { formatJobRateFull } from "@/lib/currency";
 
@@ -84,6 +85,12 @@ export function JobCard({ job, threshold = 0.75, currencySymbol = "£" }: JobCar
           >
             {job.title}
           </Link>
+          <GhostBadge
+            score={job.ghost_score}
+            verdict={job.ghost_verdict}
+            signals={job.ghost_signals}
+            jobId={job.id}
+          />
           {job.url && (
             <a
               href={job.url}

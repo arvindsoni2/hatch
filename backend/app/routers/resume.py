@@ -295,9 +295,9 @@ async def upload_resume(file: UploadFile = File(...)) -> ParsePreviewResponse:
 
     # Structured LLM parse — returns preview without persisting
     try:
-        from ..services.claude_client import ClaudeClient  # noqa: PLC0415
+        from ..services.llm_client import LLMClient  # noqa: PLC0415
         from ..services.cv_parser import parse_cv_text  # noqa: PLC0415
-        parse_result = await parse_cv_text(text, ClaudeClient())
+        parse_result = await parse_cv_text(text, LLMClient())
         parsed_cv = parse_result.parsed
         warnings = parse_result.warnings
     except Exception as exc:

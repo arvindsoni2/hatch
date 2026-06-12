@@ -12,6 +12,7 @@ The LLM used is determined by profile.yaml llm config via llm_factory.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -28,7 +29,7 @@ from ..models.cost_tracking import CostTracking
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
 from langchain_core.exceptions import OutputParserException
-from .tools.llm_factory import get_triage_model, get_primary_model, estimate_tokens, estimate_cost
+from .tools.llm_factory import get_triage_model, get_primary_model, with_schema, estimate_tokens, estimate_cost
 from .tools.local_scorer import score_locally, LocalScoreResult
 from .tools.profile_loader import load_profile
 from .tools.rate_limiter import get_limiter
@@ -106,8 +107,8 @@ class ScorerAgent(BaseAgent):
         method = self._resolve_method(profile)
         limiter = get_limiter()
 
-        triage_llm = get_triage_model().with_structured_output(_TriageResult)
-        primary_llm = get_primary_model().with_structured_output(_ScoreResult)
+        triage_llm = with_schema(get_triage_model(), _TriageResult)
+        primary_llm = with_schema(get_primary_model(), _ScoreResult)
 
         self._log.info("Scoring %d jobs using method=%s.", len(pending), method)
 
@@ -245,6 +246,13 @@ class ScorerAgent(BaseAgent):
                 result_tag = await self._persist_local_score(event, job, local_score, db, profile)
                 await self._bus.mark_completed(event["id"], db)
                 scored += 1
+            except TimeoutError:
+                self._log.warning(
+                    "LLM call timed out for event %s — falling back to local score.", event["id"]
+                )
+                result_tag = await self._persist_local_score(event, job, local_score, db, profile)
+                await self._bus.mark_completed(event["id"], db)
+                scored += 1
             except Exception as exc:
                 self._log.exception("Scoring error for event %s: %s", event["id"], exc)
                 await self._bus.mark_failed(event["id"], str(exc), db)
@@ -317,6 +325,14 @@ class ScorerAgent(BaseAgent):
                 tag = await self._persist_local_score(event, job, local_score, db, profile)
                 await self._bus.mark_completed(event["id"], db)
                 scored += 1
+            except TimeoutError:
+                self._log.warning(
+                    "LLM call timed out for event %s — falling back to local score.", event["id"]
+                )
+                local_score = score_locally(job, profile)
+                tag = await self._persist_local_score(event, job, local_score, db, profile)
+                await self._bus.mark_completed(event["id"], db)
+                scored += 1
             except Exception as exc:
                 self._log.exception("Scoring error for event %s: %s", event["id"], exc)
                 await self._bus.mark_failed(event["id"], str(exc), db)
@@ -346,7 +362,9 @@ class ScorerAgent(BaseAgent):
         await limiter.acquire()
         triage_prompt = self._build_triage_prompt(job, profile)
         try:
-            triage: _TriageResult = await triage_llm.ainvoke(triage_prompt)
+            triage: _TriageResult = await asyncio.wait_for(
+                triage_llm.ainvoke(triage_prompt), timeout=120
+            )
         except Exception as exc:
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
@@ -371,7 +389,9 @@ class ScorerAgent(BaseAgent):
         scoring_prompt = self._build_llm_judge_prompt(job, profile, resume_text)
         t1 = time.monotonic()
         try:
-            score: _ScoreResult = await primary_llm.ainvoke(scoring_prompt)
+            score: _ScoreResult = await asyncio.wait_for(
+                primary_llm.ainvoke(scoring_prompt), timeout=600
+            )
         except Exception as exc:
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
@@ -434,7 +454,9 @@ class ScorerAgent(BaseAgent):
         await limiter.acquire()
         triage_prompt = self._build_triage_prompt(job, profile)
         try:
-            triage: _TriageResult = await triage_llm.ainvoke(triage_prompt)
+            triage: _TriageResult = await asyncio.wait_for(
+                triage_llm.ainvoke(triage_prompt), timeout=120
+            )
         except Exception as exc:
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
@@ -459,7 +481,9 @@ class ScorerAgent(BaseAgent):
         scoring_prompt = self._build_scoring_prompt(job, profile)
         t1 = time.monotonic()
         try:
-            score: _ScoreResult = await primary_llm.ainvoke(scoring_prompt)
+            score: _ScoreResult = await asyncio.wait_for(
+                primary_llm.ainvoke(scoring_prompt), timeout=600
+            )
         except Exception as exc:
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()

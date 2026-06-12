@@ -9,7 +9,8 @@ from pathlib import Path
 from ..prompts import render_prompt
 from ..schemas.tailor import ATSScoreResult, JDAnalysisResult, KeywordMatch
 from ..skills.skill_loader import SkillLoader, SkillRegistry
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import ATS
 from .jd_analyser import _split_jinja_output
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def _default_skill_loader() -> SkillLoader:
 class ATSOptimiser:
     """Scores and optimises CVs for Applicant Tracking Systems."""
 
-    def __init__(self, claude_client: ClaudeClient, skill_loader: SkillLoader | None = None) -> None:
+    def __init__(self, claude_client: LLMClient, skill_loader: SkillLoader | None = None) -> None:
         self._client = claude_client
         self._skill_loader = skill_loader or _default_skill_loader()
 
@@ -65,7 +66,7 @@ class ATSOptimiser:
             )
         )
         try:
-            raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=2048)
+            raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=ATS.max_output)
             semantic_score = float(raw.get("overall_score", 0)) / 100.0
             format_warnings: list[str] = raw.get("format_warnings", [])
             improvement_suggestions: list[str] = raw.get("improvement_suggestions", [])

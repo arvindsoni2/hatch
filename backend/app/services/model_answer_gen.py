@@ -5,7 +5,8 @@ import logging
 from typing import Any
 
 from ..prompts import render_prompt
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import MODEL_ANSWER
 from .jd_analyser import _split_jinja_output
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ModelAnswerGeneratorService:
     """Generates STAR-structured model answers for interview questions."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
     async def generate(
@@ -51,7 +52,7 @@ class ModelAnswerGeneratorService:
             )
         )
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=2048)
+            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=MODEL_ANSWER.max_output)
             return raw.get("model_answer", "")
         except Exception as exc:
             logger.warning("Model answer generation failed: %s", exc)

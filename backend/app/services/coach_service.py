@@ -19,7 +19,7 @@ from ..schemas.coach import (
     SubmitAnswerRequest,
 )
 from .answer_evaluator import AnswerEvaluatorService
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
 from .company_researcher import CompanyResearchService
 from .feedback_generator import FeedbackGeneratorService
 from .followup_planner import FollowUpPlannerService
@@ -38,7 +38,7 @@ class CoachService:
     """Orchestrates all Coach module services for interview practice sessions."""
 
     def __init__(self) -> None:
-        self._claude = ClaudeClient()
+        self._claude = LLMClient()
         self._researcher = CompanyResearchService(self._claude)
         self._question_gen = QuestionGeneratorService(self._claude)
         self._model_answer_gen = ModelAnswerGeneratorService(self._claude)

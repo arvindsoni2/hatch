@@ -1,14 +1,14 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { StepAIProvider, type LLMData } from "@/components/onboarding/StepAIProvider";
-import * as api from "@/lib/api";
 
 const defaultLlm: LLMData = {
-  provider: "google",
+  provider: "google_genai",
   triage_model: "gemini-2.5-flash-lite",
   primary_model: "gemini-2.5-flash",
   api_key_env: "GOOGLE_API_KEY",
   base_url: null,
+  triage_base_url: "",
   temperature: 0.3,
   max_retries: 3,
   track_costs: true,
@@ -16,9 +16,18 @@ const defaultLlm: LLMData = {
   currency: "USD",
 };
 
-const ollamaLlm: LLMData = {
-  ...{ provider: "ollama", triage_model: "", primary_model: "", api_key_env: "", base_url: null },
-  temperature: 0.3, max_retries: 3, track_costs: false, monthly_budget: 0, currency: "GBP",
+const llamacppLlm: LLMData = {
+  provider: "llamacpp",
+  triage_model: "qwen3.5-0.8b-q8_0",
+  primary_model: "qwen3.5-4b-instruct-q4_k_m",
+  api_key_env: "",
+  base_url: "http://llm-primary:8080/v1",
+  triage_base_url: "http://llm-triage:8081/v1",
+  temperature: 0.3,
+  max_retries: 3,
+  track_costs: false,
+  monthly_budget: 0,
+  currency: "GBP",
 };
 
 const baseProps = {
@@ -63,10 +72,11 @@ describe("StepAIProvider", () => {
     expect(screen.getByText(/anthropic/i)).toBeInTheDocument();
     expect(screen.getByText(/openai/i)).toBeInTheDocument();
     expect(screen.getByText(/gemini/i)).toBeInTheDocument();
-    expect(screen.getByText(/ollama/i)).toBeInTheDocument();
+    expect(screen.getByText(/local ai/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ollama/i)).not.toBeInTheDocument();
   });
 
-  it("shows API key input when non-ollama provider selected", () => {
+  it("shows API key input when non-llamacpp provider selected", () => {
     render(
       <StepAIProvider
         llm={defaultLlm}
@@ -86,10 +96,10 @@ describe("StepAIProvider", () => {
     expect(screen.getByPlaceholderText(/GOOGLE_API_KEY/i)).toBeInTheDocument();
   });
 
-  it("hides API key input for ollama provider", () => {
+  it("hides API key input for llamacpp provider", () => {
     render(
       <StepAIProvider
-        llm={{ ...defaultLlm, provider: "ollama", api_key_env: "" }}
+        llm={llamacppLlm}
         onLlmChange={vi.fn()}
         testApiKey=""
         onTestApiKeyChange={vi.fn()}
@@ -103,8 +113,7 @@ describe("StepAIProvider", () => {
         onScrapeIntervalChange={vi.fn()}
       />
     );
-    expect(screen.queryByPlaceholderText(/GOOGLE_API_KEY/i)).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/http:\/\/host\.containers/i)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/API_KEY/i)).not.toBeInTheDocument();
   });
 
   it("calls onTestConnection when Test button is clicked", () => {
@@ -129,27 +138,8 @@ describe("StepAIProvider", () => {
     expect(onTestConnection).toHaveBeenCalled();
   });
 
-  it("shows pull command and refresh button when Ollama has no models (LLM-3)", async () => {
-    vi.spyOn(api, "fetchOllamaModels").mockResolvedValue({ models: [], base_url: "" });
-    render(
-      <StepAIProvider
-        llm={ollamaLlm}
-        {...baseProps}
-      />
-    );
-    await waitFor(() => {
-      expect(screen.getByTestId("ollama-pull-cmd")).toBeInTheDocument();
-    });
-    expect(screen.getByTestId("ollama-pull-cmd")).toHaveTextContent("ollama pull qwen3:4b");
-    expect(screen.getByText(/refresh model list/i)).toBeInTheDocument();
-  });
-
-  it("pre-selects recommended model when user switches to Ollama and models are available (LLM-3)", async () => {
+  it("switches to llamacpp and sets correct defaults (LLM-local)", () => {
     const onLlmChange = vi.fn();
-    vi.spyOn(api, "fetchOllamaModels").mockResolvedValue({
-      models: ["gemma4:e2b", "qwen3:4b", "llama3:8b"],
-      base_url: "",
-    });
     render(
       <StepAIProvider
         llm={defaultLlm}
@@ -157,15 +147,13 @@ describe("StepAIProvider", () => {
         onLlmChange={onLlmChange}
       />
     );
-    // Click the Ollama provider card to trigger handleProviderChange
-    fireEvent.click(screen.getByText(/ollama/i));
-    await waitFor(() => {
-      expect(onLlmChange).toHaveBeenCalled();
-    });
+    fireEvent.click(screen.getByText(/local ai/i));
+    expect(onLlmChange).toHaveBeenCalled();
     const call = onLlmChange.mock.calls[0][0] as LLMData;
-    // qwen3:4b ranks higher than gemma4:e2b in OLLAMA_RECOMMENDED_ORDER
-    expect(call.primary_model).toBe("qwen3:4b");
-    // gemma4:e2b is preferred for triage (edge/smallest model)
-    expect(call.triage_model).toBe("gemma4:e2b");
+    expect(call.provider).toBe("llamacpp");
+    expect(call.base_url).toBe("http://llm-primary:8080/v1");
+    expect(call.triage_base_url).toBe("http://llm-triage:8081/v1");
+    expect(call.primary_model).toBe("qwen3.5-4b-instruct-q4_k_m");
+    expect(call.triage_model).toBe("qwen3.5-0.8b-q8_0");
   });
 });

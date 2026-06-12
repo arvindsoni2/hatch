@@ -69,7 +69,6 @@ class Settings(BaseSettings):
     MAX_TAILOR_BATCH: int = 5
     AUTO_APPROVE: bool = False
     AGENT_LOG_LEVEL: str = "INFO"
-    CHROMA_PERSIST_DIR: str = "./data/chroma"
     LANGGRAPH_CHECKPOINT_DB: str = "sqlite:///data/langgraph_checkpoints.db"
     SUPERVISOR_POLL_INTERVAL_SECONDS: int = 60
 

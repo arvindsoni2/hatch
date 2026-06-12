@@ -8,7 +8,8 @@ from bs4 import BeautifulSoup
 
 from ..prompts import render_prompt
 from ..schemas.coach import CompanyResearchResponse
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import COMPANY_RESEARCH
 from .jd_analyser import _split_jinja_output
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ _USER_AGENT = "Mozilla/5.0 (compatible; JobPilot-Research/1.0)"
 class CompanyResearchService:
     """Researches companies via web scraping + Claude synthesis."""
 
-    def __init__(self, claude_client: ClaudeClient) -> None:
+    def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
     async def research(self, company_name: str, sector: str | None = None) -> CompanyResearchResponse:
@@ -44,7 +45,7 @@ class CompanyResearchService:
             )
         )
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=2048)
+            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=COMPANY_RESEARCH.max_output)
         except Exception as exc:
             logger.warning("Claude synthesis failed for %s: %s — using scraped content", company_name, exc)
             raw = {}

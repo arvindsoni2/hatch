@@ -13,7 +13,8 @@ import unicodedata
 from typing import Any
 
 from ..prompts import render_prompt
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import CV_PARSE
 from .jd_analyser import _split_jinja_output
 
 logger = logging.getLogger(__name__)
@@ -47,12 +48,12 @@ class CVParseResult:
         self.warnings = warnings
 
 
-async def parse_cv_text(text: str, claude_client: ClaudeClient) -> CVParseResult:
+async def parse_cv_text(text: str, claude_client: LLMClient) -> CVParseResult:
     """Extract structured CV data from raw text, with verbatim grounding checks.
 
     Args:
         text: Raw CV text (from .docx or .pdf extraction).
-        claude_client: Configured ClaudeClient instance.
+        claude_client: Configured LLMClient instance.
 
     Returns:
         CVParseResult with parsed dict and any grounding warnings.
@@ -63,7 +64,7 @@ async def parse_cv_text(text: str, claude_client: ClaudeClient) -> CVParseResult
 
     try:
         raw: dict[str, Any] = await claude_client.complete_json(
-            system_prompt, user_prompt, max_tokens=4096
+            system_prompt, user_prompt, max_tokens=CV_PARSE.max_output
         )
     except Exception as exc:
         logger.error("CV parsing LLM call failed: %s", exc)

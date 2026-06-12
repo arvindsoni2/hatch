@@ -18,7 +18,7 @@ from ..schemas.tailor import (
 )
 from .ats_optimiser import ATSOptimiser
 from .cl_generator import CoverLetterGenerator, select_tone_variant
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
 from .cv_tailor import CVTailor
 from .docx_cl_builder import DocxCLBuilder
 from .docx_cv_builder import DocxCVBuilder
@@ -83,7 +83,7 @@ class TailorService:
     """Orchestrates JD analysis → CV tailoring → ATS scoring → docx generation."""
 
     def __init__(self) -> None:
-        self._claude = ClaudeClient()
+        self._claude = LLMClient()
         self._jd_analyser = JDAnalyser(self._claude)
         self._cv_tailor = CVTailor(self._claude)
         self._cl_generator = CoverLetterGenerator(self._claude)

@@ -9,7 +9,8 @@ from typing import Any
 from ..prompts import render_prompt
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredExperience
 from ..skills.skill_loader import SkillLoader, SkillRegistry
-from .claude_client import ClaudeClient
+from .llm_client import LLMClient
+from ..agents.tools.context_budgets import CV_GENERATE
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import MasterCVMissingError, load_master_cv  # noqa: F401
 from .master_cv_validator import MasterCVError, normalise_master_cv, validate_master_cv
@@ -27,7 +28,7 @@ def _default_skill_loader() -> SkillLoader:
 class CVTailor:
     """Tailors the master CV to a specific job description."""
 
-    def __init__(self, claude_client: ClaudeClient, skill_loader: SkillLoader | None = None) -> None:
+    def __init__(self, claude_client: LLMClient, skill_loader: SkillLoader | None = None) -> None:
         self._client = claude_client
         self._skill_loader = skill_loader or _default_skill_loader()
 
@@ -191,7 +192,7 @@ class CVTailor:
                 skill_instructions=skill_instructions,
             )
         )
-        raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=6000)
+        raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CV_GENERATE.max_output)
         result = _parse_tailored_cv(raw)
 
         # Post-generation validation

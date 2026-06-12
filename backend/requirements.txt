@@ -35,9 +35,6 @@ aiosmtplib==3.0.1
 # When upgrading beyond 0.x, audit AgentOrchestrator and all graph definitions.
 langgraph>=0.2.28,<0.4
 
-# ── Vector store ──────────────────────────────────────────────────────────────
-chromadb>=0.5.20,<0.6
-
 # ── LangChain — provider-agnostic LLM abstraction ────────────────────────────
 # anthropic is NOT pinned here — langchain-anthropic controls the compatible version.
 # Pinning it separately caused ResolutionImpossible conflicts during Docker build.
@@ -56,10 +53,3 @@ pypdf>=4.0.0
 # Pulls in torch (CPU build via --extra-index-url in Dockerfile). ~400 MB.
 sentence-transformers>=3.0,<4.0
 
-# ── Dev / test (also installed in container for make test) ────────────────────
-ruff==0.15.15
-pytest==8.3.3
-pytest-asyncio==0.24.0
-pytest-cov>=5.0.0
-pytest-httpx==0.35.0
-factory-boy==3.3.3
