@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent download of the two Qwen3.5 GGUFs used by llm-primary and llm-triage.
+# Idempotent download of the two Qwen2.5 GGUFs used by llm-primary and llm-triage.
 # Run once before 'docker compose up'.
 # Offline path: manually drop the files into data/models/ and skip this script.
 set -euo pipefail
@@ -52,5 +52,3 @@ download_if_missing "$PRIMARY_REPO" "$PRIMARY_FILE" "$PRIMARY_SHA256"
 download_if_missing "$TRIAGE_REPO"  "$TRIAGE_FILE"  "$TRIAGE_SHA256"
 
 echo "[fetch_models] Done. Run 'docker compose up -d' to start Hatch."
-echo "[fetch_models] Note: the existing Qwen3-14B-Q4_K_M.gguf (previous family) is superseded"
-echo "               by Qwen3.5-9B for 16GB+ machines but is still selectable as a custom model."

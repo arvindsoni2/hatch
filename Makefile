@@ -1,15 +1,14 @@
-# JobPilot — Project Commands
+# Hatch — Project Commands
 # Usage: make <target>
 
 .PHONY: dev dev-back dev-front scrape scrape-one test test-back test-front \
         test-be test-fe migrate migrate-new docker-up docker-down docker-build docker-logs \
-        docker-restart lint seed clean reset-user help ci \
-        ghost-analyse ghost-stats email-pending email-generate
+        docker-restart lint format models seed clean reset-user help ci
 
 # ──────────────────────── Development ────────────────────────
 
 dev: ## Start full stack locally (backend + frontend)
-	@echo "Starting JobPilot development environment..."
+	@echo "Starting Hatch development environment..."
 	@make dev-back &
 	@make dev-front
 
@@ -25,7 +24,7 @@ scrape: ## Run all scrapers manually
 	@echo "Triggering all scrapers..."
 	curl -s -X POST http://localhost:8000/api/jobs/scrape | python -m json.tool
 
-scrape-one: ## Run a single scraper (usage: make scrape-one BOARD=contractoruk)
+scrape-one: ## Run a single scraper (usage: make scrape-one BOARD=reed)
 	@echo "Triggering $(BOARD) scraper..."
 	curl -s -X POST "http://localhost:8000/api/jobs/scrape?source=$(BOARD)" | python -m json.tool
 
@@ -71,7 +70,7 @@ docker-build: ## Build all Docker images
 
 docker-up: ## Start all containers
 	docker compose up -d --build
-	@echo "JobPilot starting..."
+	@echo "Hatch starting..."
 	@echo "  Dashboard: http://localhost:3000"
 	@echo "  API:       http://localhost:8000/docs"
 
@@ -90,6 +89,11 @@ docker-shell-back: ## Shell into backend container
 
 docker-shell-front: ## Shell into frontend container
 	docker compose exec frontend sh
+
+# ──────────────────────── AI models ──────────────────────────
+
+models: ## Download bundled llama.cpp model files (run once before first docker-up)
+	@bash scripts/fetch_models.sh
 
 # ──────────────────────── Code Quality ───────────────────────
 
@@ -116,22 +120,8 @@ clean: ## Remove generated files and caches
 stats: ## Show job statistics
 	@curl -s http://localhost:8000/api/jobs/stats | python -m json.tool
 
-ghost-analyse: ## Run ghost job analysis on all unscored jobs
-	@curl -s -X POST http://localhost:8000/api/ghost/analyse-all | python -m json.tool
-
-ghost-stats: ## Show ghost detection statistics
-	@curl -s http://localhost:8000/api/ghost/stats | python -m json.tool
-
-email-pending: ## Show pending follow-up emails awaiting review
-	@curl -s http://localhost:8000/api/emails/pending | python -m json.tool
-
-email-generate: ## Generate follow-up email: make email-generate APP_ID=xxx TYPE=post_application
-	@curl -s -X POST http://localhost:8000/api/emails/generate/$(APP_ID) \
-		-H 'Content-Type: application/json' \
-		-d '{"email_type": "$(TYPE)"}' | python -m json.tool
-
 help: ## Show this help
-	@echo "JobPilot — Available Commands:"
+	@echo "Hatch — Available Commands:"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'

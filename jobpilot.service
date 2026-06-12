@@ -1,6 +1,6 @@
 [Unit]
-Description=JobPilot v2 — Autonomous Job Search
-Documentation=https://github.com/arvindsoni2/jobpilot-v2
+Description=Hatch — Autonomous Job Search
+Documentation=https://github.com/arvindsoni2/hatch
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
@@ -19,7 +19,7 @@ ExecReload=/usr/bin/docker compose restart
 TimeoutStartSec=300
 TimeoutStopSec=60
 
-# Log to journald — view with: journalctl -u jobpilot.service
+# Log to journald — view with: journalctl -u hatch.service
 StandardOutput=journal
 StandardError=journal
 

@@ -12,10 +12,10 @@ YELLOW="\033[1;33m"
 RED="\033[0;31m"
 RESET="\033[0m"
 
-info()  { echo -e "${CYAN}[jobpilot]${RESET} $*"; }
-ok()    { echo -e "${GREEN}[jobpilot]${RESET} $*"; }
-warn()  { echo -e "${YELLOW}[jobpilot]${RESET} $*"; }
-error() { echo -e "${RED}[jobpilot]${RESET} $*" >&2; exit 1; }
+info()  { echo -e "${CYAN}[hatch]${RESET} $*"; }
+ok()    { echo -e "${GREEN}[hatch]${RESET} $*"; }
+warn()  { echo -e "${YELLOW}[hatch]${RESET} $*"; }
+error() { echo -e "${RED}[hatch]${RESET} $*" >&2; exit 1; }
 
 # ── Detect compose / container runtime ────────────────────────────
 
@@ -37,7 +37,7 @@ container_exec() {
 # ── Banner ─────────────────────────────────────────────────────────
 
 echo ""
-echo -e "${CYAN}  JobPilot — Reset User Data${RESET}"
+echo -e "${CYAN}  Hatch — Reset User Data${RESET}"
 echo "  ─────────────────────────────────────────"
 echo ""
 echo -e "  ${YELLOW}This will permanently delete:${RESET}"

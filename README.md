@@ -22,7 +22,7 @@ Discover → Score → Tailor → Track → Coach — fully automated, human-in-
 
 ## What is Hatch?
 
-> **Status:** Active development — v4 + Coach Multimodal Uplift (Phases A–E) complete. Full pipeline (Scout → Score → Tailor → Coach) with two-step assisted apply, Agent Skills layer, Direction A UX, server-side ASR, delivery metrics, vocal-tone analysis, multi-dimensional session rubric, follow-up session chaining, on-device face analysis (MediaPipe), and optional Piper TTS. 598 backend + 336 frontend tests green.
+> **Status:** Active development — v5 complete. Full pipeline (Scout → Score → Tailor → Coach) with two-step assisted apply, Agent Skills layer, Direction A UX, server-side ASR, delivery metrics, vocal-tone analysis, multi-dimensional session rubric, follow-up session chaining, on-device face analysis (MediaPipe), optional Piper TTS, and bundled llama.cpp for zero-cost local AI. 650 backend + 346 frontend tests green.
 
 Hatch is an autonomous, multi-agent job search system that handles the full pipeline from discovery to interview readiness — while keeping you in control of the two decisions that actually matter: approving applications and reviewing interview prep.
 
@@ -60,8 +60,7 @@ Hatch is an autonomous, multi-agent job search system that handles the full pipe
 |---------|-------------|
 | **Profile-driven** | All user config in `profile.yaml` — roles, location, skills, weights, LLM provider. No code changes per user. |
 | **Locale Pack System** | YAML-driven market packs for 🇬🇧 UK, 🇮🇳 India, 🇮🇪 Ireland, 🇦🇪 UAE. Controls job boards, compensation defaults, and legal/compliance fields. |
-| **Pluggable AI** | Anthropic, OpenAI, Google, Ollama (free/local), Azure, AWS Bedrock — switch via `profile.yaml` |
-| **Dynamic model picker** | Settings page auto-discovers models from your running Ollama instance — no manual config needed. `gemma4:e2b` (primary) and `phi3:mini` (triage) are installed automatically on first run |
+| **Pluggable AI** | Local AI (bundled llama.cpp, free, no API key), Anthropic, OpenAI, Google — switch via `profile.yaml` or the onboarding wizard |
 | **Two-tier scoring** | Cheap triage model pre-filters; strong primary model scores on 4 dimensions with configurable weights |
 | **Locale-aware scoring** | Contract status, work authorisation, notice period, and other locale-specific signals injected into the `location_match` scoring dimension |
 | **Assisted apply (two-step)** | Approve → package assembled (CV + cover letter + screening answers + paste-map) → you open the job site and submit → tap "Mark as applied". Hatch never submits autonomously — you are always in control of the final click. |
@@ -189,7 +188,7 @@ curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh |
 iwr https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.ps1 | iex
 ```
 
-The installer checks prerequisites (Docker/Podman, git), clones the repo, pulls the default Ollama models (`gemma4:e2b` + `phi3:mini`) if none are present, creates a template `.env`, builds and starts the containers, and optionally installs a systemd user service on Linux.
+The installer checks prerequisites (Docker, git), clones the repo, downloads the bundled llama.cpp model files (`Qwen2.5-3B` + `Qwen2.5-0.5B`, ~1.2 GB total) if none are present, creates a template `.env`, builds and starts the containers, and optionally installs a systemd user service on Linux.
 
 ---
 
@@ -226,15 +225,16 @@ make dev
 
 Open `http://localhost:3000`. If `data/profile.yaml` is absent, the dashboard redirects automatically to the **onboarding wizard**.
 
-### 4. Onboarding wizard (5 steps)
+### 4. Onboarding wizard (6 steps)
 
 | Step | What you configure |
 |------|--------------------|
-| **Identity** | Name, title, years of experience, professional summary |
-| **Your market** | Locale (🇬🇧 UK · 🇮🇳 India · 🇮🇪 Ireland · 🇦🇪 UAE), target roles, location, remote preference |
-| **Compensation & eligibility** | Rate range, rate type, currency + locale-specific fields (contract status, work authorisation, notice period, etc.) |
+| **About you** | Name, title, years of experience, professional summary |
+| **Your market** | Locale (🇬🇧 UK · 🇮🇳 India · 🇮🇪 Ireland · 🇦🇪 UAE), target roles, contract type |
+| **Compensation** | Location, rate range, rate type, currency |
+| **Eligibility** | Locale-specific compliance fields (IR35 status, work authorisation, notice period, etc.) |
 | **Skills & achievements** | Primary/secondary skills, domains, STAR proof points (used by Tailor for CV personalisation) |
-| **AI setup & launch** | LLM provider, live API key test, job board toggles, scrape interval → **Start Hatch** |
+| **AI & launch** | LLM provider (Local AI is pre-selected — no key needed), job board toggles, scrape interval → **Start Hatch** |
 
 ### 5. Or configure manually
 
@@ -245,10 +245,10 @@ cp data/profile.yaml.example data/profile.yaml
 
 See `examples/` for complete worked profiles:
 
-- `examples/profile_uk_contractor.yaml` — UK Delivery Lead (outside contract)
-- `examples/profile_in_engineer.yaml` — India Senior Software Engineer
-- `examples/profile_ie_pm.yaml` — Ireland Product Manager
-- `examples/profile_ae_architect.yaml` — UAE Solutions Architect
+- `examples/profile_uk_contractor.yaml` — UK contractor (outside IR35)
+- `examples/profile_us_swe.yaml` — US software engineer
+- `examples/profile_eu_pm.yaml` — EU/Ireland product manager
+- `examples/profile_local_free.yaml` — Zero-cost setup using bundled Local AI
 
 ---
 
@@ -271,45 +271,25 @@ The locale pack (`locales/<id>.yaml`) determines:
 
 ### LLM Providers
 
-| Provider | `provider` value | Example triage model | Example primary model | API key env |
+| Provider | `provider` value | Triage model | Primary model | API key env |
 |----------|-----------------|---------------------|----------------------|-------------|
+| **Local AI (free)** | `llamacpp` | `qwen2.5-0.5b-instruct-q8_0` | `qwen2.5-3b-instruct-q4_k_m` | — (bundled, no key) |
 | Anthropic | `anthropic` | `claude-haiku-4-5-20251001` | `claude-sonnet-4-20250514` | `ANTHROPIC_API_KEY` |
 | OpenAI | `openai` | `gpt-4o-mini` | `gpt-4o` | `OPENAI_API_KEY` |
-| Google | `google` | `gemini-2.0-flash` | `gemini-2.5-pro` | `GOOGLE_API_KEY` |
-| Ollama (free) | `ollama` | `gemma4:e2b` | `qwen3:4b` | — (set `base_url`) |
-| Azure OpenAI | `azure` | deployment name | deployment name | `AZURE_OPENAI_API_KEY` |
-| AWS Bedrock | `aws_bedrock` | model ID | model ID | AWS credentials |
+| Google | `google_genai` | `gemini-2.5-flash-lite` | `gemini-2.5-flash` | `GOOGLE_API_KEY` |
 
 ```yaml
-# profile.yaml — switch to Ollama for zero API cost
+# profile.yaml — Local AI (bundled llama.cpp, free, no API key required)
 llm:
-  provider: "ollama"
-  triage_model: "gemma4:e2b"  # edge-optimised — fast background classification
-  primary_model: "qwen3:4b"   # dense 4B Q4 — CV/CL generation and JD analysis
-  base_url: "http://host.containers.internal:11434"  # use localhost if running outside Docker
+  provider: "llamacpp"
+  triage_model: "qwen2.5-0.5b-instruct-q8_0"
+  primary_model: "qwen2.5-3b-instruct-q4_k_m"
+  base_url: "http://llm-primary:8080/v1"
+  triage_base_url: "http://llm-triage:8081/v1"
   track_costs: false
 ```
 
-> **Ollama model tip:** Thinking mode is automatically managed per model family — qwen3 has thinking ON by default (Hatch disables it for speed); gemma4 has it OFF by default (Hatch enables it only for deep analysis). The Settings page auto-discovers all locally-pulled models so you can swap them without editing YAML. See `examples/profile_local_free.yaml` for a complete zero-cost configuration.
-
-### Choosing local models
-
-Pull at least two models — one large (primary) and one small (triage):
-
-```bash
-ollama pull qwen3:4b && ollama pull gemma4:e2b
-```
-
-The onboarding wizard auto-detects what you have and pre-selects the best available option. It also reads your machine's RAM and shows which tier you can run.
-
-| RAM | Recommended primary | Notes |
-|-----|---------------------|-------|
-| 32 GB+ | `qwen3:30b-a3b` | MoE 30B — ~3B active params; best quality |
-| 16–32 GB | `gemma4:26b-a4b` | MoE 26B — ~4B active params; strong alternative |
-| 8–16 GB | `qwen3:4b` | Dense 4B Q4 — solid default for most laptops |
-| < 8 GB | `gemma4:e2b` | Edge-optimised; use as triage on all tiers |
-
-All tiers use `gemma4:e2b` as the **triage model** (fast background classification). The primary model handles the heavier work: CV tailoring, cover letter generation, and coaching analysis. CPU-only — no GPU required.
+> **Local AI tip:** The bundled llama.cpp containers use `Qwen2.5-3B` (primary, 721 MB) and `Qwen2.5-0.5B` (triage, 507 MB). Download them once with `bash scripts/fetch_models.sh`, then `docker compose up -d`. No GPU required. Switch to a cloud provider at any time from Settings or by editing `profile.yaml`. See `examples/profile_local_free.yaml` for a complete zero-cost configuration.
 
 ### Scoring
 
@@ -392,8 +372,8 @@ preferences:
 - **Trigger:** `job_shortlisted` events (score ≥ threshold), or manually via the UI for any job URL
 - **Does:** Generates tailored CV + cover letter; ATS compatibility scoring. All runs are tracked in the tailor history panel per job — download any previous variant or regenerate at any time
 - **Proof points:** Mapped from `profile.yaml → proof_points` to JD requirements by tag matching
-- **Reliability:** Hard 20-minute timeout prevents indefinite hangs when Ollama is busy with background classification. 16 K context window (`num_ctx=16384`) ensures full CV prompts are never silently truncated
-- **LLM:** Primary model (`gemma4:e2b` default for Ollama) with 16 K context
+- **Reliability:** Hard 20-minute timeout prevents indefinite hangs. 16 K context window ensures full CV prompts are never silently truncated
+- **LLM:** Primary model with 16 K context
 
 ### Coach
 
@@ -543,7 +523,7 @@ make status       # Show all agent statuses
 | Coach (research + Q&A) | 2 interviews | ~$0.11 |
 | **Total** | | **~$4.06** |
 
-Well within the default monthly budget configured in `profile.yaml`. Use Ollama for $0.
+Well within the default monthly budget configured in `profile.yaml`. Use the bundled Local AI for $0 — no API key, no cloud spend.
 
 ---
 
@@ -553,7 +533,7 @@ Well within the default monthly budget configured in `profile.yaml`. Use Ollama 
 LangGraph's explicit state machine maps cleanly to the application lifecycle; `interrupt()` gives clean human-in-the-loop; `SqliteSaver` matches the existing SQLite stack. CrewAI is great for fast prototyping but lacks built-in checkpointing.
 
 **Can I use a local model?**
-Yes — Ollama is the default and requires no API key. The installer automatically pulls both `gemma4:e2b` (primary model, ~3 GB — used for CV/CL generation and JD analysis) and `phi3:mini` (triage model, ~2.3 GB — used for fast background job classification) when no models are present. Thinking mode is automatically disabled on both to avoid multi-minute response delays. You can swap models at any time from the Settings page without editing YAML.
+Yes — Local AI (bundled llama.cpp) is the default and requires no API key. Run `bash scripts/fetch_models.sh` once to download `Qwen2.5-3B-Instruct-Q4_K_M.gguf` (~721 MB, primary) and `Qwen2.5-0.5B-Instruct-Q8_0.gguf` (~507 MB, triage). Both run entirely on CPU — no GPU required. Switch to a cloud provider at any time from Settings or by editing `profile.yaml`.
 
 **Is my data safe?**
 All data stays local. The only external calls are to your configured LLM provider's API. `profile.yaml` and `master_cv.json` are gitignored — never committed.

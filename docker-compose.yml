@@ -86,8 +86,8 @@ services:
         condition: service_started
       llm-triage:
         condition: service_started
-    # Allow the backend container to reach Ollama running on the host (Ollama provider).
     # On Linux, host.docker.internal is not automatic — host-gateway maps it.
+    # Useful if using a cloud provider that proxies through the host network.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

@@ -1,11 +1,13 @@
-# ── JobPilot v2 Example Profile — Local-Free (Ollama, $0/month) ───────────────
-# Uses Ollama running on your machine — no API keys, no cloud spend.
-# Before starting Hatch, pull the recommended models:
+# ── Hatch Example Profile — Local AI, $0/month ────────────────────────────────
+# Uses bundled llama.cpp containers — no API keys, no cloud spend.
+# Before starting Hatch, download the model files once:
 #
-#   ollama pull qwen3:4b && ollama pull gemma4:e2b
+#   bash scripts/fetch_models.sh
+#   docker compose up -d
 #
-# See "Choosing local models" in README.md for RAM tier guidance.
 # Copy to data/profile.yaml and fill in your own details.
+
+locale: "uk"
 
 candidate:
   name: "Your Name"
@@ -35,7 +37,8 @@ compensation:
   max_rate: 600
   rate_type: "daily"     # or "hourly", "annual"
   currency: "GBP"
-  ir35_preference: "outside"  # or "inside", "either"
+  legal_preferences:
+    contract_status: "outside"  # UK/IE: outside | inside | any
 
 skills:
   primary:
@@ -85,18 +88,19 @@ scoring:
   shortlist_threshold: 0.70
 
 llm:
-  # Ollama — runs entirely on your machine, $0 API spend, no key required.
-  # Hatch auto-detects the best installed model. Pull at least one model first:
-  #   ollama pull qwen3:4b && ollama pull gemma4:e2b
-  provider: "ollama"
-  triage_model: "gemma4:e2b"    # fast, small — for quick relevance filtering
-  primary_model: "qwen3:4b"     # larger — for tailoring, coaching, analysis
+  # Local AI — bundled llama.cpp containers, $0 API spend, no key required.
+  # Models are downloaded by scripts/fetch_models.sh:
+  #   Primary:  Qwen2.5-3B-Instruct-Q4_K_M.gguf (~721 MB) on port 8080
+  #   Triage:   Qwen2.5-0.5B-Instruct-Q8_0.gguf (~507 MB) on port 8081
+  provider: "llamacpp"
+  triage_model: "qwen2.5-0.5b-instruct-q8_0"
+  primary_model: "qwen2.5-3b-instruct-q4_k_m"
   api_key_env: ""
-  base_url: "http://host.containers.internal:11434"  # container deployment
-  # base_url: "http://localhost:11434"               # direct host install
+  base_url: "http://llm-primary:8080/v1"
+  triage_base_url: "http://llm-triage:8081/v1"
   temperature: 0.3
   max_retries: 3
-  track_costs: false   # no costs to track with Ollama
+  track_costs: false
   monthly_budget: 0
   currency: "GBP"
 
@@ -105,3 +109,4 @@ preferences:
   max_tailor_batch: 5
   follow_up_days: [5, 10, 15]
   locale: "en-GB"
+  archive_after_days: 30
