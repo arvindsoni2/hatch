@@ -124,9 +124,11 @@ class JDAnalyser:
             + jd_analysis.ats_keywords.domain
             + jd_analysis.ats_keywords.certifications
         )
-        # Flatten CV skills from all categories
+        # Flatten CV skills from all categories (handle both dict and list formats)
         cv_skills: set[str] = set()
-        for skill_cat in master_cv.get("skills", {}).values():
+        raw_skills = master_cv.get("skills", {})
+        skill_cats = raw_skills.values() if isinstance(raw_skills, dict) else (raw_skills if isinstance(raw_skills, list) else [])
+        for skill_cat in skill_cats:
             if not isinstance(skill_cat, dict):
                 continue
             for item in skill_cat.get("items", []):
