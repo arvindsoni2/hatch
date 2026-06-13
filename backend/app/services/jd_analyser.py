@@ -148,7 +148,7 @@ class JDAnalyser:
         match_pct = (len(matched) / len(jd_kws) * 100) if jd_kws else 0.0
 
         # Domain match: check if JD domain keywords overlap with CV sectors
-        cv_sectors = {exp.get("sector", "") for exp in master_cv.get("experience", [])}
+        cv_sectors = {exp.get("sector", "") for exp in master_cv.get("experience", []) if isinstance(exp, dict)}
         domain_match = bool(
             jd_analysis.company_context.sector
             and any(
