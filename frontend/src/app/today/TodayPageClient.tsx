@@ -1,10 +1,10 @@
 "use client";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { TodayScreen } from "@/components/hatch/screens/TodayScreen";
 import { ReviewOverlay } from "@/components/hatch/ReviewOverlay";
 import { ApplicationReadyCard } from "@/components/hatch/ApplicationReadyCard";
 import { AgentActivityPanel } from "@/components/hatch/AgentActivityPanel";
-import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob } from "@/lib/api";
+import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob, getApplicationPackage } from "@/lib/api";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 import type { ApplicationPackage, AgentPerformance } from "@/lib/api";
 
@@ -72,6 +72,21 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
         // network hiccup — keep polling
       }
     }, 5000);
+  }, []);
+
+  // Hydrate packages for any ready_to_apply jobs that arrived via server props
+  useEffect(() => {
+    const missing = jobs.filter((j) => j.state === "ready_to_apply");
+    if (missing.length === 0) return;
+    missing.forEach(async (job) => {
+      try {
+        const pkg = await getApplicationPackage(job.id);
+        setPackages((prev) => ({ ...prev, [job.id]: pkg }));
+      } catch {
+        // package not ready yet — ignore
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleAction(action: "approve" | "reject") {

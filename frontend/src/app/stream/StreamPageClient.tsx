@@ -1,9 +1,9 @@
 "use client";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { StreamScreen } from "@/components/hatch/screens/StreamScreen";
 import { ReviewOverlay } from "@/components/hatch/ReviewOverlay";
 import { ApplicationReadyCard } from "@/components/hatch/ApplicationReadyCard";
-import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob } from "@/lib/api";
+import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob, getApplicationPackage } from "@/lib/api";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 import type { ApplicationPackage } from "@/lib/api";
 
@@ -20,6 +20,21 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   const [approvingMessage, setApprovingMessage] = useState<string>("");
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Hydrate packages for any ready_to_apply jobs that arrived via server props
+  useEffect(() => {
+    const missing = initialJobs.filter((j) => j.state === "ready_to_apply");
+    if (missing.length === 0) return;
+    missing.forEach(async (job) => {
+      try {
+        const pkg = await getApplicationPackage(job.id);
+        setPackages((prev) => ({ ...prev, [job.id]: pkg }));
+      } catch {
+        // package not ready yet — ignore
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startPolling = useCallback((asyncJobId: string, jobId: string, jobTitle: string, company: string | null) => {
     if (pollRef.current) clearInterval(pollRef.current);
