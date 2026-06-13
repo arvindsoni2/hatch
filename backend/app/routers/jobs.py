@@ -534,6 +534,7 @@ async def approve_job(
         app_obj = Application(
             job_id=job_id,
             status="preparing",
+            approval_status="approved",
             priority="normal",
             is_active=True,
             created_at=datetime.utcnow(),
@@ -544,7 +545,7 @@ async def approve_job(
         await db.execute(
             update(Application)
             .where(Application.id == app_obj.id)
-            .values(status="preparing", updated_at=datetime.utcnow())
+            .values(status="preparing", approval_status="approved", updated_at=datetime.utcnow())
         )
 
     # 3. Create async_job before commit so both land in the same transaction

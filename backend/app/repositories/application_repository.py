@@ -156,8 +156,9 @@ class ApplicationRepository:
             Tuple of (list of ApplicationListItem, total count).
         """
         query = (
-            select(Application, JobPosting)
+            select(Application, JobPosting, JobScore)
             .outerjoin(JobPosting, Application.job_id == JobPosting.id)
+            .outerjoin(JobScore, Application.job_id == JobScore.job_id)
             .where(Application.is_active)
         )
         if status:
@@ -182,7 +183,7 @@ class ApplicationRepository:
         query = query.order_by(Application.updated_at.desc()).offset(skip).limit(limit)
         result = await self._session.execute(query)
         rows = result.all()
-        items = [self._to_list_item(app, job) for app, job in rows]
+        items = [self._to_list_item(app, job, score) for app, job, score in rows]
         return items, total
 
     async def get_kanban(self) -> dict[str, list[ApplicationListItem]]:

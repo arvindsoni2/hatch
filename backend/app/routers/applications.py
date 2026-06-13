@@ -390,22 +390,19 @@ async def get_application_package(
     app_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Return the prepared ApplicationPackage for the Application-ready surface.
+    """Return the stored ApplicationPackage for the Application-ready card.
 
-    Re-assembles the package from the stored application state so the card can
-    be re-opened after the initial approve.
-
-    Args:
-        app_id: UUID of the application.
-
-    Returns:
-        ApplicationPackage JSON.
+    Returns only previously generated documents — never triggers LLM calls.
+    If no documents exist yet the document fields are null; the client should
+    still render the card so the user can open the application link.
 
     Raises:
         HTTPException 404: If the application is not found.
     """
     from ..models.application import Application
-    from ..services.assisted_apply import AssistedApplyService
+    from ..models.document import GeneratedDocument
+    from ..models.job import JobPosting
+    from sqlalchemy import desc
 
     app_result = await db.execute(
         select(Application).where(Application.id == app_id, Application.is_active.is_(True))
@@ -414,20 +411,33 @@ async def get_application_package(
     if app_obj is None:
         raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
 
-    job_id = app_obj.job_id or app_id
-    service = AssistedApplyService()
-    package = await service.prepare_application(job_id=job_id, db=db)
+    # Fetch the linked job for URL + metadata
+    job_url: str | None = None
+    if app_obj.job_id:
+        job_r = await db.execute(select(JobPosting).where(JobPosting.id == app_obj.job_id))
+        job = job_r.scalar_one_or_none()
+        job_url = job.url if job else None
+
+    # Look up any previously generated documents — no LLM calls
+    docs_result = await db.execute(
+        select(GeneratedDocument)
+        .where(GeneratedDocument.application_id == app_id)
+        .order_by(desc(GeneratedDocument.created_at))
+    )
+    docs = docs_result.scalars().all()
+    cv_doc = next((d for d in docs if d.document_type == "cv"), None)
+    cl_doc = next((d for d in docs if d.document_type == "cover_letter"), None)
 
     return {
-        "job_id": package.job_id,
-        "job_url": package.job_url,
-        "cv_path": package.cv_path,
-        "cover_letter_path": package.cover_letter_path,
-        "cv_document_id": package.cv_document_id,
-        "cl_document_id": package.cl_document_id,
-        "prefill_map": package.prefill_map,
-        "screening_answers": package.screening_answers,
-        "paste_map": package.paste_map,
+        "job_id": app_obj.job_id or app_id,
+        "job_url": job_url,
+        "cv_path": cv_doc.file_path if cv_doc else None,
+        "cover_letter_path": cl_doc.file_path if cl_doc else None,
+        "cv_document_id": str(cv_doc.id) if cv_doc else None,
+        "cl_document_id": str(cl_doc.id) if cl_doc else None,
+        "prefill_map": {},
+        "screening_answers": {},
+        "paste_map": {},
     }
 
 
