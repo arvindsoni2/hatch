@@ -420,6 +420,7 @@ class AssistedApplyService:
                 "Tailor service unavailable for job %s, continuing without docs: %s",
                 job_id,
                 exc,
+                exc_info=True,
             )
 
         # 6. Build screening_answers + paste_map using SkillLoader

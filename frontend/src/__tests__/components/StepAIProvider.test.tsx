@@ -18,8 +18,8 @@ const defaultLlm: LLMData = {
 
 const llamacppLlm: LLMData = {
   provider: "llamacpp",
-  triage_model: "qwen3.5-0.8b-q8_0",
-  primary_model: "qwen3.5-4b-instruct-q4_k_m",
+  triage_model: "qwen3-0.6b-q4_0",
+  primary_model: "qwen3-4b-q4_0",
   api_key_env: "",
   base_url: "http://llm-primary:8080/v1",
   triage_base_url: "http://llm-triage:8081/v1",
@@ -153,7 +153,7 @@ describe("StepAIProvider", () => {
     expect(call.provider).toBe("llamacpp");
     expect(call.base_url).toBe("http://llm-primary:8080/v1");
     expect(call.triage_base_url).toBe("http://llm-triage:8081/v1");
-    expect(call.primary_model).toBe("qwen3.5-4b-instruct-q4_k_m");
-    expect(call.triage_model).toBe("qwen3.5-0.8b-q8_0");
+    expect(call.primary_model).toBe("qwen3-4b-q4_0");
+    expect(call.triage_model).toBe("qwen3-0.6b-q4_0");
   });
 });

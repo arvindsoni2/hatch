@@ -93,85 +93,48 @@ def _mock_package(job_id: str = "job-123", job_url: str = "https://greenhouse.io
 class TestApproveJobEndpoint:
 
     @pytest.mark.asyncio
-    async def test_approve_returns_200(
+    async def test_approve_returns_202(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        """POST /api/jobs/{job_id}/approve returns 200."""
+        """POST /api/jobs/{job_id}/approve returns 202 (async fire-and-forget)."""
         job = await _insert_job(db_session)
-        pkg = _mock_package(job_id=job.id, job_url=job.url)
 
-        with patch(
-            "app.services.assisted_apply.AssistedApplyService.prepare_application",
-            new=AsyncMock(return_value=pkg),
-        ):
-            resp = await client.post(f"/api/jobs/{job.id}/approve")
+        resp = await client.post(f"/api/jobs/{job.id}/approve")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
 
     @pytest.mark.asyncio
-    async def test_approve_sets_application_status_to_ready_to_apply(
+    async def test_approve_sets_application_status_to_preparing(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        """POST approve moves Application.status to 'ready_to_apply'."""
+        """POST approve immediately moves Application.status to 'preparing'."""
 
         job = await _insert_job(db_session)
         app = await _insert_app(db_session, job_id=job.id, status="ready")
-        pkg = _mock_package(job_id=job.id, job_url=job.url)
 
-        with patch(
-            "app.services.assisted_apply.AssistedApplyService.prepare_application",
-            new=AsyncMock(return_value=pkg),
-        ):
-            resp = await client.post(f"/api/jobs/{job.id}/approve")
+        resp = await client.post(f"/api/jobs/{job.id}/approve")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
 
-        # Re-query to check status
+        # Status is set to 'preparing' synchronously before the 202 is returned.
         await db_session.refresh(app)
-        assert app.status == "ready_to_apply"
+        assert app.status == "preparing"
 
     @pytest.mark.asyncio
-    async def test_approve_returns_package_fields(
+    async def test_approve_returns_async_job_fields(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        """Response contains job_id, job_url, cv_path, cover_letter_path,
-        prefill_map, screening_answers, paste_map."""
+        """202 response contains async_job_id, job_id, status, message."""
         job = await _insert_job(db_session)
-        pkg = _mock_package(job_id=job.id, job_url=job.url)
 
-        with patch(
-            "app.services.assisted_apply.AssistedApplyService.prepare_application",
-            new=AsyncMock(return_value=pkg),
-        ):
-            resp = await client.post(f"/api/jobs/{job.id}/approve")
+        resp = await client.post(f"/api/jobs/{job.id}/approve")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         data = resp.json()
-        assert "job_id" in data
-        assert "job_url" in data
-        assert "cv_path" in data
-        assert "cover_letter_path" in data
-        assert "prefill_map" in data
-        assert "screening_answers" in data
-        assert "paste_map" in data
-
-    @pytest.mark.asyncio
-    async def test_approve_screening_answers_in_response(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Response screening_answers contains the generated knockout answers."""
-        job = await _insert_job(db_session)
-        pkg = _mock_package(job_id=job.id, job_url=job.url)
-
-        with patch(
-            "app.services.assisted_apply.AssistedApplyService.prepare_application",
-            new=AsyncMock(return_value=pkg),
-        ):
-            resp = await client.post(f"/api/jobs/{job.id}/approve")
-
-        data = resp.json()
-        assert data["screening_answers"]["work_authorisation"] == "British Citizen"
-        assert data["screening_answers"]["notice_period"] == "Immediately available."
+        assert "async_job_id" in data
+        assert data["job_id"] == job.id
+        assert data["status"] == "preparing"
+        assert "message" in data
 
     @pytest.mark.asyncio
     async def test_approve_returns_404_for_unknown_job(
