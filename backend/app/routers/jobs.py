@@ -518,11 +518,16 @@ async def approve_job(
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
 
     # 2. Find or create the linked Application, set status → "preparing"
+    # Use .first() + ORDER BY to gracefully handle duplicate active rows created
+    # by rapid re-approve clicks racing before a previous commit landed.
     app_result = await db.execute(
-        select(Application).where(
+        select(Application)
+        .where(
             Application.job_id == job_id,
             Application.is_active.is_(True),
         )
+        .order_by(Application.updated_at.desc())
+        .limit(1)
     )
     app_obj = app_result.scalar_one_or_none()
     if app_obj is None:

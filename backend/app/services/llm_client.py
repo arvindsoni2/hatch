@@ -80,12 +80,16 @@ class LLMClient:
         JSON constraint.
         """
         model_name = load_profile().llm.primary_model
+        # Qwen3 generates <think>...</think> chains at 1-2 t/s; for structured
+        # JSON tasks CoT wastes tokens and causes 300s HTTP timeouts. /no_think
+        # disables it while keeping the same model and grammar enforcement.
+        no_think = "/no_think\n" if "qwen" in model_name.lower() else ""
         last_error: Exception | None = None
         cleaned = ""
         for attempt in range(3):
             try:
                 llm = get_json_model(schema=schema)
-                messages = [SystemMessage(content=system + _JSON_INSTRUCTION), HumanMessage(content=user)]
+                messages = [SystemMessage(content=no_think + system + _JSON_INSTRUCTION), HumanMessage(content=user)]
                 t0 = time.monotonic()
                 response = await llm.ainvoke(messages)
                 duration_ms = int((time.monotonic() - t0) * 1000)
