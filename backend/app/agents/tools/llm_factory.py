@@ -320,7 +320,7 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
             )
 
     # llamacpp exposes an OpenAI-compatible API — use ChatOpenAI directly.
-    # - timeout=300: Qwen3.5-4B on U-series CPU can take 4-8 min/call; prevents silent hangs.
+    # - timeout=3600: local LLM queue can stack 7 concurrent jobs × 180s/call = 1260s wait.
     # - num_ctx is NOT passed: the server --ctx-size flag governs context length.
     # - thinking/reasoning: Qwen3.5 thinking is controlled via extra_body chat_template_kwargs;
     #   must NOT touch _maybe_add_think_token (that is the Ollama gemma4 mechanism only).
@@ -341,7 +341,7 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
-            timeout=300,
+            timeout=3600,  # 1-hour ceiling: 7 concurrent jobs × ~180s/call = 1260s queue wait
             model_kwargs={"extra_body": extra_body},
         ), model_name)
 
@@ -372,7 +372,7 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     # - thinking-mode is model-family-aware (gemma4 vs qwen3 — see _maybe_add_think_token)
     if llm_cfg.provider == "ollama":
         reasoning = getattr(llm_cfg, "reasoning", False)
-        kwargs["request_timeout"] = 300  # 5-minute hard ceiling; prevents silent hangs
+        kwargs["request_timeout"] = 3600  # 1-hour ceiling; local LLM queue can run 20+ min
         kwargs["num_ctx"] = PRIMARY_CTX
         kwargs["format"] = "json"  # token-level JSON constraint — prevents markdown output
         # qwen3: thinking is ON by default; must explicitly disable unless reasoning=True
@@ -460,7 +460,7 @@ def get_json_model(schema: type[BaseModel] | None = None) -> BaseChatModel:
             "max_retries": llm_cfg.max_retries,
             "format": "json",
             "base_url": llm_cfg.base_url or "http://host.containers.internal:11434",
-            "request_timeout": 300,  # 5-minute hard ceiling; prevents silent hangs
+            "request_timeout": 3600,  # 1-hour ceiling; local LLM queue can run 20+ min
             # Ollama defaults to 4096 context but CV/CL prompts consume ~4000 tokens.
             # Force 16 K to leave headroom for thinking tokens + the full generated JSON.
             "num_ctx": PRIMARY_CTX,
@@ -506,7 +506,7 @@ def get_json_model(schema: type[BaseModel] | None = None) -> BaseChatModel:
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
-            timeout=300,
+            timeout=3600,  # 1-hour ceiling: matches get_primary_model ceiling above
             model_kwargs={"response_format": response_format},
         ), llm_cfg.primary_model)
     return _build_model(llm_cfg.primary_model, llm_cfg)
