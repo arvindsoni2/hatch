@@ -68,8 +68,12 @@ async def assert_context_budgets(llm_cfg: Any) -> None:
             logger.debug("llamacpp %s /props unreachable — skipping context check.", label)
             continue
 
-        # /props returns {"n_ctx": total, "n_parallel": slots, ...}
-        total_ctx = props.get("n_ctx", 0)
+        # /props returns n_ctx at top level on older builds; newer llama.cpp
+        # moves it into default_generation_settings.
+        total_ctx = (
+            props.get("n_ctx")
+            or props.get("default_generation_settings", {}).get("n_ctx", 0)
+        )
         parallel = props.get("n_parallel", 1) or 1
         slot_ctx = total_ctx // parallel
 

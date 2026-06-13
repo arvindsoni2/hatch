@@ -146,6 +146,11 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
     .filter((j) => j.state === "ready_to_apply" && packages[j.id])
     .map((j) => ({ job: j, pkg: packages[j.id] }));
 
+  // Jobs with packages are shown as ApplicationReadyCard below — exclude from TodayScreen
+  // to avoid showing the same job in two places simultaneously.
+  const packagedIds = new Set(readyToApplyWithPkg.map(({ job }) => job.id));
+  const jobsForScreen = localJobs.filter((j) => !packagedIds.has(j.id));
+
   const avgMatch = localJobs.length > 0
     ? Math.round(localJobs.reduce((sum, j) => sum + j.score, 0) / localJobs.length * 100)
     : undefined;
@@ -156,7 +161,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
       <div className="flex gap-6 items-start">
         <div className="flex-1 min-w-0">
           <TodayScreen
-            jobs={localJobs}
+            jobs={jobsForScreen}
             funnel={funnel}
             transit={transit}
             profileName={profileName ?? "there"}
