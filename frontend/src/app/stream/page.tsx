@@ -36,11 +36,12 @@ function appToHatchJob(a: ApplicationListItem, state: HatchJob["state"]): HatchJ
 }
 
 export default async function StreamPage() {
-  const [approvals, preparingApps, shortlistedApps, discoveredApps] = await Promise.all([
+  const [approvals, preparingApps, shortlistedApps, discoveredApps, readyToApplyApps] = await Promise.all([
     fetchPendingApprovals().catch((): PendingApproval[] => []),
     fetchApplications({ status: "preparing" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
     fetchApplications({ status: "shortlisted" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
     fetchApplications({ status: "discovered" }, 0, 50).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 50 })),
+    fetchApplications({ status: "ready_to_apply" }, 0, 50).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 50 })),
   ]);
 
   const readyIds = new Set(approvals.map((a) => a.application_id));
@@ -56,8 +57,12 @@ export default async function StreamPage() {
   const inPipelineJobs = discoveredApps.items
     .filter((a) => a.agent_created && !readyIds.has(a.id))
     .map((a) => appToHatchJob(a, "tailoring"));
+  // Approved and tailored — ready for user to submit
+  const applyJobs = readyToApplyApps.items
+    .filter((a) => !readyIds.has(a.id))
+    .map((a) => appToHatchJob(a, "ready_to_apply"));
 
-  const jobs: HatchJob[] = [...readyJobs, ...tailoringJobs, ...parkedJobs, ...inPipelineJobs];
+  const jobs: HatchJob[] = [...readyJobs, ...tailoringJobs, ...applyJobs, ...parkedJobs, ...inPipelineJobs];
 
   return <StreamPageClient jobs={jobs} />;
 }

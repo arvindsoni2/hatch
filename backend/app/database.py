@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from .config import settings
 
@@ -27,9 +28,10 @@ if _db_dir and not os.path.exists(_db_dir):
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.LOG_LEVEL == "DEBUG",
+    poolclass=NullPool,
     connect_args={
         "check_same_thread": False,
-        "timeout": 30,  # Wait up to 30s for a lock rather than failing immediately
+        "timeout": 30,
     },
 )
 

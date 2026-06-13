@@ -8,19 +8,21 @@ import { Dot } from '../Dot';
 import { HatchIcon } from '../HatchIcon';
 import type { HatchJob } from './TodayScreen';
 
-type StreamFilter = 'all' | 'ready' | 'tailoring' | 'parked';
+type StreamFilter = 'all' | 'ready' | 'tailoring' | 'apply' | 'parked';
 
 const STATUS_META: Record<string, { label: string; color: string; dot: boolean }> = {
-  ready:     { label: 'Ready to send',   color: 'var(--success)',    dot: true  },
-  tailoring: { label: 'Tailoring…',      color: 'var(--success)',    dot: false },
-  parked:    { label: 'Below match bar', color: 'var(--warning)',    dot: false },
-  applied:   { label: 'Applied',         color: 'var(--accent)',     dot: false },
-  rejected:  { label: 'Dismissed',       color: 'var(--text-muted)', dot: false },
+  ready:          { label: 'Ready to send',   color: 'var(--success)',    dot: true  },
+  tailoring:      { label: 'Tailoring…',      color: 'var(--success)',    dot: false },
+  ready_to_apply: { label: 'Ready to apply',  color: 'var(--warning)',    dot: true  },
+  parked:         { label: 'Below match bar', color: 'var(--warning)',    dot: false },
+  applied:        { label: 'Applied',         color: 'var(--accent)',     dot: false },
+  rejected:       { label: 'Dismissed',       color: 'var(--text-muted)', dot: false },
 };
 
 function stageOf(job: HatchJob): number {
-  if (job.state === 'ready')     return 3;
-  if (job.state === 'tailoring') return 2;
+  if (job.state === 'ready_to_apply') return 4;
+  if (job.state === 'ready')          return 3;
+  if (job.state === 'tailoring')      return 2;
   return 1;
 }
 
@@ -32,19 +34,21 @@ interface StreamScreenProps {
   approvingId?: string | null;
 }
 
-export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprove, approvingId }: StreamScreenProps) {
+export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove, approvingId }: StreamScreenProps) {
   const [filter, setFilter] = useState<StreamFilter>(defaultFilter);
 
   const counts = {
     all:      jobs.filter((j) => j.state !== 'applied' && j.state !== 'rejected').length,
     ready:    jobs.filter((j) => j.state === 'ready').length,
     tailoring:jobs.filter((j) => j.state === 'tailoring').length,
+    apply:    jobs.filter((j) => j.state === 'ready_to_apply').length,
     parked:   jobs.filter((j) => j.state === 'parked').length,
   };
 
   const filtered = jobs.filter((j) => {
     if (j.state === 'applied' || j.state === 'rejected') return false;
     if (filter === 'all') return true;
+    if (filter === 'apply') return j.state === 'ready_to_apply';
     return j.state === filter;
   });
 
@@ -52,6 +56,7 @@ export function StreamScreen({ jobs, defaultFilter = 'ready', onReview, onApprov
     { key: 'all',      label: 'All'      },
     { key: 'ready',    label: 'Ready'    },
     { key: 'tailoring',label: 'Tailoring'},
+    { key: 'apply',    label: 'Apply'    },
     { key: 'parked',   label: 'Parked'   },
   ];
 

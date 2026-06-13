@@ -389,7 +389,21 @@ class TailorService:
                 jd_text=jd_text,
                 db=db,
             )
-        analysis = await self._jd_analyser.analyse(jd_text)
+        # Auto-resolve JD from the linked job posting when caller omits jd_text
+        if not jd_text and application_id:
+            from sqlalchemy import select  # noqa: PLC0415
+            from ..models.application import Application  # noqa: PLC0415
+            from ..models.job import JobPosting  # noqa: PLC0415
+            app_r = await db.execute(select(Application).where(Application.id == application_id))
+            _app = app_r.scalar_one_or_none()
+            if _app and _app.job_id:
+                job_r = await db.execute(select(JobPosting).where(JobPosting.id == _app.job_id))
+                _job = job_r.scalar_one_or_none()
+                if _job:
+                    jd_text = _job.description or _job.title or ""
+                    if not job_url:
+                        job_url = _job.url
+        analysis = await self._jd_analyser.analyse(jd_text, job_url)
         master_cv = _load_master_cv()
         skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
 
