@@ -81,6 +81,7 @@ class LLMClient:
         """
         model_name = load_profile().llm.primary_model
         last_error: Exception | None = None
+        cleaned = ""
         for attempt in range(3):
             try:
                 llm = get_json_model(schema=schema)

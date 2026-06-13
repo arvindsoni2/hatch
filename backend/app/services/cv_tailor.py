@@ -120,6 +120,8 @@ class CVTailor:
         experiences = master_cv.get("experience", [])
         scored: list[tuple[int, dict]] = []
         for exp in experiences:
+            if not isinstance(exp, dict):
+                continue
             text = " ".join(
                 [exp.get("role", ""), exp.get("company", "")]
                 + [a.get("text", "") if isinstance(a, dict) else str(a) for a in exp.get("achievements", [])]

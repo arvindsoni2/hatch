@@ -70,6 +70,8 @@ def validate_master_cv(cv: dict[str, Any]) -> list[str]:
 
     # Experience headers and achievements
     for idx, exp in enumerate(cv.get("experience", [])):
+        if not isinstance(exp, dict):
+            continue
         company = exp.get("company", "")
         if isinstance(company, str) and _has_placeholder(company):
             errors.append(f"experience[{idx}].company: placeholder company name — {company!r}")
