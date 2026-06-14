@@ -6,6 +6,7 @@ import { StageTrack } from '../StageTrack';
 import { Btn } from '../Btn';
 import { Dot } from '../Dot';
 import { HatchIcon } from '../HatchIcon';
+import { useIsMobile } from '@/hooks/useMediaQuery';
 import type { HatchJob } from './TodayScreen';
 
 type StreamFilter = 'all' | 'ready' | 'tailoring' | 'apply' | 'parked';
@@ -36,6 +37,7 @@ interface StreamScreenProps {
 
 export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove, approvingId }: StreamScreenProps) {
   const [filter, setFilter] = useState<StreamFilter>(defaultFilter);
+  const isMobile = useIsMobile();
 
   const counts = {
     all:      jobs.filter((j) => j.state !== 'applied' && j.state !== 'rejected').length,
@@ -69,10 +71,10 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
   return (
     <div>
       {/* Mobile header */}
-      <div className="md:hidden" style={{ padding: '8px 0 14px' }}>
+      {isMobile && <div style={{ padding: '8px 0 14px' }}>
         <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Stream</div>
         <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Every role · every stage</div>
-      </div>
+      </div>}
 
       {/* Filter chips */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, overflowX: 'auto', paddingBottom: 2 }}>
@@ -101,7 +103,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
       </div>
 
       {/* ── Desktop table (md+) ── */}
-      <div className="hidden md:block">
+      {!isMobile && <div>
         {filtered.length === 0 ? emptyState : (
           <div>
             {/* Table header */}
@@ -128,11 +130,11 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 18 }}>
               {filtered.map((job) => {
                 const ready = job.state === 'ready';
+                const reviewable = job.state === 'ready' || job.state === 'parked';
                 const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
                 return (
                   <div
                     key={job.id}
-                    onClick={() => onReview?.([job.id])}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '1fr 72px 210px 148px 110px',
@@ -142,7 +144,6 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                       borderRadius: 12,
                       background: ready ? 'color-mix(in srgb, var(--accent) 6%, var(--surface))' : 'var(--surface)',
                       border: `1px solid ${ready ? 'var(--accent-soft)' : 'var(--border)'}`,
-                      cursor: 'pointer',
                     }}
                   >
                     {/* ROLE */}
@@ -156,7 +157,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                             href={job.jobUrl}
                             target="_blank"
                             rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Open ${job.title} job posting`}
                             style={{ flexShrink: 0, color: 'var(--text-muted)', lineHeight: 1 }}
                           >
                             <HatchIcon name="externalLink" size={12} color="var(--text-muted)" />
@@ -195,9 +196,13 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                         >
                           {approvingId === job.id ? 'Preparing…' : 'Approve'}
                         </Btn>
+                      ) : reviewable ? (
+                        <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>
+                          Review
+                        </Btn>
                       ) : (
-                        <Btn kind="soft" size="sm" iconR="chevronR" onClick={(e) => { e.stopPropagation(); onReview?.([job.id]); }}>
-                          Open
+                        <Btn kind="soft" size="sm" disabled>
+                          {job.state === 'tailoring' ? 'In progress' : 'Package ready'}
                         </Btn>
                       )}
                     </div>
@@ -207,25 +212,28 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* ── Mobile cards ── */}
-      <div className="md:hidden" style={{ display: 'flex', flexDirection: 'column', gap: 11, paddingBottom: 18 }}>
+      {isMobile && <div style={{ display: 'flex', flexDirection: 'column', gap: 11, paddingBottom: 18 }}>
         {filtered.length === 0 ? emptyState : filtered.map((job) => {
           const ready = job.state === 'ready';
+          const reviewable = job.state === 'ready' || job.state === 'parked';
           const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
           return (
             <Card key={job.id} accent={ready} style={{ padding: 14 }}>
-              <button
-                onClick={() => onReview?.([job.id])}
-                style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-              >
+              <div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>{job.title}</span>
                       {job.jobUrl && (
-                        <a href={job.jobUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={job.jobUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Open ${job.title} job posting`}
+                        >
                           <HatchIcon name="externalLink" size={13} color="var(--text-muted)" />
                         </a>
                       )}
@@ -237,20 +245,24 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                   <ScorePill score={job.score} />
                 </div>
                 <StageTrack stage={stageOf(job)} pct={Math.round(job.score * 100)} />
-              </button>
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
                 <span style={{ fontSize: 11.5, fontWeight: 600, color: m.color, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                   {m.dot && <Dot color={m.color} size={6} pulse />}{m.label}
                 </span>
                 {ready
                   ? <Btn kind="success" size="sm" icon="check" disabled={approvingId === job.id} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingId === job.id ? 'Preparing…' : 'Approve'}</Btn>
-                  : <HatchIcon name="chevronR" size={16} color="var(--text-muted)" />
+                  : reviewable
+                    ? <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>Review</Btn>
+                    : <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 600 }}>
+                        {job.state === 'tailoring' ? 'Tailor is working' : 'Package ready'}
+                      </span>
                 }
               </div>
             </Card>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 }

@@ -123,17 +123,16 @@ describe('StreamScreen', () => {
   it('shows all active jobs by default (All filter)', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={ALL_JOBS} defaultFilter="all" />);
-    // StreamScreen renders dual layouts (mobile + desktop); use getAllByText to handle both
-    expect(screen.getAllByText('Solutions Architect').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Solution Architect — On-Prem').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Service Architect').length).toBeGreaterThan(0);
+    expect(screen.getByText('Solutions Architect')).toBeTruthy();
+    expect(screen.getByText('Solution Architect — On-Prem')).toBeTruthy();
+    expect(screen.getByText('Service Architect')).toBeTruthy();
   });
 
   it('filters to only ready jobs when Ready chip clicked', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={ALL_JOBS} defaultFilter="all" />);
     fireEvent.click(screen.getByText('Ready'));
-    expect(screen.getAllByText('Solutions Architect').length).toBeGreaterThan(0);
+    expect(screen.getByText('Solutions Architect')).toBeTruthy();
     expect(screen.queryByText('Solution Architect — On-Prem')).toBeNull();
   });
 
@@ -155,9 +154,23 @@ describe('StreamScreen', () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     const onReview = vi.fn();
     render(<StreamScreen jobs={[READY_JOB]} defaultFilter="ready" onReview={onReview} />);
-    // StreamScreen renders dual layouts; click the first instance of the title
-    fireEvent.click(screen.getAllByText('Solutions Architect')[0]);
-    expect(onReview).toHaveBeenCalledWith([READY_JOB.id]);
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    expect(onReview).not.toHaveBeenCalled();
+  });
+
+  it('does not reopen the approval overlay for tailoring jobs', async () => {
+    const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
+    const onReview = vi.fn();
+    render(<StreamScreen jobs={[TAILORING_JOB]} onReview={onReview} />);
+    expect(screen.getByRole('button', { name: 'In progress' })).toBeDisabled();
+    fireEvent.click(screen.getByText(TAILORING_JOB.title));
+    expect(onReview).not.toHaveBeenCalled();
+  });
+
+  it('renders each role once instead of separate desktop and mobile copies', async () => {
+    const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
+    render(<StreamScreen jobs={[TAILORING_JOB]} />);
+    expect(screen.getAllByText(TAILORING_JOB.title)).toHaveLength(1);
   });
 });
 
