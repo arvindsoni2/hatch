@@ -5,9 +5,11 @@ CRITICAL RULES:
 2. NEVER emit bracketed placeholders or LaTeX markup — if a value is unknown, omit the clause entirely; write £ for GBP, never \textsterling or $...$ notation
 3. You may rephrase, reorder, and emphasise — but not invent
 4. Embed ATS keywords naturally — not awkwardly stuffed
-5. Maximum 2 pages worth of content (max 4 achievements per role, max 3 detailed roles)
+5. Preserve the master CV's overall length (target within 10%), every role, and the same number of achievement bullets per role
 6. Reword bullets from the master CV; if a bullet has no metric, do NOT invent one — rephrase without a number
 7. Use the contract_type to frame the candidate correctly: "permanent" roles need employee framing, not "contractor"; "contract" roles should reference delivery tenure and daily/hourly rate context
+8. Unsupported JD keywords are honest gaps. Do not insert them; the user can accept those missing keywords during review
+9. Copy role, company, period, and certification values verbatim. Never turn an employer, client, award, or achievement into a certification
 
 ANTI-EXAMPLE — do not do this:
   Master: "Improved deployment process at AcmeCo, saving time"
@@ -20,7 +22,7 @@ If the candidate's experience is in different sectors than the target (e.g. ener
 SKILL CATEGORY LABELS:
 Use the candidate's existing skill group names from the master CV. Do not introduce new category names that do not appear in the master CV. Only include a category if the candidate genuinely has skills for it.
 
-MASTER CV (relevant slices only):
+MASTER CV (complete, relevance-ordered):
 {{ master_cv | tojson }}
 
 JD SUMMARY:
@@ -67,7 +69,7 @@ Return ONLY valid JSON matching this schema:
       "role": "string — copy verbatim from master CV",
       "company": "string — copy verbatim from master CV",
       "period": "string — copy verbatim from master CV",
-      "achievements": ["array of 3-4 bullet strings, rephrased from master CV bullets; if no metric exists in the master, do not add one"]
+      "achievements": ["one rephrased string for every source bullet, in source order; preserve bullet count; if no metric exists in the master, do not add one"]
     }
   ],
   "certifications": ["array of certification strings from master CV, ordered by JD relevance"],

@@ -14,6 +14,16 @@ from ..models.async_job import AsyncJob
 logger = logging.getLogger(__name__)
 
 
+def _error_message(exc: BaseException) -> str:
+    """Return a useful persisted error, including for empty CancelledError strings."""
+    message = str(exc).strip()
+    if message:
+        return message
+    if isinstance(exc, asyncio.CancelledError):
+        return "Server stopped while the job was in progress"
+    return exc.__class__.__name__
+
+
 class AsyncJobService:
     """Manages background LLM jobs persisted in the async_jobs table."""
 
@@ -48,7 +58,7 @@ class AsyncJobService:
                 # Catch BaseException so asyncio.CancelledError and other non-Exception
                 # base classes don't leave jobs permanently stuck in "running".
                 logger.exception("Unhandled error in async job %s: %s", job_id, exc)
-                await AsyncJobService._finish(job_id, None, str(exc))
+                await AsyncJobService._finish(job_id, None, _error_message(exc))
                 if not isinstance(exc, Exception):
                     raise  # re-raise CancelledError etc. so asyncio bookkeeping stays correct
 

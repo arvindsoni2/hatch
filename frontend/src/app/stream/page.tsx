@@ -37,9 +37,10 @@ function appToHatchJob(a: ApplicationListItem, state: HatchJob["state"]): HatchJ
 }
 
 export default async function StreamPage() {
-  const [approvals, preparingApps, shortlistedApps, discoveredApps, readyToApplyApps] = await Promise.all([
+  const [approvals, preparingApps, failedApps, shortlistedApps, discoveredApps, readyToApplyApps] = await Promise.all([
     fetchPendingApprovals().catch((): PendingApproval[] => []),
     fetchApplications({ status: "preparing" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
+    fetchApplications({ status: "approved" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
     fetchApplications({ status: "shortlisted" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
     fetchApplications({ status: "discovered" }, 0, 50).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 50 })),
     fetchApplications({ status: "ready_to_apply" }, 0, 50).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 50 })),
@@ -51,6 +52,12 @@ export default async function StreamPage() {
   const tailoringJobs = preparingApps.items
     .filter((a) => !readyIds.has(a.id))
     .map((a) => appToHatchJob(a, "tailoring"));
+  const failedJobs = failedApps.items
+    .filter((a) => !readyIds.has(a.id))
+    .map((a) => ({
+      ...appToHatchJob(a, "tailoring_failed"),
+      failureReason: "The previous tailoring run did not complete. Retry to generate a fresh package.",
+    }));
   const parkedJobs = shortlistedApps.items
     .filter((a) => !readyIds.has(a.id))
     .map((a) => appToHatchJob(a, "parked"));
@@ -63,7 +70,7 @@ export default async function StreamPage() {
     .filter((a) => !readyIds.has(a.id))
     .map((a) => appToHatchJob(a, "ready_to_apply"));
 
-  const jobs: HatchJob[] = [...readyJobs, ...tailoringJobs, ...applyJobs, ...parkedJobs, ...inPipelineJobs];
+  const jobs: HatchJob[] = [...readyJobs, ...failedJobs, ...tailoringJobs, ...applyJobs, ...parkedJobs, ...inPipelineJobs];
 
   return <StreamPageClient jobs={jobs} />;
 }

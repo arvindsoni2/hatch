@@ -99,13 +99,11 @@ class CVTailor:
     def _select_relevant_cv_slices(
         self, jd_analysis: JDAnalysisResult, master_cv: dict[str, Any]
     ) -> dict[str, Any]:
-        """Return a trimmed master CV containing only content relevant to this JD.
+        """Return the complete CV, with roles ordered by relevance to the JD.
 
-        Keeps prompt size manageable for all models (local and cloud alike):
-          - The best summary variant (already selected by _select_best_summary_variant)
-          - The top 3 experience entries by keyword overlap with the JD
-          - All skill groups (compact — items only, no nested metadata)
-          - Certifications list
+        Tailoring must preserve the master CV's breadth and approximate length, so
+        every role and achievement is supplied to the model. Relevance changes
+        emphasis and ordering; it must not silently delete career history.
         """
         all_jd_words = set(
             " ".join(
@@ -130,7 +128,7 @@ class CVTailor:
             scored.append((overlap, exp))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        top_exp = [exp for _, exp in scored[:3]]
+        ordered_exp = [exp for _, exp in scored]
 
         # Compact skills: strip nested metadata, keep category + items
         raw_skills = master_cv.get("skills", {})
@@ -148,7 +146,7 @@ class CVTailor:
         return {
             "personal": master_cv.get("personal", {}),
             "summary_variants": master_cv.get("summary_variants", {}),
-            "experience": top_exp,
+            "experience": ordered_exp,
             "skills": compact_skills,
             "certifications": master_cv.get("certifications", []),
         }
@@ -196,6 +194,7 @@ class CVTailor:
         )
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CV_GENERATE.max_output)
         result = _parse_tailored_cv(raw)
+        result = _preserve_master_structure(result, master_cv)
 
         # Post-generation validation
         blocking, advisory = self._validate_no_fabrication(result, master_cv)
@@ -241,3 +240,84 @@ def _parse_tailored_cv(raw: dict[str, Any]) -> TailoredCVResult:
         ats_keywords_embedded=raw.get("ats_keywords_embedded", []),
         tailoring_notes=raw.get("tailoring_notes", ""),
     )
+
+
+def _achievement_texts(exp: dict[str, Any]) -> list[str]:
+    return [
+        item.get("text", "") if isinstance(item, dict) else str(item)
+        for item in exp.get("achievements", [])
+        if item
+    ]
+
+
+def _similar_length(candidate: str, source: str) -> bool:
+    source_words = max(1, len(source.split()))
+    ratio = len(candidate.split()) / source_words
+    return 0.7 <= ratio <= 1.3
+
+
+def _preserve_master_structure(
+    tailored: TailoredCVResult, master: dict[str, Any]
+) -> TailoredCVResult:
+    """Keep all source roles, bullet counts, identities, and certifications.
+
+    The LLM may rephrase achievements, but it cannot shorten the CV by omitting
+    roles or reinterpret an award/employer as a certification. If a role has an
+    incomplete bullet set, the original grounded bullets are used for that role.
+    """
+    generated = {
+        (exp.role.strip().casefold(), exp.company.strip().casefold()): exp
+        for exp in tailored.experience
+    }
+    preserved: list[TailoredExperience] = []
+    for source in master.get("experience", []):
+        if not isinstance(source, dict):
+            continue
+        role = str(source.get("role", ""))
+        company = str(source.get("company", ""))
+        period = str(source.get("period") or source.get("dates") or "")
+        source_bullets = _achievement_texts(source)
+        candidate = generated.get((role.strip().casefold(), company.strip().casefold()))
+        achievements = source_bullets
+        if candidate and len(candidate.achievements) == len(source_bullets):
+            achievements = [
+                generated if _similar_length(generated, original) else original
+                for generated, original in zip(candidate.achievements, source_bullets)
+            ]
+        preserved.append(TailoredExperience(
+            role=role,
+            company=company,
+            period=period,
+            achievements=achievements,
+        ))
+
+    tailored.experience = preserved
+    generated_skills = {
+        str(group.get("category") or group.get("display_name") or "").casefold(): group
+        for group in tailored.skills
+        if isinstance(group, dict)
+    }
+    preserved_skills: list[dict[str, Any]] = []
+    raw_skills = master.get("skills", {})
+    skill_groups = raw_skills.items() if isinstance(raw_skills, dict) else enumerate(raw_skills)
+    for key, source_group in skill_groups:
+        if not isinstance(source_group, dict):
+            continue
+        category = str(
+            source_group.get("category") or source_group.get("display_name") or key
+        )
+        source_items = [str(item) for item in source_group.get("items", []) if item]
+        candidate_group = generated_skills.get(category.casefold(), {})
+        candidate_items = [
+            str(item) for item in candidate_group.get("items", [])
+            if str(item) in source_items
+        ]
+        ordered_items = candidate_items + [
+            item for item in source_items if item not in candidate_items
+        ]
+        preserved_skills.append({"category": category, "items": ordered_items})
+    tailored.skills = preserved_skills
+    tailored.certifications = [
+        str(cert) for cert in master.get("certifications", []) if cert
+    ]
+    return tailored

@@ -72,6 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Reset any jobs left in "running" state from a previous crash
     from sqlalchemy import update as _sa_update  # noqa: PLC0415
     from .models.async_job import AsyncJob as _AsyncJob  # noqa: PLC0415
+    from .models.application import Application as _Application  # noqa: PLC0415
     async with AsyncSessionLocal() as _db:
         _r = await _db.execute(
             _sa_update(_AsyncJob)
@@ -80,6 +81,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         if _r.rowcount:
             logger.warning("Reset %d orphaned async jobs to failed.", _r.rowcount)
+        _apps = await _db.execute(
+            _sa_update(_Application)
+            .where(_Application.status == "preparing")
+            .values(status="approved")
+        )
+        if _apps.rowcount:
+            logger.warning(
+                "Reset %d interrupted application packages to retryable.",
+                _apps.rowcount,
+            )
         await _db.commit()
 
     # Build a long-lived DB session for the scheduler's JobService

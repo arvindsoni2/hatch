@@ -68,7 +68,11 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
           setApproving(false);
           setApprovingMessage("");
           setApprovingId(null);
-          setLocalJobs((prev) => prev.map((j) => j.id === jobId ? { ...j, state: "ready" as const } : j));
+          setLocalJobs((prev) => prev.map((j) => j.id === jobId ? {
+            ...j,
+            state: "tailoring_failed" as const,
+            failureReason: asyncJob.error || "Tailoring did not complete. Retry to generate a fresh package.",
+          } : j));
         }
       } catch {
         // network hiccup — keep polling
@@ -85,7 +89,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
       }
       const job = localJobs.find((j) => j.id === jobId);
       setLocalJobs((prev) =>
-        prev.map((j) => j.id === jobId ? { ...j, state: "tailoring" as const } : j)
+        prev.map((j) => j.id === jobId ? { ...j, state: "tailoring" as const, failureReason: undefined } : j)
       );
       startPolling(ref.async_job_id, jobId, job?.title ?? "", job?.company ?? null);
     } catch {
@@ -137,7 +141,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
 
   async function handleRetry(job: HatchJob) {
     const ref = await approveJob(job.jobPostingId ?? job.id);
-    setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const } : j));
+    setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const, failureReason: undefined } : j));
     startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
   }
 

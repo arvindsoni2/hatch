@@ -369,6 +369,7 @@ async def pipeline_stats(
     """Funnel counts: discovered → scored → shortlisted → tailored → approved."""
     from sqlalchemy import func
     from ..models.agent_event import AgentEvent
+    from ..models.document import GeneratedDocument
 
     async def count_events(etype: str) -> int:
         r = await db.execute(
@@ -379,8 +380,16 @@ async def pipeline_stats(
     from ..models.job import JobPosting as JP
     total_jobs = (await db.execute(select(func.count()).select_from(JP))).scalar_one() or 0
     scored = (await db.execute(select(func.count()).select_from(JobScore))).scalar_one() or 0
+    cv_apps = select(GeneratedDocument.application_id).where(
+        GeneratedDocument.document_type == "cv"
+    )
+    cl_apps = select(GeneratedDocument.application_id).where(
+        GeneratedDocument.document_type == "cover_letter"
+    )
     tailored = (await db.execute(
-        select(func.count()).select_from(Application).where(Application.agent_created)
+        select(func.count()).select_from(Application)
+        .where(Application.id.in_(cv_apps))
+        .where(Application.id.in_(cl_apps))
     )).scalar_one() or 0
     approved = (await db.execute(
         select(func.count()).select_from(Application)

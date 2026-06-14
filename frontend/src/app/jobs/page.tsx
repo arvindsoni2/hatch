@@ -23,7 +23,9 @@ const PAGE_SIZE = 50;
 export default function JobsPage() {
   const [threshold, setThreshold] = useState(0.75);
   const [thresholdLoaded, setThresholdLoaded] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(() =>
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "all"
+  );
   const [showArchived, setShowArchived] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [archiveResult, setArchiveResult] = useState<{ archived: number } | null>(null);

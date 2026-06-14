@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.services.async_job_service import AsyncJobService
+import asyncio
+
+from app.services.async_job_service import AsyncJobService, _error_message
 
 
 @pytest.mark.asyncio
@@ -71,3 +73,7 @@ async def test_list_completed_since_returns_recent_done_jobs(db_session):
     ids = [r.id for r in results]
     assert job1.id in ids
     assert job2.id in ids
+
+
+def test_cancelled_job_has_useful_error_message():
+    assert _error_message(asyncio.CancelledError()) == "Server stopped while the job was in progress"

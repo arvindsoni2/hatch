@@ -96,7 +96,7 @@ async def test_tailor_returns_result():
 
     assert isinstance(result, TailoredCVResult)
     assert result.summary != ""
-    assert len(result.experience) == 2
+    assert len(result.experience) == len(MOCK_MASTER_CV["experience"])
     assert "AWS" in result.ats_keywords_embedded
 
 
@@ -114,21 +114,17 @@ async def test_variant_b_passed_to_claude():
 
 
 @pytest.mark.asyncio
-async def test_no_fabrication_for_real_achievements():
-    """Real achievements should pass the fabrication check (score >= 70)."""
+async def test_master_structure_removes_fabricated_identity_fields():
+    """Model-generated identity fields are replaced by grounded master values."""
     client = make_mock_client(MOCK_TAILOR_RESPONSE)
     tailor = CVTailor(client)
 
     with patch.object(tailor, "_load_master_cv", return_value=MOCK_MASTER_CV):
         result = await tailor.tailor(JD_ANALYSIS)
 
-    # MOCK_TAILOR_RESPONSE has PLACEHOLDER company names — the new entity validator
-    # correctly blocks those (and may also flag £3M / certifications not in master).
-    # Verify that at least one blocking issue mentions company or placeholder.
-    assert any(
-        "company" in bi.lower() or "placeholder" in bi.lower()
-        for bi in result.blocking_issues
-    ), f"Expected a company/placeholder blocking issue, got: {result.blocking_issues}"
+    assert result.blocking_issues == []
+    assert result.experience[0].role == "Solutions Architect"
+    assert result.experience[0].company == "Company A"
 
 
 @pytest.mark.asyncio
@@ -169,3 +165,51 @@ def test_parse_tailored_cv():
     assert len(result.experience) == 2
     assert result.experience[0].role == "Solutions Architect / Technical Lead"
     assert len(result.experience[0].achievements) == 2
+
+
+def test_preserves_master_roles_bullets_and_certifications():
+    from app.services.cv_tailor import _preserve_master_structure
+
+    parsed = _parse_tailored_cv(MOCK_TAILOR_RESPONSE)
+    master = {
+        **MOCK_MASTER_CV,
+        "certifications": ["PMP"],
+        "experience": [
+            {
+                "role": "Solutions Architect",
+                "company": "Company A",
+                "period": "2022 - Present",
+                "achievements": [{"text": "One"}, {"text": "Two"}],
+            },
+            {
+                "role": "Earlier Role",
+                "company": "Company B",
+                "period": "2020 - 2022",
+                "achievements": [{"text": "Three"}],
+            },
+        ],
+    }
+
+    result = _preserve_master_structure(parsed, master)
+
+    assert [exp.role for exp in result.experience] == ["Solutions Architect", "Earlier Role"]
+    assert [len(exp.achievements) for exp in result.experience] == [2, 1]
+    assert result.certifications == ["PMP"]
+
+
+def test_rejects_drastically_shortened_bullets():
+    from app.services.cv_tailor import _preserve_master_structure
+
+    parsed = _parse_tailored_cv({
+        **MOCK_TAILOR_RESPONSE,
+        "experience": [{
+            "role": "Solutions Architect",
+            "company": "Company A",
+            "period": "2022 - Present",
+            "achievements": ["Cloud work.", "AI work."],
+        }],
+    })
+
+    result = _preserve_master_structure(parsed, MOCK_MASTER_CV)
+
+    assert result.experience[0].achievements[0].startswith("Designed hybrid cloud")

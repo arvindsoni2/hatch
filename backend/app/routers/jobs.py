@@ -573,8 +573,9 @@ async def approve_job(
                     "paste_map": package.paste_map,
                 }
                 await AsyncJobService._finish(async_job.id, _json_local.dumps(result), None)
-        except Exception as exc:
+        except BaseException as exc:
             from ..database import AsyncSessionLocal as _ASL  # noqa: PLC0415
+            from ..services.async_job_service import _error_message  # noqa: PLC0415
             async with _ASL() as err_db:
                 await err_db.execute(
                     sa_update(Application)
@@ -582,7 +583,9 @@ async def approve_job(
                     .values(status="approved", updated_at=datetime.utcnow())
                 )
                 await err_db.commit()
-            await AsyncJobService._finish(async_job.id, None, str(exc))
+            if not isinstance(exc, Exception):
+                raise
+            await AsyncJobService._finish(async_job.id, None, _error_message(exc))
 
     AsyncJobService.run(async_job.id, _prepare())
 

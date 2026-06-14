@@ -14,6 +14,7 @@ type StreamFilter = 'all' | 'ready' | 'tailoring' | 'apply' | 'parked';
 const STATUS_META: Record<string, { label: string; color: string; dot: boolean }> = {
   ready:          { label: 'Ready to send',   color: 'var(--success)',    dot: true  },
   tailoring:      { label: 'Tailoring…',      color: 'var(--success)',    dot: false },
+  tailoring_failed:{ label: 'Tailoring failed', color: 'var(--danger, #ef4444)', dot: true },
   ready_to_apply: { label: 'Ready to apply',  color: 'var(--warning)',    dot: true  },
   parked:         { label: 'Below match bar', color: 'var(--warning)',    dot: false },
   applied:        { label: 'Applied',         color: 'var(--accent)',     dot: false },
@@ -24,6 +25,7 @@ function stageOf(job: HatchJob): number {
   if (job.state === 'ready_to_apply') return 4;
   if (job.state === 'ready')          return 3;
   if (job.state === 'tailoring')      return 2;
+  if (job.state === 'tailoring_failed') return 2;
   return 1;
 }
 
@@ -42,7 +44,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
   const counts = {
     all:      jobs.filter((j) => j.state !== 'applied' && j.state !== 'rejected').length,
     ready:    jobs.filter((j) => j.state === 'ready').length,
-    tailoring:jobs.filter((j) => j.state === 'tailoring').length,
+    tailoring:jobs.filter((j) => j.state === 'tailoring' || j.state === 'tailoring_failed').length,
     apply:    jobs.filter((j) => j.state === 'ready_to_apply').length,
     parked:   jobs.filter((j) => j.state === 'parked').length,
   };
@@ -51,6 +53,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
     if (j.state === 'applied' || j.state === 'rejected') return false;
     if (filter === 'all') return true;
     if (filter === 'apply') return j.state === 'ready_to_apply';
+    if (filter === 'tailoring') return j.state === 'tailoring' || j.state === 'tailoring_failed';
     return j.state === filter;
   });
 
@@ -131,6 +134,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
               {filtered.map((job) => {
                 const ready = job.state === 'ready';
                 const reviewable = job.state === 'ready' || job.state === 'parked';
+                const retryable = job.state === 'tailoring_failed';
                 const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
                 return (
                   <div
@@ -168,6 +172,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                         {job.company} · {job.loc}
                         {job.rate && job.rate !== '—' ? <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}> · {job.rate}</span> : null}
                       </div>
+                      {job.failureReason && <div style={{ fontSize: 11, color: 'var(--danger, #ef4444)', marginTop: 4 }}>{job.failureReason}</div>}
                     </div>
 
                     {/* MATCH */}
@@ -186,7 +191,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
 
                     {/* ACTION */}
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      {ready ? (
+                      {ready || retryable ? (
                         <Btn
                           kind="success"
                           size="sm"
@@ -194,7 +199,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                           disabled={approvingId === job.id}
                           onClick={(e) => { e.stopPropagation(); onApprove?.(job.id, job.jobPostingId); }}
                         >
-                          {approvingId === job.id ? 'Preparing…' : 'Approve'}
+                          {approvingId === job.id ? 'Preparing…' : retryable ? 'Retry' : 'Approve'}
                         </Btn>
                       ) : reviewable ? (
                         <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>
@@ -219,6 +224,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
         {filtered.length === 0 ? emptyState : filtered.map((job) => {
           const ready = job.state === 'ready';
           const reviewable = job.state === 'ready' || job.state === 'parked';
+          const retryable = job.state === 'tailoring_failed';
           const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
           return (
             <Card key={job.id} accent={ready} style={{ padding: 14 }}>
@@ -241,6 +247,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                     <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 3 }}>
                       {job.company} · {job.loc} · <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>{job.rate}</span>
                     </div>
+                    {job.failureReason && <div style={{ fontSize: 11, color: 'var(--danger, #ef4444)', marginTop: 4 }}>{job.failureReason}</div>}
                   </div>
                   <ScorePill score={job.score} />
                 </div>
@@ -250,8 +257,8 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                 <span style={{ fontSize: 11.5, fontWeight: 600, color: m.color, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                   {m.dot && <Dot color={m.color} size={6} pulse />}{m.label}
                 </span>
-                {ready
-                  ? <Btn kind="success" size="sm" icon="check" disabled={approvingId === job.id} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingId === job.id ? 'Preparing…' : 'Approve'}</Btn>
+                {ready || retryable
+                  ? <Btn kind="success" size="sm" icon="check" disabled={approvingId === job.id} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingId === job.id ? 'Preparing…' : retryable ? 'Retry' : 'Approve'}</Btn>
                   : reviewable
                     ? <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>Review</Btn>
                     : <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 600 }}>

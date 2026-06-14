@@ -21,8 +21,9 @@ export interface HatchJob {
   score: number;
   ats?: number;
   dims?: { Skills: number; Experience: number; Rate: number; Location: number };
-  state: 'ready' | 'ready_to_apply' | 'tailoring' | 'parked' | 'applied' | 'rejected' | 'interview';
+  state: 'ready' | 'ready_to_apply' | 'tailoring' | 'tailoring_failed' | 'parked' | 'applied' | 'rejected' | 'interview';
   jobUrl?: string;
+  failureReason?: string;
   when?: string;
 }
 

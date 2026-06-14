@@ -56,11 +56,14 @@ function narrativeFor(
     }
     case "tailor": {
       const count = funnel.tailor;
+      const queued = transit?.scorer_to_tailor ?? 0;
       const ats = row?.success_rate;
       return {
         text: count > 0
-          ? `Drafted CV + cover letter for ${count} strong match${count !== 1 ? "es" : ""}`
-          : "Waiting for shortlisted roles",
+          ? `Prepared CV + cover letter for ${count} strong match${count !== 1 ? "es" : ""}`
+          : queued > 0
+            ? `${queued} shortlisted role${queued !== 1 ? "s" : ""} awaiting a completed package`
+            : "Waiting for shortlisted roles",
         chip: ats != null && ats > 0 ? `${ats.toFixed(0)}% ATS` : null,
         chipColor: "var(--warning)",
         chipBg: "var(--warning-soft)",
@@ -121,7 +124,7 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
   const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
 
   const agentRoutes: Record<string, string> = {
-    scout: "/stream",
+    scout: "/jobs?view=all",
     scorer: "/stream",
     tailor: "/tracker",
     coach: "/prep",
