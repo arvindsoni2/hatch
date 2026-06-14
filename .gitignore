@@ -102,11 +102,8 @@ data/master_resume.pdf
 data/master_resume.docx
 
 # ──────────────────────── Next.js generated (PWA / service worker) ───────────
-frontend/public/sw.js
+# sw.js is the kill-switch (committed); only generated workbox bundles are ignored
 frontend/public/workbox-*.js
-
-# ──────────────────────── Docker ────────────────────────
-.dockerignore
 
 # ──────────────────────── IDE / OS ────────────────────────
 .idea/

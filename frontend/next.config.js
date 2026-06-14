@@ -1,28 +1,10 @@
 /** @type {import('next').NextConfig} */
-const withPWA = require("@ducanh2912/next-pwa").default({
-  dest: "public",
-  disable: process.env.NODE_ENV === "development",
-  register: true,
-  skipWaiting: true,
-  runtimeCaching: [
-    {
-      urlPattern: /^https?:\/\/.*\/api\/.*/,
-      handler: "StaleWhileRevalidate",
-      options: {
-        cacheName: "api-cache",
-        expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 },
-      },
-    },
-    {
-      urlPattern: /\/_next\/static\/.*/,
-      handler: "CacheFirst",
-      options: {
-        cacheName: "static-cache",
-        expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 },
-      },
-    },
-  ],
-});
+// next-pwa disabled: its service worker cached /api/async-jobs polling requests
+// (unique since= params) which exhausted Chrome's Cache API quota and caused
+// "insufficient resources" / blank page. Browser Notification API works without
+// a service worker, so no functionality is lost. Package kept installed to avoid
+// lockfile churn; we just use a passthrough identity wrapper instead.
+const withPWA = (cfg) => cfg;
 
 // In container builds API_URL is injected as a Docker build arg; fall back to
 // the Compose service name so the rewrite works even if the arg is missing.

@@ -22,6 +22,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Build Next.js application
+# next-pwa is bypassed in next.config.js (withPWA is a passthrough), so no sw.js
+# is generated here. public/sw.js (kill-switch) is copied through as-is.
 RUN npm run build
 
 
