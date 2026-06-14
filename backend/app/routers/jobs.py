@@ -561,13 +561,6 @@ async def approve_job(
             async with AsyncSessionLocal() as own_db:
                 service = AssistedApplyService()
                 package = await service.prepare_application(job_id=job_id, db=own_db)
-                # Guarantee ready_to_apply regardless of what prepare_application set
-                await own_db.execute(
-                    sa_update(Application)
-                    .where(Application.job_id == job_id)
-                    .values(status="ready_to_apply", updated_at=datetime.utcnow())
-                )
-                await own_db.commit()
                 result = {
                     "job_id": package.job_id,
                     "job_url": package.job_url,

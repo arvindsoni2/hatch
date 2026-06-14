@@ -402,6 +402,7 @@ async def get_application_package(
     from ..models.application import Application
     from ..models.document import GeneratedDocument
     from ..models.job import JobPosting
+    from pathlib import Path
     from sqlalchemy import desc
 
     app_result = await db.execute(
@@ -425,8 +426,17 @@ async def get_application_package(
         .order_by(desc(GeneratedDocument.created_at))
     )
     docs = docs_result.scalars().all()
-    cv_doc = next((d for d in docs if d.document_type == "cv"), None)
-    cl_doc = next((d for d in docs if d.document_type == "cover_letter"), None)
+    cv_doc = next(
+        (d for d in docs if d.document_type == "cv" and d.file_path and Path(d.file_path).is_file()),
+        None,
+    )
+    cl_doc = next(
+        (
+            d for d in docs
+            if d.document_type == "cover_letter" and d.file_path and Path(d.file_path).is_file()
+        ),
+        None,
+    )
 
     return {
         "job_id": app_obj.job_id or app_id,

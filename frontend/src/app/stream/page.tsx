@@ -26,6 +26,7 @@ function pendingToHatchJob(a: PendingApproval): HatchJob {
 function appToHatchJob(a: ApplicationListItem, state: HatchJob["state"]): HatchJob {
   return {
     id: a.id,
+    jobPostingId: a.job_id ?? undefined,
     title: a.job_title ?? "Untitled Role",
     company: a.job_company ?? "—",
     loc: a.job_location ?? "—",

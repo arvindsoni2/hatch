@@ -291,7 +291,7 @@ class AssistedApplyService:
         1. Load job from DB
         2. Load user profile
         3. Build prefill_map (name, email if present, phone etc.)
-        4. Attempt tailor service for CV + CL (graceful fallback on failure)
+        4. Generate or reuse both the tailored CV and cover letter
         5. Build screening_answers from screening-answers skill
         6. Build paste_map from form-mapping skill
         7. Update application status to "ready_to_apply"
@@ -349,7 +349,7 @@ class AssistedApplyService:
         )
         await db.commit()
 
-        # 5. Attempt to tailor CV + CL (wrap gracefully)
+        # 5. Generate or reuse a complete CV + cover-letter package.
         cv_path: str | None = None
         cover_letter_path: str | None = None
         cv_document_id: str | None = None
@@ -378,25 +378,31 @@ class AssistedApplyService:
                 )
                 existing_docs = existing_result.scalars().all()
 
-                cv_doc_existing = next((d for d in existing_docs if d.document_type == "cv"), None)
-                cl_doc_existing = next((d for d in existing_docs if d.document_type == "cover_letter"), None)
+                cv_doc_existing = next(
+                    (d for d in existing_docs if d.document_type == "cv" and d.file_path and Path(d.file_path).is_file()),
+                    None,
+                )
+                cl_doc_existing = next(
+                    (
+                        d for d in existing_docs
+                        if d.document_type == "cover_letter" and d.file_path and Path(d.file_path).is_file()
+                    ),
+                    None,
+                )
 
-                if cv_doc_existing or cl_doc_existing:
-                    # Reuse pre-generated documents — no LLM call needed
-                    if cv_doc_existing:
-                        cv_document_id = str(cv_doc_existing.id)
-                        cv_path = cv_doc_existing.file_path
-                    if cl_doc_existing:
-                        cl_document_id = str(cl_doc_existing.id)
-                        cover_letter_path = cl_doc_existing.file_path
-                    logger.info(
-                        "Reusing %d existing docs for job %s (skipping TailorService)",
-                        len(existing_docs), job_id,
-                    )
-                elif job is not None:
-                    # No pre-generated docs — call TailorService now
-                    jd_text = job.description or f"{job.title} at {job.company}"
-                    tailor = TailorService()
+                if cv_doc_existing:
+                    cv_document_id = str(cv_doc_existing.id)
+                    cv_path = cv_doc_existing.file_path
+                if cl_doc_existing:
+                    cl_document_id = str(cl_doc_existing.id)
+                    cover_letter_path = cl_doc_existing.file_path
+
+                if job is None:
+                    raise RuntimeError(f"Job '{job_id}' is unavailable for document generation.")
+
+                jd_text = job.description or f"{job.title} at {job.company}"
+                tailor = TailorService()
+                if not cv_doc_existing and not cl_doc_existing:
                     result = await tailor.generate_all(
                         application_id=str(app_for_tailor.id),
                         variant="A",
@@ -415,13 +421,31 @@ class AssistedApplyService:
                         if cl_document_id:
                             cl_doc2 = await doc_repo.get_by_id(cl_document_id)
                             cover_letter_path = cl_doc2.file_path if cl_doc2 else None
+                elif not cv_doc_existing:
+                    cv_doc = await tailor.generate_cv(
+                        application_id=str(app_for_tailor.id), variant="A", jd_text=jd_text, db=db
+                    )
+                    cv_document_id = cv_doc.id
+                    cv_path = cv_doc.file_path
+                elif not cl_doc_existing:
+                    cl_doc = await tailor.generate_cover_letter(
+                        application_id=str(app_for_tailor.id), variant="A", jd_text=jd_text, db=db
+                    )
+                    cl_document_id = cl_doc.id
+                    cover_letter_path = cl_doc.file_path
+            if app_for_tailor is not None and not all(
+                (cv_path, cover_letter_path, cv_document_id, cl_document_id)
+            ):
+                raise RuntimeError("Document generation finished without both a CV and cover letter.")
         except Exception as exc:
-            logger.warning(
-                "Tailor service unavailable for job %s, continuing without docs: %s",
-                job_id,
-                exc,
-                exc_info=True,
+            logger.exception("Application document preparation failed for job %s: %s", job_id, exc)
+            await db.execute(
+                update(Application)
+                .where(Application.job_id == job_id)
+                .values(status="approved", updated_at=datetime.utcnow())
             )
+            await db.commit()
+            raise RuntimeError(f"Could not prepare both application documents: {exc}") from exc
 
         # 6. Build screening_answers + paste_map using SkillLoader
         screening_answers: dict[str, str] = {}
@@ -437,7 +461,7 @@ class AssistedApplyService:
         except Exception as exc:
             logger.debug("Skill assembly failed (non-fatal): %s", exc)
 
-        # 7. Update status to "ready_to_apply" + store doc paths
+        # 7. Only a complete package may transition to "ready_to_apply".
         update_values: dict = {
             "status": "ready_to_apply",
             "updated_at": datetime.utcnow(),

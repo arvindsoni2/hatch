@@ -134,6 +134,12 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
     setPackages((prev) => { const n = { ...prev }; delete n[id]; return n; });
   }
 
+  async function handleRetry(job: HatchJob) {
+    const ref = await approveJob(job.jobPostingId ?? job.id);
+    setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const } : j));
+    startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
+  }
+
   async function handleRevert(id: string) {
     await revertApplication(id).catch(() => {});
     setLocalJobs((prev) =>
@@ -202,6 +208,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
           pkg={pkg}
           onMarkApplied={handleMarkApplied}
           onRevert={handleRevert}
+          onRetry={handleRetry}
         />
       ))}
       {reviewQueue.length > 0 && (

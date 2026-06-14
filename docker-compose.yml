@@ -55,6 +55,7 @@ services:
       - jobpilot
 
   backend:
+    image: docker.io/library/job_pilot_v2-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -101,6 +102,7 @@ services:
       - jobpilot
 
   frontend:
+    image: docker.io/library/job_pilot_v2-frontend:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile

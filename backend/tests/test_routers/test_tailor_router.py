@@ -62,6 +62,26 @@ MOCK_BUNDLE = TailorResultBundle(
 )
 
 
+@pytest.mark.asyncio
+async def test_download_document_returns_existing_file(tmp_path):
+    from app.services.tailor_service import TailorService
+
+    document_path = tmp_path / "tailored-cv.docx"
+    document_path.write_bytes(b"docx")
+    document = MOCK_DOC.model_copy(update={"file_path": str(document_path)})
+
+    with patch(
+        "app.services.tailor_service.DocumentRepository.get_by_id",
+        AsyncMock(return_value=document),
+    ):
+        file_path, filename = await TailorService().download_document(
+            document.id, AsyncMock()
+        )
+
+    assert file_path == str(document_path)
+    assert filename == "tailored-cv.docx"
+
+
 def make_mock_service():
     svc = MagicMock()
     svc.analyse_job = AsyncMock(return_value=MOCK_JD_RESPONSE)

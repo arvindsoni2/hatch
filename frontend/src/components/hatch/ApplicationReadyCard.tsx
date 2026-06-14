@@ -11,11 +11,13 @@ interface ApplicationReadyCardProps {
   pkg: ApplicationPackage;
   onMarkApplied: (id: string) => void;
   onRevert: (id: string) => void;
+  onRetry?: (job: HatchJob) => void;
 }
 
-export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert }: ApplicationReadyCardProps) {
+export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert, onRetry }: ApplicationReadyCardProps) {
   const hasScreeningAnswers = Object.keys(pkg.screening_answers ?? {}).length > 0;
   const hasPasteMap = Object.keys(pkg.paste_map ?? {}).length > 0;
+  const hasCompletePackage = Boolean(pkg.cv_document_id && pkg.cl_document_id);
 
   return (
     <Card accent style={{ padding: 16 }}>
@@ -27,7 +29,9 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert }: Appl
             {job.company} · {job.loc} · <span style={{ fontWeight: 600, color: 'var(--text-dim)' }}>{job.rate}</span>
           </div>
         </div>
-        <Chip color="var(--accent)" bg="var(--accent-soft)">Ready to apply</Chip>
+        <Chip color={hasCompletePackage ? "var(--accent)" : "var(--warning)"} bg={hasCompletePackage ? "var(--accent-soft)" : "var(--warning-soft)"}>
+          {hasCompletePackage ? "Ready to apply" : "Documents incomplete"}
+        </Chip>
       </div>
 
       {/* Screening answers */}
@@ -68,7 +72,9 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert }: Appl
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '12px 0', padding: 10, borderRadius: 10, background: 'var(--accent-soft)' }}>
         <HatchIcon name="arrowR" size={14} color="var(--accent)" style={{ marginTop: 1 }} />
         <span style={{ fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-          Hatch prepared everything. Review, then submit on the company&apos;s site — you&apos;re always in control of the final click.
+          {hasCompletePackage
+            ? "Hatch prepared everything. Review, then submit on the company's site — you're always in control of the final click."
+            : "Your application documents were not fully generated. Retry preparation before applying."}
         </span>
       </div>
 
@@ -97,9 +103,15 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert }: Appl
             Open application
           </Btn>
         )}
-        <Btn kind="success" full icon="check" onClick={() => onMarkApplied(job.id)}>
-          Mark as applied
-        </Btn>
+        {hasCompletePackage ? (
+          <Btn kind="success" full icon="check" onClick={() => onMarkApplied(job.id)}>
+            Mark as applied
+          </Btn>
+        ) : onRetry ? (
+          <Btn kind="success" full icon="arrowR" onClick={() => onRetry(job)}>
+            Retry documents
+          </Btn>
+        ) : null}
       </div>
       <div style={{ textAlign: 'center', marginTop: 8 }}>
         <button

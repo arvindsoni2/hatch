@@ -372,6 +372,8 @@ const MOCK_PKG = {
   job_url: 'https://boards.greenhouse.io/jobs/1',
   cv_path: '/tmp/cv.docx',
   cover_letter_path: '/tmp/cl.docx',
+  cv_document_id: 'cv-doc',
+  cl_document_id: 'cl-doc',
   prefill_map: { name: 'Arvind Soni', email: 'arvind@example.com' },
   screening_answers: { work_authorisation: 'British Citizen', notice_period: 'Immediately available.' },
   paste_map: { 'First Name': 'Arvind', 'Email Address': 'arvind@example.com' },
@@ -425,5 +427,24 @@ describe('ApplicationReadyCard', () => {
     const { ApplicationReadyCard } = await import('@/components/hatch/ApplicationReadyCard');
     render(<ApplicationReadyCard job={READY_JOB} pkg={MOCK_PKG} onMarkApplied={vi.fn()} onRevert={vi.fn()} />);
     expect(screen.getByText(/Hatch prepared everything/i)).toBeTruthy();
+  });
+
+  it('offers retry and blocks mark-applied when documents are incomplete', async () => {
+    const { ApplicationReadyCard } = await import('@/components/hatch/ApplicationReadyCard');
+    const onRetry = vi.fn();
+    const incomplete = { ...MOCK_PKG, cl_document_id: null, cover_letter_path: null };
+    render(
+      <ApplicationReadyCard
+        job={READY_JOB}
+        pkg={incomplete}
+        onMarkApplied={vi.fn()}
+        onRevert={vi.fn()}
+        onRetry={onRetry}
+      />
+    );
+
+    expect(screen.queryByText(/Mark as applied/i)).toBeNull();
+    fireEvent.click(screen.getByText(/Retry documents/i));
+    expect(onRetry).toHaveBeenCalledWith(READY_JOB);
   });
 });
