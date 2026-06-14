@@ -170,10 +170,9 @@ async def generate_all(
         exc_str: str | None = None
         try:
             async with AsyncSessionLocal() as job_db:
-                # Hard 20-minute ceiling: Ollama queues requests internally so
-                # request_timeout=300 only fires after the response starts flowing.
-                # If the classifier monopolises Ollama the JD analysis would wait
-                # forever without this outer asyncio timeout.
+                # Hard 2-hour ceiling: with 7 concurrent jobs each taking ~3 LLM
+                # calls at ~180s/call, the last job waits 6×3×180s=3240s in queue
+                # before its first call starts. 7200s covers that plus generation.
                 result = await asyncio.wait_for(
                     svc.generate_all(
                         application_id=request.application_id,
@@ -185,15 +184,15 @@ async def generate_all(
                         company_name=request.company_name,
                         job_url=request.job_url,
                     ),
-                    timeout=1200,  # 20 minutes max
+                    timeout=7200,  # 2-hour ceiling (7 jobs × 3 calls × 180s = 3780s queue wait)
                 )
         except asyncio.TimeoutError:
             logger.error(
-                "generate_all timed out after 20 min for async job %s — "
-                "Ollama may be busy with background classifier",
+                "generate_all timed out after 2h for async job %s — "
+                "LLM queue backed up with concurrent jobs",
                 async_job.id,
             )
-            exc_str = "Pipeline timed out after 20 minutes. Ollama may be busy — retry in a few minutes."
+            exc_str = "Pipeline timed out after 2 hours. Too many concurrent jobs in queue — try again when other jobs are done."
         except Exception as exc:
             logger.exception("generate_all failed for async job %s: %s", async_job.id, exc)
             exc_str = str(exc)
