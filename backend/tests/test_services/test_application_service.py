@@ -131,19 +131,28 @@ class TestStatusTransitions:
         assert result.applied_date is not None
 
     @pytest.mark.asyncio
-    async def test_invalid_transition_raises_422(
+    async def test_directly_recording_external_application_is_allowed(
         self, db_session: AsyncSession
     ) -> None:
-        """Skipping a stage (discovered → applied) raises HTTP 422."""
+        """A user can record an application submitted outside Hatch."""
         service = make_service(db_session)
         app = await _insert_app(db_session, status="discovered")
+        result = await service.update_status(
+            app.id, ApplicationStatusUpdate(status="applied")
+        )
+        assert result.status == "applied"
+        assert result.applied_date is not None
 
-        with pytest.raises(HTTPException) as exc_info:
-            await service.update_status(
-                app.id, ApplicationStatusUpdate(status="applied")
-            )
-
-        assert exc_info.value.status_code == 422
+    @pytest.mark.asyncio
+    async def test_ready_to_apply_can_advance_to_applied(
+        self, db_session: AsyncSession
+    ) -> None:
+        service = make_service(db_session)
+        app = await _insert_app(db_session, status="ready_to_apply")
+        result = await service.update_status(
+            app.id, ApplicationStatusUpdate(status="applied")
+        )
+        assert result.status == "applied"
 
     @pytest.mark.asyncio
     async def test_terminal_state_cannot_transition(

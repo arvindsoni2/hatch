@@ -1,5 +1,5 @@
 [Unit]
-Description=Hatch — Autonomous Job Search
+Description=Hatch self-hosted job application assistant
 Documentation=https://github.com/arvindsoni2/hatch
 Requires=docker.service
 After=docker.service network-online.target
@@ -8,20 +8,14 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/asoni/Downloads/Assignment/Job_Pilot_v2
-
-# Pull/build is skipped here — images must already exist (run `docker compose build` once)
+WorkingDirectory=/path/to/hatch
 ExecStart=/usr/bin/docker compose up -d --no-build
 ExecStop=/usr/bin/docker compose down
 ExecReload=/usr/bin/docker compose restart
-
-# Give containers up to 5 minutes to start (Playwright browser install on cold cache)
 TimeoutStartSec=300
 TimeoutStopSec=60
-
-# Log to journald — view with: journalctl -u hatch.service
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

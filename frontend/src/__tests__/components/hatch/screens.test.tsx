@@ -5,7 +5,7 @@
  * Screen components receive pre-fetched data as props (server components do the fetching;
  * client components render). This makes them straightforwardly testable.
  */
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ describe('TodayScreen', () => {
   it('renders the briefing card with agent status', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" />);
-    expect(screen.getByText(/Agents active/i)).toBeTruthy();
+    expect(screen.getByText(/Agent output/i)).toBeTruthy();
   });
 
   it('shows the funnel step counts', async () => {
@@ -177,39 +177,72 @@ describe('StreamScreen', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // TrackerScreen
 // ─────────────────────────────────────────────────────────────────────────────
-const APPLIED_JOB = { id: 'ca', title: 'Cloud Architect', company: 'Lloyds', loc: 'Remote', rate: '£650/day', score: 0.84, state: 'applied' as const };
-const INTERVIEW_JOB = { id: 'la', title: 'Lead Architect', company: 'Capgemini', loc: 'London', rate: '£700/day', score: 0.91, state: 'interview' as const, when: 'Tue 9:00am' };
+function trackerApplication(id: string, title: string, status: 'discovered' | 'preparing' | 'ready_to_apply' | 'applied' | 'interview' | 'offered') {
+  return {
+    id,
+    job_id: id,
+    status,
+    priority: 'normal' as const,
+    applied_date: status === 'applied' ? '2026-06-15T08:00:00Z' : null,
+    recruiter_name: null,
+    agency_name: null,
+    salary_offered: null,
+    is_active: true,
+    created_at: '2026-06-15T08:00:00Z',
+    updated_at: '2026-06-15T08:00:00Z',
+    job_title: title,
+    job_company: 'Example Ltd',
+    job_location: 'London',
+    job_rate_text: 'Competitive',
+    job_rate_min: null,
+    job_source: 'test',
+    job_url: null,
+    agent_score: 0.84,
+    agent_created: true,
+    approval_status: 'approved',
+  };
+}
+
+const TRACKER_APPS = [
+  trackerApplication('d1', 'Data Architect', 'discovered'),
+  trackerApplication('p1', 'Platform Architect', 'preparing'),
+  trackerApplication('r1', 'Ready Architect', 'ready_to_apply'),
+  trackerApplication('a1', 'Cloud Architect', 'applied'),
+  trackerApplication('i1', 'Lead Architect', 'interview'),
+  trackerApplication('o1', 'Enterprise Architect', 'offered'),
+];
 
 describe('TrackerScreen', () => {
-  it('renders the 4 kanban column headers', async () => {
+  it('renders the full left-to-right application journey', async () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
-    render(<TrackerScreen jobs={ALL_JOBS} appliedJobs={[APPLIED_JOB]} interviewJobs={[INTERVIEW_JOB]} />);
-    expect(screen.getByText('Discovered')).toBeTruthy();
-    expect(screen.getByText('Applied')).toBeTruthy();
-    expect(screen.getByText('Interview')).toBeTruthy();
-    expect(screen.getByText('Offered')).toBeTruthy();
+    render(<TrackerScreen applications={TRACKER_APPS} />);
+    for (const name of ['Discovered', 'Preparing', 'Ready to submit', 'Applied', 'Interview', 'Offered', 'Accepted']) {
+      expect(screen.getByRole('heading', { name })).toBeTruthy();
+    }
   });
 
-  it('puts discovered/tailoring/parked jobs in the Discovered column', async () => {
+  it('keeps preparation and submission-ready work in distinct columns', async () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
-    render(<TrackerScreen jobs={ALL_JOBS} appliedJobs={[]} interviewJobs={[]} />);
-    // All 3 seeded jobs are in Discovered
-    const discoveredCol = screen.getByTestId('col-discovered');
-    expect(within(discoveredCol).getByText('Solutions Architect')).toBeTruthy();
+    render(<TrackerScreen applications={TRACKER_APPS} />);
+    expect(within(screen.getByTestId('col-preparing')).getByText('Platform Architect')).toBeTruthy();
+    expect(within(screen.getByTestId('col-ready_to_apply')).getByText('Ready Architect')).toBeTruthy();
   });
 
-  it('puts applied jobs in the Applied column', async () => {
+  it('shows real offered applications instead of a hard-coded empty column', async () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
-    render(<TrackerScreen jobs={ALL_JOBS} appliedJobs={[APPLIED_JOB]} interviewJobs={[]} />);
-    const appliedCol = screen.getByTestId('col-applied');
-    expect(within(appliedCol).getByText('Cloud Architect')).toBeTruthy();
+    render(<TrackerScreen applications={TRACKER_APPS} />);
+    expect(within(screen.getByTestId('col-offered')).getByText('Enterprise Architect')).toBeTruthy();
   });
 
-  it('shows empty dashed placeholder for the Offered column', async () => {
+  it('provides a keyboard-accessible forward move control', async () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
-    render(<TrackerScreen jobs={ALL_JOBS} appliedJobs={[]} interviewJobs={[]} />);
-    const offeredCol = screen.getByTestId('col-offered');
-    expect(within(offeredCol).getByText(/Nothing here yet/i)).toBeTruthy();
+    const onStatusChange = vi.fn().mockResolvedValue(undefined);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<TrackerScreen applications={TRACKER_APPS} onStatusChange={onStatusChange} />);
+    fireEvent.change(screen.getByLabelText('Move Cloud Architect to another stage'), { target: { value: 'interview' } });
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith('a1', 'interview'));
+    expect(within(screen.getByTestId('col-interview')).getByText('Cloud Architect')).toBeTruthy();
+    confirm.mockRestore();
   });
 });
 

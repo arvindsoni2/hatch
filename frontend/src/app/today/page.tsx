@@ -92,14 +92,14 @@ export default async function TodayPage() {
     scout:  pipeline?.discovered  ?? 0,
     scorer: pipeline?.scored      ?? 0,
     tailor: pipeline?.tailored    ?? 0,
-    coach:  pipeline?.approved    ?? 0,
+    coach:  pipeline?.coach_sessions ?? 0,
   };
 
   // transit = jobs moving between stages
   const transit = {
     scout_to_scorer:  pipeline?.scored      ?? 0,  // jobs Scorer evaluated
     scorer_to_tailor: pipeline?.shortlisted ?? 0,  // shortlisted → sent to tailor
-    tailor_to_coach:  pipeline?.tailored    ?? 0,  // tailored → ready for coach
+    tailor_to_coach:  pipeline?.coach_sessions ?? 0,  // generated Coach sessions
   };
 
   return (

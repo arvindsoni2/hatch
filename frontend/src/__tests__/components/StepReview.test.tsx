@@ -5,7 +5,7 @@ import { StepReview } from "@/components/onboarding/StepReview";
 const props = {
   candidate: { name: "Alex Smith", title: "CTO", years_experience: 10, summary: "" },
   selectedLocale: "uk",
-  locales: [{ id: "uk", name: "United Kingdom", flag: "🇬🇧" }],
+  locales: [{ id: "uk", name: "United Kingdom", flag: "🇬🇧", currency: "GBP", currency_symbol: "£", default_rate_type: "daily" }],
   search: { target_roles: ["CTO", "VP Engineering"], contract_type: "contract" },
   compensation: { min_rate: 600, max_rate: 900, rate_type: "daily", currency: "GBP", legal_preferences: {} },
   skills: { primary: ["leadership", "cloud", "agile"], secondary: [], certifications: [] },

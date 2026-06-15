@@ -67,7 +67,7 @@ TRIAGE_FILE="data/models/Qwen3-0.6B-Q4_0.gguf"
 if [ -f "$PRIMARY_FILE" ] && [ -f "$TRIAGE_FILE" ]; then
   ok "AI model files already present — skipping download."
 else
-  info "Downloading AI model files (one-time, ~1.2 GB total)…"
+  info "Downloading AI model files (one-time, about 3 GB total)…"
   warn "This may take a few minutes on a slow connection."
   if bash scripts/fetch_models.sh; then
     ok "Model files downloaded."
@@ -171,11 +171,11 @@ $COMPOSE up -d
 
 # ── Optional: systemd user service ────────────────────────────────
 
-if command -v systemctl &>/dev/null && [ -f jobpilot.service ]; then
+if command -v systemctl &>/dev/null && [ -f hatch.service ]; then
   read -r -p "$(echo -e "${CYAN}[hatch]${RESET} Install systemd user service (auto-start on login)? [y/N] ")" INSTALL_SERVICE
   if [[ "$INSTALL_SERVICE" =~ ^[Yy]$ ]]; then
     mkdir -p "$HOME/.config/systemd/user"
-    sed "s|WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|g" jobpilot.service \
+    sed "s|WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|g" hatch.service \
       > "$HOME/.config/systemd/user/hatch.service"
     systemctl --user daemon-reload
     systemctl --user enable hatch.service

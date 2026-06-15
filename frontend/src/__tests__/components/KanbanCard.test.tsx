@@ -22,6 +22,7 @@ function makeApplication(overrides: Partial<ApplicationListItem> = {}): Applicat
     job_rate_text: '£700/day',
     job_rate_min: 700,
     job_source: 'reed',
+    job_url: null,
     agent_score: null,
     agent_created: false,
     approval_status: null,

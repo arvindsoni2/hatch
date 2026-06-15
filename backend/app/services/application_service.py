@@ -19,8 +19,14 @@ from ..schemas.interview import FollowUpCreate
 logger = logging.getLogger(__name__)
 
 STATUS_TRANSITIONS: dict[str, list[str]] = {
-    "discovered":  ["shortlisted", "rejected", "withdrawn"],
+    # Users may record a submission directly when they applied outside Hatch.
+    "discovered":  ["shortlisted", "applied", "rejected", "withdrawn"],
     "shortlisted": ["applied", "rejected", "withdrawn"],
+    "parked":      ["applied", "rejected", "withdrawn"],
+    "ready":       ["applied", "rejected", "withdrawn"],
+    "approved":    ["preparing", "rejected", "withdrawn"],
+    "preparing":   ["ready_to_apply", "rejected", "withdrawn"],
+    "ready_to_apply": ["applied", "rejected", "withdrawn"],
     "applied":     ["interview", "rejected", "withdrawn"],
     "interview":   ["offered", "rejected", "withdrawn"],
     "offered":     ["accepted", "declined", "withdrawn"],

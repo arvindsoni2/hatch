@@ -1,6 +1,6 @@
-# JobPilot v2 — Docker Compose
+# Hatch - local Docker Compose stack
 # Local self-hosted deployment — all data stays on your machine.
-# Auto-starts on reboot via the jobpilot.service systemd unit.
+# Optional auto-start is provided by hatch.service.
 
 services:
   # ── llama-server: primary model (Qwen3-4B Q4_0, :8080) ─────────────────────
@@ -8,7 +8,7 @@ services:
   # Model file: run scripts/fetch_models.sh to download Qwen3-4B-Q4_0.gguf
   llm-primary:
     image: ghcr.io/ggml-org/llama.cpp:server
-    container_name: jobpilot-llm-primary
+    container_name: hatch-llm-primary
     command: >
       --model /models/Qwen3-4B-Q4_0.gguf
       --ctx-size 16384
@@ -27,13 +27,13 @@ services:
       start_period: 120s
     restart: unless-stopped
     networks:
-      - jobpilot
+      - hatch
 
   # ── llama-server: triage model (Qwen3-0.6B Q4_0, :8081) ────────────────────
   # --parallel 2 gives 2048 tokens/slot (4096 / 2) — sufficient for TRIAGE (1536+256).
   llm-triage:
     image: ghcr.io/ggml-org/llama.cpp:server
-    container_name: jobpilot-llm-triage
+    container_name: hatch-llm-triage
     command: >
       --model /models/Qwen3-0.6B-Q4_0.gguf
       --ctx-size 4096
@@ -52,14 +52,14 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - jobpilot
+      - hatch
 
   backend:
-    image: docker.io/library/job_pilot_v2-backend:latest
+    image: hatch-backend:latest
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: jobpilot-backend
+    container_name: hatch-backend
     env_file:
       - .env
     environment:
@@ -99,17 +99,17 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - jobpilot
+      - hatch
 
   frontend:
-    image: docker.io/library/job_pilot_v2-frontend:latest
+    image: hatch-frontend:latest
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_API_URL=http://localhost:8000
         - API_URL=http://backend:8000
-    container_name: jobpilot-frontend
+    container_name: hatch-frontend
     environment:
       - API_URL=http://backend:8000
       - NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -126,8 +126,8 @@ services:
       start_period: 30s
     restart: unless-stopped
     networks:
-      - jobpilot
+      - hatch
 
 networks:
-  jobpilot:
+  hatch:
     driver: bridge

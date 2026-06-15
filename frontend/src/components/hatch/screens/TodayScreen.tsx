@@ -60,6 +60,13 @@ interface TodayScreenProps {
   onOpenPrep?: () => void;
 }
 
+const OUTPUT_LABELS: Record<string, string> = {
+  scout: 'Jobs stored',
+  scorer: 'Jobs scored',
+  tailor: 'Packages ready',
+  coach: 'Sessions ready',
+};
+
 function FunnelStep({ agent, count }: { agent: string; count: number }) {
   const a = AGENT_DEFS[agent as keyof typeof AGENT_DEFS];
   return (
@@ -67,6 +74,7 @@ function FunnelStep({ agent, count }: { agent: string; count: number }) {
       <AgentBadge agent={agent as never} size={34} />
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 18, fontWeight: 700, color: 'var(--text)', lineHeight: 1 }}>{count}</div>
       <div style={{ fontSize: 10, fontWeight: 600, color: a.color }}>{a.name}</div>
+      <div style={{ fontSize: 9.5, color: 'var(--text-muted)', textAlign: 'center' }}>{OUTPUT_LABELS[agent]}</div>
     </div>
   );
 }
@@ -98,7 +106,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
       >
         <div>
           <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Today</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>What your agents did overnight</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Your application workspace at a glance</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ position: 'relative' }}>
@@ -120,7 +128,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           <TimeGreeting name={profileName} />
         </div>
         <div style={{ fontSize: 13.5, color: 'var(--text-muted)', marginTop: 4 }}>
-          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })} — here&apos;s what your agents did overnight
+          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })} — your application workspace at a glance
         </div>
       </div>
 
@@ -130,13 +138,13 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               <Dot color="var(--success)" size={8} pulse />
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Agents active</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Agent output</span>
             </div>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>last run 3h ago</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>all-time totals</span>
           </div>
           <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, color: 'var(--text-dim)' }}>
-            <strong style={{ color: 'var(--text)' }}>{funnel.scout} new roles</strong> processed overnight ·{' '}
-            <strong style={{ color: 'var(--success)' }}>{ready.length} tailored</strong> and ready for review.
+            <strong style={{ color: 'var(--text)' }}>{funnel.scout} roles</strong> in your workspace ·{' '}
+            <strong style={{ color: 'var(--success)' }}>{ready.length} packages</strong> currently need review.
           </p>
           {/* Mini funnel */}
           {(() => {

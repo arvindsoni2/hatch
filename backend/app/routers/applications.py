@@ -29,6 +29,41 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 
 
+async def _queue_application_coach_session(
+    app_id: str,
+    db: AsyncSession,
+) -> None:
+    """Queue one Coach session for an applied application."""
+    from ..models.application import Application
+    from ..models.job import JobPosting
+    from ..schemas.coach import CreateSessionRequest
+
+    app_result = await db.execute(
+        select(Application).where(Application.id == app_id, Application.is_active.is_(True))
+    )
+    app_obj = app_result.scalar_one_or_none()
+    if app_obj is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
+
+    job = None
+    if app_obj.job_id:
+        job_result = await db.execute(
+            select(JobPosting).where(JobPosting.id == app_obj.job_id)
+        )
+        job = job_result.scalar_one_or_none()
+
+    await queue_coach_session(
+        CreateSessionRequest(
+            application_id=app_id,
+            company_name=job.company if job else "Unknown Company",
+            role_title=job.title if job else "Application Interview",
+            jd_text=job.description if job else None,
+        ),
+        db,
+        deduplicate_application=True,
+    )
+
+
 def get_app_service(db: AsyncSession = Depends(get_db)) -> ApplicationService:
     """Dependency: returns ApplicationService with injected session."""
     app_repo = ApplicationRepository(db)
@@ -296,6 +331,7 @@ async def update_application(
 async def update_application_status(
     app_id: str,
     data: ApplicationStatusUpdate,
+    db: AsyncSession = Depends(get_db),
     service: ApplicationService = Depends(get_app_service),
 ) -> ApplicationRead:
     """Move application to a new status with state machine enforcement.
@@ -311,7 +347,10 @@ async def update_application_status(
         HTTPException 404: If not found.
         HTTPException 422: If the transition is not permitted.
     """
-    return await service.update_status(app_id, data)
+    updated = await service.update_status(app_id, data)
+    if data.status == "applied":
+        await _queue_application_coach_session(app_id, db)
+    return updated
 
 
 @router.post("/{app_id}/notes", response_model=ApplicationRead)
@@ -456,6 +495,7 @@ async def get_application_package(
 async def mark_applied(
     app_id: str,
     db: AsyncSession = Depends(get_db),
+    service: ApplicationService = Depends(get_app_service),
 ) -> ApplicationRead:
     """Confirm that the user has submitted the application on the external site.
 
@@ -472,13 +512,7 @@ async def mark_applied(
         HTTPException 404: Application not found.
         HTTPException 422: Application is not in 'ready_to_apply' state.
     """
-    from sqlalchemy import update
-    from datetime import datetime
-
     from ..models.application import Application
-    from ..models.job import JobPosting
-    from ..repositories.application_repository import ApplicationRepository
-    from ..schemas.coach import CreateSessionRequest
 
     app_result = await db.execute(
         select(Application).where(Application.id == app_id, Application.is_active.is_(True))
@@ -496,36 +530,12 @@ async def mark_applied(
             ),
         )
 
-    now = datetime.utcnow()
-    await db.execute(
-        update(Application)
-        .where(Application.id == app_id)
-        .values(status="applied", applied_date=now, updated_at=now)
+    updated = await service.update_status(
+        app_id,
+        ApplicationStatusUpdate(status="applied"),
     )
-
-    job = None
-    if app_obj.job_id:
-        job_result = await db.execute(
-            select(JobPosting).where(JobPosting.id == app_obj.job_id)
-        )
-        job = job_result.scalar_one_or_none()
-
-    await queue_coach_session(
-        CreateSessionRequest(
-            application_id=app_id,
-            company_name=job.company if job else "Unknown Company",
-            role_title=job.title if job else "Application Interview",
-            jd_text=job.description if job else None,
-        ),
-        db,
-        deduplicate_application=True,
-    )
-
-    repo = ApplicationRepository(db)
-    result = await repo.get_by_id(app_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
-    return result
+    await _queue_application_coach_session(app_id, db)
+    return updated
 
 
 @router.post("/{app_id}/reject", response_model=ApplicationRead)

@@ -4,11 +4,11 @@ import { StepJobSearch } from "@/components/onboarding/StepJobSearch";
 import type { LocaleSummary } from "@/lib/api";
 
 const MOCK_LOCALES: LocaleSummary[] = [
-  { id: "uk", name: "United Kingdom", flag: "🇬🇧" },
-  { id: "in", name: "India", flag: "🇮🇳" },
-  { id: "ae", name: "United Arab Emirates", flag: "🇦🇪" },
-  { id: "ie", name: "Ireland", flag: "🇮🇪" },
-  { id: "us", name: "United States", flag: "🇺🇸" },
+  { id: "uk", name: "United Kingdom", flag: "🇬🇧", currency: "GBP", currency_symbol: "£", default_rate_type: "daily" },
+  { id: "in", name: "India", flag: "🇮🇳", currency: "INR", currency_symbol: "₹", default_rate_type: "annual" },
+  { id: "ae", name: "United Arab Emirates", flag: "🇦🇪", currency: "AED", currency_symbol: "AED", default_rate_type: "monthly" },
+  { id: "ie", name: "Ireland", flag: "🇮🇪", currency: "EUR", currency_symbol: "€", default_rate_type: "daily" },
+  { id: "us", name: "United States", flag: "🇺🇸", currency: "USD", currency_symbol: "$", default_rate_type: "annual" },
 ];
 
 const defaultSearch = { target_roles: [], contract_type: "permanent" };

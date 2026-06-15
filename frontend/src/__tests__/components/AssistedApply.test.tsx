@@ -107,6 +107,8 @@ describe("AssistedApplyCard", () => {
       cv_path: null,
       cover_letter_path: null,
       prefill_map: {},
+      screening_answers: {},
+      paste_map: {},
     });
   });
 
@@ -117,6 +119,8 @@ describe("AssistedApplyCard", () => {
       cv_path: "/tmp/cv.docx",
       cover_letter_path: "/tmp/cl.docx",
       prefill_map: { name: "Alice" },
+      screening_answers: {},
+      paste_map: {},
     });
 
     const onStatusChange = vi.fn();

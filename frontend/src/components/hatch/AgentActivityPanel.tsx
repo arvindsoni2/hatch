@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import {
   fetchAgentPerformance,
   fetchAnalyticsDashboard,
-  listSessions,
   type AgentPerformance,
   type AgentPerformanceRow,
   type AnalyticsDashboard,
@@ -35,9 +34,9 @@ function narrativeFor(
       const found = funnel.scout;
       return {
         text: found > 0
-          ? `Scanned ${boards} board${boards !== 1 ? "s" : ""}, found ${found} new roles`
+          ? `${found} roles stored across ${boards} board run${boards !== 1 ? "s" : ""} today`
           : "Scanning job boards for new roles",
-        chip: boards > 0 ? `${boards} boards` : null,
+        chip: found > 0 ? `${found} total` : null,
         chipColor: "var(--accent)",
         chipBg: "var(--accent-soft)",
       };
@@ -47,7 +46,7 @@ function narrativeFor(
       const passed = transit?.scorer_to_tailor ?? 0;
       return {
         text: total > 0
-          ? `Ranked ${total} roles — ${passed} cleared your bar`
+          ? `${total} roles scored — ${passed} shortlist events recorded`
           : "Waiting for new roles to score",
         chip: passed > 0 ? `${passed} passed` : null,
         chipColor: "var(--success)",
@@ -60,7 +59,7 @@ function narrativeFor(
       const ats = row?.success_rate;
       return {
         text: count > 0
-          ? `Prepared CV + cover letter for ${count} strong match${count !== 1 ? "es" : ""}`
+          ? `${count} applications have a completed CV + cover letter package`
           : queued > 0
             ? `${queued} shortlisted role${queued !== 1 ? "s" : ""} awaiting a completed package`
             : "Waiting for shortlisted roles",
@@ -72,9 +71,9 @@ function narrativeFor(
     case "coach": {
       return {
         text: coachSessions > 0
-          ? `Prepped ${coachSessions} interview session${coachSessions !== 1 ? "s" : ""}`
+          ? `${coachSessions} active or completed interview prep session${coachSessions !== 1 ? "s" : ""}`
           : "No interview sessions yet",
-        chip: coachSessions > 0 ? `${coachSessions} ready` : null,
+        chip: coachSessions > 0 ? `${coachSessions} sessions` : null,
         chipColor: "var(--purple)",
         chipBg: "var(--purple-soft)",
       };
@@ -108,13 +107,10 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
   const router = useRouter();
   const [data, setData] = useState<AgentPerformance | null>(initialData);
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null);
-  const [coachSessions, setCoachSessions] = useState(0);
+  const coachSessions = funnel?.coach ?? 0;
 
   useEffect(() => {
     fetchAnalyticsDashboard().then(setAnalytics).catch(() => {});
-    listSessions(20)
-      .then((sessions) => setCoachSessions(sessions.filter((s) => s.status === "active" || s.status === "completed").length))
-      .catch(() => {});
     const id = setInterval(() => {
       fetchAgentPerformance().then(setData).catch(() => {});
     }, 30_000);
@@ -154,7 +150,7 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", marginBottom: 2 }}>
-        Agent activity
+        Agent activity · latest runs
       </span>
 
       {sorted.map((key) => {

@@ -366,9 +366,10 @@ async def update_application_notes(
 async def pipeline_stats(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, int]:
-    """Funnel counts: discovered → scored → shortlisted → tailored → approved."""
+    """Return clearly named all-time agent output counts for the dashboard."""
     from sqlalchemy import func
     from ..models.agent_event import AgentEvent
+    from ..models.coach_session import InterviewSession
     from ..models.document import GeneratedDocument
 
     async def count_events(etype: str) -> int:
@@ -396,6 +397,10 @@ async def pipeline_stats(
         .where(Application.agent_created)
         .where(Application.approval_status == "approved")
     )).scalar_one() or 0
+    coach_sessions = (await db.execute(
+        select(func.count()).select_from(InterviewSession)
+        .where(InterviewSession.status.in_(("active", "completed")))
+    )).scalar_one() or 0
 
     return {
         "discovered": total_jobs,
@@ -403,6 +408,7 @@ async def pipeline_stats(
         "shortlisted": await count_events("job_shortlisted"),
         "tailored": tailored,
         "approved": approved,
+        "coach_sessions": coach_sessions,
     }
 
 

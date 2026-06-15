@@ -27,11 +27,11 @@ elif command -v docker-compose &>/dev/null; then
 fi
 
 backend_running() {
-  docker ps --format "{{.Names}}" 2>/dev/null | grep -q "jobpilot-backend"
+  docker ps --format "{{.Names}}" 2>/dev/null | grep -q "hatch-backend"
 }
 
 container_exec() {
-  docker exec jobpilot-backend "$@"
+  docker exec hatch-backend "$@"
 }
 
 # ── Banner ─────────────────────────────────────────────────────────

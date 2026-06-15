@@ -1,7 +1,6 @@
 # ── Hatch — profile.yaml template ───────────────────────────────────────────
 # Copy this file to data/profile.yaml and fill in your details.
-# Or run `./install.sh` — it creates the profile automatically and detects
-# your Ollama model so you can start immediately without any API key.
+# Or run `./install.sh` to create the profile and download the bundled models.
 #
 # NEVER commit data/profile.yaml — it contains personal information.
 # It is listed in .gitignore by default.
@@ -80,14 +79,14 @@ scoring:
   method: "auto"                    # "auto" | "llm" | "local" | "hybrid"
 
 # ─── LLM Provider ────────────────────────────────────────────────────────────
-# Default: Ollama (local, free, no API key).
-# The install script detects your installed Ollama model automatically.
+# Default: bundled llama.cpp models (local, free, no API key).
 # To use a cloud provider, change provider and set the API key in .env.
 llm:
-  provider: "ollama"                # "ollama" | "anthropic" | "openai" | "google_genai" | "azure_openai"
-  triage_model: ""                  # Populated by install.sh from local Ollama models
-  primary_model: ""                 # Populated by install.sh from local Ollama models
-  base_url: "http://host.containers.internal:11434"  # Ollama endpoint (container → host)
+  provider: "llamacpp"              # "llamacpp" | "anthropic" | "openai" | "google_genai" | "azure_openai"
+  triage_model: "qwen3-0.6b-q4_0"
+  primary_model: "qwen3-4b-q4_0"
+  base_url: "http://llm-primary:8080/v1"
+  triage_base_url: "http://llm-triage:8081/v1"
   api_key_env: ""                   # Env var name for cloud providers (e.g. ANTHROPIC_API_KEY)
   temperature: 0.3
   max_retries: 3

@@ -186,7 +186,7 @@ export async function deleteJob(id: string): Promise<void> {
 export type ApplicationStatus =
   | "discovered" | "shortlisted" | "applied" | "interview"
   | "offered" | "accepted" | "rejected" | "withdrawn" | "declined"
-  | "preparing" | "ready_to_apply";
+  | "parked" | "ready" | "approved" | "preparing" | "ready_to_apply";
 
 export type Priority = "low" | "normal" | "high" | "urgent";
 
@@ -1356,6 +1356,7 @@ export interface PipelineStats {
   shortlisted: number
   tailored: number
   approved: number
+  coach_sessions: number
 }
 
 export async function fetchAllAgentStatus(): Promise<AllAgentStatus> {
