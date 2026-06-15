@@ -201,6 +201,21 @@ class TestGetPackageEndpoint:
 
 class TestMarkAppliedEndpoint:
 
+    @pytest.fixture(autouse=True)
+    def _mock_coach_queue(self):
+        with patch(
+            "app.routers.applications.queue_coach_session",
+            new_callable=AsyncMock,
+        ) as queued:
+            queued.return_value = {
+                "job_id": "coach-job-id",
+                "status": "pending",
+                "type": "coach_session",
+                "session_id": "coach-session-id",
+                "created": True,
+            }
+            yield queued
+
     @pytest.mark.asyncio
     async def test_mark_applied_from_ready_to_apply_returns_200(
         self, client: AsyncClient, db_session: AsyncSession
@@ -229,6 +244,22 @@ class TestMarkAppliedEndpoint:
 
         await db_session.refresh(app)
         assert app.applied_date is not None
+
+    @pytest.mark.asyncio
+    async def test_mark_applied_queues_linked_coach_session(
+        self, client: AsyncClient, db_session: AsyncSession, _mock_coach_queue
+    ) -> None:
+        job = await _insert_job(db_session)
+        app = await _insert_app(db_session, job_id=job.id, status="ready_to_apply")
+
+        response = await client.post(f"/api/applications/{app.id}/mark-applied")
+
+        assert response.status_code == 200
+        request = _mock_coach_queue.await_args.args[0]
+        assert request.application_id == app.id
+        assert request.company_name == job.company
+        assert request.role_title == job.title
+        assert _mock_coach_queue.await_args.kwargs["deduplicate_application"] is True
 
     @pytest.mark.asyncio
     async def test_mark_applied_without_approve_returns_422(

@@ -22,6 +22,7 @@ from ..schemas.application import (
 )
 from ..schemas.job import PaginatedResponse
 from ..services.application_service import ApplicationService
+from ..services.coach_session_queue import queue_coach_session
 
 logger = logging.getLogger(__name__)
 
@@ -475,7 +476,9 @@ async def mark_applied(
     from datetime import datetime
 
     from ..models.application import Application
+    from ..models.job import JobPosting
     from ..repositories.application_repository import ApplicationRepository
+    from ..schemas.coach import CreateSessionRequest
 
     app_result = await db.execute(
         select(Application).where(Application.id == app_id, Application.is_active.is_(True))
@@ -499,7 +502,24 @@ async def mark_applied(
         .where(Application.id == app_id)
         .values(status="applied", applied_date=now, updated_at=now)
     )
-    await db.commit()
+
+    job = None
+    if app_obj.job_id:
+        job_result = await db.execute(
+            select(JobPosting).where(JobPosting.id == app_obj.job_id)
+        )
+        job = job_result.scalar_one_or_none()
+
+    await queue_coach_session(
+        CreateSessionRequest(
+            application_id=app_id,
+            company_name=job.company if job else "Unknown Company",
+            role_title=job.title if job else "Application Interview",
+            jd_text=job.description if job else None,
+        ),
+        db,
+        deduplicate_application=True,
+    )
 
     repo = ApplicationRepository(db)
     result = await repo.get_by_id(app_id)

@@ -26,6 +26,7 @@ from ..schemas.coach import (
     SubmitAnswerRequest,
 )
 from ..services.async_job_service import AsyncJobService
+from ..services.coach_session_queue import queue_coach_session
 from ..services.coach_service import CoachService
 
 logger = logging.getLogger(__name__)
@@ -118,41 +119,7 @@ async def create_session(
     async job uses its own DB session (not the request session) to avoid accessing
     a closed connection after the HTTP response has been sent.
     """
-    from ..repositories.session_repository import SessionRepository
-    session_repo = SessionRepository(db)
-    config_dict = request.config.model_dump()
-    if request.interview_date:
-        config_dict["interview_date"] = request.interview_date
-    stub = await session_repo.create_session(
-        application_id=request.application_id,
-        company_name=request.company_name,
-        role_title=request.role_title,
-        config=config_dict,
-    )
-    session_id = stub.id
-
-    async_job = await AsyncJobService.create(db, "coach_session")
-    await db.commit()
-
-    async def _work() -> None:
-        from ..database import AsyncSessionLocal  # noqa: PLC0415
-        async with AsyncSessionLocal() as job_db:
-            try:
-                result = await svc.create_session(request, job_db, session_id=session_id)
-                await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
-            except Exception as exc:
-                logger.error("create_session job %s failed: %s", async_job.id, exc)
-                # Mark stub session as abandoned so user sees failure in the list
-                from ..repositories.session_repository import SessionRepository as _SR  # noqa: PLC0415
-                try:
-                    await _SR(job_db).update_session_status(session_id, "abandoned")
-                    await job_db.commit()
-                except Exception:
-                    pass
-                await AsyncJobService._finish(async_job.id, None, str(exc))
-
-    AsyncJobService.run(async_job.id, _work())
-    return {"job_id": async_job.id, "status": "pending", "type": "coach_session", "session_id": session_id}
+    return await queue_coach_session(request, db, svc)
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
