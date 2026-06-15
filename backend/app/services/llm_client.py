@@ -6,6 +6,7 @@ whatever provider is configured in profile.yaml.
 """
 from __future__ import annotations
 
+import asyncio
 import ast
 import json
 import logging
@@ -20,6 +21,8 @@ from ..agents.tools.llm_factory import get_json_model, get_primary_model, record
 from ..agents.tools.profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
+
+_LLM_CALL_TIMEOUT_SECONDS = 1800
 
 _JSON_INSTRUCTION = (
     "\n\nIMPORTANT: Respond ONLY with valid JSON. "
@@ -55,7 +58,10 @@ class LLMClient:
         llm = get_primary_model()
         messages = [SystemMessage(content=system), HumanMessage(content=user)]
         t0 = time.monotonic()
-        response = await llm.ainvoke(messages)
+        response = await asyncio.wait_for(
+            llm.bind(max_tokens=max_tokens).ainvoke(messages),
+            timeout=_LLM_CALL_TIMEOUT_SECONDS,
+        )
         duration_ms = int((time.monotonic() - t0) * 1000)
         content = response.content
         text = content if isinstance(content, str) else str(content)
@@ -91,7 +97,10 @@ class LLMClient:
                 llm = get_json_model(schema=schema)
                 messages = [SystemMessage(content=no_think + system + _JSON_INSTRUCTION), HumanMessage(content=user)]
                 t0 = time.monotonic()
-                response = await llm.ainvoke(messages)
+                response = await asyncio.wait_for(
+                    llm.bind(max_tokens=max_tokens).ainvoke(messages),
+                    timeout=_LLM_CALL_TIMEOUT_SECONDS,
+                )
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 text = response.content if isinstance(response.content, str) else str(response.content)
                 record_trace(model_name, duration_ms, text)

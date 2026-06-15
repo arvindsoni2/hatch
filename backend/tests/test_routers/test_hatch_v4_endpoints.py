@@ -144,6 +144,17 @@ class TestApproveJobEndpoint:
         resp = await client.post(f"/api/jobs/{uuid.uuid4()}/approve")
         assert resp.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_approve_returns_409_when_package_already_preparing(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        job = await _insert_job(db_session)
+        await _insert_app(db_session, job_id=job.id, status="preparing")
+
+        resp = await client.post(f"/api/jobs/{job.id}/approve")
+
+        assert resp.status_code == 409
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /api/applications/{app_id}/package

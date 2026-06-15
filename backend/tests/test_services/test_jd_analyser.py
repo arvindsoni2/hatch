@@ -96,6 +96,7 @@ async def test_analyse_returns_jd_analysis_result():
     assert result.contract_details.ir35_status == "Outside IR35"
     assert "AWS" in result.ats_keywords.technical
     assert result.raw_text_length == len(jd_text)
+    assert client.complete_json.await_args.kwargs["max_tokens"] == 768
 
 
 @pytest.mark.asyncio

@@ -159,6 +159,17 @@ def test_select_best_summary_variant_solutions_architect():
     assert "Solutions Architect" in summary or "Data Architect" in summary
 
 
+@pytest.mark.asyncio
+async def test_conflicting_summary_uses_grounded_role_variant():
+    response = {**MOCK_TAILOR_RESPONSE, "summary": "Technical Project Manager with 20 years' experience."}
+    tailor = CVTailor(make_mock_client(response))
+
+    with patch.object(tailor, "_load_master_cv", return_value=MOCK_MASTER_CV):
+        result = await tailor.tailor(JD_ANALYSIS)
+
+    assert result.summary == MOCK_MASTER_CV["summary_variants"]["solutions_architect"]
+
+
 def test_parse_tailored_cv():
     result = _parse_tailored_cv(MOCK_TAILOR_RESPONSE)
     assert result.summary.startswith("Solutions Architect")

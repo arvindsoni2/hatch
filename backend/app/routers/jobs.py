@@ -501,6 +501,7 @@ async def approve_job(
         HTTPException 404: Job not found.
     """
     import json as _json_local
+    import asyncio
     from sqlalchemy import select, update
     from datetime import datetime
 
@@ -530,6 +531,11 @@ async def approve_job(
         .limit(1)
     )
     app_obj = app_result.scalar_one_or_none()
+    if app_obj is not None and app_obj.status == "preparing":
+        raise HTTPException(
+            status_code=409,
+            detail="This application package is already being prepared.",
+        )
     if app_obj is None:
         app_obj = Application(
             job_id=job_id,
@@ -542,11 +548,20 @@ async def approve_job(
         )
         db.add(app_obj)
     else:
-        await db.execute(
+        claimed = await db.execute(
             update(Application)
-            .where(Application.id == app_obj.id)
+            .where(
+                Application.id == app_obj.id,
+                Application.status != "preparing",
+            )
             .values(status="preparing", approval_status="approved", updated_at=datetime.utcnow())
         )
+        if claimed.rowcount == 0:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="This application package is already being prepared.",
+            )
 
     # 3. Create async_job before commit so both land in the same transaction
     async_job = await AsyncJobService.create(db, "prepare_application")
@@ -560,7 +575,10 @@ async def approve_job(
         try:
             async with AsyncSessionLocal() as own_db:
                 service = AssistedApplyService()
-                package = await service.prepare_application(job_id=job_id, db=own_db)
+                package = await asyncio.wait_for(
+                    service.prepare_application(job_id=job_id, db=own_db),
+                    timeout=2700,
+                )
                 result = {
                     "job_id": package.job_id,
                     "job_url": package.job_url,

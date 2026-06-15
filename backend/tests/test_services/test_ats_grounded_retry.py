@@ -1,7 +1,12 @@
-"""G-6 tests — ATS retry loop only reinforces master-CV-grounded keywords."""
+"""G-6 tests — ATS gaps remain grounded and do not trigger regeneration."""
 from __future__ import annotations
 
-from app.services.tailor_service import _partition_ats_keywords
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.schemas.tailor import ATSScoreResult, JDAnalysisResult, TailoredCVResult
+from app.services.tailor_service import TailorService, _partition_ats_keywords
 
 
 class TestPartitionATSKeywords:
@@ -43,3 +48,23 @@ class TestPartitionATSKeywords:
         grounded, gaps = _partition_ats_keywords([], self.MASTER_TEXT)
         assert grounded == []
         assert gaps == []
+
+
+@pytest.mark.asyncio
+async def test_low_ats_score_does_not_regenerate_cv():
+    service = TailorService()
+    tailored = TailoredCVResult(summary="Grounded summary")
+    ats = ATSScoreResult(overall_score=60, missing_critical=["Unsupported Skill"])
+    service._cv_tailor.tailor = AsyncMock(return_value=tailored)
+    service._ats_optimiser.score = AsyncMock(return_value=ats)
+
+    with patch("app.services.tailor_service._load_master_cv", return_value={}):
+        result, score = await service._tailor_and_score(
+            JDAnalysisResult(role_title="Solutions Architect"),
+            "A",
+        )
+
+    assert result is tailored
+    assert score is ats
+    service._cv_tailor.tailor.assert_awaited_once()
+    service._ats_optimiser.score.assert_awaited_once()

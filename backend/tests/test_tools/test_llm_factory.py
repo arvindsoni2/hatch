@@ -321,9 +321,12 @@ class TestThinkBlockStripping:
 
         async def run():
             client = LLMClient()
+            mock_llm = MagicMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_llm.bind.return_value = mock_llm
             with patch(
                 "app.services.llm_client.get_json_model",
-                return_value=MagicMock(ainvoke=AsyncMock(return_value=mock_response)),
+                return_value=mock_llm,
             ):
                 result = await client.complete_json("system", "user")
             return result

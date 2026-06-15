@@ -30,7 +30,7 @@ from .master_cv_store import MasterCVMissingError, load_master_cv
 
 logger = logging.getLogger(__name__)
 
-# ATS score threshold — re-tailor if below this
+# ATS score threshold used to flag packages that need user review.
 _ATS_THRESHOLD = 75
 
 
@@ -100,7 +100,7 @@ class TailorService:
         variant: str,
         custom_instructions: str | None = None,
     ) -> tuple[TailoredCVResult, ATSScoreResult]:
-        """Create one grounded CV result and apply at most one ATS retry."""
+        """Create one grounded CV result and score it for user review."""
         tailored_cv = await self._cv_tailor.tailor(analysis, variant, custom_instructions)
         if tailored_cv.blocking_issues:
             raise HTTPException(
@@ -113,41 +113,15 @@ class TailorService:
             )
 
         ats_result = await self._ats_optimiser.score(_cv_to_plain_text(tailored_cv), analysis)
-        if ats_result.overall_score >= _ATS_THRESHOLD:
-            return tailored_cv, ats_result
-
-        master_text = _master_cv_text(_load_master_cv())
-        grounded, gaps = _partition_ats_keywords(ats_result.missing_critical, master_text)
-        if gaps:
+        if ats_result.overall_score < _ATS_THRESHOLD:
+            master_text = _master_cv_text(_load_master_cv())
+            _, gaps = _partition_ats_keywords(ats_result.missing_critical, master_text)
             logger.info(
-                "Leaving %d unsupported ATS keyword(s) as honest gaps: %s",
-                len(gaps), gaps,
+                "ATS score %d is below %d; preserving the grounded CV for review%s",
+                ats_result.overall_score,
+                _ATS_THRESHOLD,
+                f" with unsupported gaps: {gaps}" if gaps else "",
             )
-        grounded_instruction = (
-            "Increase natural coverage of these evidenced keywords: "
-            f"{', '.join(grounded)}. Do not introduce unsupported terms."
-            if grounded
-            else "Improve ATS structure and phrasing without adding unsupported keywords."
-        )
-        other_suggestions = [
-            suggestion
-            for suggestion in self._ats_optimiser.suggest_improvements(ats_result)
-            if not suggestion.startswith("CRITICAL:")
-        ]
-        improvements = "\n".join([grounded_instruction] + other_suggestions[:3])
-        tailored_cv = await self._cv_tailor.tailor(
-            analysis, variant, f"{custom_instructions or ''}\n{improvements}"
-        )
-        if tailored_cv.blocking_issues:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error": "Re-tailored CV failed grounding checks — document withheld.",
-                    "issues": tailored_cv.blocking_issues,
-                    "hint": "Review the source CV evidence or accept the remaining keyword gaps.",
-                },
-            )
-        ats_result = await self._ats_optimiser.score(_cv_to_plain_text(tailored_cv), analysis)
         return tailored_cv, ats_result
 
     async def analyse_job(self, job_id: str, db: AsyncSession) -> JDAnalysisResponse:
@@ -206,7 +180,7 @@ class TailorService:
     ) -> GeneratedDocumentRead:
         """Generate a tailored CV and persist the document record.
 
-        Applies one re-tailoring pass if initial ATS score < threshold.
+        Preserves honest ATS gaps for user review instead of fabricating keywords.
 
         Args:
             application_id: UUID of the Application.
@@ -406,11 +380,17 @@ class TailorService:
                     if not job_url:
                         job_url = _job.url
         analysis = await self._jd_analyser.analyse(jd_text, job_url)
+        logger.info("Tailor package %s: JD analysis complete", application_id)
         master_cv = _load_master_cv()
         skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
 
         doc_repo = DocumentRepository(db)
         tailored_cv, ats_result = await self._tailor_and_score(analysis, variant)
+        logger.info(
+            "Tailor package %s: CV content and ATS score complete (%d)",
+            application_id,
+            ats_result.overall_score,
+        )
         personal = _load_personal()
 
         cv_version = await doc_repo.get_latest_version(application_id, "cv") + 1
@@ -430,11 +410,13 @@ class TailorService:
             variant_label=variant,
             status="generated",
         )
+        logger.info("Tailor package %s: CV document created", application_id)
 
         cl_variant = select_tone_variant(analysis)
         cover_letter = await self._cl_generator.generate(
             analysis, tailored_cv, personal, cl_variant
         )
+        logger.info("Tailor package %s: cover letter content complete", application_id)
         cl_version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
         cl_path, cl_size = self._cl_builder.build(
             cover_letter, analysis, personal, application_id, cl_version, variant
@@ -451,6 +433,7 @@ class TailorService:
             status="generated",
         )
         await db.commit()
+        logger.info("Tailor package %s: package committed", application_id)
 
         return TailorResultBundle(
             application_id=application_id,
@@ -503,39 +486,6 @@ class TailorService:
         yield sse("scoring_ats", 55, "Running ATS scoring...")
         cv_text = _cv_to_plain_text(tailored_cv)
         ats_result = await self._ats_optimiser.score(cv_text, analysis)
-
-        if ats_result.overall_score < _ATS_THRESHOLD:
-            yield sse("improving_cv", 65, f"ATS score {ats_result.overall_score} — optimising...")
-            master_text = _master_cv_text(_load_master_cv())
-            grounded, gaps = _partition_ats_keywords(ats_result.missing_critical, master_text)
-            if grounded:
-                grounded_instruction = (
-                    f"Increase coverage of these keywords which the candidate already has: "
-                    f"{', '.join(grounded)}. Do not introduce any other new terms."
-                )
-            else:
-                grounded_instruction = (
-                    "Improve flow and ATS formatting. "
-                    "Do not introduce any keywords not already in the master CV."
-                )
-            other_suggestions = [
-                s for s in self._ats_optimiser.suggest_improvements(ats_result)
-                if not s.startswith("CRITICAL:")
-            ]
-            improvements = "\n".join([grounded_instruction] + other_suggestions[:3])
-            tailored_cv = await self._cv_tailor.tailor(analysis, variant, improvements)
-            if tailored_cv.blocking_issues:
-                yield sse(
-                    "error",
-                    0,
-                    json.dumps({
-                        "error": "Re-tailored CV still failed grounding checks — document withheld.",
-                        "issues": tailored_cv.blocking_issues,
-                    }),
-                )
-                return
-            cv_text = _cv_to_plain_text(tailored_cv)
-            ats_result = await self._ats_optimiser.score(cv_text, analysis)
 
         yield sse("generating_cl", 70, "Generating cover letter...")
         personal = _load_personal()

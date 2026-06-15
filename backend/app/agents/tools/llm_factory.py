@@ -341,7 +341,7 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
-            timeout=3600,  # 1-hour ceiling: 7 concurrent jobs × ~180s/call = 1260s queue wait
+            timeout=1800,
             model_kwargs={"extra_body": extra_body},
         ), model_name)
 
@@ -506,7 +506,7 @@ def get_json_model(schema: type[BaseModel] | None = None) -> BaseChatModel:
             openai_api_key="not-required",
             temperature=llm_cfg.temperature,
             max_retries=llm_cfg.max_retries,
-            timeout=3600,  # 1-hour ceiling: matches get_primary_model ceiling above
+            timeout=1800,
             model_kwargs={"response_format": response_format},
         ), llm_cfg.primary_model)
     return _build_model(llm_cfg.primary_model, llm_cfg)

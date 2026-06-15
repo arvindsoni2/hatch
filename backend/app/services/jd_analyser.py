@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..agents.tools.context_budgets import JD_ANALYSIS
 from ..prompts import render_prompt
 from ..schemas.tailor import ATSKeywords, JDAnalysisResult, SkillMatchResult
 from .llm_client import LLMClient
@@ -83,7 +84,11 @@ class JDAnalyser:
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt("jd_analysis.j2", job_description=job_description)
         )
-        raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt)
+        raw: dict[str, Any] = await self._client.complete_json(
+            system_prompt,
+            user_prompt,
+            max_tokens=JD_ANALYSIS.max_output,
+        )
         return _parse_jd_analysis(raw, len(job_description))
 
     async def analyse_from_job_posting(self, job_id: str, db: AsyncSession) -> JDAnalysisResult:

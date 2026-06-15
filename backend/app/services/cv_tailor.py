@@ -194,6 +194,11 @@ class CVTailor:
         )
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CV_GENERATE.max_output)
         result = _parse_tailored_cv(raw)
+        if best_summary and _summary_conflicts_with_role(result.summary, jd_analysis.role_title):
+            # Summaries are curated, grounded master-CV content. Keep the
+            # role-specific variant when a small local model rewrites the
+            # candidate into a different professional identity.
+            result.summary = best_summary
         result = _preserve_master_structure(result, master_cv)
 
         # Post-generation validation
@@ -207,6 +212,7 @@ class CVTailor:
 
         return result
 
+
     def _validate_no_fabrication(
         self, tailored: TailoredCVResult, master: dict[str, Any]
     ) -> tuple[list[str], list[str]]:
@@ -217,6 +223,25 @@ class CVTailor:
         """
         from .grounding_validator import validate  # noqa: PLC0415
         return validate(tailored, master)
+
+
+_ROLE_NOUNS = {
+    "analyst",
+    "architect",
+    "consultant",
+    "engineer",
+    "lead",
+    "manager",
+    "owner",
+}
+
+
+def _summary_conflicts_with_role(summary: str, role_title: str) -> bool:
+    target_roles = _ROLE_NOUNS.intersection(role_title.lower().split())
+    if not target_roles:
+        return False
+    summary_roles = _ROLE_NOUNS.intersection(summary.lower().split())
+    return not bool(target_roles.intersection(summary_roles))
 
 
 def _parse_tailored_cv(raw: dict[str, Any]) -> TailoredCVResult:
