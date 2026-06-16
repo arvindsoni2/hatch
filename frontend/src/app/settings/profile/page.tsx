@@ -176,11 +176,11 @@ export default function ProfileSettingsPage() {
       {/* Back + header */}
       <div>
         <Link
-          href="/"
+          href="/today"
           className="inline-flex items-center gap-1.5 text-sm mb-4"
           style={{ color: "var(--text-dim)" }}
         >
-          <ArrowLeft size={14} /> Back to Home
+          <ArrowLeft size={14} /> Back to Today
         </Link>
         <h1
           className="text-[28px] font-semibold"

@@ -1,7 +1,6 @@
 """Tests for debug-router gating behind LOG_LEVEL=DEBUG — SEC-5."""
 from __future__ import annotations
 
-import importlib
 import sys
 
 import pytest
@@ -49,3 +48,22 @@ async def test_debug_router_mounted_at_debug_level() -> None:
     async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as ac:
         r = await ac.get("/api/debug/llm-traces")
     assert r.status_code != 404
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_reports_backend_and_llm_services(monkeypatch) -> None:
+    """GET /api/debug/runtime-status returns runtime service health."""
+    import app.routers.debug as debug_mod
+
+    async def fake_probe(name: str, url: str) -> dict:
+        return {"name": name, "status": "online", "detail": url, "latency_ms": 12}
+
+    monkeypatch.setattr(debug_mod, "_probe_service", fake_probe)
+    application = _rebuild_app("INFO")
+    async with AsyncClient(transport=ASGITransport(app=application), base_url="http://test") as ac:
+        r = await ac.get("/api/debug/runtime-status")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert [service["name"] for service in data["services"]] == ["backend", "llm-primary", "llm-triage"]
+    assert all(service["status"] == "online" for service in data["services"])

@@ -41,6 +41,40 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
   );
 }
 
+function SkillBar({
+  label,
+  count,
+  max,
+  tone,
+}: {
+  label: string;
+  count: number;
+  max: number;
+  tone: "accent" | "danger";
+}) {
+  const width = max > 0 ? Math.max(8, Math.round((count / max) * 100)) : 0;
+  const color = tone === "danger" ? "var(--danger)" : "var(--accent)";
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="min-w-0 truncate font-medium" style={{ color: "var(--text-dim)" }}>{label}</span>
+        <span className="shrink-0 tabular-nums" style={{ color: "var(--text-muted)" }}>{count}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full" style={{ background: "var(--surface-2)" }}>
+        <div className="h-full rounded-full" style={{ width: `${width}%`, background: color }} />
+      </div>
+    </div>
+  );
+}
+
+function EmptySkillPanel({ message }: { message: string }) {
+  return (
+    <div className="rounded-lg px-4 py-8 text-center text-sm" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+      {message}
+    </div>
+  );
+}
+
 export default async function AnalyticsPage() {
   const [
     dashboard,
@@ -119,7 +153,7 @@ export default async function AnalyticsPage() {
           ) : (
             <p className="text-sm py-8 text-center" style={{ color: "var(--text-muted)" }}>
               Run the scorer agent to see the distribution.{" "}
-              <Link href="/" style={{ color: "var(--accent)" }} className="underline">Trigger from Home →</Link>
+              <Link href="/today" style={{ color: "var(--accent)" }} className="underline">Trigger from Today →</Link>
             </p>
           )}
         </div>
@@ -191,56 +225,89 @@ export default async function AnalyticsPage() {
         </div>
 
         {/* Section G: Skills */}
-        {skillFrequency && !skillFrequency.message && skillFrequency.skills.length > 0 && (
-          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Top Skills in Matched Jobs</h2>
-            <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
-              Keywords appearing most frequently across {skillFrequency.total_jobs_analyzed} scored jobs
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {skillFrequency.skills.map((s) => {
-                const maxCount = skillFrequency.skills[0]?.count ?? 1;
-                const opacity = 0.4 + 0.6 * (s.count / maxCount);
-                return (
-                  <span
-                    key={s.skill}
-                    className="rounded-full px-3 py-1 text-xs font-medium"
-                    style={{ opacity, background: "var(--accent-soft)", color: "var(--accent)" }}
-                  >
-                    {s.skill}
-                    <span className="ml-1.5" style={{ color: "var(--accent)", opacity: 0.7 }}>{s.count}</span>
-                  </span>
-                );
-              })}
+        <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Skill Demand & Profile Gaps</h2>
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Demand is counted across scored jobs; gaps are demanded skills missing from your profile.
+              </p>
             </div>
+            {skillFrequency && !skillFrequency.message && (
+              <span className="rounded-full px-2.5 py-1 text-xs font-medium" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+                {skillFrequency.total_jobs_analyzed} jobs analysed
+              </span>
+            )}
           </div>
-        )}
 
-        {/* Section G2: Skill Gaps */}
-        {skillGaps && !skillGaps.message && skillGaps.skills.length > 0 && (
-          <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Skill Gaps to Address</h2>
-            <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
-              Skills required by matched jobs that aren&apos;t in your profile — consider adding them
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {skillGaps.skills.map((s) => {
-                const maxCount = skillGaps.skills[0]?.count ?? 1;
-                const opacity = 0.4 + 0.6 * (s.count / maxCount);
-                return (
-                  <span
-                    key={s.skill}
-                    className="rounded-full px-3 py-1 text-xs font-medium"
-                    style={{ opacity, background: "var(--danger-soft)", color: "var(--danger)" }}
-                  >
-                    {s.skill}
-                    <span className="ml-1.5" style={{ opacity: 0.7 }}>{s.count}</span>
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        )}
+          {(() => {
+            const demand = skillFrequency && !skillFrequency.message ? skillFrequency.skills.slice(0, 8) : [];
+            const gaps = skillGaps && !skillGaps.message ? skillGaps.skills.slice(0, 8) : [];
+            const gapNames = new Set(gaps.map((s) => s.skill.toLowerCase()));
+            const overlap = demand.filter((s) => gapNames.has(s.skill.toLowerCase())).slice(0, 4);
+            const maxDemand = Math.max(1, ...demand.map((s) => s.count));
+            const maxGap = Math.max(1, ...gaps.map((s) => s.count));
+
+            return (
+              <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr_0.8fr]">
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-dim)" }}>Market Demand</h3>
+                    <p className="mt-0.5 text-xs" style={{ color: "var(--text-muted)" }}>Most repeated skills in matched jobs.</p>
+                  </div>
+                  {demand.length > 0 ? (
+                    <div className="space-y-3">
+                      {demand.map((s) => <SkillBar key={s.skill} label={s.skill} count={s.count} max={maxDemand} tone="accent" />)}
+                    </div>
+                  ) : (
+                    <EmptySkillPanel message={skillFrequency?.message ?? "Score more jobs to see skill demand."} />
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-dim)" }}>Missing From Profile</h3>
+                    <p className="mt-0.5 text-xs" style={{ color: "var(--text-muted)" }}>Add only skills you can honestly evidence.</p>
+                  </div>
+                  {gaps.length > 0 ? (
+                    <div className="space-y-3">
+                      {gaps.map((s) => <SkillBar key={s.skill} label={s.skill} count={s.count} max={maxGap} tone="danger" />)}
+                    </div>
+                  ) : (
+                    <EmptySkillPanel message={skillGaps?.message ?? "No missing skills detected in the analysed jobs."} />
+                  )}
+                </div>
+
+                <div className="rounded-lg p-4" style={{ background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-dim)" }}>Next Action</h3>
+                  {gaps.length > 0 ? (
+                    <>
+                      <p className="mt-2 text-sm" style={{ color: "var(--text)" }}>
+                        Prioritise the top {Math.min(3, gaps.length)} missing skills when updating your CV, then rerun tailoring.
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {gaps.slice(0, 3).map((s) => (
+                          <span key={s.skill} className="rounded-full px-2 py-0.5 text-xs font-medium" style={{ background: "var(--danger-soft)", color: "var(--danger)" }}>
+                            {s.skill}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="mt-2 text-sm" style={{ color: "var(--text)" }}>
+                      Your profile covers the detected demand. Use score distribution and ATS response rate to tune applications.
+                    </p>
+                  )}
+                  {overlap.length > 0 && (
+                    <p className="mt-3 text-xs" style={{ color: "var(--text-muted)" }}>
+                      High-demand gaps: {overlap.map((s) => s.skill).join(", ")}.
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
 
         {/* Section H: Rate Limit Health */}
         {rateLimitStatus && (

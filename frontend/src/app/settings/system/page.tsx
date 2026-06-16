@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft, RefreshCw, Download, RotateCcw,
-  Loader2, Trash2, Zap,
+  Loader2, Trash2, Zap, Server, Activity, Cpu, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { API_BASE } from "@/lib/api";
@@ -43,6 +44,18 @@ interface CostSummary {
   total_calls: number;
 }
 
+interface RuntimeService {
+  name: string;
+  status: "online" | "degraded" | "offline";
+  detail: string;
+  latency_ms: number;
+}
+
+interface RuntimeStatus {
+  services: RuntimeService[];
+  checked_at: number;
+}
+
 const STATUS_BADGE: Record<string, string> = {
   completed: "bg-green-100 text-green-700",
   failed: "bg-red-100 text-red-700",
@@ -57,6 +70,24 @@ const AGENT_COLORS: Record<string, string> = {
   coach: "bg-purple-100 text-purple-700",
 };
 
+const SERVICE_LABELS: Record<string, { label: string; icon: ReactNode }> = {
+  backend: { label: "Backend API", icon: <Server className="h-4 w-4" aria-hidden="true" /> },
+  "llm-primary": { label: "Primary LLM", icon: <Cpu className="h-4 w-4" aria-hidden="true" /> },
+  "llm-triage": { label: "Triage LLM", icon: <Zap className="h-4 w-4" aria-hidden="true" /> },
+};
+
+function money(amount: number): string {
+  if (amount === 0) return "$0.00";
+  if (amount < 0.01) return `$${amount.toFixed(5)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
+function serviceTone(status: RuntimeService["status"]) {
+  if (status === "online") return { text: "var(--success)", bg: "var(--success-soft)", label: "Online" };
+  if (status === "degraded") return { text: "var(--warning)", bg: "var(--warning-soft)", label: "Degraded" };
+  return { text: "var(--danger)", bg: "var(--danger-soft)", label: "Offline" };
+}
+
 export default function SystemLogPage() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -64,6 +95,7 @@ export default function SystemLogPage() {
   const [offset, setOffset] = useState(0);
   const [filter, setFilter] = useState({ agent: "", status: "", type: "" });
   const [costs, setCosts] = useState<CostSummary | null>(null);
+  const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [traces, setTraces] = useState<LLMTrace[]>([]);
   const [expandedTrace, setExpandedTrace] = useState<number | null>(null);
@@ -107,6 +139,15 @@ export default function SystemLogPage() {
     }
   }, []);
 
+  const loadRuntime = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/debug/runtime-status`);
+      if (res.ok) setRuntime(await res.json());
+    } catch {
+      // runtime status is advisory
+    }
+  }, []);
+
   const clearTraces = async () => {
     await fetch(`${API_BASE}/api/debug/llm-traces`, { method: "DELETE" });
     setTraces([]);
@@ -115,11 +156,15 @@ export default function SystemLogPage() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadCosts(); }, [loadCosts]);
+  useEffect(() => { void loadRuntime(); }, [loadRuntime]);
   useEffect(() => {
     void loadTraces();
-    traceTimerRef.current = setInterval(() => { void loadTraces(); }, 10_000);
+    traceTimerRef.current = setInterval(() => {
+      void loadTraces();
+      void loadRuntime();
+    }, 10_000);
     return () => { if (traceTimerRef.current) clearInterval(traceTimerRef.current); };
-  }, [loadTraces]);
+  }, [loadRuntime, loadTraces]);
 
   const retryEvent = async (id: string) => {
     setRetrying(id);
@@ -150,13 +195,13 @@ export default function SystemLogPage() {
       {/* Back nav */}
       <div className="flex items-center justify-between">
         <Link
-          href="/settings"
+          href="/today"
           className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
         >
-          <ArrowLeft className="h-4 w-4" /> Settings
+          <ArrowLeft className="h-4 w-4" /> Today
         </Link>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void load()}>
+          <Button variant="outline" size="sm" onClick={() => { void load(); void loadRuntime(); void loadTraces(); }}>
             <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh
           </Button>
           <Button variant="outline" size="sm" onClick={exportCsv}>
@@ -165,28 +210,77 @@ export default function SystemLogPage() {
         </div>
       </div>
 
-      <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>System Event Log</h1>
+      <div>
+        <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>System Logs</h1>
+        <p className="mt-1 text-sm text-muted">
+          Runtime health, LLM calls, and agent events from the local Hatch stack.
+        </p>
+      </div>
+
+      {/* Runtime health */}
+      <div className="grid gap-3 md:grid-cols-3">
+        {(runtime?.services ?? [
+          { name: "backend", status: "degraded" as const, detail: "Checking…", latency_ms: 0 },
+          { name: "llm-primary", status: "degraded" as const, detail: "Checking…", latency_ms: 0 },
+          { name: "llm-triage", status: "degraded" as const, detail: "Checking…", latency_ms: 0 },
+        ]).map((service) => {
+          const meta = SERVICE_LABELS[service.name] ?? { label: service.name, icon: <Activity className="h-4 w-4" aria-hidden="true" /> };
+          const tone = serviceTone(service.status);
+          return (
+            <div key={service.name} className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="grid h-8 w-8 place-items-center rounded-lg" style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}>
+                    {meta.icon}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold truncate" style={{ color: "var(--text)" }}>{meta.label}</p>
+                    <p className="text-xs text-muted truncate">{service.detail}</p>
+                  </div>
+                </div>
+                <span className="rounded-full px-2 py-0.5 text-xs font-semibold" style={{ background: tone.bg, color: tone.text }}>
+                  {tone.label}
+                </span>
+              </div>
+              <div className="mt-3 flex items-center gap-1 text-xs text-muted tabular-nums">
+                <Activity className="h-3.5 w-3.5" aria-hidden="true" />
+                {service.latency_ms > 0 ? `${service.latency_ms} ms probe` : "local process"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
       {/* Cost summary */}
-      {costs && costs.total_calls > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
             <p className="text-xs text-muted">Total LLM cost (30d)</p>
-            <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>${costs.total_cost_usd.toFixed(4)}</p>
+            <p className="text-xl font-bold tabular-nums" style={{ color: 'var(--text)' }}>{money(costs?.total_cost_usd ?? 0)}</p>
             <p className="text-xs text-muted">USD</p>
           </div>
           <div className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
             <p className="text-xs text-muted">LLM calls (30d)</p>
-            <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>{costs.total_calls.toLocaleString()}</p>
+            <p className="text-xl font-bold tabular-nums" style={{ color: 'var(--text)' }}>{(costs?.total_calls ?? traces.length).toLocaleString()}</p>
+            <p className="text-xs text-muted">{costs ? "tracked costs" : "recent trace buffer"}</p>
           </div>
-          {Object.entries(costs.by_agent).map(([agent, cost]) => (
+          {Object.entries(costs?.by_agent ?? {}).slice(0, 2).map(([agent, cost]) => (
             <div key={agent} className="rounded-xl p-4 shadow-sm" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
               <p className="text-xs text-muted capitalize">{agent} agent cost</p>
-              <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>${cost.toFixed(4)}</p>
+              <p className="text-xl font-bold tabular-nums" style={{ color: 'var(--text)' }}>{money(cost)}</p>
             </div>
           ))}
-        </div>
-      )}
+          {(!costs || Object.keys(costs.by_agent).length === 0) && (
+            <div className="rounded-xl p-4 shadow-sm sm:col-span-2" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-500" aria-hidden="true" />
+                <div>
+                  <p className="text-xs font-medium" style={{ color: "var(--text)" }}>No cost breakdown yet</p>
+                  <p className="mt-1 text-xs text-muted">Costs and per-agent spend populate after LLM-backed agent runs.</p>
+                </div>
+              </div>
+            </div>
+          )}
+      </div>
 
       {/* LLM Traces */}
       <div className="rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
