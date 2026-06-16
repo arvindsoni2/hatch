@@ -6,7 +6,7 @@ from typing import Generic, TypeVar
 
 import json
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -98,6 +98,11 @@ class JobPostingRead(BaseModel):
     fit_reasoning: str | None = None           # LLM holistic rationale paragraph
     score_strengths: list[str] | None = None   # 2-3 specific strengths
     score_gaps: list[str] | None = None        # genuine gaps
+    opportunity_score: float | None = None
+    outcome_adjustment: float | None = None
+    outcome_confidence: str | None = None
+    outcome_sample_size: int | None = None
+    outcome_reasons: list[dict] = Field(default_factory=list)
 
     @field_validator("ghost_signals", mode="before")
     @classmethod

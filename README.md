@@ -211,3 +211,10 @@ This is destructive and should only be used when intentionally starting again.
 - Tailoring may rephrase verified experience and align terminology, but must not fabricate claims.
 - Local AI keeps prompts on the machine. Cloud providers receive prompts when explicitly configured.
 - Raw webcam video used by optional interview practice is processed in the browser and is not uploaded.
+- Optional Coach presence analysis sends only numeric camera-attention and head-stability summaries. It can be disabled and its saved consent revoked in Profile Settings.
+
+## Outcome Learning
+
+Hatch can calculate a separate **opportunity score** from your own resolved application history. The existing fit score remains unchanged. Opportunity adjustments are deterministic, capped, calculated locally without an LLM or embeddings, and exclude protected personal characteristics, company identity, recruiter details, notes, and document contents.
+
+Learning activates after the configured minimum number of resolved applications. Applications without a response become eligible negatives only after the configured no-response window. Withdrawn and declined applications are excluded. Profile Settings can disable individual signals, recompute scores, or reset the learning window without deleting application history.

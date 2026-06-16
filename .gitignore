@@ -156,5 +156,10 @@ models/*.bin
 data/models/
 
 # Agent skills — installed locally, not part of the project
+AGENTS.md
+.ai/
+.codex/
 .agents/
+.opencode/
 .claude/skills/
+opencode.json

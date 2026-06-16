@@ -319,11 +319,26 @@ async def update_application(
     Raises:
         HTTPException 404: If not found.
     """
+    before = await service._repo.get_by_id(app_id)
     updated = await service._repo.update(app_id, data)
     if updated is None:
         raise HTTPException(
             status_code=404, detail=f"Application '{app_id}' not found."
         )
+    recompute_needed = False
+    if data.response_received is True and before:
+        from ..services.outcome_event_service import record_outcome
+        recompute_needed = await record_outcome(service._repo._session, app_id, "recruiter_response", data.response_date, source="application_update") or recompute_needed
+    if data.status == "applied":
+        from ..services.application_snapshot_service import create_snapshot
+        _, created = await create_snapshot(service._repo._session, app_id)
+        recompute_needed = created or recompute_needed
+    elif data.status:
+        from ..services.outcome_event_service import record_status_outcome
+        recompute_needed = await record_status_outcome(service._repo._session, app_id, data.status) or recompute_needed
+    if recompute_needed:
+        from ..services.outcome_learning_service import recompute_active_jobs
+        await recompute_active_jobs(service._repo._session)
     return updated
 
 

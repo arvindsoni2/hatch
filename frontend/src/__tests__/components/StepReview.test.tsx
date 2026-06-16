@@ -11,7 +11,7 @@ const props = {
   skills: { primary: ["leadership", "cloud", "agile"], secondary: [], certifications: [] },
   llm: {
     provider: "google", triage_model: "gemini-2.5-flash-lite", primary_model: "gemini-2.5-flash",
-    api_key_env: "GOOGLE_API_KEY", base_url: null, temperature: 0.3, max_retries: 3,
+    api_key_env: "GOOGLE_API_KEY", base_url: null, triage_base_url: "", temperature: 0.3, max_retries: 3,
     track_costs: true, monthly_budget: 15, currency: "USD",
   },
   enabledBoardsCount: 3,

@@ -100,3 +100,15 @@ preferences:
   max_tailor_batch: 5
   follow_up_days: [5, 10, 15]
   archive_after_days: 30
+
+# Local deterministic learning from your own resolved application history.
+outcome_learning:
+  enabled: true
+  minimum_total_applications: 15
+  minimum_segment_size: 5
+  maximum_score_adjustment: 0.10
+  maximum_signal_adjustment: 0.04
+  no_response_after_days: 35
+  recency_half_life_days: 120
+  enabled_signals: [source, role_family, seniority, working_pattern, employment_type, freshness]
+  learning_since: null

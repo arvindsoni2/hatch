@@ -87,6 +87,13 @@ class AnswerEvaluatorService:
             evaluation,
             speech_metrics=speech_metrics,
             tone_result=tone_result,
+            face_summary=(
+                {
+                    "eye_contact_pct": video_metrics.eye_contact_pct / 100.0,
+                    "head_stability": video_metrics.head_stability,
+                }
+                if video_metrics else None
+            ),
         )
         return evaluation
 

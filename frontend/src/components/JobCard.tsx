@@ -10,6 +10,7 @@ import { ScoreBadge } from "@/components/ScoreBadge";
 import { GhostBadge } from "@/components/GhostBadge";
 import { cn } from "@/lib/utils";
 import { formatJobRateFull } from "@/lib/currency";
+import { OpportunityScoreBadge } from "@/components/OpportunityScoreBadge";
 
 const SOURCE_LABELS: Record<string, string> = {
   contractoruk: "ContractorUK",
@@ -75,6 +76,18 @@ export function JobCard({ job, threshold = 0.75, currencySymbol = "£" }: JobCar
       <div className="shrink-0 w-12 flex justify-center">
         <ScoreBadge score={job.match_score} threshold={threshold} dimensions={dimensions} />
       </div>
+
+      {job.opportunity_score != null && job.outcome_confidence && (
+        <div className="hidden shrink-0 sm:block">
+          <OpportunityScoreBadge
+            score={job.opportunity_score}
+            adjustment={job.outcome_adjustment ?? 0}
+            confidence={job.outcome_confidence}
+            sampleSize={job.outcome_sample_size ?? 0}
+            reasons={job.outcome_reasons ?? []}
+          />
+        </div>
+      )}
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">

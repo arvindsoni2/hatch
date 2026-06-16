@@ -4,12 +4,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession
 from langchain.chat_models import init_chat_model
 from pydantic import ValidationError
 
 from ..agents.tools.profile_loader import invalidate_cache
 from ..schemas.profile import Profile
+from ..database import get_db
+from ..models.opportunity_score import OpportunityScore
 from ..services.profile_service import (
     load_profile,
     load_profile_raw,
@@ -55,13 +59,23 @@ async def get_validated_profile() -> Profile:
 
 
 @router.put("", response_model=dict[str, Any])
-async def update_profile(data: dict[str, Any]) -> dict[str, Any]:
+async def update_profile(data: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """Replace profile.yaml with the submitted data. Validates before writing."""
     errors = validate_profile_data(data)
     if errors:
         raise HTTPException(status_code=422, detail={"validation_errors": errors})
+    try:
+        previous = load_profile().outcome_learning
+    except Exception:
+        previous = None
     profile = save_profile_raw(data)
     invalidate_cache()
+    if previous != profile.outcome_learning:
+        if not profile.outcome_learning.enabled:
+            await db.execute(delete(OpportunityScore))
+        else:
+            from ..services.outcome_learning_service import recompute_active_jobs
+            await recompute_active_jobs(db)
     return profile.model_dump()
 
 

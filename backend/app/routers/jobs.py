@@ -136,6 +136,7 @@ async def list_jobs(
     posted_after: Optional[datetime] = Query(default=None, description="ISO datetime — return only jobs posted after this time"),
     min_match_score: Optional[float] = Query(default=None, ge=0, le=100, description="Minimum AI match score"),
     hide_ghosts: bool = Query(default=True, description="Exclude likely_ghost listings (default True)"),
+    sort_by: str = Query(default="newest", pattern="^(newest|fit|opportunity|rate)$"),
     service: JobService = Depends(get_job_service),
 ) -> PaginatedResponse[JobPostingRead]:
     """List active job postings with optional filtering and pagination.
@@ -170,6 +171,7 @@ async def list_jobs(
         posted_after=posted_after,
         min_match_score=min_match_score,
         hide_ghosts=hide_ghosts,
+        sort_by=sort_by,
     )
     return PaginatedResponse(items=items, total=total, skip=skip, limit=limit)
 

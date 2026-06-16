@@ -38,7 +38,12 @@ async def create_interview(
     Returns:
         Created InterviewRoundRead.
     """
-    return await repo.create(data)
+    interview = await repo.create(data)
+    from ..services.outcome_event_service import record_outcome
+    from ..services.outcome_learning_service import recompute_active_jobs
+    await record_outcome(repo._session, data.application_id, "interview", data.scheduled_at, source="interview_round")
+    await recompute_active_jobs(repo._session)
+    return interview
 
 
 @router.get("/upcoming", response_model=list[InterviewRoundRead])

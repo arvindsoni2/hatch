@@ -5,9 +5,10 @@ the structure on load so agents fail fast with clear errors rather than KeyError
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class CandidateConfig(BaseModel):
@@ -126,6 +127,36 @@ class PerceptionConfig(BaseModel):
     tts: TTSConfig = Field(default_factory=TTSConfig)
 
 
+OutcomeSignal = Literal["source", "role_family", "seniority", "working_pattern", "employment_type", "freshness"]
+
+
+class OutcomeLearningConfig(BaseModel):
+    enabled: bool = True
+    minimum_total_applications: int = Field(default=15, ge=5)
+    minimum_segment_size: int = Field(default=5, ge=3)
+    maximum_score_adjustment: float = Field(default=0.10, ge=0.0, le=0.20)
+    maximum_signal_adjustment: float = Field(default=0.04, ge=0.0)
+    no_response_after_days: int = Field(default=35, ge=14, le=120)
+    recency_half_life_days: int = Field(default=120, ge=30, le=730)
+    enabled_signals: list[OutcomeSignal] = Field(default_factory=lambda: [
+        "source", "role_family", "seniority", "working_pattern", "employment_type", "freshness",
+    ])
+    learning_since: datetime | None = None
+
+    @field_validator("enabled_signals")
+    @classmethod
+    def deduplicate_signals(cls, values: list[OutcomeSignal]) -> list[OutcomeSignal]:
+        return list(dict.fromkeys(values))
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> "OutcomeLearningConfig":
+        if self.minimum_segment_size > self.minimum_total_applications:
+            raise ValueError("minimum_segment_size cannot exceed minimum_total_applications")
+        if self.maximum_signal_adjustment > self.maximum_score_adjustment:
+            raise ValueError("maximum_signal_adjustment cannot exceed maximum_score_adjustment")
+        return self
+
+
 class LLMConfig(BaseModel):
     provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp"] = "llamacpp"
     triage_model: str = "qwen3.5-0.8b-q8_0"
@@ -168,6 +199,7 @@ class Profile(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
+    outcome_learning: OutcomeLearningConfig = Field(default_factory=OutcomeLearningConfig)
 
     def is_complete(self) -> bool:
         """Return True if the profile has enough data for agents to run."""

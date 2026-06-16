@@ -56,6 +56,11 @@ export interface Job {
   ghost_verdict: string | null;
   ghost_signals: unknown[] | null;
   ghost_analysed_at: string | null;
+  opportunity_score?: number | null;
+  outcome_adjustment?: number | null;
+  outcome_confidence?: "insufficient" | "low" | "medium" | "high" | null;
+  outcome_sample_size?: number | null;
+  outcome_reasons?: OutcomeReason[];
 }
 
 export interface PaginatedResponse<T> {
@@ -93,6 +98,7 @@ export interface JobFilters {
   posted_after?: string;
   // Ghost filter
   hide_ghosts?: boolean;
+  sort_by?: "newest" | "fit" | "opportunity" | "rate";
 }
 
 // ──────────────────────── Helpers ────────────────────────
@@ -147,6 +153,7 @@ export async function fetchJobs(
     ...(filters.min_match_score !== undefined ? { min_match_score: filters.min_match_score } : {}),
     ...(filters.posted_after ? { posted_after: filters.posted_after } : {}),
     ...(filters.hide_ghosts !== undefined ? { hide_ghosts: filters.hide_ghosts } : {}),
+    ...(filters.sort_by ? { sort_by: filters.sort_by } : {}),
   };
   const qs = buildQueryString(params);
   return apiFetch<PaginatedResponse<Job>>(`/api/jobs${qs}`);
@@ -172,6 +179,62 @@ export async function fetchStats(): Promise<StatsResponse> {
 export async function triggerScrape(source?: string): Promise<ScrapeResult[]> {
   const qs = source ? `?source=${encodeURIComponent(source)}` : "";
   return apiFetch<ScrapeResult[]>(`/api/jobs/scrape${qs}`, { method: "POST" });
+}
+
+export interface OutcomeReason {
+  signal: string;
+  value: string;
+  direction: "positive" | "negative";
+  contribution: number;
+  segment_rate: number;
+  baseline_rate: number;
+  sample_size: number;
+  message: string;
+}
+
+export interface VariantRecommendation {
+  document_type: "cv" | "cover_letter";
+  recommended_variant: string;
+  reason: string;
+  sample_size: number;
+  confidence: string;
+}
+
+export interface OutcomeLearningSummary {
+  enabled: boolean;
+  model_version: string;
+  confidence: "insufficient" | "low" | "medium" | "high";
+  resolved_applications: number;
+  effective_sample_size: number;
+  positive_responses: number;
+  global_response_rate: number;
+  minimum_required: number;
+  additional_required: number;
+  learning_since: string | null;
+  top_positive_signals: OutcomeReason[];
+  top_negative_signals: OutcomeReason[];
+  variant_recommendations: VariantRecommendation[];
+  variant_performance: Record<string, Array<Record<string, string | number>>>;
+  last_recomputed_at: string | null;
+}
+
+export async function fetchOutcomeLearningSummary(): Promise<OutcomeLearningSummary> {
+  return apiFetch<OutcomeLearningSummary>("/api/outcome-learning/summary", { cache: "no-store" });
+}
+
+export async function recomputeOutcomeLearning(): Promise<Record<string, unknown>> {
+  return apiFetch<Record<string, unknown>>("/api/outcome-learning/recompute", { method: "POST" });
+}
+
+export async function backfillOutcomeLearning(): Promise<Record<string, unknown>> {
+  return apiFetch<Record<string, unknown>>("/api/outcome-learning/backfill", { method: "POST" });
+}
+
+export async function resetOutcomeLearning(): Promise<{ learning_since: string }> {
+  return apiFetch<{ learning_since: string }>("/api/outcome-learning/reset", {
+    method: "POST",
+    body: JSON.stringify({ confirmation: "RESET" }),
+  });
 }
 
 /**
@@ -1566,6 +1629,18 @@ export interface RawProfile {
   preferences?: { scrape_interval_hours?: number; max_tailor_batch?: number };
   scoring?: { shortlist_threshold?: number };
   llm?: { provider?: string; primary_model?: string; triage_model?: string };
+  perception?: { face?: { provider?: string; enabled?: boolean } };
+  outcome_learning?: {
+    enabled?: boolean;
+    minimum_total_applications?: number;
+    minimum_segment_size?: number;
+    maximum_score_adjustment?: number;
+    maximum_signal_adjustment?: number;
+    no_response_after_days?: number;
+    recency_half_life_days?: number;
+    enabled_signals?: string[];
+    learning_since?: string | null;
+  };
 }
 
 export async function fetchRawProfile(): Promise<RawProfile> {

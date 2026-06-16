@@ -70,6 +70,10 @@ class ApplicationUpdate(BaseModel):
     agency_name: str | None = None
     salary_offered: float | None = None
     rejection_reason: str | None = None
+    cv_variant: str | None = None
+    cl_variant: str | None = None
+    response_received: bool | None = None
+    response_date: datetime | None = None
 
 
 class ApplicationStatusUpdate(BaseModel):

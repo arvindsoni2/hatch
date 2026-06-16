@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.job import JobPosting, ScrapeLog
 from ..models.job_score import JobScore
+from ..models.opportunity_score import OpportunityScore
 from ..schemas.ghost import GhostScore, GhostStats
 from ..schemas.job import (
     JobPostingCreate,
@@ -91,6 +92,7 @@ class JobRepository:
         min_match_score: float | None = None,
         ghost_verdict: str | None = None,
         hide_ghosts: bool = True,
+        sort_by: str = "newest",
     ) -> tuple[list[JobPostingRead], int]:
         """List active job postings with optional filters and pagination.
 
@@ -156,9 +158,23 @@ class JobRepository:
         )
         total = count_result.scalar_one()
 
-        # Order by match_score when filtering by score, else by scraped_at
-        if min_match_score is not None:
+        if sort_by == "opportunity":
+            try:
+                from ..agents.tools.profile_loader import load_profile
+                if not load_profile().outcome_learning.enabled:
+                    sort_by = "fit"
+            except Exception:
+                sort_by = "fit"
+        if sort_by == "opportunity":
+            query = query.outerjoin(OpportunityScore, OpportunityScore.job_id == JobPosting.id).order_by(
+                OpportunityScore.opportunity_score.desc().nullslast(),
+                JobPosting.match_score.desc().nullslast(),
+                JobPosting.scraped_at.desc(),
+            )
+        elif sort_by == "fit" or min_match_score is not None:
             query = query.order_by(JobPosting.match_score.desc().nullslast(), JobPosting.scraped_at.desc())
+        elif sort_by == "rate":
+            query = query.order_by(JobPosting.rate_max.desc().nullslast(), JobPosting.rate_min.desc().nullslast(), JobPosting.scraped_at.desc())
         else:
             query = query.order_by(JobPosting.scraped_at.desc())
 
@@ -168,12 +184,23 @@ class JobRepository:
 
         # Bulk-fetch per-dimension scores for these jobs in one query
         score_map: dict[str, JobScore] = {}
+        opportunity_map: dict[str, OpportunityScore] = {}
         if rows:
             job_ids = [r.id for r in rows]
             score_res = await self._session.execute(
                 select(JobScore).where(JobScore.job_id.in_(job_ids))
             )
             score_map = {s.job_id: s for s in score_res.scalars().all()}
+            try:
+                from ..agents.tools.profile_loader import load_profile
+                learning_enabled = load_profile().outcome_learning.enabled
+            except Exception:
+                learning_enabled = False
+            if learning_enabled:
+                opportunity_res = await self._session.execute(
+                    select(OpportunityScore).where(OpportunityScore.job_id.in_(job_ids))
+                )
+                opportunity_map = {s.job_id: s for s in opportunity_res.scalars().all()}
 
         items: list[JobPostingRead] = []
         for r in rows:
@@ -195,6 +222,15 @@ class JobRepository:
                         "score_gaps": getattr(s, "score_gaps", None),
                     }
                 )
+            if r.id in opportunity_map:
+                outcome = opportunity_map[r.id]
+                posting = posting.model_copy(update={
+                    "opportunity_score": outcome.opportunity_score,
+                    "outcome_adjustment": outcome.outcome_adjustment,
+                    "outcome_confidence": outcome.confidence,
+                    "outcome_sample_size": outcome.raw_sample_size,
+                    "outcome_reasons": outcome.reasons or [],
+                })
             items.append(posting)
         return items, total
 

@@ -79,6 +79,14 @@ class ApplicationService:
         """
         app = await self._repo.create(data)
         await self._repo.log_activity(app.id, action="created", detail=f"status={app.status}")
+        if app.status == "applied":
+            from .application_snapshot_service import create_snapshot
+            from .outcome_learning_service import recompute_active_jobs
+            await create_snapshot(self._repo._session, app.id)
+            await recompute_active_jobs(self._repo._session)
+        elif app.status in {"interview", "offered", "accepted", "rejected", "withdrawn", "declined"}:
+            from .outcome_event_service import record_status_outcome
+            await record_status_outcome(self._repo._session, app.id, app.status)
         logger.info("Application created: %s (status=%s)", app.id, app.status)
         return app
 
@@ -121,6 +129,16 @@ class ApplicationService:
                 status_code=404,
                 detail=f"Application '{app_id}' not found after update.",
             )
+
+        db = self._repo._session
+        if status_update.status == "applied":
+            from .application_snapshot_service import create_snapshot
+            await create_snapshot(db, app_id)
+        from .outcome_event_service import record_status_outcome
+        outcome_created = await record_status_outcome(db, app_id, status_update.status)
+        if status_update.status == "applied" or outcome_created:
+            from .outcome_learning_service import recompute_active_jobs
+            await recompute_active_jobs(db)
 
         # Create automatic follow-up tasks based on new status
         await self._create_status_follow_ups(app_id, status_update.status)

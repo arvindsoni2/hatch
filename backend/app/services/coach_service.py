@@ -267,6 +267,12 @@ class CoachService:
                 evaluation=evaluation,
                 speech_metrics=speech_metrics,
             )
+            if video_metrics and evaluation.rubric:
+                from .rubric_builder import build_presence_dimension
+                evaluation.rubric.dimensions["presence"] = build_presence_dimension({
+                    "eye_contact_pct": video_metrics.eye_contact_pct / 100.0,
+                    "head_stability": video_metrics.head_stability,
+                })
         except Exception as exc:
             logger.warning("Rubric synthesis skipped: %s", exc)
 

@@ -2,13 +2,13 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, Save, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertCircle, CheckCircle2, Camera, BrainCircuit } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, recomputeOutcomeLearning, resetOutcomeLearning } from "@/lib/api";
 
 async function fetchProfile(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_BASE}/api/v2/profile`);
@@ -107,6 +107,7 @@ export default function ProfileSettingsPage() {
   const [savedOk, setSavedOk] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
+  const [learningAction, setLearningAction] = useState<"recompute" | "reset" | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -467,6 +468,86 @@ export default function ProfileSettingsPage() {
       </SectionCard>
 
       {/* LLM Provider */}
+      <SectionCard title="Coach & Privacy">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--text)" }}>
+              <Camera className="h-4 w-4" /> Camera-based presence analysis
+            </div>
+            <p className="mt-1 max-w-xl text-xs" style={{ color: "var(--text-muted)" }}>
+              Makes Video mode available in Coach. MediaPipe processes the webcam locally and uploads only numeric summaries for approximate camera attention and head stability. Raw video is not uploaded.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(get(["perception", "face", "enabled"], false))}
+            onClick={() => update(["perception", "face", "enabled"], !Boolean(get(["perception", "face", "enabled"], false)))}
+            className="rounded-full px-3 py-1.5 text-xs font-medium"
+            style={{
+              background: Boolean(get(["perception", "face", "enabled"], false)) ? "var(--success-soft)" : "var(--surface-2)",
+              border: `1px solid ${Boolean(get(["perception", "face", "enabled"], false)) ? "var(--success)" : "var(--border)"}`,
+              color: Boolean(get(["perception", "face", "enabled"], false)) ? "var(--success)" : "var(--text-dim)",
+            }}
+          >
+            {Boolean(get(["perception", "face", "enabled"], false)) ? "Enabled" : "Disabled"}
+          </button>
+        </div>
+        <button
+          type="button"
+          className="text-xs underline"
+          style={{ color: "var(--text-dim)" }}
+          onClick={() => {
+            localStorage.removeItem("face_consent_given");
+            setSavedOk(true);
+            setTimeout(() => setSavedOk(false), 3000);
+          }}
+        >
+          Revoke saved camera-analysis consent
+        </button>
+      </SectionCard>
+
+      <SectionCard title="Outcome Learning">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--text)" }}>
+              <BrainCircuit className="h-4 w-4" /> Learn from application outcomes
+            </div>
+            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              Adds a bounded opportunity adjustment to fit scores using only your resolved application history. Calculation is local, deterministic, and never uses protected personal data or an LLM.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={Boolean(get(["outcome_learning", "enabled"], true))}
+            onClick={() => update(["outcome_learning", "enabled"], !Boolean(get(["outcome_learning", "enabled"], true)))}
+            className="rounded-full px-3 py-1.5 text-xs font-medium"
+            style={{ background: Boolean(get(["outcome_learning", "enabled"], true)) ? "var(--success-soft)" : "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
+          >
+            {Boolean(get(["outcome_learning", "enabled"], true)) ? "Enabled" : "Disabled"}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Field label="Minimum resolved applications"><Input className={inputCls} style={inputStyle} type="number" min="5" value={String(get(["outcome_learning", "minimum_total_applications"], 15))} onChange={(e) => update(["outcome_learning", "minimum_total_applications"], Number(e.target.value))} /></Field>
+          <Field label="No-response window (days)"><Input className={inputCls} style={inputStyle} type="number" min="14" max="120" value={String(get(["outcome_learning", "no_response_after_days"], 35))} onChange={(e) => update(["outcome_learning", "no_response_after_days"], Number(e.target.value))} /></Field>
+          <Field label="Recency half-life (days)"><Input className={inputCls} style={inputStyle} type="number" min="30" max="730" value={String(get(["outcome_learning", "recency_half_life_days"], 120))} onChange={(e) => update(["outcome_learning", "recency_half_life_days"], Number(e.target.value))} /></Field>
+          <Field label="Maximum adjustment"><Input className={inputCls} style={inputStyle} type="number" min="0" max="0.2" step="0.01" value={String(get(["outcome_learning", "maximum_score_adjustment"], 0.1))} onChange={(e) => update(["outcome_learning", "maximum_score_adjustment"], Number(e.target.value))} /></Field>
+        </div>
+        <Field label="Learning signals">
+          <div className="flex flex-wrap gap-2">
+            {["source", "role_family", "seniority", "working_pattern", "employment_type", "freshness"].map((signal) => {
+              const enabled = (get(["outcome_learning", "enabled_signals"], []) as string[]).includes(signal);
+              return <label key={signal} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs" style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}><input type="checkbox" checked={enabled} onChange={() => { const current = get(["outcome_learning", "enabled_signals"], []) as string[]; update(["outcome_learning", "enabled_signals"], enabled ? current.filter((item) => item !== signal) : [...current, signal]); }} />{signal.replaceAll("_", " ")}</label>;
+            })}
+          </div>
+        </Field>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" disabled={learningAction !== null || dirty} onClick={async () => { setLearningAction("recompute"); setError(""); try { await recomputeOutcomeLearning(); setSavedOk(true); } catch (e) { setError(e instanceof Error ? e.message : "Recompute failed"); } finally { setLearningAction(null); } }}>{learningAction === "recompute" ? "Recomputing..." : "Recompute now"}</Button>
+          <Button type="button" variant="outline" disabled={learningAction !== null || dirty} onClick={async () => { if (!window.confirm("This starts a new learning window. It does not delete applications or documents.")) return; setLearningAction("reset"); setError(""); try { const result = await resetOutcomeLearning(); update(["outcome_learning", "learning_since"], result.learning_since); setDirty(false); setSavedOk(true); } catch (e) { setError(e instanceof Error ? e.message : "Reset failed"); } finally { setLearningAction(null); } }}>{learningAction === "reset" ? "Resetting..." : "Reset learning window"}</Button>
+        </div>
+      </SectionCard>
+
       <SectionCard title="LLM Provider">
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
           Changing provider takes effect on the next agent run. Set the API key in .env or via Settings → AI Provider.

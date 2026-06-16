@@ -32,6 +32,11 @@ export default function JobsPage() {
   const [scraperError, setScraperError] = useState<string | null>(null);
   const [rescoring, setRescoring] = useState(false);
   const [rescoreResult, setRescoreResult] = useState<{ queued: number } | null>(null);
+  const [sortBy, setSortBy] = useState<"newest" | "fit" | "opportunity" | "rate">(() => {
+    if (typeof window === "undefined") return "newest";
+    const value = new URLSearchParams(window.location.search).get("sort");
+    return value === "fit" || value === "opportunity" || value === "rate" ? value : "newest";
+  });
 
   const [filters, setFilters] = useState<FilterValues>({
     search: "",
@@ -70,6 +75,7 @@ export default function JobsPage() {
           min_rate: filters.min_rate ? parseFloat(filters.min_rate) : undefined,
           hide_ghosts: showArchived ? false : filters.hide_ghosts,
           min_match_score: showAll || showArchived ? undefined : threshold,
+          sort_by: sortBy,
         },
         page,
         PAGE_SIZE,
@@ -81,7 +87,16 @@ export default function JobsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filters, page, threshold, showAll, showArchived]);
+  }, [filters, page, threshold, showAll, showArchived, sortBy]);
+
+  function handleSortChange(value: "newest" | "fit" | "opportunity" | "rate") {
+    setSortBy(value);
+    setPage(0);
+    const url = new URL(window.location.href);
+    if (value === "newest") url.searchParams.delete("sort");
+    else url.searchParams.set("sort", value);
+    window.history.replaceState(null, "", url);
+  }
 
   // Load scoring insights when not in archive/show-all mode
   useEffect(() => {
@@ -246,6 +261,22 @@ export default function JobsPage() {
         onFilterChange={handleFilterChange}
         onScrapeComplete={handleScrapeComplete}
       />
+
+      <div className="flex items-center justify-end gap-2">
+        <label htmlFor="job-sort" className="text-xs" style={{ color: "var(--text-muted)" }}>Sort by</label>
+        <select
+          id="job-sort"
+          value={sortBy}
+          onChange={(event) => handleSortChange(event.target.value as typeof sortBy)}
+          className="rounded-md px-3 py-2 text-sm"
+          style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+        >
+          <option value="newest">Newest</option>
+          <option value="fit">Best fit</option>
+          <option value="opportunity">Best opportunity</option>
+          <option value="rate">Highest compensation</option>
+        </select>
+      </div>
 
       {/* Score band legend — all bounds derived from threshold */}
       {!showAll && (() => {

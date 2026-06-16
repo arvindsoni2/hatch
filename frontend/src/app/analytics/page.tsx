@@ -6,6 +6,7 @@ import {
   DailyCostChart,
 } from "@/components/AnalyticsCharts";
 import { AgentPerformanceTable } from "@/components/AgentPerformanceTable";
+import { OutcomeLearningPanel } from "@/components/OutcomeLearningPanel";
 import { BackButton } from "@/components/hatch/BackButton";
 import {
   fetchAnalyticsDashboard,
@@ -18,6 +19,7 @@ import {
   fetchSearchQuality,
   fetchRateLimitStatus,
   fetchAgentPerformance,
+  fetchOutcomeLearningSummary,
 } from "@/lib/api";
 import Link from "next/link";
 
@@ -51,6 +53,7 @@ export default async function AnalyticsPage() {
     searchQuality,
     rateLimitStatus,
     agentPerf,
+    outcomeSummary,
   ] = await Promise.all([
     fetchAnalyticsDashboard().catch(() => null),
     fetchAtsCorrelation().catch(() => null),
@@ -62,6 +65,7 @@ export default async function AnalyticsPage() {
     fetchSearchQuality().catch(() => null),
     fetchRateLimitStatus().catch(() => null),
     fetchAgentPerformance().catch(() => null),
+    fetchOutcomeLearningSummary().catch(() => null),
   ]);
 
   const { stats, funnel, trends, sources, avg_days_to_interview } = dashboard ?? {
@@ -103,6 +107,8 @@ export default async function AnalyticsPage() {
         </div>
 
         {/* Section B: Score Distribution */}
+        <OutcomeLearningPanel summary={outcomeSummary} />
+
         <div className="rounded-xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <h2 className="text-sm font-semibold mb-1" style={{ color: "var(--text)" }}>Score Distribution</h2>
           <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>

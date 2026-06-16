@@ -38,6 +38,7 @@ from .routers.gap_analysis import router as gap_analysis_router
 from .routers.scoring import router as scoring_router
 from .routers.async_jobs import router as async_jobs_router
 from .routers.debug import router as debug_router
+from .routers.outcome_learning import router as outcome_learning_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
 from .services.llm_client import LLMClient
@@ -308,6 +309,7 @@ def create_app() -> FastAPI:
     app.include_router(scoring_router)
     app.include_router(async_jobs_router)
     app.include_router(debug_router)
+    app.include_router(outcome_learning_router)
 
     return app
 
