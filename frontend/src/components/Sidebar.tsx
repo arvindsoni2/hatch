@@ -236,7 +236,7 @@ export function Sidebar() {
         style={{ borderTop: "1px solid var(--border)" }}
       >
         <Link
-          href="/settings"
+          href="/settings/profile"
           className="flex items-center gap-2.5 flex-1 rounded-lg p-2 transition-colors"
           style={{ color: "var(--text-dim)", borderRadius: "var(--radius-sm)" }}
         >
@@ -258,7 +258,7 @@ export function Sidebar() {
               {profileName ?? "Profile"}
             </div>
             <div className="truncate" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-              {profileTitle ?? "Settings"}
+              {profileTitle ?? "Profile"}
             </div>
           </div>
           <Settings size={14} />

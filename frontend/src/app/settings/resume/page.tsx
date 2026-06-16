@@ -303,8 +303,8 @@ export default function ResumePage() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Nav */}
-      <Link href="/settings" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
-        <ArrowLeft className="h-4 w-4" /> Settings
+      <Link href="/today" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+        <ArrowLeft className="h-4 w-4" /> Today
       </Link>
 
       <div>
@@ -437,7 +437,7 @@ export default function ResumePage() {
                     <ExternalLink className="h-3.5 w-3.5 mr-1" /> View JSON
                   </Button>
                 </a>
-                <Link href="/settings">
+                <Link href="/settings/profile">
                   <Button variant="outline" size="sm">Edit proof points</Button>
                 </Link>
               </div>

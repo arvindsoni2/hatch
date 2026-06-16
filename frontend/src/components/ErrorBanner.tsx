@@ -37,7 +37,7 @@ const CONFIG: Record<
     title: "AI provider key invalid",
     defaultMessage:
       "Hatch couldn't reach your configured LLM provider. Scoring and tailoring will be paused until the key is fixed.",
-    cta: { label: "Fix in Settings", href: "/settings" },
+    cta: { label: "Fix AI provider", href: "/settings/ai" },
     colorClass: "bg-red-50 text-red-800",
     borderClass: "border-red-200",
     iconClass: "text-red-500",
@@ -47,7 +47,7 @@ const CONFIG: Record<
     title: "Scraper error",
     defaultMessage:
       "One or more scrapers failed on the last run. New jobs may be missing. Check the agent log for details.",
-    cta: { label: "View agent status", href: "/settings" },
+    cta: { label: "View system logs", href: "/settings/system" },
     colorClass: "bg-amber-50 text-amber-800",
     borderClass: "border-amber-200",
     iconClass: "text-amber-500",
@@ -57,7 +57,7 @@ const CONFIG: Record<
     title: "No high-match jobs found",
     defaultMessage:
       "None of the recently scraped jobs cleared your match threshold. Try lowering the threshold or broadening your search.",
-    cta: { label: "Adjust in Settings", href: "/settings" },
+    cta: { label: "Adjust profile", href: "/settings/profile" },
     colorClass: "bg-slate-50 text-slate-700",
     borderClass: "border-slate-200",
     iconClass: "text-slate-400",

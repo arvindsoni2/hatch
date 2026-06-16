@@ -52,12 +52,20 @@ describe('HatchTopBarSlot', () => {
     expect(screen.getByText('Tracker')).toBeTruthy();
   });
 
-  it('shows "Settings" for /settings pathname', async () => {
+  it('shows "Profile" for /settings pathname', async () => {
     const nav = await import('next/navigation');
     vi.mocked(nav.usePathname).mockReturnValue('/settings');
     const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
     await act(async () => { render(<HatchTopBarSlot />); });
-    expect(screen.getByText('Settings')).toBeTruthy();
+    expect(screen.getByText('Profile')).toBeTruthy();
+  });
+
+  it('shows "Master CV" for /settings/resume pathname', async () => {
+    const nav = await import('next/navigation');
+    vi.mocked(nav.usePathname).mockReturnValue('/settings/resume');
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByText('Master CV')).toBeTruthy();
   });
 
   it('renders a notifications button', async () => {

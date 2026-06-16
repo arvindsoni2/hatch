@@ -17,12 +17,12 @@ const COMMANDS = [
     { label: "Prep",            icon: BookOpen,   href: "/prep" },
     { label: "Analytics",       icon: BarChart2,  href: "/analytics" },
     { label: "Activity Stream", icon: TrendingUp, href: "/stream" },
-    { label: "Settings",        icon: Settings,   href: "/settings" },
-    { label: "AI Settings",     icon: Settings,   href: "/settings/ai" },
+    { label: "Profile Settings", icon: Settings,  href: "/settings/profile" },
+    { label: "AI Provider",      icon: Settings,  href: "/settings/ai" },
   ]},
   { group: "Actions", items: [
     { label: "Browse all jobs",  icon: Search,  href: "/jobs?showAll=true" },
-    { label: "Notifications",   icon: Bell,    href: "/settings/notifications" },
+    { label: "System Logs",     icon: Bell,    href: "/settings/system" },
   ]},
 ];
 
