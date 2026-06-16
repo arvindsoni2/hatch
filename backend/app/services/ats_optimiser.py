@@ -32,7 +32,13 @@ class ATSOptimiser:
         self._client = claude_client
         self._skill_loader = skill_loader or _default_skill_loader()
 
-    async def score(self, cv_text: str, jd_analysis: JDAnalysisResult) -> ATSScoreResult:
+    async def score(
+        self,
+        cv_text: str,
+        jd_analysis: JDAnalysisResult,
+        evidence_bank: str | None = None,
+        target_score: int = 80,
+    ) -> ATSScoreResult:
         """Compute a blended ATS score: 40% algorithmic + 60% Claude semantic.
 
         Args:
@@ -60,6 +66,7 @@ class ATSOptimiser:
             render_prompt(
                 "ats_keywords.j2",
                 cv_content=cv_text[:6000],  # Stay within token budget
+                evidence_bank=(evidence_bank or "")[:3000],
                 target_keywords=all_keywords,
                 must_have=must_have,
                 skill_instructions=skill_instructions,
@@ -81,6 +88,8 @@ class ATSOptimiser:
 
         return ATSScoreResult(
             overall_score=overall,
+            target_score=target_score,
+            passed_target=overall >= target_score,
             algorithmic_score=round(algo_score * 100, 1),
             semantic_score=round(semantic_score * 100, 1),
             keyword_matches=keyword_matches,

@@ -27,11 +27,12 @@ from .docx_cl_builder import DocxCLBuilder
 from .docx_cv_builder import DocxCVBuilder
 from .jd_analyser import JDAnalyser
 from .master_cv_store import MasterCVMissingError, load_master_cv
+from ..agents.tools.profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
 
-# ATS score threshold used to flag packages that need user review.
-_ATS_THRESHOLD = 75
+# Default ATS score target used when profile.yaml is absent or incomplete.
+_ATS_TARGET_SCORE = 80
 
 
 def _load_master_cv() -> dict[str, Any]:
@@ -63,6 +64,38 @@ def _master_cv_text(master: dict[str, Any]) -> str:
     return " ".join(str(p) for p in parts if p).lower()
 
 
+def _master_cv_evidence_bank(master: dict[str, Any]) -> str:
+    """Compact source evidence for ATS suggestions and grounded retries."""
+    parts: list[str] = []
+    for exp in master.get("experience", []):
+        if not isinstance(exp, dict):
+            continue
+        heading = " - ".join(
+            str(value)
+            for value in (exp.get("role"), exp.get("company"), exp.get("period") or exp.get("dates"))
+            if value
+        )
+        if heading:
+            parts.append(heading)
+        for ach in exp.get("achievements", []):
+            text = ach.get("text", "") if isinstance(ach, dict) else str(ach)
+            if text:
+                parts.append(f"* {text}")
+    skills = master.get("skills", {})
+    skill_groups = skills.values() if isinstance(skills, dict) else skills
+    if isinstance(skill_groups, list) or not isinstance(skill_groups, dict):
+        for group in skill_groups or []:
+            if isinstance(group, dict):
+                category = group.get("category") or group.get("display_name") or "Skills"
+                items = ", ".join(str(item) for item in group.get("items", []) if item)
+                if items:
+                    parts.append(f"{category}: {items}")
+    certs = ", ".join(str(cert) for cert in master.get("certifications", []) if cert)
+    if certs:
+        parts.append(f"Certifications: {certs}")
+    return "\n".join(parts)
+
+
 def _partition_ats_keywords(
     missing_critical: list[str], master_text: str
 ) -> tuple[list[str], list[str]]:
@@ -82,6 +115,29 @@ def _partition_ats_keywords(
     return grounded, gaps
 
 
+def _build_retry_instructions(
+    base_instructions: str | None,
+    grounded_keywords: list[str],
+    suggestions: list[str],
+    target_score: int,
+) -> str:
+    parts = [base_instructions.strip()] if base_instructions else []
+    parts.append(
+        "ATS IMPROVEMENT RETRY: The previous draft scored below "
+        f"{target_score}. Reinforce only these keywords because they are already "
+        f"supported by the master CV: {', '.join(grounded_keywords)}. "
+        "Place them naturally in the summary, skills, or existing bullets where truthful. "
+        "Do not add unsupported skills, employers, certifications, metrics, or new claims."
+    )
+    grounded_suggestions = [
+        suggestion for suggestion in suggestions[:3]
+        if not suggestion.lower().startswith("add ")
+    ]
+    if grounded_suggestions:
+        parts.append("Grounded ATS suggestions to consider: " + " | ".join(grounded_suggestions))
+    return "\n\n".join(parts)
+
+
 class TailorService:
     """Orchestrates JD analysis → CV tailoring → ATS scoring → docx generation."""
 
@@ -94,35 +150,84 @@ class TailorService:
         self._cv_builder = DocxCVBuilder()
         self._cl_builder = DocxCLBuilder()
 
+    def _tailoring_config(self) -> tuple[int, int]:
+        try:
+            config = load_profile().tailoring
+            return config.ats_target_score, config.ats_retry_limit
+        except Exception:
+            return _ATS_TARGET_SCORE, 1
+
     async def _tailor_and_score(
         self,
         analysis: JDAnalysisResult,
         variant: str,
         custom_instructions: str | None = None,
     ) -> tuple[TailoredCVResult, ATSScoreResult]:
-        """Create one grounded CV result and score it for user review."""
-        tailored_cv = await self._cv_tailor.tailor(analysis, variant, custom_instructions)
-        if tailored_cv.blocking_issues:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error": "Tailored CV failed grounding checks — document withheld.",
-                    "issues": tailored_cv.blocking_issues,
-                    "hint": "Review the source CV evidence or re-run tailoring.",
-                },
-            )
+        """Create a grounded CV, retrying only for supported ATS gaps."""
+        target_score, retry_limit = self._tailoring_config()
+        master = _load_master_cv()
+        master_text = _master_cv_text(master)
+        evidence_bank = _master_cv_evidence_bank(master)
+        attempt = 1
+        retry_instructions = custom_instructions
+        best_cv: TailoredCVResult | None = None
+        best_score: ATSScoreResult | None = None
+        review_notes: list[str] = []
 
-        ats_result = await self._ats_optimiser.score(_cv_to_plain_text(tailored_cv), analysis)
-        if ats_result.overall_score < _ATS_THRESHOLD:
-            master_text = _master_cv_text(_load_master_cv())
-            _, gaps = _partition_ats_keywords(ats_result.missing_critical, master_text)
-            logger.info(
-                "ATS score %d is below %d; preserving the grounded CV for review%s",
-                ats_result.overall_score,
-                _ATS_THRESHOLD,
-                f" with unsupported gaps: {gaps}" if gaps else "",
+        while True:
+            tailored_cv = await self._cv_tailor.tailor(analysis, variant, retry_instructions)
+            if tailored_cv.blocking_issues:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "Tailored CV failed grounding checks — document withheld.",
+                        "issues": tailored_cv.blocking_issues,
+                        "hint": "Review the source CV evidence or re-run tailoring.",
+                    },
+                )
+
+            ats_result = await self._ats_optimiser.score(
+                _cv_to_plain_text(tailored_cv),
+                analysis,
+                evidence_bank=evidence_bank,
+                target_score=target_score,
             )
-        return tailored_cv, ats_result
+            grounded, gaps = _partition_ats_keywords(ats_result.missing_critical, master_text)
+            ats_result.attempts = attempt
+            ats_result.target_score = target_score
+            ats_result.passed_target = ats_result.overall_score >= target_score
+            ats_result.grounded_improvements = grounded
+            ats_result.unsupported_gaps = gaps
+            ats_result.review_notes = [
+                *review_notes,
+                *([f"Unsupported JD gaps left for review: {', '.join(gaps)}"] if gaps else []),
+            ]
+
+            if best_score is None or ats_result.overall_score > best_score.overall_score:
+                best_cv = tailored_cv
+                best_score = ats_result
+
+            if ats_result.overall_score >= target_score:
+                return tailored_cv, ats_result
+            if attempt > retry_limit or not grounded:
+                logger.info(
+                    "ATS score %d is below target %d; preserving best grounded CV for review%s",
+                    best_score.overall_score,
+                    target_score,
+                    f" with unsupported gaps: {best_score.unsupported_gaps}" if best_score.unsupported_gaps else "",
+                )
+                return best_cv or tailored_cv, best_score or ats_result
+
+            review_notes.append(
+                f"Attempt {attempt} scored {ats_result.overall_score}; retrying with grounded keywords: {', '.join(grounded)}."
+            )
+            retry_instructions = _build_retry_instructions(
+                custom_instructions,
+                grounded,
+                ats_result.improvement_suggestions,
+                target_score,
+            )
+            attempt += 1
 
     async def analyse_job(self, job_id: str, db: AsyncSession) -> JDAnalysisResponse:
         """Run JD analysis for a job posting and compute skill match.
@@ -240,22 +345,20 @@ class TailorService:
         """
         doc_repo = DocumentRepository(db)
         analysis = await self._jd_analyser.analyse(jd_text)
-        tailored_cv = await self._cv_tailor.tailor(analysis, variant)
-
-        # G-3: blocking grounding issues withhold the document entirely
-        if tailored_cv.blocking_issues:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error": "Tailored CV failed grounding checks — cover letter withheld.",
-                    "issues": tailored_cv.blocking_issues,
-                    "hint": "Fix the issues in your master CV or re-run tailoring.",
-                },
-            )
+        tailored_cv, _ = await self._tailor_and_score(analysis, variant)
 
         personal = _load_personal()
         cl_variant = select_tone_variant(analysis)
         cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
+        if cover_letter.grounding_issues:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Cover letter failed grounding checks — document withheld.",
+                    "issues": cover_letter.grounding_issues,
+                    "hint": "Regenerate with grounded evidence or edit the master CV.",
+                },
+            )
 
         version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
         file_path, file_size = self._cl_builder.build(
@@ -340,6 +443,7 @@ class TailorService:
         job_title: str | None = None,
         company_name: str | None = None,
         job_url: str | None = None,
+        custom_instructions: str | None = None,
     ) -> TailorResultBundle:
         """Run the full pipeline: JD analysis → CV → Cover letter.
 
@@ -385,7 +489,9 @@ class TailorService:
         skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
 
         doc_repo = DocumentRepository(db)
-        tailored_cv, ats_result = await self._tailor_and_score(analysis, variant)
+        tailored_cv, ats_result = await self._tailor_and_score(
+            analysis, variant, custom_instructions
+        )
         logger.info(
             "Tailor package %s: CV content and ATS score complete (%d)",
             application_id,
@@ -404,7 +510,7 @@ class TailorService:
             file_path=cv_path,
             file_size_bytes=cv_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
+            tailoring_params=json.dumps({"variant": variant, "custom_instructions": custom_instructions}),
             ats_score=ats_result.overall_score,
             ats_details=json.dumps(ats_result.model_dump()),
             variant_label=variant,
@@ -416,6 +522,15 @@ class TailorService:
         cover_letter = await self._cl_generator.generate(
             analysis, tailored_cv, personal, cl_variant
         )
+        if cover_letter.grounding_issues:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "Cover letter failed grounding checks — document withheld.",
+                    "issues": cover_letter.grounding_issues,
+                    "hint": "Regenerate with grounded evidence or edit the master CV.",
+                },
+            )
         logger.info("Tailor package %s: cover letter content complete", application_id)
         cl_version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
         cl_path, cl_size = self._cl_builder.build(
@@ -469,28 +584,28 @@ class TailorService:
         self._jd_analyser.compute_skill_match(analysis, master_cv)
 
         yield sse("tailoring_cv", 40, "Tailoring CV with Claude...")
-        tailored_cv = await self._cv_tailor.tailor(analysis, variant)
-
-        # G-3: blocking grounding issues withhold the document
-        if tailored_cv.blocking_issues:
-            yield sse(
-                "error",
-                0,
-                json.dumps({
-                    "error": "Tailored CV failed grounding checks — document withheld.",
-                    "issues": tailored_cv.blocking_issues,
-                }),
-            )
+        try:
+            tailored_cv, ats_result = await self._tailor_and_score(analysis, variant)
+        except HTTPException as exc:
+            yield sse("error", 0, json.dumps(exc.detail))
             return
 
-        yield sse("scoring_ats", 55, "Running ATS scoring...")
-        cv_text = _cv_to_plain_text(tailored_cv)
-        ats_result = await self._ats_optimiser.score(cv_text, analysis)
+        yield sse("scoring_ats", 55, "Running ATS scoring and grounded improvements...")
 
         yield sse("generating_cl", 70, "Generating cover letter...")
         personal = _load_personal()
         cl_variant = select_tone_variant(analysis)
         cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
+        if cover_letter.grounding_issues:
+            yield sse(
+                "error",
+                0,
+                json.dumps({
+                    "error": "Cover letter failed grounding checks — document withheld.",
+                    "issues": cover_letter.grounding_issues,
+                }),
+            )
+            return
 
         yield sse("building_docx", 85, "Building .docx documents...")
         doc_repo = DocumentRepository(db)
@@ -594,7 +709,7 @@ def _cv_to_plain_text(tailored_cv: Any) -> str:
     parts = [tailored_cv.summary]
     for skill_group in tailored_cv.skills:
         if isinstance(skill_group, dict):
-            parts.append(skill_group.get("display_name", ""))
+            parts.append(skill_group.get("category") or skill_group.get("display_name", ""))
             parts.extend(skill_group.get("items", []))
     for exp in tailored_cv.experience:
         parts.append(f"{exp.role} at {exp.company} ({exp.period})")

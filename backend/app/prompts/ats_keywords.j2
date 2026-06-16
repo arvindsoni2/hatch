@@ -8,13 +8,16 @@ RULES:
 CV CONTENT:
 {{ cv_content }}
 
+MASTER CV EVIDENCE BANK:
+{{ evidence_bank or "No additional master-CV evidence supplied." }}
+
 TARGET KEYWORDS:
 {{ target_keywords | tojson }}
 
 MUST-HAVE REQUIREMENTS:
 {{ must_have | tojson }}
 
-Evaluate each keyword for presence in the CV (exact match and close variants). Check format compliance. Suggest specific improvements grounded in what the CV already contains.
+Evaluate each keyword for presence in the CV (exact match and close variants). Check format compliance. Suggest specific improvements grounded in the CV content or the master-CV evidence bank. If evidence is absent, flag it as a gap rather than suggesting insertion.
 
 {% if skill_instructions %}
 ## SKILL GUIDANCE

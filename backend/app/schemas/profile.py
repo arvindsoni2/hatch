@@ -98,6 +98,11 @@ class ScoringConfig(BaseModel):
         return v
 
 
+class TailoringConfig(BaseModel):
+    ats_target_score: int = Field(default=80, ge=60, le=100)
+    ats_retry_limit: int = Field(default=1, ge=0, le=3)
+
+
 class ASRConfig(BaseModel):
     provider: Literal["faster_whisper", "qwen3_asr", "web_speech", "deepgram"] = "faster_whisper"
     model: str = "small"
@@ -196,6 +201,7 @@ class Profile(BaseModel):
     master_cv_path: str = "./data/master_cv.json"
     job_boards: list[JobBoardConfig] = Field(default_factory=list)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    tailoring: TailoringConfig = Field(default_factory=TailoringConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     preferences: PreferencesConfig = Field(default_factory=PreferencesConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)

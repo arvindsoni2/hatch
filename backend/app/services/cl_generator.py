@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from pathlib import Path
@@ -27,6 +28,13 @@ _CONVERSATIONAL_SECTORS = frozenset(
     {"technology", "tech", "startup", "creative", "media", "advertising",
      "design", "gaming", "software", "saas"}
 )
+
+_NUMERIC_TOKEN_RE = re.compile(
+    r"(?:[£$€¥][\d,]+(?:\.\d+)?(?:[KMBkm+]*)|"
+    r"\d[\d,]*(?:\.\d+)?(?:[KMBkm%+]+))",
+    re.IGNORECASE,
+)
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]|\bPLACEHOLDER\b|\bTODO\b", re.IGNORECASE)
 
 
 def select_tone_variant(jd_analysis: "JDAnalysisResult") -> str:
@@ -85,6 +93,7 @@ class CoverLetterGenerator:
         )
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CL_BODY.max_output)
         result = _parse_cover_letter(raw)
+        result.grounding_issues = _validate_cover_letter_grounding(result, tailored_cv, personal)
 
         # Trim loop: if over word limit, regenerate with tighter instruction
         if result.word_count > _MAX_WORDS:
@@ -102,6 +111,7 @@ class CoverLetterGenerator:
             )
             raw2: dict[str, Any] = await self._client.complete_json(system_prompt2, user_prompt2, max_tokens=CL_BODY.max_output)
             result = _parse_cover_letter(raw2)
+            result.grounding_issues = _validate_cover_letter_grounding(result, tailored_cv, personal)
 
         return result
 
@@ -156,6 +166,7 @@ class CoverLetterGenerator:
             sign_off=current_letter.sign_off,
             word_count=word_count,
             key_keywords_used=current_letter.key_keywords_used,
+            grounding_issues=list(current_letter.grounding_issues),
         )
 
 
@@ -172,4 +183,38 @@ def _parse_cover_letter(raw: dict[str, Any]) -> CoverLetterResult:
         sign_off=raw.get("sign_off", "Yours sincerely,"),
         word_count=word_count,
         key_keywords_used=raw.get("key_keywords_used", []),
+        grounding_issues=raw.get("grounding_issues", []),
     )
+
+
+def _source_text(tailored_cv: TailoredCVResult, personal: dict[str, Any]) -> str:
+    parts: list[str] = []
+    parts.append(tailored_cv.summary)
+    for skill_group in tailored_cv.skills:
+        if isinstance(skill_group, dict):
+            parts.append(str(skill_group.get("category") or skill_group.get("display_name") or ""))
+            parts.extend(str(item) for item in skill_group.get("items", []) if item)
+    for exp in tailored_cv.experience:
+        parts.extend([exp.role, exp.company, exp.period])
+        parts.extend(exp.achievements)
+    parts.extend(tailored_cv.certifications)
+    parts.extend(str(value) for value in personal.values() if value)
+    return " ".join(parts).lower()
+
+
+def _validate_cover_letter_grounding(
+    result: CoverLetterResult,
+    tailored_cv: TailoredCVResult,
+    personal: dict[str, Any],
+) -> list[str]:
+    text = " ".join(
+        [result.subject_line, result.greeting, result.sign_off] + result.body_paragraphs
+    )
+    source = _source_text(tailored_cv, personal)
+    issues: list[str] = []
+    if _PLACEHOLDER_RE.search(text):
+        issues.append("Cover letter contains placeholder text.")
+    for token in _NUMERIC_TOKEN_RE.findall(text):
+        if token.lower() not in source:
+            issues.append(f"Cover letter numeric token '{token}' is not grounded in the tailored CV.")
+    return issues

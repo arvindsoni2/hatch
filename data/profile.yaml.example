@@ -78,6 +78,11 @@ scoring:
   shortlist_threshold: 0.75         # Jobs above this score get auto-tailored
   method: "auto"                    # "auto" | "llm" | "local" | "hybrid"
 
+# ─── Tailoring ───────────────────────────────────────────────────────────────
+tailoring:
+  ats_target_score: 80              # Retry grounded CV tailoring below this score
+  ats_retry_limit: 1                # Extra attempts; unsupported gaps are never invented
+
 # ─── LLM Provider ────────────────────────────────────────────────────────────
 # Default: bundled llama.cpp models (local, free, no API key).
 # To use a cloud provider, change provider and set the API key in .env.

@@ -183,6 +183,7 @@ async def generate_all(
                         job_title=request.job_title,
                         company_name=request.company_name,
                         job_url=request.job_url,
+                        custom_instructions=request.custom_instructions,
                     ),
                     timeout=7200,  # 2-hour ceiling (7 jobs × 3 calls × 180s = 3780s queue wait)
                 )

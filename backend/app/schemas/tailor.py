@@ -108,6 +108,7 @@ class CoverLetterResult(BaseModel):
     sign_off: str
     word_count: int
     key_keywords_used: list[str] = Field(default_factory=list)
+    grounding_issues: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -123,12 +124,18 @@ class KeywordMatch(BaseModel):
 
 class ATSScoreResult(BaseModel):
     overall_score: int = Field(ge=0, le=100)
+    target_score: int = 80
+    passed_target: bool = False
+    attempts: int = 1
     algorithmic_score: float | None = None
     semantic_score: float | None = None
     keyword_matches: list[KeywordMatch] = Field(default_factory=list)
     format_warnings: list[str] = Field(default_factory=list)
     missing_critical: list[str] = Field(default_factory=list)
     improvement_suggestions: list[str] = Field(default_factory=list)
+    grounded_improvements: list[str] = Field(default_factory=list)
+    unsupported_gaps: list[str] = Field(default_factory=list)
+    review_notes: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

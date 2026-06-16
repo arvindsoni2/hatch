@@ -136,6 +136,25 @@ async def test_jd_keywords_present_in_result():
 
 
 @pytest.mark.asyncio
+async def test_cover_letter_flags_unsupported_metric():
+    response = {
+        **SHORT_CL_RESPONSE,
+        "body_paragraphs": [
+            "I reduced platform costs by 99% while delivering AWS architecture.",
+            "I can bring that delivery focus to your programme.",
+        ],
+        "word_count": 18,
+    }
+    client = make_mock_client(response)
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    assert result.grounding_issues
+    assert "99%" in result.grounding_issues[0]
+
+
+@pytest.mark.asyncio
 async def test_regenerate_paragraph():
     client = make_mock_client({"paragraph": "Rewritten paragraph with AWS and Terraform focus."})
     gen = CoverLetterGenerator(client)

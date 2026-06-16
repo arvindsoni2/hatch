@@ -1,4 +1,4 @@
-"""G-6 tests — ATS gaps remain grounded and do not trigger regeneration."""
+"""G-6 tests — ATS retries are grounded and unsupported gaps remain honest."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -51,7 +51,7 @@ class TestPartitionATSKeywords:
 
 
 @pytest.mark.asyncio
-async def test_low_ats_score_does_not_regenerate_cv():
+async def test_low_ats_score_with_only_unsupported_gaps_does_not_regenerate_cv():
     service = TailorService()
     tailored = TailoredCVResult(summary="Grounded summary")
     ats = ATSScoreResult(overall_score=60, missing_critical=["Unsupported Skill"])
@@ -68,3 +68,34 @@ async def test_low_ats_score_does_not_regenerate_cv():
     assert score is ats
     service._cv_tailor.tailor.assert_awaited_once()
     service._ats_optimiser.score.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_low_ats_score_retries_grounded_missing_keywords():
+    service = TailorService()
+    first = TailoredCVResult(summary="Grounded summary")
+    improved = TailoredCVResult(summary="Improved grounded summary")
+    first_score = ATSScoreResult(
+        overall_score=60,
+        missing_critical=["AWS"],
+        improvement_suggestions=["Surface AWS in the summary"],
+    )
+    improved_score = ATSScoreResult(overall_score=84, missing_critical=[])
+    service._cv_tailor.tailor = AsyncMock(side_effect=[first, improved])
+    service._ats_optimiser.score = AsyncMock(side_effect=[first_score, improved_score])
+
+    master = {"skills": {"cloud": {"category": "Cloud", "items": ["AWS"]}}}
+    with patch("app.services.tailor_service._load_master_cv", return_value=master):
+        result, score = await service._tailor_and_score(
+            JDAnalysisResult(role_title="Solutions Architect"),
+            "A",
+        )
+
+    assert result is improved
+    assert score is improved_score
+    assert score.passed_target is True
+    assert score.attempts == 2
+    assert service._cv_tailor.tailor.await_count == 2
+    retry_instruction = service._cv_tailor.tailor.await_args_list[1].args[2]
+    assert "AWS" in retry_instruction
+    assert "Do not add unsupported" in retry_instruction
