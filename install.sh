@@ -119,6 +119,10 @@ scoring:
     rate_match: 0.20
     location_match: 0.15
   shortlist_threshold: 0.75
+  method: "auto"
+tailoring:
+  ats_target_score: 80
+  ats_retry_limit: 1
 llm:
   provider: "llamacpp"
   triage_model: "qwen3-0.6b-q4_0"
@@ -136,6 +140,16 @@ preferences:
   max_tailor_batch: 5
   follow_up_days: [5, 10, 15]
   archive_after_days: 30
+outcome_learning:
+  enabled: true
+  minimum_total_applications: 15
+  minimum_segment_size: 5
+  maximum_score_adjustment: 0.10
+  maximum_signal_adjustment: 0.04
+  no_response_after_days: 35
+  recency_half_life_days: 120
+  enabled_signals: [source, role_family, seniority, working_pattern, employment_type, freshness]
+  learning_since: null
 PROFILEEOF
   fi
 

@@ -43,11 +43,12 @@ echo ""
 echo -e "  ${YELLOW}This will permanently delete:${RESET}"
 echo "    • All scraped jobs, scores, and decisions"
 echo "    • All agent run history and events"
+echo "    • Local LangGraph checkpoints"
 echo "    • All generated CVs and cover letters"
 echo ""
 echo -e "  ${YELLOW}If you also reset identity (prompted below):${RESET}"
 echo "    • profile.yaml → reset to blank template"
-echo "    • master_cv.json / master_resume.txt → deleted"
+echo "    • master_cv.json / master_resume.* → deleted"
 echo "    • api_keys.env → cleared (keys must be re-entered)"
 echo ""
 
@@ -127,6 +128,21 @@ delete_file \
   "/app/data/jobpilot.db-wal" \
   "database WAL log (jobpilot.db-wal)"
 
+delete_file \
+  "$DATA_DIR/langgraph_checkpoints.db" \
+  "/app/data/langgraph_checkpoints.db" \
+  "LangGraph checkpoints (langgraph_checkpoints.db)"
+
+delete_file \
+  "$DATA_DIR/langgraph_checkpoints.db-shm" \
+  "/app/data/langgraph_checkpoints.db-shm" \
+  "LangGraph checkpoints WAL shared memory (langgraph_checkpoints.db-shm)"
+
+delete_file \
+  "$DATA_DIR/langgraph_checkpoints.db-wal" \
+  "/app/data/langgraph_checkpoints.db-wal" \
+  "LangGraph checkpoints WAL log (langgraph_checkpoints.db-wal)"
+
 delete_dir_contents \
   "$DATA_DIR/generated" \
   "/app/data/generated" \
@@ -167,6 +183,16 @@ if [[ "$RESET_PROFILE" =~ ^[Yy]$ ]]; then
     "$DATA_DIR/master_resume.txt" \
     "/app/data/master_resume.txt" \
     "master_resume.txt (CV text used for scoring)"
+
+  delete_file \
+    "$DATA_DIR/master_resume.pdf" \
+    "/app/data/master_resume.pdf" \
+    "master_resume.pdf"
+
+  delete_file \
+    "$DATA_DIR/master_resume.docx" \
+    "/app/data/master_resume.docx" \
+    "master_resume.docx"
 
   warn "Clearing api_keys.env — API keys will need to be re-entered in Settings or onboarding."
   if backend_running; then

@@ -20,18 +20,33 @@ TRIAGE_FILE="Qwen3-0.6B-Q4_0.gguf"
 download_if_missing() {
   local url="$1" filename="$2"
   local dest="$MODELS_DIR/$filename"
+  local tmp="$dest.part"
 
-  if [[ -f "$dest" ]]; then
+  if [[ -s "$dest" ]]; then
     echo "[fetch_models] $filename already present — skipping."
     return
   fi
 
-  echo "[fetch_models] Downloading $filename …"
-  if command -v wget &>/dev/null; then
-    wget -q --show-progress "$url" -O "$dest"
-  else
-    curl -L --progress-bar "$url" -o "$dest"
+  if [[ -f "$dest" ]]; then
+    echo "[fetch_models] $filename exists but is empty — replacing it."
+    rm -f "$dest"
   fi
+
+  echo "[fetch_models] Downloading $filename …"
+  rm -f "$tmp"
+  if command -v wget &>/dev/null; then
+    wget -q --show-progress "$url" -O "$tmp"
+  else
+    curl -L --progress-bar "$url" -o "$tmp"
+  fi
+
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    echo "[fetch_models] ERROR: downloaded $filename, but the file is empty." >&2
+    return 1
+  fi
+
+  mv "$tmp" "$dest"
   echo "[fetch_models] $filename downloaded."
 }
 
