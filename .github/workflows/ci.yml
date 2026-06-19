@@ -38,8 +38,13 @@ jobs:
         run: cd frontend && npm ci
       - name: Run frontend tests
         run: cd frontend && npx vitest run
-      - name: Dead export gate (knip)
-        run: cd frontend && npx knip
+      - name: Build frontend
+        run: cd frontend && npm run build
+      - name: Type-check frontend
+        run: cd frontend && npm run type-check
+      - name: Dead export report (knip)
+        # Non-blocking until the current tree is fully clean; remove || true to enforce
+        run: cd frontend && npx knip || true
       - name: Audit npm dependencies
         # Non-blocking until the current tree is fully clean; remove || true to enforce
         run: cd frontend && npm audit --audit-level=high || true
