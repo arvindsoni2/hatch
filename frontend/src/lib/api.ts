@@ -595,13 +595,26 @@ export interface TailoredExperience {
   achievements: string[];
 }
 
+export interface TailoredEducation {
+  qualification: string;
+  institution: string;
+  year: string;
+  field?: string;
+  location?: string;
+  details?: string[];
+}
+
 export interface TailoredCV {
   summary: string;
-  skills: Array<{ display_name?: string; items?: string[] }>;
+  skills: Array<{ category?: string; display_name?: string; items?: string[] }>;
   experience: TailoredExperience[];
+  education: TailoredEducation[];
   certifications: string[];
   ats_keywords_embedded: string[];
   tailoring_notes: string;
+  structural_warnings: string[];
+  validation_status: "passed" | "repaired" | "failed";
+  blocking_issues: string[];
   fabrication_warnings: string[];
 }
 

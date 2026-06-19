@@ -71,3 +71,34 @@ def test_build_spec_multiple_skill_groups():
     spec = _build_cv_spec(cv, _make_jd(), {"name": "Test"})
     labels = [s["display_name"] for s in spec["skills"]]
     assert labels == ["Cloud & Infrastructure", "Data & AI"]
+
+
+def test_build_spec_includes_education_and_structural_status():
+    cv = _make_tailored_cv(
+        education=[
+            {
+                "qualification": "MBA",
+                "institution": "Example Business School",
+                "year": "2010",
+                "field": "Business Administration",
+                "details": ["Dissertation on technology transformation"],
+            }
+        ],
+        structural_warnings=["education: restored master education"],
+        validation_status="repaired",
+    )
+
+    spec = _build_cv_spec(cv, _make_jd(), {"name": "Test"})
+
+    assert spec["education"] == [
+        {
+            "qualification": "MBA",
+            "institution": "Example Business School",
+            "year": "2010",
+            "field": "Business Administration",
+            "location": "",
+            "details": ["Dissertation on technology transformation"],
+        }
+    ]
+    assert spec["validation_status"] == "repaired"
+    assert spec["structural_warnings"] == ["education: restored master education"]

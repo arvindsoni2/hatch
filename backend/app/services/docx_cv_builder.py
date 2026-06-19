@@ -106,7 +106,20 @@ def _build_cv_spec(
             }
             for exp in tailored_cv.experience
         ],
+        "education": [
+            {
+                "qualification": edu.qualification,
+                "institution": edu.institution,
+                "year": edu.year,
+                "field": edu.field,
+                "location": edu.location,
+                "details": edu.details,
+            }
+            for edu in tailored_cv.education
+        ],
         "certifications": tailored_cv.certifications,
         "role_applied_for": jd_analysis.role_title,
         "ats_keywords": tailored_cv.ats_keywords_embedded,
+        "validation_status": tailored_cv.validation_status,
+        "structural_warnings": tailored_cv.structural_warnings,
     }

@@ -714,5 +714,13 @@ def _cv_to_plain_text(tailored_cv: Any) -> str:
     for exp in tailored_cv.experience:
         parts.append(f"{exp.role} at {exp.company} ({exp.period})")
         parts.extend(exp.achievements)
+    for edu in getattr(tailored_cv, "education", []):
+        parts.extend([
+            getattr(edu, "qualification", ""),
+            getattr(edu, "field", ""),
+            getattr(edu, "institution", ""),
+            getattr(edu, "year", ""),
+        ])
+        parts.extend(getattr(edu, "details", []) or [])
     parts.extend(tailored_cv.certifications)
     return " ".join(str(p) for p in parts if p)

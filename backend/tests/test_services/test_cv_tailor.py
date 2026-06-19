@@ -55,12 +55,21 @@ MOCK_MASTER_CV = {
         {
             "role": "Solutions Architect",
             "company": "Company A",
+            "period": "2022 - Present",
             "achievements": [
                 {"text": "Designed hybrid cloud field mobility platform serving 2,000+ field engineers across the North of England, reducing paper-based processes by 90% and delivering £500K annual operational savings.", "tags": ["cloud", "aws"]},
                 {"text": "Led adoption of GenAI-powered document processing, automating extraction from 50,000+ regulatory documents annually using RAG architecture, reducing manual review time by 70%.", "tags": ["genai", "rag"]},
             ],
         },
     ],
+    "education": [
+        {
+            "qualification": "MBA",
+            "institution": "Example Business School",
+            "year": "2010",
+        }
+    ],
+    "certifications": ["PMP"],
 }
 
 JD_ANALYSIS = JDAnalysisResult(
@@ -178,6 +187,21 @@ def test_parse_tailored_cv():
     assert len(result.experience[0].achievements) == 2
 
 
+def test_parse_tailored_cv_accepts_education():
+    result = _parse_tailored_cv({
+        **MOCK_TAILOR_RESPONSE,
+        "education": [{
+            "qualification": "MBA",
+            "institution": "Example Business School",
+            "year": "2010",
+        }],
+    })
+
+    assert result.education[0].qualification == "MBA"
+    assert result.education[0].institution == "Example Business School"
+    assert result.education[0].year == "2010"
+
+
 def test_preserves_master_roles_bullets_and_certifications():
     from app.services.cv_tailor import _preserve_master_structure
 
@@ -206,6 +230,48 @@ def test_preserves_master_roles_bullets_and_certifications():
     assert [exp.role for exp in result.experience] == ["Solutions Architect", "Earlier Role"]
     assert [len(exp.achievements) for exp in result.experience] == [2, 1]
     assert result.certifications == ["PMP"]
+
+
+def test_tailored_cv_does_not_collapse_to_one_page_or_drop_sections():
+    from app.services.cv_tailor import _preserve_master_structure
+
+    collapsed = _parse_tailored_cv({
+        "summary": "Tailored summary.",
+        "skills": [],
+        "experience": [
+            {
+                "role": "Solutions Architect",
+                "company": "Company A",
+                "period": "2022 - Present",
+                "achievements": [
+                    "Designed hybrid cloud field mobility platform serving 2,000+ field engineers across the North of England, reducing paper-based processes by 90% and delivering £500K annual operational savings.",
+                    "Led adoption of GenAI-powered document processing, automating extraction from 50,000+ regulatory documents annually using RAG architecture, reducing manual review time by 70%.",
+                ],
+            }
+        ],
+        "certifications": [],
+    })
+    master = {
+        **MOCK_MASTER_CV,
+        "experience": [
+            *MOCK_MASTER_CV["experience"],
+            {
+                "role": "Earlier Delivery Lead",
+                "company": "Company B",
+                "period": "2019 - 2022",
+                "achievements": [{"text": "Delivered a multi-team transformation programme."}],
+            },
+        ],
+    }
+
+    result = _preserve_master_structure(collapsed, master)
+
+    assert [exp.role for exp in result.experience] == ["Solutions Architect", "Earlier Delivery Lead"]
+    assert result.education[0].institution == "Example Business School"
+    assert result.skills[0]["items"] == ["AWS", "Azure", "Terraform"]
+    assert result.certifications == ["PMP"]
+    assert result.validation_status == "repaired"
+    assert any("education" in warning for warning in result.structural_warnings)
 
 
 def test_rejects_drastically_shortened_bullets():

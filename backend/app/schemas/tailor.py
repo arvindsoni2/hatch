@@ -1,7 +1,7 @@
 """Pydantic schemas for the Tailor module — JD analysis, CV tailoring, cover letter, ATS scoring."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -85,13 +85,25 @@ class TailoredExperience(BaseModel):
     achievements: list[str] = Field(default_factory=list)
 
 
+class TailoredEducation(BaseModel):
+    qualification: str = ""
+    institution: str = ""
+    year: str = ""
+    field: str = ""
+    location: str = ""
+    details: list[str] = Field(default_factory=list)
+
+
 class TailoredCVResult(BaseModel):
     summary: str
     skills: list[dict[str, Any]] = Field(default_factory=list)
     experience: list[TailoredExperience] = Field(default_factory=list)
+    education: list[TailoredEducation] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
     ats_keywords_embedded: list[str] = Field(default_factory=list)
     tailoring_notes: str = ""
+    structural_warnings: list[str] = Field(default_factory=list)
+    validation_status: Literal["passed", "repaired", "failed"] = "passed"
     blocking_issues: list[str] = Field(default_factory=list)
     fabrication_warnings: list[str] = Field(default_factory=list)
 

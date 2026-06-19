@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..prompts import render_prompt
-from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredExperience
+from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredEducation, TailoredExperience
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import CV_GENERATE
@@ -148,6 +148,7 @@ class CVTailor:
             "summary_variants": master_cv.get("summary_variants", {}),
             "experience": ordered_exp,
             "skills": compact_skills,
+            "education": master_cv.get("education", []),
             "certifications": master_cv.get("certifications", []),
         }
 
@@ -257,10 +258,20 @@ def _parse_tailored_cv(raw: dict[str, Any]) -> TailoredCVResult:
             )
         )
 
+    education: list[TailoredEducation] = []
+    for edu_raw in raw.get("education", []):
+        if isinstance(edu_raw, str):
+            education.append(TailoredEducation(qualification=edu_raw))
+            continue
+        if not isinstance(edu_raw, dict):
+            continue
+        education.append(_normalise_education_entry(edu_raw))
+
     return TailoredCVResult(
         summary=raw.get("summary", ""),
         skills=raw.get("skills", []),
         experience=experience,
+        education=education,
         certifications=raw.get("certifications", []),
         ats_keywords_embedded=raw.get("ats_keywords_embedded", []),
         tailoring_notes=raw.get("tailoring_notes", ""),
@@ -284,16 +295,20 @@ def _similar_length(candidate: str, source: str) -> bool:
 def _preserve_master_structure(
     tailored: TailoredCVResult, master: dict[str, Any]
 ) -> TailoredCVResult:
-    """Keep all source roles, bullet counts, identities, and certifications.
+    """Keep all source roles, bullet counts, identities, education, and certifications.
 
     The LLM may rephrase achievements, but it cannot shorten the CV by omitting
-    roles or reinterpret an award/employer as a certification. If a role has an
-    incomplete bullet set, the original grounded bullets are used for that role.
+    roles, education, skills, or reinterpret an award/employer as a certification.
+    If a role has an incomplete bullet set, the original grounded bullets are
+    used for that role.
     """
+    structural_warnings = list(tailored.structural_warnings)
     generated = {
         (exp.role.strip().casefold(), exp.company.strip().casefold()): exp
         for exp in tailored.experience
     }
+    if len(generated) != len(master.get("experience", [])):
+        structural_warnings.append("experience: restored master role structure")
     preserved: list[TailoredExperience] = []
     for source in master.get("experience", []):
         if not isinstance(source, dict):
@@ -309,6 +324,8 @@ def _preserve_master_structure(
                 generated if _similar_length(generated, original) else original
                 for generated, original in zip(candidate.achievements, source_bullets)
             ]
+        elif source_bullets:
+            structural_warnings.append(f"experience: restored bullets for {role} at {company}")
         preserved.append(TailoredExperience(
             role=role,
             company=company,
@@ -340,9 +357,52 @@ def _preserve_master_structure(
         ordered_items = candidate_items + [
             item for item in source_items if item not in candidate_items
         ]
+        if not candidate_items and source_items:
+            structural_warnings.append(f"skills: restored {category}")
         preserved_skills.append({"category": category, "items": ordered_items})
     tailored.skills = preserved_skills
+    generated_certifications = list(tailored.certifications)
+    tailored.education = _preserve_master_education(tailored.education, master, structural_warnings)
     tailored.certifications = [
         str(cert) for cert in master.get("certifications", []) if cert
     ]
+    if master.get("certifications") and generated_certifications != tailored.certifications:
+        structural_warnings.append("certifications: restored master certifications")
+    tailored.structural_warnings = list(dict.fromkeys(structural_warnings))
+    tailored.validation_status = "repaired" if tailored.structural_warnings else "passed"
     return tailored
+
+
+def _normalise_education_entry(raw: dict[str, Any]) -> TailoredEducation:
+    details = raw.get("details", [])
+    if isinstance(details, str):
+        details = [details]
+    elif not isinstance(details, list):
+        details = []
+    return TailoredEducation(
+        qualification=str(raw.get("qualification") or raw.get("degree") or raw.get("award") or ""),
+        institution=str(raw.get("institution") or raw.get("school") or raw.get("university") or ""),
+        year=str(raw.get("year") or raw.get("period") or raw.get("date") or raw.get("end_date") or ""),
+        field=str(raw.get("field") or raw.get("subject") or ""),
+        location=str(raw.get("location") or ""),
+        details=[str(item) for item in details if item],
+    )
+
+
+def _preserve_master_education(
+    generated: list[TailoredEducation],
+    master: dict[str, Any],
+    structural_warnings: list[str],
+) -> list[TailoredEducation]:
+    master_education = master.get("education", [])
+    if not master_education:
+        return []
+    if len(generated) != len(master_education):
+        structural_warnings.append("education: restored master education")
+    preserved: list[TailoredEducation] = []
+    for item in master_education:
+        if isinstance(item, str):
+            preserved.append(TailoredEducation(qualification=item))
+        elif isinstance(item, dict):
+            preserved.append(_normalise_education_entry(item))
+    return preserved

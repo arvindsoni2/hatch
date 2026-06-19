@@ -10,6 +10,7 @@ CRITICAL RULES:
 7. Use the contract_type to frame the candidate correctly: "permanent" roles need employee framing, not "contractor"; "contract" roles should reference delivery tenure and daily/hourly rate context
 8. Unsupported JD keywords are honest gaps. Do not insert them; the user can accept those missing keywords during review
 9. Copy role, company, period, and certification values verbatim. Never turn an employer, client, award, or achievement into a certification
+10. Preserve education exactly as supplied in the master CV. Do not rewrite qualification names, institutions, dates, grades, or fields
 
 ANTI-EXAMPLE — do not do this:
   Master: "Improved deployment process at AcmeCo, saving time"
@@ -70,6 +71,16 @@ Return ONLY valid JSON matching this schema:
       "company": "string — copy verbatim from master CV",
       "period": "string — copy verbatim from master CV",
       "achievements": ["one rephrased string for every source bullet, in source order; preserve bullet count; if no metric exists in the master, do not add one"]
+    }
+  ],
+  "education": [
+    {
+      "qualification": "string — copy verbatim from master CV",
+      "institution": "string — copy verbatim from master CV",
+      "year": "string — copy verbatim from master CV",
+      "field": "string — copy verbatim from master CV if present",
+      "location": "string — copy verbatim from master CV if present",
+      "details": ["array of detail strings copied verbatim from master CV if present"]
     }
   ],
   "certifications": ["array of certification strings from master CV, ordered by JD relevance"],

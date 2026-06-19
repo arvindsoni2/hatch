@@ -33,6 +33,13 @@ REAL_MASTER_CV = {
         "delivery": {"items": ["Agile", "SAFe", "PRINCE2", "Stakeholder Management"]},
     },
     "certifications": ["PMP", "PSM-1", "PRINCE2 Practitioner"],
+    "education": [
+        {
+            "qualification": "MBA",
+            "institution": "Example Business School",
+            "year": "2010",
+        }
+    ],
 }
 
 
@@ -49,6 +56,13 @@ def _build_tailored(**kwargs) -> TailoredCVResult:
             )
         ],
         certifications=["PMP"],
+        education=[
+            {
+                "qualification": "MBA",
+                "institution": "Example Business School",
+                "year": "2010",
+            }
+        ],
         ats_keywords_embedded=[],
         tailoring_notes="notes",
         blocking_issues=[],
@@ -125,6 +139,20 @@ class TestGroundingValidator:
         blocking, _ = validate(tailored, REAL_MASTER_CV)
         metric_blocks = [b for b in blocking if "£500K" in b]
         assert metric_blocks == [], f"Real metric incorrectly flagged: {metric_blocks}"
+
+    def test_invented_education_is_blocking(self):
+        """Education values not in master CV are blocking."""
+        tailored = _build_tailored(
+            education=[
+                {
+                    "qualification": "PhD Artificial Intelligence",
+                    "institution": "Invented University",
+                    "year": "2024",
+                }
+            ]
+        )
+        blocking, _ = validate(tailored, REAL_MASTER_CV)
+        assert any("education" in b.lower() for b in blocking), blocking
 
     def test_sc_cleared_claim_without_master_evidence_is_blocking(self):
         """SC Cleared claim not in master CV is blocking."""

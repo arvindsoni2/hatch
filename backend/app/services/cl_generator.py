@@ -197,6 +197,14 @@ def _source_text(tailored_cv: TailoredCVResult, personal: dict[str, Any]) -> str
     for exp in tailored_cv.experience:
         parts.extend([exp.role, exp.company, exp.period])
         parts.extend(exp.achievements)
+    for edu in getattr(tailored_cv, "education", []):
+        parts.extend([
+            getattr(edu, "qualification", ""),
+            getattr(edu, "field", ""),
+            getattr(edu, "institution", ""),
+            getattr(edu, "year", ""),
+        ])
+        parts.extend(getattr(edu, "details", []) or [])
     parts.extend(tailored_cv.certifications)
     parts.extend(str(value) for value in personal.values() if value)
     return " ".join(parts).lower()

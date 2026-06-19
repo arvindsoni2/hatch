@@ -116,7 +116,7 @@ function experienceHeader(role, company, period) {
 // ---------------------------------------------------------------------------
 
 function buildCV(spec) {
-  const { personal, summary, skills, experience, certifications, role_applied_for } = spec;
+  const { personal, summary, skills, experience, education, certifications, role_applied_for } = spec;
 
   const children = [];
 
@@ -197,6 +197,34 @@ function buildCV(spec) {
       children.push(experienceHeader(exp.role, exp.company, exp.period));
       for (const ach of (exp.achievements || [])) {
         children.push(bulletPoint(ach));
+      }
+    }
+  }
+
+  // --- Education ---
+  if (education && education.length > 0) {
+    children.push(sectionHeading("Education"));
+    for (const edu of education) {
+      const qualification = edu.qualification || edu.degree || edu.award || "";
+      const institution = edu.institution || edu.school || edu.university || "";
+      const year = edu.year || edu.period || edu.date || "";
+      const field = edu.field || edu.subject || "";
+      const location = edu.location || "";
+      const titleParts = [qualification, field].filter(Boolean);
+      const metaParts = [institution, location, year].filter(Boolean);
+      if (titleParts.length > 0 || metaParts.length > 0) {
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({ text: titleParts.join(" — "), bold: true, size: 20, font: FONT, color: HEADING_COLOR }),
+              ...(metaParts.length > 0 ? [new TextRun({ text: ` | ${metaParts.join(" | ")}`, italics: true, size: 18, font: FONT, color: DARK_GRAY })] : []),
+            ],
+            spacing: { before: 60, after: 30 },
+          })
+        );
+      }
+      for (const detail of (edu.details || [])) {
+        children.push(bulletPoint(detail));
       }
     }
   }

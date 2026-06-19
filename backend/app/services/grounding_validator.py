@@ -85,6 +85,16 @@ def _master_raw_text(master: dict[str, Any]) -> str:
     # certifications
     parts.extend(master.get("certifications", []))
 
+    # education
+    for edu in master.get("education", []):
+        if isinstance(edu, str):
+            parts.append(edu)
+        elif isinstance(edu, dict):
+            parts.extend(str(v) for v in edu.values() if isinstance(v, str))
+            details = edu.get("details", [])
+            if isinstance(details, list):
+                parts.extend(str(item) for item in details if item)
+
     return _normalise(" ".join(str(p) for p in parts if p))
 
 
@@ -144,6 +154,12 @@ def validate(
         if _has_ph(exp.company):
             blocking.append(f"experience.company: placeholder — {exp.company!r}")
 
+    for idx, edu in enumerate(tailored.education):
+        for field_name in ("qualification", "institution", "year", "field", "location"):
+            value = getattr(edu, field_name, "")
+            if value and _has_ph(value):
+                blocking.append(f"education[{idx}].{field_name}: placeholder — {value!r}")
+
     # ── 2. Company / role name verbatim check (blocking) ─────────────────────
     for exp in tailored.experience:
         if exp.company and not _in_source(exp.company, source_norm):
@@ -186,6 +202,15 @@ def validate(
             blocking.append(
                 f"certifications: '{cert}' not in master CV certifications — possible fabrication"
             )
+
+    # ── 4b. Education verbatim check (blocking) ─────────────────────────────
+    for edu in tailored.education:
+        for field_name in ("qualification", "institution", "year", "field", "location"):
+            value = getattr(edu, field_name, "")
+            if value and not _in_source(value, source_norm):
+                blocking.append(
+                    f"education.{field_name}: '{value}' not found in master CV — possible fabrication"
+                )
 
     # ── 5. Clearance/eligibility claim check (blocking) ──────────────────────
     full_tailored_text = " ".join(
