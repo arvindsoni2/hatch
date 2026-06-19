@@ -36,6 +36,20 @@ def _safe_json(value: str | None) -> Any:
         return None
 
 
+async def _latest_cv_ats_score(db: AsyncSession, application_id: str) -> int | None:
+    result = await db.execute(
+        select(GeneratedDocument.ats_score)
+        .where(
+            GeneratedDocument.application_id == application_id,
+            GeneratedDocument.document_type == "cv",
+            GeneratedDocument.ats_score.isnot(None),
+        )
+        .order_by(GeneratedDocument.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 # ── Dependency: resolve orchestrator from app state ───────────────────────────
 
 def _get_orchestrator(request: Request) -> Any:
@@ -182,6 +196,7 @@ async def list_pending_approvals(
             "rate_text": job.rate_text if job else None,
             "job_url": job.url if job else None,
             "overall_score": score.overall_score if score else None,
+            "latest_cv_ats_score": await _latest_cv_ats_score(db, app.id),
             "skill_match": score.skill_match if score else None,
             "experience_match": score.experience_match if score else None,
             "rate_match": score.rate_match if score else None,

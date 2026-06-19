@@ -27,6 +27,7 @@ function pendingToHatchJob(a: PendingApproval): HatchJob {
     loc: "—",
     rate: a.rate_text ?? "—",
     score: a.overall_score ?? 0,
+    ats: a.latest_cv_ats_score ?? undefined,
     dims: hasDims ? {
       Skills: a.skill_match ?? 0,
       Experience: a.experience_match ?? 0,
@@ -46,6 +47,7 @@ function readyToApplyToHatchJob(a: ApplicationListItem): HatchJob {
     loc: a.job_location ?? "—",
     rate: a.job_rate_text ?? "—",
     score: a.agent_score ?? 0,
+    ats: a.latest_cv_ats_score ?? undefined,
     state: "ready_to_apply",
   };
 }

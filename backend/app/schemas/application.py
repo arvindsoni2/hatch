@@ -183,6 +183,7 @@ class ApplicationListItem(BaseModel):
     job_url: str | None = None
     # Agentic fields
     agent_score: float | None = None      # overall_score from job_scores (0.0–1.0)
+    latest_cv_ats_score: int | None = None
     agent_created: bool = False
     approval_status: str | None = None
 

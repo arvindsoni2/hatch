@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from ..models.application import Application, FollowUp, InterviewRound
 from ..models.activity import ActivityLog
+from ..models.document import GeneratedDocument
 from ..models.job import JobPosting
 from ..models.job_score import JobScore
 from ..schemas.application import (
@@ -155,8 +156,9 @@ class ApplicationRepository:
         Returns:
             Tuple of (list of ApplicationListItem, total count).
         """
+        latest_cv_ats_score = self._latest_cv_ats_score_subquery()
         query = (
-            select(Application, JobPosting, JobScore)
+            select(Application, JobPosting, JobScore, latest_cv_ats_score)
             .outerjoin(JobPosting, Application.job_id == JobPosting.id)
             .outerjoin(JobScore, Application.job_id == JobScore.job_id)
             .where(Application.is_active)
@@ -183,7 +185,7 @@ class ApplicationRepository:
         query = query.order_by(Application.updated_at.desc()).offset(skip).limit(limit)
         result = await self._session.execute(query)
         rows = result.all()
-        items = [self._to_list_item(app, job, score) for app, job, score in rows]
+        items = [self._to_list_item(app, job, score, cv_ats_score) for app, job, score, cv_ats_score in rows]
         return items, total
 
     async def get_kanban(self) -> dict[str, list[ApplicationListItem]]:
@@ -195,7 +197,7 @@ class ApplicationRepository:
             Dict mapping status string to list of ApplicationListItem.
         """
         result = await self._session.execute(
-            select(Application, JobPosting, JobScore)
+            select(Application, JobPosting, JobScore, self._latest_cv_ats_score_subquery())
             .outerjoin(JobPosting, Application.job_id == JobPosting.id)
             .outerjoin(JobScore, Application.job_id == JobScore.job_id)
             .where(Application.is_active)
@@ -203,8 +205,8 @@ class ApplicationRepository:
         )
         rows = result.all()
         grouped: dict[str, list[ApplicationListItem]] = {}
-        for app, job, score in rows:
-            item = self._to_list_item(app, job, score)
+        for app, job, score, cv_ats_score in rows:
+            item = self._to_list_item(app, job, score, cv_ats_score)
             grouped.setdefault(app.status, []).append(item)
         return grouped
 
@@ -398,7 +400,11 @@ class ApplicationRepository:
         )
 
     def _to_list_item(
-        self, app: Application, job: JobPosting | None, score: JobScore | None = None
+        self,
+        app: Application,
+        job: JobPosting | None,
+        score: JobScore | None = None,
+        latest_cv_ats_score: int | None = None,
     ) -> ApplicationListItem:
         """Build an ApplicationListItem from an ORM Application and optional JobPosting.
 
@@ -430,6 +436,22 @@ class ApplicationRepository:
             job_source=job.source if job else None,
             job_url=job.url if job else None,
             agent_score=score.overall_score if score else None,
+            latest_cv_ats_score=latest_cv_ats_score,
             agent_created=getattr(app, "agent_created", False),
             approval_status=getattr(app, "approval_status", None),
+        )
+
+    @staticmethod
+    def _latest_cv_ats_score_subquery():
+        """Return the newest ATS score for the generated CV attached to each app."""
+        return (
+            select(GeneratedDocument.ats_score)
+            .where(
+                GeneratedDocument.application_id == Application.id,
+                GeneratedDocument.document_type == "cv",
+                GeneratedDocument.ats_score.isnot(None),
+            )
+            .order_by(GeneratedDocument.created_at.desc())
+            .limit(1)
+            .scalar_subquery()
         )

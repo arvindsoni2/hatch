@@ -18,6 +18,7 @@ function pendingToHatchJob(a: PendingApproval): HatchJob {
     loc: "—",
     rate: a.rate_text ?? "—",
     score: a.overall_score ?? 0,
+    ats: a.latest_cv_ats_score ?? undefined,
     state: "ready",
     jobUrl: a.job_url ?? undefined,
   };
@@ -32,6 +33,7 @@ function appToHatchJob(a: ApplicationListItem, state: HatchJob["state"]): HatchJ
     loc: a.job_location ?? "—",
     rate: a.job_rate_text ?? "—",
     score: a.agent_score ?? 0,
+    ats: a.latest_cv_ats_score ?? undefined,
     state,
   };
 }

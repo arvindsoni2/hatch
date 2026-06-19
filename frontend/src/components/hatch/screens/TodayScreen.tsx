@@ -203,8 +203,8 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                     </div>
                     <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{job.company}</div>
                   </div>
-                  {job.ats && (
-                    <Chip color="var(--success)" bg="var(--success-soft)" icon="check">ATS {job.ats}</Chip>
+                  {job.ats != null && (
+                    <Chip color="var(--success)" bg="var(--success-soft)" icon="check">CV ATS {job.ats}%</Chip>
                   )}
                 </button>
               ))}
@@ -237,7 +237,14 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                     <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{job.title}</div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 1 }}>{job.company} · {job.loc}</div>
                   </div>
-                  <ScorePill score={job.score} />
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
+                    <ScorePill score={job.score} />
+                    {job.ats != null && (
+                      <Chip color="var(--success)" bg="var(--success-soft)" icon="check" style={{ fontSize: 10.5, padding: '2px 6px' }}>
+                        CV ATS {job.ats}%
+                      </Chip>
+                    )}
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {job.jobUrl && (

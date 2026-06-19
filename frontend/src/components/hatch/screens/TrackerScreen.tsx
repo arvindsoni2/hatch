@@ -180,7 +180,24 @@ function JobCard({ application, onMove }: JobCardProps) {
             {application.job_company ?? "—"} · {application.job_location ?? "—"}
           </div>
         </div>
-        <ScorePill score={application.agent_score ?? 0} />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
+          <ScorePill score={application.agent_score ?? 0} />
+          {application.latest_cv_ats_score != null && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: "var(--success)",
+                background: "var(--success-soft)",
+                borderRadius: 999,
+                padding: "2px 6px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              CV ATS {application.latest_cv_ats_score}%
+            </span>
+          )}
+        </div>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 10 }}>

@@ -312,6 +312,7 @@ export interface ApplicationListItem {
   job_url: string | null;
   // Agentic fields
   agent_score: number | null;
+  latest_cv_ats_score?: number | null;
   agent_created: boolean;
   approval_status: string | null;
 }
@@ -1417,6 +1418,7 @@ export interface PendingApproval {
   rate_text: string | null
   job_url: string | null
   overall_score: number | null
+  latest_cv_ats_score?: number | null
   skill_match: number | null
   experience_match: number | null
   rate_match: number | null

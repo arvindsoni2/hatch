@@ -1,6 +1,7 @@
 "use client";
 import { useState } from 'react';
 import { Card } from '../Card';
+import { Chip } from '../Chip';
 import { ScorePill } from '../ScorePill';
 import { StageTrack } from '../StageTrack';
 import { Btn } from '../Btn';
@@ -176,7 +177,14 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                     </div>
 
                     {/* MATCH */}
-                    <div><ScorePill score={job.score} /></div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 5 }}>
+                      <ScorePill score={job.score} />
+                      {job.ats != null && (
+                        <Chip color="var(--success)" bg="var(--success-soft)" icon="check" style={{ fontSize: 10.5, padding: '2px 6px' }}>
+                          CV ATS {job.ats}%
+                        </Chip>
+                      )}
+                    </div>
 
                     {/* PIPELINE STAGE */}
                     <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -249,7 +257,14 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                     </div>
                     {job.failureReason && <div style={{ fontSize: 11, color: 'var(--danger, #ef4444)', marginTop: 4 }}>{job.failureReason}</div>}
                   </div>
-                  <ScorePill score={job.score} />
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
+                    <ScorePill score={job.score} />
+                    {job.ats != null && (
+                      <Chip color="var(--success)" bg="var(--success-soft)" icon="check" style={{ fontSize: 10.5, padding: '2px 6px' }}>
+                        CV ATS {job.ats}%
+                      </Chip>
+                    )}
+                  </div>
                 </div>
                 <StageTrack stage={stageOf(job)} pct={Math.round(job.score * 100)} />
               </div>
