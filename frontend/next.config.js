@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
-// next-pwa disabled: its service worker cached /api/async-jobs polling requests
-// (unique since= params) which exhausted Chrome's Cache API quota and caused
-// "insufficient resources" / blank page. Browser Notification API works without
-// a service worker, so no functionality is lost. Package kept installed to avoid
-// lockfile churn; we just use a passthrough identity wrapper instead.
+// PWA service worker generation is intentionally disabled: the previous
+// next-pwa setup cached /api/async-jobs polling requests and exhausted Chrome's
+// Cache API quota. Browser Notification API works without a service worker.
 const withPWA = (cfg) => cfg;
 
 // In container builds API_URL is injected as a Docker build arg; fall back to
@@ -12,6 +10,7 @@ const BACKEND_URL = process.env.API_URL || "http://backend:8000";
 
 const nextConfig = {
   reactStrictMode: true,
+  outputFileTracingRoot: __dirname,
   ...(process.env.NODE_ENV === "production" && { output: "standalone" }),
   // Prevent Next.js from stripping trailing slashes on rewrite targets —
   // the FastAPI backend requires them and would 307-loop otherwise.

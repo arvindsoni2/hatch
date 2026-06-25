@@ -64,7 +64,8 @@ FROM python:3.12-slim AS runner
 WORKDIR /app
 
 # Tell every process in the container where to find browser binaries
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    LANGGRAPH_STRICT_MSGPACK=true
 
 # Python packages
 COPY --from=builder /install /usr/local
