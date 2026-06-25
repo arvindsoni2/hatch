@@ -323,6 +323,8 @@ export interface ApplicationJob {
   company: string | null;
   location: string | null;
   rate_text: string | null;
+  rate_min: number | null;
+  rate_max: number | null;
   url: string;
   source: string;
   ir35_status: string | null;
@@ -413,6 +415,27 @@ export async function createApplication(data: {
   agency_name?: string;
 }): Promise<Application> {
   return apiFetch<Application>("/api/applications", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createManualApplication(data: {
+  job_title: string;
+  company_name?: string | null;
+  job_url?: string | null;
+  job_description?: string | null;
+  location?: string | null;
+  status?: ApplicationStatus;
+  applied_date?: string | null;
+  notes?: string | null;
+  recruiter_name?: string | null;
+  recruiter_email?: string | null;
+  agency_name?: string | null;
+  prepare_with_coach?: boolean;
+}): Promise<Application> {
+  return apiFetch<Application>("/api/applications/manual", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -892,6 +915,7 @@ export interface SessionListItem {
   status: string;
   overall_score: number | null;
   created_at: string;
+  started_at?: string | null;
 }
 
 export interface PracticePlanDay {
@@ -955,6 +979,12 @@ export async function listSessions(
 
 export async function getSession(id: string): Promise<SessionResponse> {
   return apiFetch<SessionResponse>(`/api/coach/sessions/${id}`);
+}
+
+export async function retrySession(id: string): Promise<AsyncJobRef> {
+  return apiFetch<AsyncJobRef>(`/api/coach/sessions/${id}/retry`, {
+    method: "POST",
+  });
 }
 
 export async function endSession(id: string): Promise<AsyncJobRef> {
@@ -1345,8 +1375,9 @@ export async function overrideGhostVerdict(jobId: string, verdict: string): Prom
 
 export interface AsyncJobRef {
   job_id: string
-  status: "pending"
+  status: string
   type: string
+  session_id?: string
 }
 
 export interface AsyncJobResponse<T = unknown> {

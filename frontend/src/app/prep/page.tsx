@@ -5,11 +5,17 @@ import type { PrepSession } from "@/components/hatch/screens/PrepScreen";
 export const revalidate = 60;
 
 function sessionToPrep(s: SessionListItem): PrepSession {
+  const startedAt = s.started_at ?? s.created_at;
+  const ageMs = Date.now() - new Date(startedAt).getTime();
   const status =
     s.status === "completed" || s.status === "active"
       ? "ready"
+      : s.status === "abandoned"
+      ? "failed"
       : s.status === "in_progress"
       ? "progress"
+      : ageMs > 30 * 60 * 1000
+      ? "stale"
       : "generating";
 
   return {
@@ -17,12 +23,14 @@ function sessionToPrep(s: SessionListItem): PrepSession {
     title: s.role_title,
     company: s.company_name,
     status,
+    createdAt: s.created_at,
+    startedAt,
   };
 }
 
 export default async function PrepPage() {
   const raw = await listSessions(20).catch((): SessionListItem[] => []);
-  const sessions = raw.filter((s) => s.status !== "abandoned").map(sessionToPrep);
+  const sessions = raw.map(sessionToPrep);
 
   return <PrepPageClient sessions={sessions} />;
 }

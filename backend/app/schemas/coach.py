@@ -210,6 +210,7 @@ class SessionListItem(BaseModel):
     status: str
     overall_score: float | None = None
     created_at: datetime
+    started_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------

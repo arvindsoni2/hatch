@@ -47,6 +47,8 @@ async def queue_coach_session(
     config = request.config.model_dump()
     if request.interview_date:
         config["interview_date"] = request.interview_date
+    if request.jd_text:
+        config["jd_text"] = request.jd_text
     stub = await session_repo.create_session(
         application_id=request.application_id,
         company_name=request.company_name,

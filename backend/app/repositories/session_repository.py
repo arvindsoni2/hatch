@@ -94,6 +94,7 @@ class SessionRepository:
                 status=r.status,
                 overall_score=r.overall_score,
                 created_at=r.created_at,
+                started_at=r.started_at,
             )
             for r in rows
         ]

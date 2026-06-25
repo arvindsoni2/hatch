@@ -31,6 +31,16 @@ The Tracker follows the real application journey from left to right:
 - Rejected, withdrawn, and declined roles use explicit close actions.
 - Preparing is system-managed while Hatch creates or reviews documents.
 - Moving a role to Applied records the date, creates a follow-up, and queues Coach prep.
+- Use **Add application** to track a role submitted outside Hatch, such as a company-site application. Paste the role, company, URL, applied date, notes, and job description, then optionally queue Coach prep in the same flow.
+
+## Interview Prep
+
+Coach prep can be created from an applied Tracker card or directly from **Prep -> New** for external interviews.
+
+- Ready sessions show likely questions, model answers, calendar export, and practice launch.
+- New manual applications can queue Coach immediately after they are added to Tracker.
+- Long-running generation is surfaced as needing attention instead of looking active forever.
+- Failed or stale sessions can be retried from Prep, reusing the saved role, company, configuration, and job description where available.
 
 ## Quick Start
 
