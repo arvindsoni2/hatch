@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import {
   fetchAllAgentStatus,
@@ -272,11 +273,11 @@ export default function AgentDashboardPage() {
               Review AI-generated CVs before they go out
             </p>
           </div>
-          <a href="/approvals">
+          <Link href="/approvals">
             <Button className="bg-amber-600 hover:bg-amber-700 text-white">
               Review <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
-          </a>
+          </Link>
         </CardContent>
       </Card>
     </div>
