@@ -16,8 +16,10 @@ export interface PrepSession {
   id: string;
   title: string;
   company: string;
-  status: 'ready' | 'progress' | 'generating';
+  status: 'ready' | 'progress' | 'generating' | 'stale' | 'failed';
   when?: string;
+  createdAt?: string;
+  startedAt?: string;
   companyResearch?: string;
   questions?: PrepQuestion[];
 }
@@ -26,6 +28,8 @@ const STATUS_PILL: Record<PrepSession['status'], { label: string; color: string;
   ready:      { label: 'Prep ready',   color: 'var(--success)', soft: 'var(--success-soft)' },
   progress:   { label: 'In progress',  color: 'var(--accent)',  soft: 'var(--accent-soft)'  },
   generating: { label: 'Generating…',  color: 'var(--warning)', soft: 'var(--warning-soft)' },
+  stale:      { label: 'Needs attention', color: 'var(--warning)', soft: 'var(--warning-soft)' },
+  failed:     { label: 'Failed', color: 'var(--danger, #ef4444)', soft: 'rgba(239,68,68,0.14)' },
 };
 
 interface PrepScreenProps {
@@ -36,6 +40,20 @@ interface PrepScreenProps {
   onCalendar?: () => void;
   onPractice?: (id: string) => void;
   onDeleteSession?: (id: string) => void;
+  onRetrySession?: (id: string) => void;
+  retryingIds?: Record<string, boolean>;
+}
+
+function timeAgo(value?: string): string | null {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return null;
+  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function DetailView({ session, onCalendar, onPractice }: { session: PrepSession; onCalendar?: () => void; onPractice?: () => void }) {
@@ -115,7 +133,7 @@ function DetailView({ session, onCalendar, onPractice }: { session: PrepSession;
   );
 }
 
-export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSession, onCalendar, onPractice, onDeleteSession }: PrepScreenProps) {
+export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSession, onCalendar, onPractice, onDeleteSession, onRetrySession, retryingIds = {} }: PrepScreenProps) {
   const openSession = sessions.find((s) => s.id === openSessionId);
 
   return (
@@ -143,21 +161,34 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
           {sessions.map((s) => {
             const p = STATUS_PILL[s.status];
             const active = s.id === openSessionId;
+            const canOpen = s.status === 'ready';
+            const canRetry = s.status === 'stale' || s.status === 'failed';
+            const age = timeAgo(s.startedAt ?? s.createdAt);
             return (
               <Card
                 key={s.id}
-                onClick={() => s.status === 'ready' && onSelectSession?.(s.id)}
-                style={{ padding: 15, cursor: s.status === 'ready' ? 'pointer' : 'default', background: active ? 'var(--surface-2)' : 'var(--surface)' }}
+                onClick={() => canOpen && onSelectSession?.(s.id)}
+                style={{ padding: 15, cursor: canOpen ? 'pointer' : 'default', background: active ? 'var(--surface-2)' : 'var(--surface)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <AgentBadge agent="coach" size={34} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>{s.title}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
-                      {s.company}{s.when ? ` · ${s.when}` : ''}
+                      {s.company}{s.when ? ` · ${s.when}` : age ? ` · ${age}` : ''}
                     </div>
                   </div>
                   <Chip color={p.color} bg={p.soft}>{p.label}</Chip>
+                  {canRetry && onRetrySession && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onRetrySession(s.id); }}
+                      disabled={retryingIds[s.id]}
+                      title="Retry generation"
+                      style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', cursor: retryingIds[s.id] ? 'wait' : 'pointer', padding: '6px 8px', borderRadius: 7, color: 'var(--text)', fontSize: 11, fontWeight: 700 }}
+                    >
+                      {retryingIds[s.id] ? 'Retrying' : 'Retry'}
+                    </button>
+                  )}
                   {onDeleteSession && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id); }}

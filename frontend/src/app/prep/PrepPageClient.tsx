@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 import { PrepScreen } from "@/components/hatch/screens/PrepScreen";
 import type { PrepSession, PrepQuestion } from "@/components/hatch/screens/PrepScreen";
 import { SessionLauncher } from "@/components/coach/SessionLauncher";
-import { getSession, fetchApplication, abandonSession } from "@/lib/api";
+import { getSession, fetchApplication, abandonSession, retrySession } from "@/lib/api";
 import type { SessionResponse } from "@/lib/api";
 
 interface PrepPageClientProps {
@@ -45,6 +45,7 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
   const [openSessionId, setOpenSessionId] = useState<string | undefined>(firstReady?.id);
   const [sessionCache, setSessionCache] = useState<Record<string, SessionResponse>>({});
   const [showLauncher, setShowLauncher] = useState(false);
+  const [retryingIds, setRetryingIds] = useState<Record<string, boolean>>({});
 
   // Auto-fetch detail for the initially-selected session (state setter never triggers handleSelectSession)
   useEffect(() => {
@@ -64,6 +65,32 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
     }
     setSessions((prev) => prev.filter((s) => s.id !== id));
     if (openSessionId === id) setOpenSessionId(undefined);
+  };
+
+  const handleRetrySession = async (id: string) => {
+    const source = sessions.find((s) => s.id === id);
+    if (!source) return;
+    setRetryingIds((prev) => ({ ...prev, [id]: true }));
+    try {
+      const ref = await retrySession(id);
+      setSessions((prev) => [
+        {
+          id: ref.session_id ?? ref.job_id,
+          title: source.title,
+          company: source.company,
+          status: "generating",
+          createdAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+        },
+        ...prev.filter((s) => s.id !== id),
+      ]);
+      setOpenSessionId(undefined);
+      router.refresh();
+    } catch {
+      alert("Could not retry this prep session.");
+    } finally {
+      setRetryingIds((prev) => ({ ...prev, [id]: false }));
+    }
   };
 
   const enrichedSessions: PrepSession[] = sessions.map((s) => {
@@ -147,6 +174,8 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
         onCalendar={handleCalendar}
         onPractice={(id) => router.push(`/coach/session/${id}`)}
         onDeleteSession={handleDeleteSession}
+        onRetrySession={handleRetrySession}
+        retryingIds={retryingIds}
       />
 
       {showLauncher && (

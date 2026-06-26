@@ -55,6 +55,30 @@ class ApplicationCreate(BaseModel):
         return v
 
 
+class ManualApplicationCreate(BaseModel):
+    """Payload for tracking a role the user found or applied to outside Hatch."""
+
+    job_title: str
+    company_name: str | None = None
+    job_url: str | None = None
+    job_description: str | None = None
+    location: str | None = None
+    status: str = "applied"
+    applied_date: datetime | None = None
+    notes: str | None = None
+    recruiter_name: str | None = None
+    recruiter_email: str | None = None
+    agency_name: str | None = None
+    prepare_with_coach: bool = False
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in VALID_STATUSES:
+            raise ValueError(f"status must be one of {VALID_STATUSES}")
+        return v
+
+
 class ApplicationUpdate(BaseModel):
     """Schema for partially updating an application record."""
 

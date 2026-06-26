@@ -19,6 +19,7 @@ from ..schemas.application import (
     ApplicationRead,
     ApplicationStatusUpdate,
     ApplicationUpdate,
+    ManualApplicationCreate,
 )
 from ..schemas.job import PaginatedResponse
 from ..services.application_service import ApplicationService
@@ -212,6 +213,59 @@ async def create_application(
         New ApplicationRead.
     """
     return await service.create_application(data)
+
+
+@router.post("/manual", response_model=ApplicationRead, status_code=201)
+async def create_manual_application(
+    data: ManualApplicationCreate,
+    db: AsyncSession = Depends(get_db),
+    service: ApplicationService = Depends(get_app_service),
+) -> ApplicationRead:
+    """Track an externally found or already-submitted role and optionally prepare with Coach."""
+    import uuid
+    from ..models.job import JobPosting
+
+    effective_url = data.job_url or f"manual://{uuid.uuid4()}"
+    result = await db.execute(select(JobPosting).where(JobPosting.url == effective_url))
+    job = result.scalar_one_or_none()
+
+    if job is None:
+        job = JobPosting(
+            id=str(uuid.uuid4()),
+            title=data.job_title.strip() or "Manual Job",
+            company=data.company_name,
+            location=data.location,
+            url=effective_url,
+            source="manual",
+            description=data.job_description,
+        )
+        db.add(job)
+        await db.flush()
+
+    app = await service.create_application(
+        ApplicationCreate(
+            job_id=job.id,
+            status=data.status,
+            notes=data.notes,
+            recruiter_name=data.recruiter_name,
+            recruiter_email=data.recruiter_email,
+            agency_name=data.agency_name,
+        )
+    )
+
+    if data.status == "applied":
+        applied_at = data.applied_date or datetime.utcnow()
+        app = await service._repo.update(app.id, ApplicationUpdate(applied_date=applied_at)) or app
+        await service._create_status_follow_ups(app.id, "applied")
+
+    if data.prepare_with_coach:
+        await _queue_application_coach_session(app.id, db)
+
+    await db.commit()
+    refreshed = await service._repo.get_by_id(app.id, load_relations=True)
+    if refreshed is None:
+        raise HTTPException(status_code=404, detail=f"Application '{app.id}' not found.")
+    return refreshed
 
 
 @router.get("/follow-up-reminders")

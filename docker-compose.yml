@@ -65,6 +65,7 @@ services:
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/jobpilot.db
       - LANGGRAPH_CHECKPOINT_DB=sqlite+aiosqlite:///./data/langgraph_checkpoints.db
+      - LANGGRAPH_STRICT_MSGPACK=true
       - PLAYWRIGHT_HEADLESS=true
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SCRAPE_INTERVAL_HOURS=${SCRAPE_INTERVAL_HOURS:-4}

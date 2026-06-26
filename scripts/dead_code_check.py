@@ -22,6 +22,8 @@ _ALEMBIC = Path(__file__).parent.parent / "backend" / "alembic"
 
 _ALLOWLIST_PATTERNS = [
     "alembic",
+    "main",            # FastAPI ASGI entrypoint loaded by uvicorn/Docker
+    "seed",            # Operational seed script invoked directly
     "skills",          # skill scripts loaded dynamically via spec_from_file_location
     "models",          # ORM models imported via Base.metadata.create_all
     "migrations",

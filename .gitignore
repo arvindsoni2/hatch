@@ -20,12 +20,18 @@ UX_changes.md
 CLAUDE_Phase2.md
 # ──────────────────────── Secrets ────────────────────────
 .env
-.env.example
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.sample
+.envrc
 *.pem
 *.key
+*.crt
+*.cer
+*.der
 secrets/
+credentials.json
+service-account*.json
 env-v2-additions.txt
 backend/data/api_keys.env
 backend/app/config/master_profile.yaml
@@ -156,10 +162,8 @@ models/*.bin
 data/models/
 
 # Agent skills — installed locally, not part of the project
-AGENTS.md
 .ai/
 .codex/
 .agents/
 .opencode/
 .claude/skills/
-opencode.json

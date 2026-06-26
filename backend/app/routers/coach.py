@@ -16,6 +16,7 @@ from ..database import get_db
 from ..schemas.coach import (
     CompanyResearchResponse,
     CreateSessionRequest,
+    SessionConfig,
     PlanFollowUpResponse,
     ProgressTrendItem,
     QuestionPresentation,
@@ -158,6 +159,46 @@ async def abandon_session(
     await repo.update_session_status(session_id, "abandoned")
     await db.commit()
     return Response(status_code=204)
+
+
+@router.post("/sessions/{session_id}/retry", status_code=202)
+async def retry_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    svc: CoachService = Depends(get_coach_service),
+) -> dict:
+    """Retry a stale or failed Coach session using the original session metadata."""
+    from ..repositories.session_repository import SessionRepository
+
+    repo = SessionRepository(db)
+    session = await repo.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    config = dict(session.config or {})
+    session_config_keys = set(SessionConfig.model_fields.keys())
+    session_config = SessionConfig(
+        **{key: value for key, value in config.items() if key in session_config_keys}
+    )
+    interview_date = config.get("interview_date")
+    jd_text = config.get("jd_text")
+
+    if session.status != "abandoned":
+        await repo.update_session_status(session_id, "abandoned")
+        await db.flush()
+
+    return await queue_coach_session(
+        CreateSessionRequest(
+            application_id=session.application_id,
+            company_name=session.company_name,
+            role_title=session.role_title,
+            jd_text=jd_text if isinstance(jd_text, str) else None,
+            interview_date=interview_date if isinstance(interview_date, str) else None,
+            config=session_config,
+        ),
+        db,
+        svc,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +445,7 @@ async def get_application_progress(
             status=r.status,
             overall_score=r.overall_score,
             created_at=r.created_at,
+            started_at=r.started_at,
         )
         for r in rows
     ]
