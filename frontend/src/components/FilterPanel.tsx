@@ -44,7 +44,6 @@ const LEGAL_STATUS_OPTIONS = [
 export function FilterPanel({
   filters,
   onFilterChange,
-  onScrapeComplete,
   currencySymbol = "£",
   rateUnit = "day",
 }: FilterPanelProps) {
@@ -62,14 +61,11 @@ export function FilterPanel({
         // Use the scout agent trigger — it respects profile job_boards and is DB-safe
         const res = await fetch(`${API_BASE}/api/agents/scout/trigger`, { method: "POST" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json() as { result: { jobs_found: number; jobs_new: number; errors: Array<unknown> } };
-        const r = data.result;
-        const message = r.errors.length > 0
-          ? `Done — ${r.jobs_new} new jobs (${r.errors.length} source errors)`
-          : `Done — ${r.jobs_new} new jobs found`;
-        setScrapeMessage(message);
-        // Notify parent so it can refresh the job list
-        onScrapeComplete?.([{ source: "scout", jobs_found: r.jobs_found, jobs_new: r.jobs_new, errors: r.errors.length, duration_seconds: 0 }]);
+        const data = await res.json() as { agent: string; status: string };
+        if (data.agent !== "scout" || data.status !== "started") {
+          throw new Error("Unexpected scout trigger response");
+        }
+        setScrapeMessage("Scrape started — results will appear here shortly");
       } catch {
         setScrapeMessage("Scrape failed — is the backend running?");
       }

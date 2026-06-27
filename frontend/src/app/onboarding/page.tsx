@@ -203,7 +203,10 @@ export default function OnboardingPage() {
     try {
       await saveProfile(buildProfile());
       if (testApiKey && llm.provider !== "llamacpp") {
-        await saveApiKey(llm.api_key_env, testApiKey).catch(() => {});
+        const keyResult = await saveApiKey(llm.api_key_env, testApiKey);
+        if (!keyResult.valid) {
+          throw new Error(keyResult.error || "API key could not be saved");
+        }
       }
       await triggerAgent("scout").catch(() => {});
       try { localStorage.removeItem(STORAGE_KEY); } catch {}

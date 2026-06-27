@@ -33,6 +33,7 @@ class TestSettingsRouter:
     async def test_put_env_does_not_return_key_value_in_response(self, client):
         """PUT /api/v2/settings/env must never return the actual key value."""
         mock_llm = AsyncMock()
+        build_model = MagicMock(return_value=mock_llm)
         mock_profile = MagicMock()
         mock_profile.llm.provider = "anthropic"
         mock_profile.llm.triage_model = "claude-haiku-4-5-20251001"
@@ -40,7 +41,7 @@ class TestSettingsRouter:
 
         # _build_model and load_profile are imported inline — patch at their source modules
         # Also patch _write_env_key to avoid filesystem writes (data/ may be owned by container)
-        with patch("app.agents.tools.llm_factory._build_model", return_value=mock_llm), \
+        with patch("app.agents.tools.llm_factory._build_model", build_model), \
              patch("app.services.profile_service.load_profile", return_value=mock_profile), \
              patch("app.routers.settings.load_profile_raw", return_value={"llm": {}}), \
              patch("app.routers.settings.save_profile_raw"), \
@@ -55,6 +56,9 @@ class TestSettingsRouter:
         data = response.json()
         assert "sk-ant-test123" not in str(data)
         assert "key_value" not in data
+        test_cfg = build_model.call_args.args[1]
+        assert test_cfg.base_url is None
+        assert test_cfg.triage_base_url == ""
 
 
 def test_write_env_key_sets_file_mode_600(tmp_path, monkeypatch):

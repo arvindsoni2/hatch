@@ -113,6 +113,10 @@ async def save_api_key(data: dict[str, Any]) -> dict[str, Any]:
             provider=provider,  # type: ignore[arg-type]
             triage_model=_PROVIDER_MODELS[provider][0],
             api_key_env=key_name,
+            # LLMConfig defaults target the bundled llama.cpp containers.
+            # Cloud-provider validation must not inherit those local endpoints.
+            base_url=None,
+            triage_base_url="",
         )
         # Set model temporarily
         profile.llm.provider = provider  # type: ignore[assignment]
