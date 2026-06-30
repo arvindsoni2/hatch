@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useState } from 'react';
 import { HatchIcon } from './HatchIcon';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserMenu } from './UserMenu';
@@ -18,6 +19,11 @@ function getGreeting(): string {
 }
 
 export function HatchTopBar({ name, role, pageTitle, pageSub }: HatchTopBarProps) {
+  const [greeting, setGreeting] = useState('Welcome');
+
+  useEffect(() => {
+    setGreeting(getGreeting());
+  }, []);
 
   return (
     <header
@@ -37,7 +43,7 @@ export function HatchTopBar({ name, role, pageTitle, pageSub }: HatchTopBarProps
             {pageTitle}
           </span>
           <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {pageSub ?? `${getGreeting()}, ${name}`}
+            {pageSub ?? `${greeting}, ${name}`}
           </span>
         </div>
       </div>

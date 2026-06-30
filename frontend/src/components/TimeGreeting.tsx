@@ -10,9 +10,7 @@ function getGreeting(hour: number): string {
 }
 
 export function TimeGreeting({ name }: { name?: string | null }) {
-  const [greeting, setGreeting] = useState<string>(() =>
-    getGreeting(new Date().getHours())
-  );
+  const [greeting, setGreeting] = useState<string>("Welcome");
 
   useEffect(() => {
     setGreeting(getGreeting(new Date().getHours()));

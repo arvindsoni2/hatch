@@ -1,5 +1,5 @@
 "use client";
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AgentBadge } from '../AgentBadge';
 import { Btn } from '../Btn';
 import { Card } from '../Card';
@@ -96,6 +96,15 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
   const ready = jobs.filter((j) => j.state === 'ready');
   const readyToApply = jobs.filter((j) => j.state === 'ready_to_apply');
   const initials = profileName.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  const [todayLabel, setTodayLabel] = useState('');
+
+  useEffect(() => {
+    setTodayLabel(new Date().toLocaleDateString('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    }));
+  }, []);
 
   return (
     <div>
@@ -119,7 +128,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
 
       {/* Mobile date subtitle */}
       <div className="md:hidden" style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: -8, marginBottom: 10 }}>
-        {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
+        {todayLabel}
       </div>
 
       {/* Desktop greeting */}
@@ -128,7 +137,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           <TimeGreeting name={profileName} />
         </div>
         <div style={{ fontSize: 13.5, color: 'var(--text-muted)', marginTop: 4 }}>
-          {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })} — your application workspace at a glance
+          {todayLabel ? `${todayLabel} — ` : ''}your application workspace at a glance
         </div>
       </div>
 

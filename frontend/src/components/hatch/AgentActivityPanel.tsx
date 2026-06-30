@@ -89,11 +89,11 @@ function formatTimestamp(lastRunAt: string | null): string {
   const diffMs = Date.now() - dt.getTime();
   const diffMin = Math.floor(diffMs / 60_000);
   if (diffMin < 1) return "just now";
-  if (diffMin < 60) return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (diffMin < 60) return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
   const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (diffH < 24) return dt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
   if (Math.floor(diffH / 24) === 1) return "Yesterday";
-  return dt.toLocaleDateString([], { weekday: "short" });
+  return dt.toLocaleDateString([], { weekday: "short", timeZone: "UTC" });
 }
 
 interface AgentActivityPanelProps {
