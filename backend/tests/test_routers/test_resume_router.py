@@ -7,6 +7,8 @@ from unittest.mock import patch
 import pytest
 from httpx import AsyncClient
 
+from app.routers.resume import _heuristic_cv, _is_complete_parse
+
 
 @pytest.mark.asyncio
 async def test_resume_status_returns_200(client: AsyncClient) -> None:
@@ -35,6 +37,7 @@ async def test_resume_upload_invalid_file_type_returns_422(client: AsyncClient) 
 @pytest.mark.asyncio
 async def test_resume_upload_falls_back_when_structured_parse_times_out(
     client: AsyncClient,
+    tmp_path,
 ) -> None:
     """A slow local LLM must not outlive the frontend proxy timeout."""
     extracted_text = (
@@ -44,6 +47,7 @@ async def test_resume_upload_falls_back_when_structured_parse_times_out(
 
     with (
         patch("app.routers.resume._extract_text_from_docx", return_value=extracted_text),
+        patch("app.routers.resume._data_dir", return_value=tmp_path),
         patch("app.services.resume_store.save_resume_text"),
         patch("app.routers.resume._STRUCTURED_PARSE_TIMEOUT_SECONDS", 0),
     ):
@@ -63,3 +67,45 @@ async def test_resume_upload_falls_back_when_structured_parse_times_out(
     assert body["filename"] == "resume.docx"
     assert body["parsed_cv"]["skills"][0]["items"] == ["Python", "FastAPI"]
     assert "timed out" in body["warnings"][0]
+
+
+def test_grounded_fallback_preserves_complete_cv_structure() -> None:
+    text = """Arvind Soni
+arvind@example.com
+Newcastle upon Tyne
+07424 338059
+Profile
+Technical Project Manager delivering regulated programmes.
+Professional Experience
+05/2022 – Present Product Delivery Lead
+Natoora Ltd
+Established an Agile operating model.
+• Reduced time-to-market from 5 weeks to 3 weeks.
+07/2011 – 05/2022 Associate Consultant
+Tata Consultancy Services
+• Led a £400K infrastructure modernisation programme.
+Education
+2000 – 2004 Bachelor of Engineering - Computer Science
+RGPV
+Technical Skills and Tools
+Agile Delivery Tools: Jira, Confluence
+DevOps & Cloud: GitHub Actions, Docker
+Awards & Certifications
+• PMI PMP (Project Management Professional)
+• PMI-ACP (Agile Certified Practitioner)
+"""
+
+    parsed = _heuristic_cv(text)
+
+    assert _is_complete_parse(parsed)
+    assert parsed["personal"]["full_name"] == "Arvind Soni"
+    assert [item["role"] for item in parsed["experience"]] == [
+        "Product Delivery Lead",
+        "Associate Consultant",
+    ]
+    assert parsed["education"][0]["qualification"] == "Bachelor of Engineering - Computer Science"
+    assert parsed["skills"][1]["category"] == "DevOps & Cloud"
+    assert parsed["certifications"] == [
+        "PMI PMP (Project Management Professional)",
+        "PMI-ACP (Agile Certified Practitioner)",
+    ]

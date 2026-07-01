@@ -39,12 +39,12 @@ New-Item -ItemType Directory -Force -Path "data\models" | Out-Null
 
 $Models = @(
     @{
-        Name = "Qwen3-4B-Q4_0.gguf"
-        Url = "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_0.gguf"
+        Name = "Qwen3-8B-Q5_K_M.gguf"
+        Url = "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q5_K_M.gguf"
     },
     @{
-        Name = "Qwen3-0.6B-Q4_0.gguf"
-        Url = "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf"
+        Name = "Qwen3-0.6B-Q8_0.gguf"
+        Url = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf"
     }
 )
 
@@ -110,8 +110,8 @@ tailoring:
   ats_retry_limit: 1
 llm:
   provider: "llamacpp"
-  triage_model: "qwen3-0.6b-q4_0"
-  primary_model: "qwen3-4b-q4_0"
+  triage_model: "qwen3-0.6b-q8_0"
+  primary_model: "qwen3-8b-q5_k_m"
   base_url: "http://llm-primary:8080/v1"
   triage_base_url: "http://llm-triage:8081/v1"
   api_key_env: ""

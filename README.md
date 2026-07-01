@@ -64,7 +64,7 @@ Both installers:
 
 - verify Docker Compose and Git;
 - clone or update `arvindsoni2/hatch`;
-- download the bundled Qwen3 GGUF models, about 3 GB total;
+- download the bundled Qwen3 GGUF models, about 6.5 GB total;
 - create `data/profile.yaml` and `.env` when missing;
 - build and start the Docker Compose stack.
 
@@ -92,8 +92,8 @@ The default stack runs two local llama.cpp services:
 
 | Service | Model | Port | Purpose |
 |---|---|---:|---|
-| `llm-primary` | `Qwen3-4B-Q4_0.gguf` | 8080 | CV, cover letter, detailed scoring, Coach |
-| `llm-triage` | `Qwen3-0.6B-Q4_0.gguf` | 8081 | Fast initial filtering |
+| `llm-primary` | `Qwen3-8B-Q5_K_M.gguf` | 8080 | CV, cover letter, detailed scoring, Coach |
+| `llm-triage` | `Qwen3-0.6B-Q8_0.gguf` | 8081 | Fast initial filtering |
 
 The model ports bind to localhost only. Model files live in `data/models/` and are not committed.
 
@@ -200,7 +200,7 @@ curl -f http://localhost:8000/api/health
 Confirm both files exist:
 
 ```bash
-ls -lh data/models/Qwen3-4B-Q4_0.gguf data/models/Qwen3-0.6B-Q4_0.gguf
+ls -lh data/models/Qwen3-8B-Q5_K_M.gguf data/models/Qwen3-0.6B-Q8_0.gguf
 bash scripts/fetch_models.sh
 docker compose restart llm-primary llm-triage
 ```

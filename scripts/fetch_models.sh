@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Idempotent download of the two Qwen3 GGUFs used by llm-primary and llm-triage.
-# Source: unsloth quantizations on HuggingFace (public, no auth required).
+# Source: official Qwen quantizations on Hugging Face (public, no auth required).
 # Run once before 'docker compose up'.
 # Offline path: manually drop the files into data/models/ and skip this script.
 set -euo pipefail
 
-MODELS_DIR="${MODELS_DIR:-$(dirname "$0")/../data/models}"
+MODELS_DIR="$(realpath -m "${MODELS_DIR:-$(dirname "$0")/../data/models}")"
 mkdir -p "$MODELS_DIR"
 
 # ── Pinned sources ────────────────────────────────────────────────────────────
-# unsloth quantizations — no HF token required.
-PRIMARY_URL="https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_0.gguf"
-PRIMARY_FILE="Qwen3-4B-Q4_0.gguf"
+# Official Qwen quantizations — no HF token required.
+PRIMARY_URL="https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q5_K_M.gguf"
+PRIMARY_FILE="Qwen3-8B-Q5_K_M.gguf"
 
-TRIAGE_URL="https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_0.gguf"
-TRIAGE_FILE="Qwen3-0.6B-Q4_0.gguf"
+TRIAGE_URL="https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf"
+TRIAGE_FILE="Qwen3-0.6B-Q8_0.gguf"
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 download_if_missing() {

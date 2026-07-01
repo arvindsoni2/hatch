@@ -6,8 +6,8 @@ import { Field, Choice, ToggleRow, Seg } from "./OnboardingPrimitives";
 import type { LocaleBoard } from "@/lib/api";
 
 // Model name constants shared with fetch_models.sh (single source of truth for display/traces).
-export const LLAMACPP_PRIMARY_MODEL = "qwen3-4b-q4_0";
-export const LLAMACPP_TRIAGE_MODEL  = "qwen3-0.6b-q4_0";
+export const LLAMACPP_PRIMARY_MODEL = "qwen3-8b-q5_k_m";
+export const LLAMACPP_TRIAGE_MODEL  = "qwen3-0.6b-q8_0";
 
 export const LLM_PROVIDERS = [
   { id: "llamacpp",     label: "Local AI (free)",    sub: "llama.cpp bundled in this stack — no API key, no cost, privacy-first", keyEnv: "", triageDefault: LLAMACPP_TRIAGE_MODEL, primaryDefault: LLAMACPP_PRIMARY_MODEL },

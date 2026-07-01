@@ -145,6 +145,105 @@ def _extract_skills(text: str) -> list[str]:
     return [s for s in raw_skills if 1 < len(s) < 60][:60]
 
 
+_DATE_RANGE_RE = re.compile(
+    r"^(?P<period>(?:\d{1,2}/)?(?:19|20)\d{2}\s*[–—-]\s*"
+    r"(?:Present|Current|(?:\d{1,2}/)?(?:19|20)\d{2}))\s+(?P<role>.+)$",
+    re.IGNORECASE,
+)
+
+
+def _join_wrapped_lines(lines: list[str]) -> str:
+    """Join PDF-wrapped prose while preserving intentional paragraph breaks."""
+    return " ".join(line.strip() for line in lines if line.strip()).strip()
+
+
+def _parse_contact(header: str) -> dict[str, str]:
+    lines = [line.strip() for line in header.splitlines() if line.strip()]
+    email_match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", header)
+    phone_match = re.search(r"(?:\+\d{1,3}\s*)?0?\d[\d ()-]{8,}\d", header)
+    email = email_match.group(0) if email_match else ""
+    phone = phone_match.group(0).strip() if phone_match else ""
+    non_contact = [line for line in lines if line not in {email, phone}]
+    return {
+        "full_name": non_contact[0] if non_contact else "",
+        "email": email,
+        "phone": phone,
+        "location": non_contact[1] if len(non_contact) > 1 else "",
+        "linkedin": next((line for line in lines if "linkedin.com/" in line.lower()), ""),
+        "title": "",
+    }
+
+
+def _parse_experience(section: str) -> list[dict[str, Any]]:
+    """Parse common CV date/role/company layouts without inventing content."""
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    starts = [(idx, match) for idx, line in enumerate(lines)
+              if (match := _DATE_RANGE_RE.match(line))]
+    experience: list[dict[str, Any]] = []
+    for pos, (start, match) in enumerate(starts):
+        end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
+        body = lines[start + 1:end]
+        company = body[0] if body else ""
+        content = body[1:]
+        achievements: list[dict[str, str]] = []
+        current: list[str] = []
+        for line in content:
+            is_bullet = line.startswith(("•", "●", "▪", "◦"))
+            if is_bullet and current:
+                achievements.append({"text": _join_wrapped_lines(current)})
+                current = []
+            current.append(line.lstrip("•●▪◦ ").strip())
+        if current:
+            achievements.append({"text": _join_wrapped_lines(current)})
+        experience.append({
+            "role": match.group("role").strip(),
+            "company": company,
+            "period": match.group("period").strip(),
+            "achievements": [item for item in achievements if item["text"]],
+        })
+    return experience
+
+
+def _parse_skills_section(section: str) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    current_category = "Skills"
+    current_text = ""
+    for line in [line.strip() for line in section.splitlines() if line.strip()]:
+        if ":" in line:
+            if current_text:
+                groups.append({
+                    "category": current_category,
+                    "items": [item.strip() for item in current_text.split(",") if item.strip()],
+                })
+            current_category, current_text = (part.strip() for part in line.split(":", 1))
+        else:
+            current_text = f"{current_text} {line}".strip()
+    if current_text:
+        groups.append({
+            "category": current_category,
+            "items": [item.strip() for item in current_text.split(",") if item.strip()],
+        })
+    return groups
+
+
+def _parse_education(section: str) -> list[dict[str, str]]:
+    lines = [line.strip() for line in section.splitlines() if line.strip()]
+    education: list[dict[str, str]] = []
+    idx = 0
+    while idx < len(lines):
+        match = re.match(r"^(?P<year>(?:19|20)\d{2}(?:\s*[–—-]\s*(?:19|20)\d{2})?)\s+(?P<qualification>.+)$", lines[idx])
+        if not match:
+            idx += 1
+            continue
+        education.append({
+            "qualification": match.group("qualification").strip(),
+            "institution": lines[idx + 1] if idx + 1 < len(lines) else "",
+            "year": match.group("year").strip(),
+        })
+        idx += 2
+    return education
+
+
 def _count_experience_items(sections: dict[str, Any]) -> int:
     # Look in experience, profile (fallback if parser lumped experience there), or full text
     exp_text = (
@@ -254,19 +353,33 @@ _STRUCTURED_PARSE_TIMEOUT_SECONDS = 20
 
 
 def _heuristic_cv(text: str) -> dict[str, Any]:
-    """Return a minimal CV structure without requiring an LLM."""
+    """Return a grounded CV structure without requiring an LLM."""
     sections = _parse_sections(text)
-    skills = _extract_skills(text)
+    certifications = [
+        line.lstrip("•●▪◦ ").strip()
+        for line in str(sections.get("certifications", "")).splitlines()
+        if line.lstrip("•●▪◦ ").strip()
+    ]
     return {
-        "personal": {},
+        "personal": _parse_contact(str(sections.get("header", ""))),
         "summary_variants": {
             "default": sections.get("summary") or sections.get("profile") or ""
         },
-        "experience": [],
-        "skills": [{"category": "Skills", "items": skills}] if skills else [],
-        "certifications": [],
-        "education": [],
+        "experience": _parse_experience(str(sections.get("experience", ""))),
+        "skills": _parse_skills_section(str(sections.get("skills", ""))),
+        "certifications": certifications,
+        "education": _parse_education(str(sections.get("education", ""))),
     }
+
+
+def _is_complete_parse(parsed: dict[str, Any]) -> bool:
+    """Require identity and career history before accepting a master CV parse."""
+    personal = parsed.get("personal", {})
+    return bool(
+        isinstance(personal, dict)
+        and personal.get("full_name")
+        and parsed.get("experience")
+    )
 
 
 @router.post("/upload", response_model=ParsePreviewResponse)
@@ -314,26 +427,27 @@ async def upload_resume(file: UploadFile = File(...)) -> ParsePreviewResponse:
         import logging as _logging  # noqa: PLC0415
         _logging.getLogger(__name__).warning("Could not save resume text for scoring: %s", _exc)
 
-    # Structured LLM parse — returns preview without persisting
-    try:
-        from ..services.llm_client import LLMClient  # noqa: PLC0415
-        from ..services.cv_parser import parse_cv_text  # noqa: PLC0415
-        parse_result = await asyncio.wait_for(
-            parse_cv_text(text, LLMClient()),
-            timeout=_STRUCTURED_PARSE_TIMEOUT_SECONDS,
-        )
-        parsed_cv = parse_result.parsed
-        warnings = parse_result.warnings
-    except TimeoutError:
-        parsed_cv = _heuristic_cv(text)
-        warnings = [
-            "Structured CV parsing timed out; using heuristic extraction. "
-            "You can review and edit the parsed CV before saving."
-        ]
-    except Exception as exc:
-        # Fallback: return heuristic-parsed sections so the user sees something
-        parsed_cv = _heuristic_cv(text)
-        warnings = [f"LLM parse failed, using heuristic extraction: {exc}"]
+    # Prefer the fast, grounded parser when it can identify the candidate and
+    # employment history. This avoids making uploads depend on local-model speed.
+    parsed_cv = _heuristic_cv(text)
+    warnings: list[str] = []
+    if not _is_complete_parse(parsed_cv):
+        try:
+            from ..services.llm_client import LLMClient  # noqa: PLC0415
+            from ..services.cv_parser import parse_cv_text  # noqa: PLC0415
+            parse_result = await asyncio.wait_for(
+                parse_cv_text(text, LLMClient()),
+                timeout=_STRUCTURED_PARSE_TIMEOUT_SECONDS,
+            )
+            if _is_complete_parse(parse_result.parsed):
+                parsed_cv = parse_result.parsed
+                warnings = parse_result.warnings
+            else:
+                warnings = ["Could not identify complete contact and employment history. Review the parsed CV before saving."]
+        except TimeoutError:
+            warnings = ["CV parsing timed out and the document structure could not be fully identified. Review before saving."]
+        except Exception as exc:
+            warnings = [f"CV parsing failed: {exc}. Review before saving."]
 
     return ParsePreviewResponse(
         parsed_cv=parsed_cv,
@@ -353,6 +467,11 @@ async def confirm_cv(body: ConfirmCVRequest) -> ResumeStatus:
     from ..services.master_cv_validator import validate_master_cv  # noqa: PLC0415
 
     cv_data = body.parsed_cv
+    if not _is_complete_parse(cv_data):
+        raise HTTPException(
+            status_code=422,
+            detail="Master CV must include the candidate name and at least one employment entry.",
+        )
     validation_errors = validate_master_cv(cv_data)
     if validation_errors:
         # Advisory only — still save. Blocking errors are surfaced at tailor time.
