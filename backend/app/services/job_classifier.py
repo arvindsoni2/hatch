@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 _PROFILE_PATH = Path(__file__).parent.parent / "templates" / "candidate_profile.json"
 
+# The bundled triage server runs two parallel slots in a 4096-token context,
+# leaving 2048 tokens per request. Three 500-character job excerpts plus the
+# classifier instructions fit below that limit with room for the JSON response.
+_MAX_CONTEXT_SAFE_BATCH_SIZE = 3
+
 
 class JobClassifier:
     """Enriches job postings with AI-classified metadata in batches.
@@ -97,11 +102,15 @@ class JobClassifier:
         Returns:
             Number of jobs successfully classified.
         """
+        batch_size = min(
+            max(settings.CLASSIFIER_BATCH_SIZE, 1),
+            _MAX_CONTEXT_SAFE_BATCH_SIZE,
+        )
         stmt = (
             select(JobPosting)
             .where(JobPosting.match_score.is_(None))
             .where(JobPosting.is_active.is_(True))
-            .limit(settings.CLASSIFIER_BATCH_SIZE * 3)  # fetch up to 3 batches
+            .limit(batch_size * 3)  # fetch up to 3 context-safe batches
         )
         result = await db.execute(stmt)
         all_jobs = list(result.scalars().all())
@@ -110,11 +119,11 @@ class JobClassifier:
             logger.info("No unclassified jobs to process.")
             return 0
 
-        logger.info("Classifying %d jobs in batches of %d", len(all_jobs), settings.CLASSIFIER_BATCH_SIZE)
+        logger.info("Classifying %d jobs in batches of %d", len(all_jobs), batch_size)
         classified = 0
 
-        for batch_start in range(0, len(all_jobs), settings.CLASSIFIER_BATCH_SIZE):
-            batch = all_jobs[batch_start : batch_start + settings.CLASSIFIER_BATCH_SIZE]
+        for batch_start in range(0, len(all_jobs), batch_size):
+            batch = all_jobs[batch_start : batch_start + batch_size]
             classifications = await self.classify_batch(batch)
 
             if not classifications:

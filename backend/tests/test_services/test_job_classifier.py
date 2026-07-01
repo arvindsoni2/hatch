@@ -189,3 +189,44 @@ async def test_run_pending_classifies_jobs_in_db(db_session):
     assert job.match_score == pytest.approx(0.82)
     assert job.ir35_status == "outside"
     assert job.employment_type == "contract"
+
+
+@pytest.mark.asyncio
+async def test_run_pending_caps_batches_for_bundled_triage_context(db_session):
+    """Large configured batches are split to fit the bundled 2048-token slot."""
+    from app.models.job import JobPosting
+
+    jobs = []
+    for index in range(8):
+        job = JobPosting(
+            id=str(uuid.uuid4()),
+            title=f"Cloud Architect {index}",
+            company="Test Co",
+            location="London",
+            description="Cloud architecture role. " * 20,
+            url=f"https://example.com/context-safe-{index}",
+            source="test",
+            scraped_at=datetime.utcnow(),
+            is_active=True,
+            match_score=None,
+        )
+        jobs.append(job)
+        db_session.add(job)
+    await db_session.commit()
+
+    classifier = JobClassifier()
+    seen_batch_sizes: list[int] = []
+
+    async def classify(batch):
+        seen_batch_sizes.append(len(batch))
+        return [
+            {**SAMPLE_CLASSIFICATION, "id": job.id}
+            for job in batch
+        ]
+
+    classifier.classify_batch = AsyncMock(side_effect=classify)
+    with patch("app.services.job_classifier.settings.CLASSIFIER_BATCH_SIZE", 30):
+        count = await classifier.run_pending(db_session)
+
+    assert count == 8
+    assert seen_batch_sizes == [3, 3, 2]
