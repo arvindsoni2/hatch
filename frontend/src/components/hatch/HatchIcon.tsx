@@ -10,6 +10,7 @@ const PATHS: Record<string, React.ReactNode> = {
   chevronL:     <path d="m15 18-6-6 6-6"/>,
   arrowR:       <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
   clock:        <><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></>,
+  lock:         <><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>,
   fileText:     <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></>,
   send:         <><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></>,
   target:       <><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></>,

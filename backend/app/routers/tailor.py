@@ -6,6 +6,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +17,7 @@ from ..schemas.tailor import (
     TailorRequest,
 )
 from ..services.async_job_service import AsyncJobService
-from ..services.master_cv_store import MasterCVMissingError, resolve_master_cv_path
+from ..services.master_cv_store import resolve_master_cv_path
 from ..services.tailor_service import TailorService
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,50 @@ router = APIRouter(prefix="/api/tailor", tags=["tailor"])
 def get_tailor_service() -> TailorService:
     """Dependency factory for TailorService (stateless, re-created per request)."""
     return TailorService()
+
+
+@router.get("/templates")
+async def list_templates() -> dict:
+    from ..agents.tools.profile_loader import load_profile
+    from ..services.resume_template_registry import template_payload
+    try:
+        default_id = load_profile().tailoring.default_template_id
+    except Exception:
+        default_id = "ats_classic"
+    return template_payload(default_id)
+
+
+@router.get("/review/{application_id}")
+async def get_tailoring_review(
+    application_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from ..services.tailoring_review import latest_review
+    review = await latest_review(db, application_id)
+    if review is None:
+        return {
+            "application_id": application_id,
+            "available": False,
+            "message": "No review data available for this generation.",
+        }
+    return {"available": True, **review}
+
+
+class DefaultTemplateRequest(BaseModel):
+    template_id: str
+
+
+@router.put("/templates/default")
+async def set_default_template(body: DefaultTemplateRequest) -> dict:
+    from ..services.profile_service import load_profile_raw, save_profile_raw
+    from ..services.resume_template_registry import resolve_template
+    template, warning = resolve_template(body.template_id)
+    if warning:
+        raise HTTPException(status_code=422, detail=warning)
+    profile = load_profile_raw()
+    profile.setdefault("tailoring", {})["default_template_id"] = template["id"]
+    save_profile_raw(profile)
+    return {"default_template_id": template["id"]}
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +157,12 @@ async def generate_cv(
     async def _work() -> None:
         try:
             result = await svc.generate_cv(
-                request.application_id, request.variant, jd_text, db, request.custom_instructions
+                request.application_id,
+                request.variant,
+                jd_text,
+                db,
+                request.custom_instructions,
+                request.template_id,
             )
             await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
         except Exception as exc:
@@ -184,6 +234,7 @@ async def generate_all(
                         company_name=request.company_name,
                         job_url=request.job_url,
                         custom_instructions=request.custom_instructions,
+                        template_id=request.template_id,
                     ),
                     timeout=7200,  # 2-hour ceiling (7 jobs × 3 calls × 180s = 3780s queue wait)
                 )

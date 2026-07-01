@@ -71,7 +71,10 @@ Both installers:
 Open:
 
 - Dashboard: <http://localhost:3000>
-- API documentation: <http://localhost:8000/docs>
+- API documentation after unlocking Hatch: <http://localhost:8000/docs>
+
+On first run, Hatch asks you to create a local app-lock password. This protects
+the workspace; it is not a SaaS account and has no email recovery.
 
 ### Manual Docker Install
 
@@ -114,6 +117,50 @@ User configuration lives in `data/profile.yaml`:
 Supported locale packs currently include the UK, India, Ireland, and UAE. Locale definitions live in `locales/`.
 
 Secrets belong in `.env` or `data/api_keys.env`. Personal data, databases, generated documents, recordings, and models under `data/` are gitignored.
+
+### Safety and privacy
+
+App lock is enabled by default. With `HATCH_APP_PASSWORD` unset, the first-run
+screen stores a bcrypt password hash in SQLite. Setting `HATCH_APP_PASSWORD`
+makes the environment the authoritative password source. Administrators may set
+`HATCH_APP_LOCK_ENABLED=false` for an explicit test/demo installation; there is
+no in-app disable switch.
+
+Sessions use an HttpOnly browser-session cookie and expire server-side after 12
+hours by default. API docs and product APIs are protected. To recover from a
+forgotten database-backed password:
+
+```bash
+bash scripts/reset-app-lock.sh
+```
+
+This removes only app-lock configuration and sessions. Profile, jobs,
+applications, generated documents, and other user data are preserved.
+
+### Resume templates and tailoring review
+
+Tailor supports four DOCX templates: ATS Classic, Professional 2-page, Compact
+One-page, and Career Switcher. Set the default in Profile Settings and override
+it for an individual generation. PDF export remains intentionally unavailable.
+
+Each generated CV/cover-letter pack now stores a review containing match
+summary, ATS coverage, grounded evidence, unsupported requirements, and
+warnings. Regeneration creates new document versions and keeps earlier files in
+history.
+
+### Profile summary
+
+Settings and Tailor show a read-only summary of the evidence Hatch will use.
+Identity and contact details prefer explicit `profile.yaml` values; education
+and certifications prefer the master CV. Differences are warnings rather than
+generation blockers.
+
+### Release 3 upgrade
+
+Existing data is preserved. This release adds app-lock and tailoring-review
+tables plus the `tailoring.default_template_id` setting. It does not introduce
+multi-user accounts. The container entrypoint applies the database migrations
+automatically on restart.
 
 ## Docker Services
 

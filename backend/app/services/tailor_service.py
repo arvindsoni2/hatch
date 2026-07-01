@@ -26,7 +26,7 @@ from .cv_tailor import CVTailor
 from .docx_cl_builder import DocxCLBuilder
 from .docx_cv_builder import DocxCVBuilder
 from .jd_analyser import JDAnalyser
-from .master_cv_store import MasterCVMissingError, load_master_cv
+from .master_cv_store import load_master_cv
 from ..agents.tools.profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
@@ -282,6 +282,7 @@ class TailorService:
         jd_text: str,
         db: AsyncSession,
         custom_instructions: str | None = None,
+        template_id: str | None = None,
     ) -> GeneratedDocumentRead:
         """Generate a tailored CV and persist the document record.
 
@@ -297,6 +298,16 @@ class TailorService:
         Returns:
             GeneratedDocumentRead for the saved .docx record.
         """
+        if not template_id:
+            try:
+                template_id = load_profile().tailoring.default_template_id
+            except Exception:
+                template_id = "ats_classic"
+        from .resume_template_registry import resolve_template  # noqa: PLC0415
+        template, template_warning = resolve_template(template_id)
+        template_id = template["id"]
+        if template_warning:
+            logger.warning(template_warning)
         doc_repo = DocumentRepository(db)
         analysis = await self._jd_analyser.analyse(jd_text)
         tailored_cv, ats_result = await self._tailor_and_score(
@@ -306,7 +317,7 @@ class TailorService:
         personal = _load_personal()
         version = await doc_repo.get_latest_version(application_id, "cv") + 1
         file_path, file_size = self._cv_builder.build(
-            tailored_cv, analysis, personal, application_id, version, variant
+            tailored_cv, analysis, personal, application_id, version, variant, template_id
         )
 
         doc = await doc_repo.create(
@@ -316,7 +327,11 @@ class TailorService:
             file_path=file_path,
             file_size_bytes=file_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant, "custom_instructions": custom_instructions}),
+            tailoring_params=json.dumps({
+                "variant": variant,
+                "custom_instructions": custom_instructions,
+                "template_id": template_id or "ats_classic",
+            }),
             ats_score=ats_result.overall_score,
             ats_details=json.dumps(ats_result.model_dump()),
             variant_label=variant,
@@ -444,6 +459,7 @@ class TailorService:
         company_name: str | None = None,
         job_url: str | None = None,
         custom_instructions: str | None = None,
+        template_id: str | None = None,
     ) -> TailorResultBundle:
         """Run the full pipeline: JD analysis → CV → Cover letter.
 
@@ -461,6 +477,16 @@ class TailorService:
         Returns:
             TailorResultBundle with document IDs and scores.
         """
+        if not template_id:
+            try:
+                template_id = load_profile().tailoring.default_template_id
+            except Exception:
+                template_id = "ats_classic"
+        from .resume_template_registry import resolve_template  # noqa: PLC0415
+        template, template_warning = resolve_template(template_id)
+        template_id = template["id"]
+        if template_warning:
+            logger.warning(template_warning)
         if not application_id:
             application_id = await self._create_manual_application(
                 job_title=job_title or "Manual Job",
@@ -501,7 +527,7 @@ class TailorService:
 
         cv_version = await doc_repo.get_latest_version(application_id, "cv") + 1
         cv_path, cv_size = self._cv_builder.build(
-            tailored_cv, analysis, personal, application_id, cv_version, variant
+            tailored_cv, analysis, personal, application_id, cv_version, variant, template_id
         )
         cv_doc = await doc_repo.create(
             application_id=application_id,
@@ -510,7 +536,11 @@ class TailorService:
             file_path=cv_path,
             file_size_bytes=cv_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant, "custom_instructions": custom_instructions}),
+            tailoring_params=json.dumps({
+                "variant": variant,
+                "custom_instructions": custom_instructions,
+                "template_id": template_id or "ats_classic",
+            }),
             ats_score=ats_result.overall_score,
             ats_details=json.dumps(ats_result.model_dump()),
             variant_label=variant,
@@ -543,10 +573,27 @@ class TailorService:
             file_path=cl_path,
             file_size_bytes=cl_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
+            tailoring_params=json.dumps({
+                "variant": variant,
+                "template_id": template_id,
+                "regeneration_instruction": custom_instructions,
+            }),
             variant_label=variant,
             status="generated",
         )
+        from .tailoring_review import build_review, save_review  # noqa: PLC0415
+        review = build_review(
+            application_id=application_id,
+            analysis=analysis,
+            skill_match=skill_match,
+            ats=ats_result,
+            tailored=tailored_cv,
+            cv_document_id=cv_doc.id,
+            cl_document_id=cl_doc.id,
+            template_id=template_id,
+            variant=variant,
+        )
+        await save_review(db, review)
         await db.commit()
         logger.info("Tailor package %s: package committed", application_id)
 
@@ -557,6 +604,7 @@ class TailorService:
             ats_score=ats_result,
             analysis=analysis,
             skill_match=skill_match,
+            review=review,
         )
 
     async def stream_progress(

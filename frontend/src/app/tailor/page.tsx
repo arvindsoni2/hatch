@@ -10,10 +10,16 @@ import {
   generateAll,
   getDocumentHistory,
   listTailorHistory,
+  fetchResumeTemplates,
+  fetchTailoringReview,
+  type TailoringReview,
   type JDAnalysisResponse,
   type AsyncJobResponse,
   GeneratedDocument,
 } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { ProfileSummaryCard } from "@/components/ProfileSummaryCard";
+import { TailoringReviewPanel } from "@/components/TailoringReviewPanel";
 import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { CheckCircle2, ChevronRight, Clock, ExternalLink, FileText, Loader2, XCircle, Zap } from "lucide-react";
 
@@ -57,6 +63,13 @@ export default function TailorPage() {
   const [jdText, setJdText] = useState("");
   const [jobUrl, setJobUrl] = useState("");
   const [variant, setVariant] = useState<"A" | "B">("A");
+  const [templateOverride, setTemplateOverride] = useState<string | null>(null);
+  const { data: templateData } = useQuery({
+    queryKey: ["resume-templates"],
+    queryFn: fetchResumeTemplates,
+  });
+  const selectedTemplateId = templateOverride ?? templateData?.default_template_id ?? "ats_classic";
+  const selectedTemplate = templateData?.templates.find((item) => item.id === selectedTemplateId);
 
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +77,8 @@ export default function TailorPage() {
   const [synthJdText, setSynthJdText] = useState("");
   const [autoApplicationId, setAutoApplicationId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
-  const [activeTab, setActiveTab] = useState<"analysis" | "history">("analysis");
+  const [review, setReview] = useState<TailoringReview | null>(null);
+  const [activeTab, setActiveTab] = useState<"analysis" | "review" | "history">("analysis");
   const [analysisHistory, setAnalysisHistory] = useState<AsyncJobResponse<JDAnalysisResponse>[]>([]);
 
   const jdTextRef = useRef(jdText);
@@ -99,16 +113,21 @@ export default function TailorPage() {
   const {
     state: generateState,
     submit: submitGenerate,
-  } = useAsyncJob<{ application_id: string }>({
+  } = useAsyncJob<{ application_id: string; review?: TailoringReview }>({
     onComplete: async (result) => {
       const appId = result?.application_id ?? null;
       setAutoApplicationId(appId);
       setStage("complete");
-      setActiveTab("history");
+      setReview(result?.review ?? null);
+      setActiveTab("review");
       if (appId) {
         try {
-          const docs = await getDocumentHistory(appId);
+          const [docs, persistedReview] = await Promise.all([
+            getDocumentHistory(appId),
+            result?.review ? Promise.resolve(result.review) : fetchTailoringReview(appId),
+          ]);
           setDocuments(docs);
+          setReview(persistedReview);
         } catch {
           // non-fatal
         }
@@ -154,21 +173,38 @@ export default function TailorPage() {
         jobTitle: analysis?.analysis?.role_title ?? undefined,
         companyName: undefined,
         jobUrl: jobUrl || undefined,
+        templateId: selectedTemplateId,
       })
     );
-  }, [jdText, jobUrl, synthJdText, variant, analysis, submitGenerate]);
+  }, [jdText, jobUrl, synthJdText, variant, analysis, selectedTemplateId, submitGenerate]);
 
   const handleLoadHistory = useCallback(async () => {
     const appId = autoApplicationId;
     if (!appId) return;
     try {
-      const docs = await getDocumentHistory(appId);
+      const [docs, persistedReview] = await Promise.all([
+        getDocumentHistory(appId),
+        fetchTailoringReview(appId),
+      ]);
       setDocuments(docs);
+      setReview(persistedReview);
       setActiveTab("history");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load history");
     }
   }, [autoApplicationId]);
+
+  const handleRegenerate = useCallback(async (instruction: string) => {
+    const effectiveJd = jdText.trim() || synthJdText;
+    if (!effectiveJd || !autoApplicationId) return;
+    setStage("generating");
+    await submitGenerate(() => generateAll(effectiveJd, variant, {
+      applicationId: autoApplicationId,
+      jobUrl: jobUrl || undefined,
+      templateId: selectedTemplateId,
+      regenerationInstruction: instruction,
+    }));
+  }, [autoApplicationId, jdText, jobUrl, selectedTemplateId, submitGenerate, synthJdText, variant]);
 
   const restoreAnalysis = useCallback((job: AsyncJobResponse<JDAnalysisResponse>) => {
     if (!job.result) return;
@@ -207,6 +243,8 @@ export default function TailorPage() {
           AI-powered CV and cover letter generation with ATS optimisation
         </p>
       </div>
+
+      <ProfileSummaryCard compact />
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ── LEFT: Input Panel ── */}
@@ -273,6 +311,26 @@ export default function TailorPage() {
                 </button>
               ))}
             </div>
+            <label className="mb-3 block text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+              Resume template
+              <select
+                value={selectedTemplateId}
+                onChange={(event) => setTemplateOverride(event.target.value)}
+                className="mt-2 w-full rounded-lg px-3 py-2 text-sm normal-case"
+                style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
+              >
+                {templateData?.templates.map((template) => (
+                  <option key={template.id} value={template.id}>{template.name}</option>
+                ))}
+              </select>
+            </label>
+            {selectedTemplate ? (
+              <div className="mb-3 rounded-lg p-3 text-xs leading-5" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
+                <strong style={{ color: "var(--text)" }}>{selectedTemplate.name}</strong><br />
+                {selectedTemplate.description}<br />
+                Density: {selectedTemplate.content_density}
+              </div>
+            ) : null}
 
             <div className="flex gap-2">
               <Button
@@ -396,7 +454,7 @@ export default function TailorPage() {
         <div className="space-y-4">
           {/* Tabs */}
           <div className="flex rounded-lg p-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            {(["analysis", "history"] as const).map((tab) => (
+            {(["analysis", "review", "history"] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -406,7 +464,7 @@ export default function TailorPage() {
                   color: activeTab === tab ? "var(--on-accent)" : "var(--text-dim)",
                 }}
               >
-                {tab === "analysis" ? "JD Analysis" : "Documents"}
+                {tab === "analysis" ? "JD Analysis" : tab === "review" ? "Review" : "Documents"}
               </button>
             ))}
           </div>
@@ -516,6 +574,9 @@ export default function TailorPage() {
           {/* History Tab */}
           {activeTab === "history" && (
             <DocumentHistory documents={documents} />
+          )}
+          {activeTab === "review" && (
+            <TailoringReviewPanel review={review} regenerating={stage === "generating"} onRegenerate={handleRegenerate} />
           )}
 
           {/* Empty state */}

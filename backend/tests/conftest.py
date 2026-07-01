@@ -11,8 +11,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.database import Base, get_db
+from app.database import AsyncSessionLocal, Base, get_db
 from app.main import app
+from app.config import settings
 from app.models.job import JobPosting
 from app.schemas.job import JobPostingCreate
 
@@ -39,6 +40,15 @@ TestAsyncSession = async_sessionmaker(
 )
 
 
+@pytest.fixture(autouse=True)
+def app_lock_test_mode(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+    """Existing tests opt out; app-lock tests explicitly exercise secure defaults."""
+    enabled = request.node.get_closest_marker("app_lock") is not None
+    monkeypatch.setattr(settings, "HATCH_APP_LOCK_ENABLED", enabled)
+    monkeypatch.setattr(settings, "HATCH_APP_PASSWORD", "")
+    monkeypatch.setattr(settings, "HATCH_AUTH_TOKEN", "")
+
+
 @pytest_asyncio.fixture(scope="function")
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Provide a fresh in-memory SQLite session per test, with tables created."""
@@ -60,6 +70,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.app_lock_session_factory = TestAsyncSession
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -68,6 +79,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         yield ac
 
     app.dependency_overrides.clear()
+    app.state.app_lock_session_factory = AsyncSessionLocal
 
 
 # ──────────────────────── Sample Data Factories ────────────────────────

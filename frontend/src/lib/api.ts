@@ -10,6 +10,35 @@ export const API_BASE =
     ? (process.env.API_URL ?? "http://127.0.0.1:8000")
     : "";
 
+export interface AppLockStatus {
+  enabled: boolean;
+  configured_source: "env" | "database" | "none";
+  is_configured: boolean;
+  is_unlocked: boolean;
+  last_unlocked_at?: string | null;
+  last_password_changed_at?: string | null;
+  failed_attempt_count?: number;
+  retry_after_seconds?: number;
+}
+
+export interface ProfileSummary {
+  identity: { name: string; title: string; email?: string; phone?: string };
+  target_roles: string[];
+  skills: string[];
+  unverified_skills: string[];
+  domains: string[];
+  certifications: string[];
+  education: Array<Record<string, unknown>>;
+  proof_points: Array<Record<string, unknown>>;
+  master_cv: {
+    status: "present" | "missing" | "invalid";
+    path: string;
+    last_validated_at: string | null;
+    last_updated_at: string | null;
+  };
+  warnings: Array<{ code: string; message: string }>;
+}
+
 // ──────────────────────── Types ────────────────────────
 
 export interface Job {
@@ -118,6 +147,36 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 
   return res.json() as Promise<T>;
 }
+
+export const getAppLockStatus = () =>
+  apiFetch<AppLockStatus>("/api/app-lock/status");
+
+export const setupAppLock = (password: string) =>
+  apiFetch<{ unlocked: boolean }>("/api/app-lock/setup", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+
+export const unlockApp = (password: string) =>
+  apiFetch<{ unlocked: boolean }>("/api/app-lock/unlock", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+
+export const lockApp = () =>
+  apiFetch<{ locked: boolean }>("/api/app-lock/lock", { method: "POST" });
+
+export const changeAppLockPassword = (currentPassword: string, newPassword: string) =>
+  apiFetch<{ changed: boolean }>("/api/app-lock/change-password", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+
+export const fetchProfileSummary = () =>
+  apiFetch<ProfileSummary>("/api/v2/profile/summary");
 
 function buildQueryString(params: Record<string, string | number | boolean | undefined>): string {
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== "");
@@ -695,6 +754,36 @@ export interface TailorProgressEvent {
   message: string;
 }
 
+export interface ResumeTemplate {
+  id: string;
+  name: string;
+  description: string;
+  best_for: string[];
+  layout: string;
+  content_density: "standard" | "detailed" | "compact" | "transferable";
+}
+
+export interface ResumeTemplateResponse {
+  templates: ResumeTemplate[];
+  default_template_id: string;
+  warning?: string | null;
+}
+
+export interface TailoringReview {
+  available?: boolean;
+  message?: string;
+  application_id: string;
+  match_summary: { role_title: string; overall_match: number; summary: string };
+  ats_keyword_coverage: { covered: string[]; missing: string[]; coverage_pct: number };
+  evidence_used: Array<{ requirement: string; evidence: string; confidence: string }>;
+  weak_or_unsupported_requirements: Array<{ requirement: string; reason: string; suggestion: string }>;
+  warnings: Array<{ severity: string; message: string }>;
+  documents: Array<{ id: string; type: string; template_id: string }>;
+  template_id: string;
+  variant: string;
+  created_at: string;
+}
+
 // ─────────────────── Phase 3 — API Functions ───────────────────
 
 export async function analyseJob(jobId: string): Promise<AsyncJobRef> {
@@ -718,6 +807,8 @@ export async function generateAll(
     jobTitle?: string | null;
     companyName?: string | null;
     jobUrl?: string | null;
+    templateId?: string | null;
+    regenerationInstruction?: string | null;
   }
 ): Promise<AsyncJobRef> {
   return apiFetch<AsyncJobRef>(`/api/tailor/generate`, {
@@ -729,9 +820,24 @@ export async function generateAll(
       job_title: meta?.jobTitle ?? null,
       company_name: meta?.companyName ?? null,
       job_url: meta?.jobUrl ?? null,
+      template_id: meta?.templateId ?? null,
+      regeneration_instruction: meta?.regenerationInstruction ?? null,
+      custom_instructions: meta?.regenerationInstruction ?? null,
     }),
   });
 }
+
+export const fetchResumeTemplates = () =>
+  apiFetch<ResumeTemplateResponse>("/api/tailor/templates");
+
+export const setDefaultResumeTemplate = (templateId: string) =>
+  apiFetch<{ default_template_id: string }>("/api/tailor/templates/default", {
+    method: "PUT",
+    body: JSON.stringify({ template_id: templateId }),
+  });
+
+export const fetchTailoringReview = (applicationId: string) =>
+  apiFetch<TailoringReview>(`/api/tailor/review/${applicationId}`);
 
 export async function generateCV(
   applicationId: string,

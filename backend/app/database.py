@@ -83,6 +83,8 @@ async def init_db() -> None:
     from .models import application_score_snapshot as _snapshot_models  # noqa: F401
     from .models import application_outcome as _outcome_models  # noqa: F401
     from .models import opportunity_score as _opportunity_models  # noqa: F401
+    from .models import app_lock as _app_lock_models  # noqa: F401
+    from .models import tailoring_review as _tailoring_review_models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

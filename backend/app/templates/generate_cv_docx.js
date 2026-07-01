@@ -35,9 +35,10 @@ const {
 // Constants
 // ---------------------------------------------------------------------------
 const A4_WIDTH_DXA = 11906;  // twips
-const MARGIN_DXA = 1080;     // ~0.75 inch
+let MARGIN_DXA = 1080;       // ~0.75 inch
 const FONT = "Calibri";
-const HEADING_COLOR = "1F4E79";
+let HEADING_COLOR = "1F4E79";
+let BODY_SIZE = 20;
 const BLACK = "000000";
 const DARK_GRAY = "333333";
 
@@ -73,7 +74,7 @@ function bodyText(text, opts = {}) {
     children: [
       new TextRun({
         text,
-        size: 20,
+        size: BODY_SIZE,
         font: FONT,
         color: opts.color || DARK_GRAY,
         bold: opts.bold || false,
@@ -87,9 +88,7 @@ function bodyText(text, opts = {}) {
 
 function bulletPoint(text) {
   return new Paragraph({
-    children: [
-      new TextRun({ text, size: 20, font: FONT, color: DARK_GRAY }),
-    ],
+    children: [new TextRun({ text, size: BODY_SIZE, font: FONT, color: DARK_GRAY })],
     bullet: { level: 0 },
     spacing: { line: 276, before: 20, after: 20 },
   });
@@ -116,7 +115,12 @@ function experienceHeader(role, company, period) {
 // ---------------------------------------------------------------------------
 
 function buildCV(spec) {
-  const { personal, summary, skills, experience, education, certifications, role_applied_for } = spec;
+  const { personal, summary, skills, experience, education, certifications, role_applied_for, template } = spec;
+  if (template?.style) {
+    MARGIN_DXA = template.style.margin || MARGIN_DXA;
+    HEADING_COLOR = template.style.accent || HEADING_COLOR;
+    BODY_SIZE = template.style.font_size || BODY_SIZE;
+  }
 
   const children = [];
 
@@ -172,7 +176,7 @@ function buildCV(spec) {
 
   // --- Skills ---
   if (skills && skills.length > 0) {
-    children.push(sectionHeading("Core Skills"));
+    children.push(sectionHeading(template?.id === "career_switcher" ? "Transferable Skills" : "Core Skills"));
     for (const skillGroup of skills) {
       const groupName = skillGroup.display_name || skillGroup.category || skillGroup.name || "";
       const items = (skillGroup.items || []).join("  ·  ");

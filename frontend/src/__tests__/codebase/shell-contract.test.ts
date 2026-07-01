@@ -12,26 +12,34 @@ const layout = fs.readFileSync(
   path.join(__dirname, '../../../src/app/layout.tsx'),
   'utf-8',
 );
+const gate = fs.readFileSync(
+  path.join(__dirname, '../../../src/components/AppLockGate.tsx'),
+  'utf-8',
+);
 
 describe('layout.tsx shell contract', () => {
+  it('mounts the app-lock gate around the product shell', () => {
+    expect(layout).toContain('<AppLockGate>');
+  });
+
   it('mounts OnboardingGate (first-run redirect)', () => {
-    expect(layout).toContain('OnboardingGate');
-    expect(layout).toContain('<OnboardingGate');
+    expect(gate).toContain('OnboardingGate');
+    expect(gate).toContain('<OnboardingGate');
   });
 
   it('mounts HatchNavShell (sidebar + mobile tabs)', () => {
-    expect(layout).toContain('HatchNavShell');
-    expect(layout).toContain('<HatchNavShell');
+    expect(gate).toContain('HatchNavShell');
+    expect(gate).toContain('<HatchNavShell');
   });
 
   it('mounts HatchTopBarSlot (desktop top bar with bell + toggle)', () => {
-    expect(layout).toContain('HatchTopBarSlot');
-    expect(layout).toContain('<HatchTopBarSlot');
+    expect(gate).toContain('HatchTopBarSlot');
+    expect(gate).toContain('<HatchTopBarSlot');
   });
 
   it('mounts HatchMobileBar (mobile bell + toggle)', () => {
-    expect(layout).toContain('HatchMobileBar');
-    expect(layout).toContain('<HatchMobileBar');
+    expect(gate).toContain('HatchMobileBar');
+    expect(gate).toContain('<HatchMobileBar');
   });
 
   it('has dark-mode boot script (theme persisted across reload)', () => {

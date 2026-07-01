@@ -138,6 +138,12 @@ async def profile_status() -> dict[str, Any]:
     }
 
 
+@router.get("/summary")
+async def profile_summary() -> dict[str, Any]:
+    from ..services.profile_summary import build_profile_summary
+    return build_profile_summary()
+
+
 @router.post("/test-connection")
 async def test_llm_connection(data: dict[str, Any]) -> dict[str, Any]:
     """Test that the LLM API key / provider in the submitted profile config is valid.

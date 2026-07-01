@@ -87,6 +87,11 @@ scoring:
     location_match: 0.15
   shortlist_threshold: 0.70
 
+tailoring:
+  ats_target_score: 80
+  ats_retry_limit: 1
+  default_template_id: ats_classic
+
 llm:
   # Local AI — bundled llama.cpp containers, $0 API spend, no key required.
   # Models are downloaded by scripts/fetch_models.sh:

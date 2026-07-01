@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { API_BASE, recomputeOutcomeLearning, resetOutcomeLearning } from "@/lib/api";
+import { TemplateDefaultSetting } from "@/components/TemplateDefaultSetting";
+import { ProfileSummaryCard } from "@/components/ProfileSummaryCard";
 
 async function fetchProfile(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_BASE}/api/v2/profile`);
@@ -210,6 +212,9 @@ export default function ProfileSettingsPage() {
           <AlertCircle className="w-4 h-4" /> {error}
         </div>
       )}
+
+      <TemplateDefaultSetting />
+      <ProfileSummaryCard />
 
       {/* Identity */}
       <SectionCard title="Identity">

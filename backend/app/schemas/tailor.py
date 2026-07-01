@@ -161,6 +161,8 @@ class TailorRequest(BaseModel):
     generate_cv: bool = True
     generate_cover_letter: bool = True
     custom_instructions: str | None = None
+    template_id: str | None = None
+    regeneration_instruction: str | None = None
     jd_text: str | None = None
     # Used when application_id is None to create a pipeline entry automatically
     job_title: str | None = None
@@ -181,6 +183,7 @@ class TailorResultBundle(BaseModel):
     ats_score: ATSScoreResult | None = None
     analysis: JDAnalysisResult | None = None
     skill_match: SkillMatchResult | None = None
+    review: dict[str, Any] | None = None
 
 
 class RegenerateSectionRequest(BaseModel):

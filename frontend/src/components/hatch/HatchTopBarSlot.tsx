@@ -13,6 +13,7 @@ const ROUTE_LABELS: Record<string, { title: string; sub?: string }> = {
   '/settings/profile': { title: 'Profile' },
   '/settings/ai':      { title: 'AI Provider' },
   '/settings/system':  { title: 'System Logs' },
+  '/settings/security': { title: 'Security' },
   '/settings':         { title: 'Profile' },
   '/coach':        { title: 'Coach' },
   '/jobs':         { title: 'Jobs' },

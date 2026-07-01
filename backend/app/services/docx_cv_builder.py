@@ -29,6 +29,7 @@ class DocxCVBuilder:
         application_id: str,
         version: int,
         variant_label: str = "A",
+        template_id: str | None = None,
     ) -> tuple[str, int]:
         """Generate a CV .docx and return (file_path, file_size_bytes).
 
@@ -53,7 +54,7 @@ class DocxCVBuilder:
         if not str(out_path).startswith(str(expected_parent)):
             raise ValueError(f"Output path traversal detected: {out_path}")
 
-        spec = _build_cv_spec(tailored_cv, jd_analysis, personal)
+        spec = _build_cv_spec(tailored_cv, jd_analysis, personal, template_id)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
             json.dump(spec, tf, indent=2)
@@ -83,11 +84,31 @@ def _build_cv_spec(
     tailored_cv: TailoredCVResult,
     jd_analysis: JDAnalysisResult,
     personal: dict[str, Any],
+    template_id: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the JSON spec that generate_cv_docx.js consumes."""
+    from .resume_template_registry import resolve_template
+
+    template, template_warning = resolve_template(template_id)
+    experience = [
+        {
+            "role": exp.role,
+            "company": exp.company,
+            "period": exp.period,
+            "achievements": list(exp.achievements),
+        }
+        for exp in tailored_cv.experience
+    ]
+    summary = tailored_cv.summary
+    if template["content_density"] == "compact":
+        summary = " ".join(summary.split()[:70])
+        for index, item in enumerate(experience):
+            # Preserve chronology and every employer; reduce lower-priority bullets.
+            item["achievements"] = item["achievements"][: 3 if index == 0 else 1]
+
     return {
         "personal": personal,
-        "summary": tailored_cv.summary,
+        "summary": summary,
         "skills": [
             {
                 "display_name": (
@@ -97,15 +118,7 @@ def _build_cv_spec(
             }
             for s in tailored_cv.skills
         ],
-        "experience": [
-            {
-                "role": exp.role,
-                "company": exp.company,
-                "period": exp.period,
-                "achievements": exp.achievements,
-            }
-            for exp in tailored_cv.experience
-        ],
+        "experience": experience,
         "education": [
             {
                 "qualification": edu.qualification,
@@ -122,4 +135,6 @@ def _build_cv_spec(
         "ats_keywords": tailored_cv.ats_keywords_embedded,
         "validation_status": tailored_cv.validation_status,
         "structural_warnings": tailored_cv.structural_warnings,
+        "template": template,
+        "template_warning": template_warning,
     }

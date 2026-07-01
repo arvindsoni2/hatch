@@ -1,14 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { HatchNavShell } from "@/components/hatch/HatchNavShell";
-import { HatchTopBarSlot } from "@/components/hatch/HatchTopBarSlot";
-import { HatchMobileBar } from "@/components/hatch/HatchMobileBar";
-import { OnboardingGate } from "@/components/OnboardingGate";
-import { OfflineIndicator } from "@/components/OfflineIndicator";
-import { InstallPrompt } from "@/components/InstallPrompt";
 import { QueryProvider } from "@/components/QueryProvider";
-import { CommandPalette } from "@/components/CommandPalette";
+import { AppLockGate } from "@/components/AppLockGate";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -66,25 +60,7 @@ export default function RootLayout({
         style={{ background: "var(--bg)", color: "var(--text)" }}
       >
         <QueryProvider>
-        <OnboardingGate />
-        <OfflineIndicator />
-
-        <div className="flex" style={{ minHeight: "100vh" }}>
-          {/* Desktop sidebar (hidden on mobile) — rendered via client shell for pathname awareness */}
-          <HatchNavShell />
-
-          {/* Main content area */}
-          <div className="flex flex-col flex-1 min-w-0">
-            <HatchMobileBar />
-            <HatchTopBarSlot />
-            <main className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-6 md:pb-8">
-              {children}
-            </main>
-          </div>
-        </div>
-
-        <InstallPrompt />
-        <CommandPalette />
+          <AppLockGate>{children}</AppLockGate>
         </QueryProvider>
       </body>
     </html>

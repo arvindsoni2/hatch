@@ -39,6 +39,7 @@ from .routers.scoring import router as scoring_router
 from .routers.async_jobs import router as async_jobs_router
 from .routers.debug import router as debug_router
 from .routers.outcome_learning import router as outcome_learning_router
+from .routers.app_lock import router as app_lock_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
 from .services.llm_client import LLMClient
@@ -231,11 +232,45 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.url.path in ("/api/health", "/api/healthz"):
             return await call_next(request)
+        if request.method == "GET" and request.url.path == "/api/app-lock/status":
+            return await call_next(request)
         if request.url.path.startswith("/api/"):
             auth = request.headers.get("Authorization", "")
             if auth != f"Bearer {self._token}":
                 from fastapi.responses import JSONResponse  # noqa: PLC0415
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return await call_next(request)
+
+
+class AppLockMiddleware(BaseHTTPMiddleware):
+    """Require a valid server-side app-lock session for product routes and APIs."""
+
+    _PUBLIC_PATHS = {
+        "/api/health",
+        "/api/healthz",
+        "/api/app-lock/status",
+        "/api/app-lock/setup",
+        "/api/app-lock/unlock",
+    }
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if not settings.HATCH_APP_LOCK_ENABLED or request.method == "OPTIONS":
+            return await call_next(request)
+        path = request.url.path
+        if path in self._PUBLIC_PATHS or path.startswith("/static/"):
+            return await call_next(request)
+        should_protect = path.startswith("/api/") or path in {"/docs", "/redoc", "/openapi.json"}
+        if not should_protect:
+            return await call_next(request)
+        from fastapi.responses import JSONResponse  # noqa: PLC0415
+        from .services.app_lock_service import AppLockService  # noqa: PLC0415
+        token = request.cookies.get(settings.HATCH_APP_SESSION_COOKIE)
+        session_factory = getattr(request.app.state, "app_lock_session_factory", AsyncSessionLocal)
+        async with session_factory() as db:
+            session = await AppLockService(db).session(token)
+            await db.commit()
+        if session is None:
+            return JSONResponse({"detail": "Hatch is locked."}, status_code=423)
         return await call_next(request)
 
 
@@ -254,6 +289,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if _debug else None,
         lifespan=lifespan,
     )
+    app.state.app_lock_session_factory = AsyncSessionLocal
 
     # CORS — origins from ALLOWED_ORIGINS env var (comma-separated), defaults to localhost
     _origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
@@ -277,6 +313,7 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Accept", "Authorization"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(AppLockMiddleware)
     app.add_middleware(AuthMiddleware, token=settings.HATCH_AUTH_TOKEN)
     app.add_middleware(
         RateLimitMiddleware,
@@ -310,6 +347,7 @@ def create_app() -> FastAPI:
     app.include_router(async_jobs_router)
     app.include_router(debug_router)
     app.include_router(outcome_learning_router)
+    app.include_router(app_lock_router)
 
     return app
 

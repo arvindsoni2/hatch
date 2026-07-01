@@ -101,6 +101,9 @@ class ScoringConfig(BaseModel):
 class TailoringConfig(BaseModel):
     ats_target_score: int = Field(default=80, ge=60, le=100)
     ats_retry_limit: int = Field(default=1, ge=0, le=3)
+    default_template_id: Literal[
+        "ats_classic", "professional_2_page", "compact_one_page", "career_switcher"
+    ] = "ats_classic"
 
 
 class ASRConfig(BaseModel):

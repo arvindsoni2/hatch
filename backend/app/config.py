@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     # When empty (default) auth is disabled — localhost use is frictionless.
     # Set HATCH_AUTH_TOKEN=<secret> in .env when exposing beyond localhost.
     HATCH_AUTH_TOKEN: str = ""
+    HATCH_APP_LOCK_ENABLED: bool = True
+    HATCH_APP_PASSWORD: str = ""
+    HATCH_APP_SESSION_COOKIE: str = "hatch_app_session"
+    HATCH_APP_SESSION_TTL_HOURS: int = 12
+    HATCH_APP_LOCK_FAILED_ATTEMPT_LIMIT: int = 5
+    HATCH_APP_LOCK_RETRY_DELAY_SECONDS: int = 30
 
     # Per-client rate limit on mutating endpoints (POST/PUT/PATCH/DELETE).
     # Only active when HATCH_AUTH_TOKEN is non-empty (disabled for localhost dev).
