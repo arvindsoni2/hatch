@@ -84,6 +84,22 @@ class TestProfileRouter:
         assert resp.json()["ok"] is True
         assert os.environ.get("ANTHROPIC_API_KEY", "ORIGINAL_SENTINEL") == sentinel
 
+    @pytest.mark.asyncio
+    async def test_llamacpp_connection_checks_bundled_services(self, client) -> None:
+        """The onboarding check must probe llama.cpp, not default to Anthropic."""
+        with patch(
+            "app.routers.profile._test_llamacpp_services",
+            return_value={"ok": True},
+        ) as probe:
+            resp = await client.post(
+                "/api/v2/profile/test-connection",
+                json={"provider": "llamacpp", "api_key": ""},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+        probe.assert_awaited_once()
+
 
 @pytest.mark.asyncio
 async def test_security_headers_present_on_every_response(client: AsyncClient) -> None:

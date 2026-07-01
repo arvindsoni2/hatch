@@ -1,6 +1,6 @@
 # Hatch - local Docker Compose stack
 # Local self-hosted deployment — all data stays on your machine.
-# Optional auto-start is provided by hatch.service.
+# Optional auto-start is provided by infrastructure/systemd/hatch.service.
 
 services:
   # ── llama-server: primary model (Qwen3-4B Q4_0, :8080) ─────────────────────

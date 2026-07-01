@@ -136,7 +136,13 @@ docker compose down
 docker compose up -d --build
 ```
 
-On Linux, `install.sh` can optionally install `hatch.service` as a user service for startup on login.
+On Linux, `install.sh` can optionally install
+`infrastructure/systemd/hatch.service` as a user service for startup on login.
+
+Optional Docker Compose overrides are documented in
+`infrastructure/docker/docker-compose.override.yml.example`. Copy that file to
+`docker-compose.override.yml` before customising it so Compose discovers it
+automatically.
 
 ## Development
 
@@ -210,7 +216,7 @@ docker compose logs -f backend llm-primary
 ### Reset local data
 
 ```bash
-bash reset-user-data.sh
+bash scripts/reset-user-data.sh
 ```
 
 This is destructive and should only be used when intentionally starting again.

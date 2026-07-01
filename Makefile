@@ -108,7 +108,7 @@ format: ## Format code
 # ──────────────────────── Utilities ──────────────────────────
 
 reset-user: ## Wipe all job/application data to start fresh as a new user
-	@bash reset-user-data.sh
+	@bash scripts/reset-user-data.sh
 
 clean: ## Remove generated files and caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

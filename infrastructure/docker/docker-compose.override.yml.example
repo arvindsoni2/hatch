@@ -1,5 +1,5 @@
-# docker-compose.override.yml.example
-# Copy to docker-compose.override.yml and edit as needed.
+# infrastructure/docker/docker-compose.override.yml.example
+# Copy this file to ../../docker-compose.override.yml and edit as needed.
 # docker-compose.yml + docker-compose.override.yml are merged automatically by compose.
 
 # ── CPU thread tuning ─────────────────────────────────────────────────────────

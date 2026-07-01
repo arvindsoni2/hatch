@@ -1,6 +1,7 @@
 """FastAPI router for master CV upload and management."""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import tempfile
@@ -246,6 +247,26 @@ async def get_resume_status() -> ResumeStatus:
 
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+# Next.js' rewrite proxy has a 30-second upstream timeout. Keep enough headroom
+# for document extraction and response serialization; heuristic parsing remains
+# available when the configured LLM is slow or unavailable.
+_STRUCTURED_PARSE_TIMEOUT_SECONDS = 20
+
+
+def _heuristic_cv(text: str) -> dict[str, Any]:
+    """Return a minimal CV structure without requiring an LLM."""
+    sections = _parse_sections(text)
+    skills = _extract_skills(text)
+    return {
+        "personal": {},
+        "summary_variants": {
+            "default": sections.get("summary") or sections.get("profile") or ""
+        },
+        "experience": [],
+        "skills": [{"category": "Skills", "items": skills}] if skills else [],
+        "certifications": [],
+        "education": [],
+    }
 
 
 @router.post("/upload", response_model=ParsePreviewResponse)
@@ -297,21 +318,21 @@ async def upload_resume(file: UploadFile = File(...)) -> ParsePreviewResponse:
     try:
         from ..services.llm_client import LLMClient  # noqa: PLC0415
         from ..services.cv_parser import parse_cv_text  # noqa: PLC0415
-        parse_result = await parse_cv_text(text, LLMClient())
+        parse_result = await asyncio.wait_for(
+            parse_cv_text(text, LLMClient()),
+            timeout=_STRUCTURED_PARSE_TIMEOUT_SECONDS,
+        )
         parsed_cv = parse_result.parsed
         warnings = parse_result.warnings
+    except TimeoutError:
+        parsed_cv = _heuristic_cv(text)
+        warnings = [
+            "Structured CV parsing timed out; using heuristic extraction. "
+            "You can review and edit the parsed CV before saving."
+        ]
     except Exception as exc:
         # Fallback: return heuristic-parsed sections so the user sees something
-        sections = _parse_sections(text)
-        skills = _extract_skills(text)
-        parsed_cv = {
-            "personal": {},
-            "summary_variants": {"default": sections.get("summary") or sections.get("profile") or ""},
-            "experience": [],
-            "skills": [{"category": "Skills", "items": skills}] if skills else [],
-            "certifications": [],
-            "education": [],
-        }
+        parsed_cv = _heuristic_cv(text)
         warnings = [f"LLM parse failed, using heuristic extraction: {exc}"]
 
     return ParsePreviewResponse(

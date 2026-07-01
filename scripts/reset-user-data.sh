@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # reset-user-data.sh — wipe all job/application data to start fresh as a new user
-# Usage: ./reset-user-data.sh
+# Usage: ./scripts/reset-user-data.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_DIR="$SCRIPT_DIR/data"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DATA_DIR="$PROJECT_DIR/data"
 
 CYAN="\033[0;36m"
 GREEN="\033[0;32m"

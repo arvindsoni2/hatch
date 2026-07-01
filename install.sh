@@ -185,11 +185,12 @@ $COMPOSE up -d
 
 # ── Optional: systemd user service ────────────────────────────────
 
-if command -v systemctl &>/dev/null && [ -f hatch.service ]; then
+SERVICE_FILE="infrastructure/systemd/hatch.service"
+if command -v systemctl &>/dev/null && [ -f "$SERVICE_FILE" ]; then
   read -r -p "$(echo -e "${CYAN}[hatch]${RESET} Install systemd user service (auto-start on login)? [y/N] ")" INSTALL_SERVICE
   if [[ "$INSTALL_SERVICE" =~ ^[Yy]$ ]]; then
     mkdir -p "$HOME/.config/systemd/user"
-    sed "s|WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|g" hatch.service \
+    sed "s|WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|g" "$SERVICE_FILE" \
       > "$HOME/.config/systemd/user/hatch.service"
     systemctl --user daemon-reload
     systemctl --user enable hatch.service

@@ -1,9 +1,11 @@
 """Profile CRUD API — read, write, validate, and check profile.yaml."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +26,31 @@ from ..services.profile_service import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/profile", tags=["profile"])
+
+_LLAMACPP_HEALTH_URLS = (
+    ("primary", "http://llm-primary:8080/health"),
+    ("triage", "http://llm-triage:8081/health"),
+)
+
+
+async def _test_llamacpp_services() -> dict[str, Any]:
+    """Check both bundled llama.cpp services without generating tokens."""
+    async def probe(name: str, url: str) -> tuple[str, str | None]:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(url)
+            response.raise_for_status()
+            return name, None
+        except Exception as exc:
+            return name, f"{exc.__class__.__name__}: {exc}"
+
+    results = await asyncio.gather(
+        *(probe(name, url) for name, url in _LLAMACPP_HEALTH_URLS)
+    )
+    failures = [f"{name}: {error}" for name, error in results if error]
+    if failures:
+        return {"ok": False, "error": "; ".join(failures)}
+    return {"ok": True}
 
 
 @router.get("", response_model=dict[str, Any])
@@ -121,14 +148,19 @@ async def test_llm_connection(data: dict[str, Any]) -> dict[str, Any]:
     """
     provider: str = data.get("provider", "anthropic")
     api_key: str = data.get("api_key", "")
+    if provider == "llamacpp":
+        return await _test_llamacpp_services()
+
     model_map = {
         "anthropic": "claude-haiku-4-5-20251001",
         "openai": "gpt-4o-mini",
-        "google": "gemini-2.0-flash",
-        "azure": "gpt-4o-mini",
+        "google_genai": "gemini-2.5-flash-lite",
+        "azure_openai": "gpt-4o-mini",
         "ollama": "qwen3:4b",
     }
-    model_name = model_map.get(provider, "claude-haiku-4-5-20251001")
+    if provider not in model_map:
+        return {"ok": False, "error": f"Unsupported LLM provider: {provider}"}
+    model_name = model_map[provider]
 
     try:
         kwargs: dict[str, Any] = {"temperature": 0.0, "max_retries": 1}
