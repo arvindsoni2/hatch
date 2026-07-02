@@ -49,6 +49,15 @@ describe('HatchNav', () => {
     render(<HatchNav activeTab="stream" />);
     expect(screen.getByRole('link', { name: 'Pipeline' }).getAttribute('aria-current')).toBe('page');
   });
+
+  it('lets the responsive utility hide the mobile bar on desktop', async () => {
+    const { HatchNav } = await import('@/components/hatch/HatchNav');
+    const { container } = render(<HatchNav activeTab="today" />);
+    const nav = container.querySelector('nav') as HTMLElement;
+    expect(nav.className).toContain('md:hidden');
+    expect(nav.className).toContain('flex');
+    expect(nav.style.display).toBe('');
+  });
 });
 
 // ── HatchSidebar ──────────────────────────────────────────────────────────────

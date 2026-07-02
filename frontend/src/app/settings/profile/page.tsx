@@ -75,7 +75,7 @@ function TagInput({ tags, onChange }: { tags: string[]; onChange: (t: string[]) 
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div
-      className="rounded-xl p-5 space-y-4"
+      className="space-y-4 rounded-xl p-4 sm:p-5"
       style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
     >
       <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>
@@ -86,10 +86,15 @@ function SectionCard({ title, children }: { title: string; children: React.React
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children, alignLabel = false }: { label: string; children: React.ReactNode; alignLabel?: boolean }) {
   return (
-    <div className="space-y-1.5">
-      <Label style={{ color: "var(--text-dim)", fontSize: 12 }}>{label}</Label>
+    <div className="flex h-full flex-col gap-1.5">
+      <Label
+        className={alignLabel ? "flex min-h-10 items-end leading-5" : "leading-5"}
+        style={{ color: "var(--text-dim)", fontSize: 12 }}
+      >
+        {label}
+      </Label>
       {children}
     </div>
   );
@@ -174,7 +179,7 @@ export default function ProfileSettingsPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       {/* Back + header */}
       <div>
         <Link
@@ -218,7 +223,7 @@ export default function ProfileSettingsPage() {
 
       {/* Identity */}
       <SectionCard title="Identity">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Name">
             <Input
               className={inputCls}
@@ -244,7 +249,7 @@ export default function ProfileSettingsPage() {
               onChange={(e) => update(["candidate", "years_experience"], parseInt(e.target.value) || 0)}
             />
           </Field>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <Field label="Summary">
               <Textarea
                 className={inputCls}
@@ -292,7 +297,7 @@ export default function ProfileSettingsPage() {
       {/* Location */}
       <SectionCard title="Location">
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>Primary location used by scrapers for search.</p>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="City">
             <Input
               className={inputCls}
@@ -444,7 +449,7 @@ export default function ProfileSettingsPage() {
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
           Jobs above the shortlist threshold get auto-tailored.
         </p>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Shortlist threshold (0.0–1.0)">
             <Input
               className={inputCls}
@@ -474,7 +479,7 @@ export default function ProfileSettingsPage() {
 
       {/* LLM Provider */}
       <SectionCard title="Coach & Privacy">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--text)" }}>
               <Camera className="h-4 w-4" /> Camera-based presence analysis
@@ -488,7 +493,7 @@ export default function ProfileSettingsPage() {
             role="switch"
             aria-checked={Boolean(get(["perception", "face", "enabled"], false))}
             onClick={() => update(["perception", "face", "enabled"], !Boolean(get(["perception", "face", "enabled"], false)))}
-            className="rounded-full px-3 py-1.5 text-xs font-medium"
+            className="h-11 shrink-0 rounded-full px-4 text-xs font-medium"
             style={{
               background: Boolean(get(["perception", "face", "enabled"], false)) ? "var(--success-soft)" : "var(--surface-2)",
               border: `1px solid ${Boolean(get(["perception", "face", "enabled"], false)) ? "var(--success)" : "var(--border)"}`,
@@ -513,7 +518,7 @@ export default function ProfileSettingsPage() {
       </SectionCard>
 
       <SectionCard title="Outcome Learning">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--text)" }}>
               <BrainCircuit className="h-4 w-4" /> Learn from application outcomes
@@ -527,27 +532,27 @@ export default function ProfileSettingsPage() {
             role="switch"
             aria-checked={Boolean(get(["outcome_learning", "enabled"], true))}
             onClick={() => update(["outcome_learning", "enabled"], !Boolean(get(["outcome_learning", "enabled"], true)))}
-            className="rounded-full px-3 py-1.5 text-xs font-medium"
+            className="h-11 shrink-0 rounded-full px-4 text-xs font-medium"
             style={{ background: Boolean(get(["outcome_learning", "enabled"], true)) ? "var(--success-soft)" : "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
           >
             {Boolean(get(["outcome_learning", "enabled"], true)) ? "Enabled" : "Disabled"}
           </button>
         </div>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <Field label="Minimum resolved applications"><Input className={inputCls} style={inputStyle} type="number" min="5" value={String(get(["outcome_learning", "minimum_total_applications"], 15))} onChange={(e) => update(["outcome_learning", "minimum_total_applications"], Number(e.target.value))} /></Field>
-          <Field label="No-response window (days)"><Input className={inputCls} style={inputStyle} type="number" min="14" max="120" value={String(get(["outcome_learning", "no_response_after_days"], 35))} onChange={(e) => update(["outcome_learning", "no_response_after_days"], Number(e.target.value))} /></Field>
-          <Field label="Recency half-life (days)"><Input className={inputCls} style={inputStyle} type="number" min="30" max="730" value={String(get(["outcome_learning", "recency_half_life_days"], 120))} onChange={(e) => update(["outcome_learning", "recency_half_life_days"], Number(e.target.value))} /></Field>
-          <Field label="Maximum adjustment"><Input className={inputCls} style={inputStyle} type="number" min="0" max="0.2" step="0.01" value={String(get(["outcome_learning", "maximum_score_adjustment"], 0.1))} onChange={(e) => update(["outcome_learning", "maximum_score_adjustment"], Number(e.target.value))} /></Field>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field alignLabel label="Minimum resolved applications"><Input className={inputCls} style={inputStyle} type="number" min="5" value={String(get(["outcome_learning", "minimum_total_applications"], 15))} onChange={(e) => update(["outcome_learning", "minimum_total_applications"], Number(e.target.value))} /></Field>
+          <Field alignLabel label="No-response window (days)"><Input className={inputCls} style={inputStyle} type="number" min="14" max="120" value={String(get(["outcome_learning", "no_response_after_days"], 35))} onChange={(e) => update(["outcome_learning", "no_response_after_days"], Number(e.target.value))} /></Field>
+          <Field alignLabel label="Recency half-life (days)"><Input className={inputCls} style={inputStyle} type="number" min="30" max="730" value={String(get(["outcome_learning", "recency_half_life_days"], 120))} onChange={(e) => update(["outcome_learning", "recency_half_life_days"], Number(e.target.value))} /></Field>
+          <Field alignLabel label="Maximum adjustment"><Input className={inputCls} style={inputStyle} type="number" min="0" max="0.2" step="0.01" value={String(get(["outcome_learning", "maximum_score_adjustment"], 0.1))} onChange={(e) => update(["outcome_learning", "maximum_score_adjustment"], Number(e.target.value))} /></Field>
         </div>
         <Field label="Learning signals">
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {["source", "role_family", "seniority", "working_pattern", "employment_type", "freshness"].map((signal) => {
               const enabled = (get(["outcome_learning", "enabled_signals"], []) as string[]).includes(signal);
-              return <label key={signal} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs" style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}><input type="checkbox" checked={enabled} onChange={() => { const current = get(["outcome_learning", "enabled_signals"], []) as string[]; update(["outcome_learning", "enabled_signals"], enabled ? current.filter((item) => item !== signal) : [...current, signal]); }} />{signal.replaceAll("_", " ")}</label>;
+              return <label key={signal} className="flex min-h-11 items-center gap-2 rounded-md px-3 py-2 text-xs" style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}><input type="checkbox" checked={enabled} onChange={() => { const current = get(["outcome_learning", "enabled_signals"], []) as string[]; update(["outcome_learning", "enabled_signals"], enabled ? current.filter((item) => item !== signal) : [...current, signal]); }} />{signal.replaceAll("_", " ")}</label>;
             })}
           </div>
         </Field>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <Button type="button" variant="outline" disabled={learningAction !== null || dirty} onClick={async () => { setLearningAction("recompute"); setError(""); try { await recomputeOutcomeLearning(); setSavedOk(true); } catch (e) { setError(e instanceof Error ? e.message : "Recompute failed"); } finally { setLearningAction(null); } }}>{learningAction === "recompute" ? "Recomputing..." : "Recompute now"}</Button>
           <Button type="button" variant="outline" disabled={learningAction !== null || dirty} onClick={async () => { if (!window.confirm("This starts a new learning window. It does not delete applications or documents.")) return; setLearningAction("reset"); setError(""); try { const result = await resetOutcomeLearning(); update(["outcome_learning", "learning_since"], result.learning_since); setDirty(false); setSavedOk(true); } catch (e) { setError(e instanceof Error ? e.message : "Reset failed"); } finally { setLearningAction(null); } }}>{learningAction === "reset" ? "Resetting..." : "Reset learning window"}</Button>
         </div>
@@ -557,7 +562,7 @@ export default function ProfileSettingsPage() {
         <p className="text-xs" style={{ color: "var(--text-muted)" }}>
           Changing provider takes effect on the next agent run. Set the API key in .env or via Settings → AI Provider.
         </p>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Provider">
             <select
               className="w-full rounded-md p-2 text-sm"

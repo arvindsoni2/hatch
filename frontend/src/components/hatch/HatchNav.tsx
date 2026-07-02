@@ -18,11 +18,10 @@ interface HatchNavProps {
 export function HatchNav({ activeTab }: HatchNavProps) {
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-50 md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-50 flex md:hidden"
       style={{
         background: 'var(--bg-elevated)',
         borderTop: '1px solid var(--border)',
-        display: 'flex',
         padding: '8px 8px 4px',
         paddingBottom: 'calc(8px + env(safe-area-inset-bottom, 0px))',
       }}
