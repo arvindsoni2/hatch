@@ -2,12 +2,10 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { HatchIcon } from './HatchIcon';
-import { UserMenu } from './UserMenu';
 import { AGENT_DEFS, PIPELINE } from './agents';
 import { Dot } from './Dot';
 import type { HatchTab } from './HatchNav';
 import {
-  fetchRawProfile,
   fetchPendingApprovals,
   fetchPipelineStats,
   listSessions,
@@ -32,24 +30,15 @@ interface BadgeCounts {
 }
 
 export function HatchSidebar({ activeTab }: HatchSidebarProps) {
-  const [profileName, setProfileName] = useState<string>('You');
-  const [profileTitle, setProfileTitle] = useState<string | undefined>(undefined);
   const [badges, setBadges] = useState<BadgeCounts>({ today: 0, stream: 0, prep: 0 });
 
   useEffect(() => {
     async function load() {
-      const [profile, approvals, pipeline, sessions] = await Promise.allSettled([
-        fetchRawProfile(),
+      const [approvals, pipeline, sessions] = await Promise.allSettled([
         fetchPendingApprovals(),
         fetchPipelineStats(),
         listSessions(20),
       ]);
-
-      if (profile.status === 'fulfilled' && profile.value.candidate) {
-        const c = profile.value.candidate;
-        if (c.name) setProfileName(c.name);
-        if (c.title) setProfileTitle(c.title);
-      }
 
       const todayBadge = approvals.status === 'fulfilled' ? approvals.value.length : 0;
       const streamBadge = pipeline.status === 'fulfilled'
@@ -194,22 +183,7 @@ export function HatchSidebar({ activeTab }: HatchSidebarProps) {
         </div>
       </div>
 
-      {/* Spacer + user profile card */}
-      <div className="mt-auto pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 2px' }}>
-          <UserMenu name={profileName} role={profileTitle} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {profileName}
-            </div>
-            {profileTitle && (
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {profileTitle}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      <div className="mt-auto" />
     </aside>
   );
 }
