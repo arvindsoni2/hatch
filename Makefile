@@ -3,7 +3,7 @@
 
 .PHONY: dev dev-back dev-front scrape scrape-one test test-back test-front \
         test-be test-fe migrate migrate-new docker-up docker-down docker-build docker-logs \
-        docker-restart lint format models seed clean reset-user help ci
+        docker-restart lint format models seed clean reset-user test-reset-user help ci
 
 # ──────────────────────── Development ────────────────────────
 
@@ -107,8 +107,11 @@ format: ## Format code
 
 # ──────────────────────── Utilities ──────────────────────────
 
-reset-user: ## Wipe all job/application data to start fresh as a new user
+reset-user: ## Wipe all local user data and return Hatch to first-run state
 	@bash scripts/reset-user-data.sh
+
+test-reset-user: ## Verify reset behavior against an isolated temporary data directory
+	@bash scripts/tests/test_reset_user_data.sh
 
 clean: ## Remove generated files and caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

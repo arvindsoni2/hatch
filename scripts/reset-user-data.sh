@@ -1,11 +1,27 @@
 #!/usr/bin/env bash
-# reset-user-data.sh — wipe all job/application data to start fresh as a new user
-# Usage: ./scripts/reset-user-data.sh
+# reset-user-data.sh — wipe local user data and return Hatch to first-run state
+# Usage: ./scripts/reset-user-data.sh [--yes] [--keep-profile]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DATA_DIR="$PROJECT_DIR/data"
+DATA_DIR="${HATCH_RESET_DATA_DIR:-$PROJECT_DIR/data}"
+ASSUME_YES=false
+RESET_PROFILE=true
+
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y) ASSUME_YES=true ;;
+    --keep-profile) RESET_PROFILE=false ;;
+    --help|-h)
+      echo "Usage: $0 [--yes] [--keep-profile]"
+      echo "  --yes           Skip the destructive confirmation prompt"
+      echo "  --keep-profile  Clear workflow data but retain identity, CV, and saved API keys"
+      exit 0
+      ;;
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
 CYAN="\033[0;36m"
 GREEN="\033[0;32m"
@@ -31,6 +47,7 @@ elif command -v docker-compose &>/dev/null; then
 fi
 
 backend_running() {
+  [[ "${HATCH_RESET_OFFLINE:-0}" != "1" ]] || return 1
   docker ps --format "{{.Names}}" 2>/dev/null | grep -q "hatch-backend"
 }
 
@@ -88,23 +105,26 @@ echo "    • All scraped jobs, scores, and decisions"
 echo "    • All agent run history and events"
 echo "    • Local LangGraph checkpoints"
 echo "    • All generated CVs and cover letters"
-echo ""
-echo -e "  ${YELLOW}If you also reset identity (prompted below):${RESET}"
-echo "    • profile.yaml → reset to blank template"
-echo "    • master_cv.json / master_resume.* → deleted"
-echo "    • api_keys.env → cleared (keys must be re-entered)"
-echo ""
-
-# ── Ask whether to also reset identity files ──────────────────────
-
-RESET_PROFILE="n"
-read -r -p "  Also reset profile.yaml and master_cv.json (new user identity)? [y/N] " RESET_PROFILE
+  echo "    • Coach recordings"
+if $RESET_PROFILE; then
+  echo "    • profile.yaml → reset to the blank first-run template"
+  echo "    • master_cv.json, metadata, and master_resume.*"
+  echo "    • data/api_keys.env (keys must be re-entered)"
+else
+  echo ""
+  echo -e "  ${YELLOW}Keeping profile, master CV/resume, and saved API keys.${RESET}"
+fi
 echo ""
 
 # ── Confirm ────────────────────────────────────────────────────────
 
-read -r -p "  Type 'yes' to confirm: " CONFIRM
-echo ""
+CONFIRM=""
+if $ASSUME_YES; then
+  CONFIRM="yes"
+else
+  read -r -p "  Type 'yes' to confirm: " CONFIRM
+  echo ""
+fi
 
 if [[ "$CONFIRM" != "yes" ]]; then
   info "Aborted — no changes made."
@@ -117,6 +137,11 @@ delete_file() {
   local host_path="$1"
   local container_path="$2"
   local label="$3"
+
+  if ! backend_running && [ ! -e "$host_path" ]; then
+    ok "$label was already absent"
+    return 0
+  fi
 
   if backend_running; then
     container_exec rm -f "$container_path" 2>/dev/null \
@@ -138,14 +163,21 @@ delete_dir_contents() {
   local container_path="$2"
   local label="$3"
 
+  if ! backend_running && [ ! -e "$host_path" ]; then
+    ok "$label was already absent"
+    return 0
+  fi
+
   if backend_running; then
-    container_exec sh -c "rm -rf ${container_path}/* 2>/dev/null; true" \
+    container_exec sh -c "find '$container_path' -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; true" \
       && ok "Cleared $label" \
       || warn "Could not clear $label inside container"
   elif [ -w "$host_path" ]; then
-    rm -rf "${host_path:?}"/* 2>/dev/null; ok "Cleared $label"
+    find "${host_path:?}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null
+    ok "Cleared $label"
   elif sudo -n true 2>/dev/null; then
-    sudo rm -rf "${host_path:?}"/* 2>/dev/null && ok "Cleared $label (sudo)"
+    sudo find "${host_path:?}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null \
+      && ok "Cleared $label (sudo)"
   else
     warn "Cannot clear $label — containers are not running and the directory is not writable."
     return 1
@@ -176,14 +208,24 @@ delete_dir_contents \
   "/app/data/generated" \
   "generated documents (data/generated/)"
 
-if [[ "$RESET_PROFILE" =~ ^[Yy]$ ]]; then
+delete_dir_contents \
+  "$DATA_DIR/recordings" \
+  "/app/data/recordings" \
+  "Coach recordings (data/recordings/)"
+
+delete_dir_contents \
+  "$DATA_DIR/uploads" \
+  "/app/data/uploads" \
+  "uploaded temporary files (data/uploads/)"
+
+if $RESET_PROFILE; then
   info "Resetting user identity…"
 
   if [ -f "$DATA_DIR/profile.yaml.example" ]; then
     if backend_running; then
       container_exec sh -c "cp /app/data/profile.yaml.example /app/data/profile.yaml" \
         && ok "Reset profile.yaml from example template"
-    elif [ -w "$DATA_DIR/profile.yaml" ]; then
+    elif [ -w "$DATA_DIR" ]; then
       cp "$DATA_DIR/profile.yaml.example" "$DATA_DIR/profile.yaml" \
         && ok "Reset profile.yaml from example template"
     else
@@ -266,7 +308,7 @@ fi
 echo ""
 ok "Reset complete."
 echo ""
-if [[ "$RESET_PROFILE" =~ ^[Yy]$ ]]; then
+if $RESET_PROFILE; then
   warn "Next: open http://localhost:3000/onboarding to set up the new user."
   warn "Browser tip: clear localStorage for localhost:3000 (DevTools → Application → Storage → Clear site data)"
   warn "  to avoid the previous session's onboarding progress appearing as 'Resume where you left off'."

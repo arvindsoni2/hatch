@@ -14,16 +14,16 @@ Hatch never submits an application for you. You review the documents, submit on 
 
 The main screens are:
 
-- **Today:** work requiring attention and clearly labelled all-time agent output.
-- **Stream:** scored roles moving through the agent pipeline.
-- **Tracker:** the application Kanban board.
-- **Prep:** manual and application-linked Coach sessions.
+- **Today:** the recommended next action, ready work, and supporting agent progress.
+- **Pipeline:** scored roles moving through the agent pipeline.
+- **Applications:** the application Kanban board.
+- **Interview Prep:** manual and application-linked Coach sessions.
 
-## Application Tracker
+## Applications
 
-The Tracker follows the real application journey from left to right:
+Applications follows the real application journey from left to right:
 
-`Discovered -> Preparing -> Ready to submit -> Applied -> Interview -> Offered -> Accepted`
+`Discovered -> Preparing -> Ready to apply -> Applied -> Interview -> Offered -> Accepted`
 
 - Drag a card only to its next valid stage.
 - Use the card's **Move to...** menu as a keyboard-accessible alternative.
@@ -35,7 +35,7 @@ The Tracker follows the real application journey from left to right:
 
 ## Interview Prep
 
-Coach prep can be created from an applied Tracker card or directly from **Prep -> New** for external interviews.
+Coach prep can be created from an applied Applications card or directly from **Interview Prep → New session** for external interviews.
 
 - Ready sessions show likely questions, model answers, calendar export, and practice launch.
 - New manual applications can queue Coach immediately after they are added to Tracker.
@@ -162,6 +162,13 @@ tables plus the `tailoring.default_template_id` setting. It does not introduce
 multi-user accounts. The container entrypoint applies the database migrations
 automatically on restart.
 
+### Release 4 interface
+
+Release 4 gives Hatch one consistent responsive shell and plain-language
+navigation: Today, Pipeline, Applications, and Interview Prep. Desktop uses the
+sidebar; mobile uses the bottom navigation. Settings share the same colour,
+spacing, focus, touch-target, and responsive form principles.
+
 ## Docker Services
 
 | Service | Local address | Notes |
@@ -215,7 +222,8 @@ make docker-up       # build and start the stack
 make docker-logs     # follow container logs
 make migrate         # run database migrations
 make scrape          # trigger Scout manually
-make reset-user      # remove local user/job data after confirmation
+make reset-user      # return Hatch to first-run state after confirmation
+make test-reset-user # verify reset behavior in a temporary directory
 ```
 
 ## Architecture
@@ -263,10 +271,23 @@ docker compose logs -f backend llm-primary
 ### Reset local data
 
 ```bash
-bash scripts/reset-user-data.sh
+make reset-user
 ```
 
-This is destructive and should only be used when intentionally starting again.
+This is destructive and returns Hatch to first-run state. It removes the
+application database and checkpoints, generated documents, Coach recordings,
+temporary uploads, profile, master CV/resume artifacts, and saved API keys.
+Downloaded models and `data/profile.yaml.example` are retained; a blank
+`profile.yaml` is recreated from that template. Open
+<http://localhost:3000/onboarding> afterwards and clear localhost site data if
+the browser offers to resume an old onboarding session.
+
+To clear jobs and workflow history while deliberately retaining the existing
+profile, CV, and saved API keys:
+
+```bash
+bash scripts/reset-user-data.sh --keep-profile
+```
 
 ## Safety and Privacy
 
