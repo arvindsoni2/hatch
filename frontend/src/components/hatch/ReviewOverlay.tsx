@@ -1,9 +1,7 @@
 "use client";
-import { useState } from 'react';
 import { AgentBadge } from './AgentBadge';
 import { Btn } from './Btn';
 import { Card } from './Card';
-import { Chip } from './Chip';
 import { HatchIcon } from './HatchIcon';
 import { ScorePill } from './ScorePill';
 import type { HatchJob } from './screens/TodayScreen';
@@ -42,7 +40,6 @@ interface ReviewOverlayProps {
 }
 
 export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false, loadingMessage }: ReviewOverlayProps) {
-  const [tab, setTab] = useState<'cv' | 'cl'>('cv');
   const job = queue[idx];
   if (!job) return null;
 
@@ -123,50 +120,23 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
             </div>
           </Card>
 
-          {/* Tailored docs header */}
+          {/* Generation decision */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '18px 0 10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <AgentBadge agent="tailor" size={26} />
-              <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>Tailored by Tailor</span>
+              <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>Generate with Tailor</span>
             </div>
-            {job.ats && <Chip color="var(--success)" bg="var(--success-soft)" icon="checkCircle">ATS {job.ats}%</Chip>}
           </div>
 
-          {/* CV / CL tab toggle */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-            {([['cv', 'CV'], ['cl', 'Cover letter']] as const).map(([k, l]) => (
-              <button
-                key={k}
-                type="button"
-                className="hatch-interactive"
-                aria-pressed={tab === k}
-                onClick={() => setTab(k)}
-                style={{
-                  flex: 1, padding: 8, borderRadius: 9, cursor: 'pointer',
-                  fontSize: 12.5, fontWeight: tab === k ? 700 : 600,
-                  background: tab === k ? 'var(--accent-soft)' : 'var(--surface)',
-                  color: tab === k ? 'var(--accent)' : 'var(--text-dim)',
-                  border: `1px solid ${tab === k ? 'transparent' : 'var(--border)'}`,
-                }}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-
-          {/* Document drafted confirmation */}
+          {/* Documents do not exist until the user confirms generation. */}
           <div style={{ background: 'var(--surface-2)', borderRadius: 12, padding: 16, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-            <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--success-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <HatchIcon name="checkCircle" size={18} color="var(--success)" />
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <HatchIcon name="fileText" size={18} color="var(--accent)" />
             </div>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>
-                {tab === 'cv' ? 'CV drafted and ready' : 'Cover letter drafted and ready'}
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>No documents generated yet</div>
               <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                {tab === 'cv'
-                  ? 'Tailored to this job description and optimised for ATS keyword matching.'
-                  : 'Personalised to your experience and written specifically for this role.'}
+                Review the match evidence above. If you continue, Tailor will prepare a CV and cover letter for this role.
               </div>
             </div>
           </div>
@@ -175,7 +145,7 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
           <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '16px 0 18px', padding: 12, borderRadius: 12, background: 'var(--accent-soft)' }}>
             <HatchIcon name="arrowR" size={16} color="var(--accent)" style={{ marginTop: 1 }} />
             <span style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-              Use this version and Hatch will prepare your CV pack. You&apos;ll submit on the company&apos;s site — you&apos;re always in control of the final click.
+              Generating a CV pack does not submit an application. You will review the completed documents before applying on the company&apos;s site.
             </span>
           </div>
         </div>
@@ -206,7 +176,7 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
         }}>
           <Btn kind="ghost" icon="x" disabled={isLoading} onClick={() => onAction('reject')}>Dismiss role</Btn>
           <Btn kind="primary" full iconR={isLoading ? undefined : "arrowR"} disabled={isLoading} onClick={() => onAction('approve')}>
-            {isLoading ? 'Preparing CV pack…' : 'Use this version'}
+            {isLoading ? 'Preparing CV pack…' : 'Generate CV pack'}
           </Btn>
         </div>
         <div style={{ height: 30, flexShrink: 0 }} className="md:hidden" />

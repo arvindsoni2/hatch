@@ -63,11 +63,11 @@ describe('Navigation cleanup (v4.1)', () => {
 
 // ── Two-step assisted apply invariants ───────────────────────────────────────
 describe('Two-step assisted apply (v4)', () => {
-  it('ReviewOverlay keeps document choice separate from application submission', () => {
+  it('ReviewOverlay keeps document generation separate from application submission', () => {
     const overlay = read('components', 'hatch', 'ReviewOverlay.tsx');
-    const hasChooseVersion = overlay.includes('Use this version');
+    const hasGeneratePack = overlay.includes('Generate CV pack');
     const hasApproveAndApply = overlay.includes('Approve & apply') || overlay.includes('Approve &amp; apply');
-    expect(hasChooseVersion).toBe(true);
+    expect(hasGeneratePack).toBe(true);
     expect(hasApproveAndApply).toBe(false);
   });
 

@@ -143,7 +143,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>Recommended next action</div>
           <h2 style={{ margin: 0, fontSize: 20, lineHeight: 1.3, color: 'var(--text)' }}>
             {ready.length > 0
-              ? `${ready.length} CV pack${ready.length === 1 ? ' is' : 's are'} ready to review`
+              ? `${ready.length} role${ready.length === 1 ? ' is' : 's are'} ready to review`
               : readyToApply.length > 0
                 ? `${readyToApply.length} application${readyToApply.length === 1 ? ' is' : 's are'} ready to finish`
                 : followUpCount > 0
@@ -152,7 +152,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           </h2>
           <p style={{ margin: '6px 0 16px', fontSize: 14, lineHeight: 1.55, color: 'var(--text-dim)' }}>
             {ready.length > 0
-              ? 'Review the tailored documents before deciding whether to use them.'
+              ? 'Review the match evidence before deciding whether to generate a CV pack.'
               : readyToApply.length > 0
                 ? 'Open the application, submit it on the employer site, then record the outcome here.'
                 : followUpCount > 0
@@ -161,7 +161,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           </p>
           {ready.length > 0 && (
             <Btn kind="primary" iconR="arrowR" onClick={() => onReview?.(ready.map((j) => j.id))}>
-              Review CV packs
+              Review roles
             </Btn>
           )}
         </Card>
@@ -179,9 +179,9 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
               <AgentBadge agent="tailor" size={34} ring />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
-                  {ready.length} CV pack{ready.length !== 1 ? 's' : ''} ready
+                  {ready.length} role{ready.length !== 1 ? 's' : ''} ready for review
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>CV and cover letter prepared for your review</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>Match evidence is ready. Documents have not been generated yet.</div>
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 13 }}>
@@ -204,9 +204,6 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                     </div>
                     <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>{job.company}</div>
                   </div>
-                  {job.ats != null && (
-                    <Chip color="var(--success)" bg="var(--success-soft)" icon="check">CV ATS {job.ats}%</Chip>
-                  )}
                 </button>
               ))}
             </div>
@@ -216,8 +213,8 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
             <div style={{ width: 38, height: 38, borderRadius: 999, margin: '0 auto 10px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--success-soft)' }}>
               <HatchIcon name="checkCircle" size={20} color="var(--success)" />
             </div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>No CV packs need review</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>New packs will appear here after Tailor finishes.</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>No roles need review</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>New roles will appear here after Scorer finishes.</div>
           </Card>
         )}
 

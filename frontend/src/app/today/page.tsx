@@ -25,7 +25,9 @@ function pendingToHatchJob(a: PendingApproval): HatchJob {
     loc: "—",
     rate: a.rate_text ?? "—",
     score: a.overall_score ?? 0,
-    ats: a.latest_cv_ats_score ?? undefined,
+    // Pending approvals have match evidence, not a generated CV pack. A prior
+    // document score must not make this pre-generation state look complete.
+    ats: undefined,
     dims: hasDims ? {
       Skills: a.skill_match ?? 0,
       Experience: a.experience_match ?? 0,

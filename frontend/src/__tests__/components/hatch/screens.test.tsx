@@ -59,21 +59,21 @@ describe('TodayScreen', () => {
   it('shows one outcome-led review CTA when ready jobs exist', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" />);
-    expect(screen.getByRole('button', { name: 'Review CV packs' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Review roles' })).toBeTruthy();
   });
 
   it('shows empty state when no ready jobs', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     const noReadyJobs = [TAILORING_JOB, PARKED_JOB];
     render(<TodayScreen jobs={noReadyJobs} funnel={FUNNEL} profileName="Arvind" />);
-    expect(screen.getByText(/No CV packs need review/i)).toBeTruthy();
+    expect(screen.getByText(/No roles need review/i)).toBeTruthy();
   });
 
   it('calls onReview with ready job ids when CTA clicked', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     const onReview = vi.fn();
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" onReview={onReview} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Review CV packs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review roles' }));
     expect(onReview).toHaveBeenCalledWith(expect.arrayContaining(['sa']));
   });
 
@@ -336,7 +336,7 @@ describe('ReviewOverlay', () => {
     expect(screen.getByText(/Application 1 of 1/i)).toBeTruthy();
   });
 
-  it('primary button describes choosing the reviewed version', async () => {
+  it('primary button describes generating the CV pack', async () => {
     const { ReviewOverlay } = await import('@/components/hatch/ReviewOverlay');
     render(
       <ReviewOverlay
@@ -346,10 +346,10 @@ describe('ReviewOverlay', () => {
         onClose={vi.fn()}
       />
     );
-    expect(screen.getByRole('button', { name: /Use this version/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Generate CV pack/i })).toBeTruthy();
   });
 
-  it('calls onAction("approve") when Use this version is clicked', async () => {
+  it('calls onAction("approve") when Generate CV pack is clicked', async () => {
     const { ReviewOverlay } = await import('@/components/hatch/ReviewOverlay');
     const onAction = vi.fn();
     render(
@@ -360,7 +360,7 @@ describe('ReviewOverlay', () => {
         onClose={vi.fn()}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: /Use this version/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Generate CV pack/i }));
     expect(onAction).toHaveBeenCalledWith('approve');
   });
 
@@ -395,7 +395,7 @@ describe('ReviewOverlay', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('renders both CV and Cover Letter tab buttons', async () => {
+  it('does not claim documents exist before generation', async () => {
     const { ReviewOverlay } = await import('@/components/hatch/ReviewOverlay');
     render(
       <ReviewOverlay
@@ -405,8 +405,9 @@ describe('ReviewOverlay', () => {
         onClose={vi.fn()}
       />
     );
-    expect(screen.getByText('CV')).toBeTruthy();
-    expect(screen.getByText('Cover letter')).toBeTruthy();
+    expect(screen.getByText(/No documents generated yet/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'CV' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Cover letter' })).toBeNull();
   });
 });
 
