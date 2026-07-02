@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
@@ -100,3 +101,22 @@ async def test_disabled_mode_keeps_product_available(
 async def test_docs_are_locked(client: AsyncClient) -> None:
     assert (await client.get("/docs")).status_code == 423
     assert (await client.get("/openapi.json")).status_code == 423
+
+
+@pytest.mark.asyncio
+async def test_status_with_session_is_read_only(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    setup = await client.post("/api/app-lock/setup", json={"password": "safe-password"})
+    assert setup.status_code == 200
+
+    cleanup = AsyncMock(side_effect=AssertionError("status must not prune sessions"))
+    monkeypatch.setattr(
+        "app.services.app_lock_service.AppLockService.cleanup_expired_sessions",
+        cleanup,
+    )
+
+    status = await client.get("/api/app-lock/status")
+    assert status.status_code == 200
+    assert status.json()["is_unlocked"] is True
+    cleanup.assert_not_awaited()

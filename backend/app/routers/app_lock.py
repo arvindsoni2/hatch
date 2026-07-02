@@ -48,8 +48,7 @@ async def status(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
         settings.HATCH_AUTH_TOKEN
         and request.headers.get("authorization") == f"Bearer {settings.HATCH_AUTH_TOKEN}"
     )
-    unlocked = await service.session(token) is not None
-    return await service.status(token, include_private=bearer_ok or unlocked)
+    return await service.status(token, include_private=bearer_ok)
 
 
 @router.post("/setup")

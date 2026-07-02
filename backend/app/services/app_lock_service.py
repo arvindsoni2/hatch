@@ -57,10 +57,9 @@ class AppLockService:
     async def cleanup_expired_sessions(self) -> None:
         await self._db.execute(delete(AppLockSession).where(AppLockSession.expires_at <= _utcnow()))
 
-    async def session(self, token: str | None, *, touch: bool = True) -> AppLockSession | None:
+    async def session(self, token: str | None, *, touch: bool = False) -> AppLockSession | None:
         if not settings.HATCH_APP_LOCK_ENABLED or not token:
             return None
-        await self.cleanup_expired_sessions()
         result = await self._db.execute(
             select(AppLockSession).where(
                 AppLockSession.session_hash == _session_hash(token),
@@ -74,14 +73,14 @@ class AppLockService:
 
     async def status(self, token: str | None, *, include_private: bool = False) -> dict:
         source = await self.configured_source()
-        session = await self.session(token)
+        session = await self.session(token, touch=False)
         base = {
             "enabled": settings.HATCH_APP_LOCK_ENABLED,
             "configured_source": source,
             "is_configured": source != "none",
             "is_unlocked": not settings.HATCH_APP_LOCK_ENABLED or session is not None,
         }
-        if not include_private:
+        if not include_private and session is None:
             return base
         row = await self._config()
         return {
@@ -143,6 +142,11 @@ class AppLockService:
         return await self._create_session(row)
 
     async def _create_session(self, row: AppLockConfig) -> str:
+        # Session creation already requires a write transaction, so this is the
+        # safe place to prune expired rows. Status checks remain read-only and
+        # cannot fail merely because another worker currently holds SQLite's
+        # write lock.
+        await self.cleanup_expired_sessions()
         token = secrets.token_urlsafe(32)
         now = _utcnow()
         self._db.add(AppLockSession(
