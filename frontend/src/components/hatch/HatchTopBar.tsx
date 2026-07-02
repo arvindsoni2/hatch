@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { HatchIcon } from './HatchIcon';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserMenu } from './UserMenu';
@@ -9,6 +10,7 @@ interface HatchTopBarProps {
   role?: string;
   pageTitle: string;
   pageSub?: string;
+  onSearch?: (query: string) => void;
 }
 
 function getGreeting(): string {
@@ -18,12 +20,25 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-export function HatchTopBar({ name, role, pageTitle, pageSub }: HatchTopBarProps) {
+export function HatchTopBar({ name, role, pageTitle, pageSub, onSearch }: HatchTopBarProps) {
   const [greeting, setGreeting] = useState('Welcome');
+  const [searchQuery, setSearchQuery] = useState('');
+  const router = useRouter();
 
   useEffect(() => {
     setGreeting(getGreeting());
   }, []);
+
+  function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (!query) return;
+    if (onSearch) {
+      onSearch(query);
+      return;
+    }
+    router.push(`/jobs?view=all&search=${encodeURIComponent(query)}`);
+  }
 
   return (
     <header
@@ -49,7 +64,7 @@ export function HatchTopBar({ name, role, pageTitle, pageSub }: HatchTopBarProps
       </div>
 
       {/* Search */}
-      <div className="relative" style={{ width: 240 }}>
+      <form className="relative" style={{ width: 240 }} role="search" onSubmit={submitSearch}>
         <HatchIcon
           name="search"
           size={15}
@@ -60,6 +75,11 @@ export function HatchTopBar({ name, role, pageTitle, pageSub }: HatchTopBarProps
           type="search"
           placeholder="Search roles…"
           aria-label="Search roles"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') setSearchQuery('');
+          }}
           style={{
             width: '100%',
             padding: '7px 10px 7px 32px',
@@ -71,7 +91,7 @@ export function HatchTopBar({ name, role, pageTitle, pageSub }: HatchTopBarProps
             outline: 'none',
           }}
         />
-      </div>
+      </form>
 
       <NotificationBell />
       <UserMenu name={name} role={role} />

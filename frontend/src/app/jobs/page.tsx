@@ -39,7 +39,9 @@ export default function JobsPage() {
   });
 
   const [filters, setFilters] = useState<FilterValues>({
-    search: "",
+    search: typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("search") ?? ""
+      : "",
     ir35_status: "",
     source: "",
     min_rate: "",
@@ -112,6 +114,10 @@ export default function JobsPage() {
   function handleFilterChange(newFilters: FilterValues) {
     setFilters(newFilters);
     setPage(0);
+    const url = new URL(window.location.href);
+    if (newFilters.search.trim()) url.searchParams.set("search", newFilters.search.trim());
+    else url.searchParams.delete("search");
+    window.history.replaceState(null, "", url);
   }
 
   function handleScrapeComplete(results: ScrapeResult[]) {

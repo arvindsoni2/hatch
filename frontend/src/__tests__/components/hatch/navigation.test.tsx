@@ -3,7 +3,7 @@
  * Written BEFORE any implementation exists.
  * v4.1: extended with live NotificationBell assertions (Task 2).
  */
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 // ── HatchNav (mobile bottom tab bar) ─────────────────────────────────────────
@@ -125,6 +125,16 @@ describe('HatchTopBar', () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
     const { container } = render(<HatchTopBar name="Arvind" pageTitle="Today" />);
     expect(container.querySelector('input[type="search"], input[placeholder]')).toBeTruthy();
+  });
+
+  it('submits a trimmed role search', async () => {
+    const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
+    const onSearch = vi.fn();
+    render(<HatchTopBar name="Arvind" pageTitle="Today" onSearch={onSearch} />);
+    const input = screen.getByRole('searchbox', { name: 'Search roles' });
+    fireEvent.change(input, { target: { value: '  programme manager  ' } });
+    fireEvent.submit(screen.getByRole('search'));
+    expect(onSearch).toHaveBeenCalledWith('programme manager');
   });
 
   it('renders a bell notification button', async () => {
