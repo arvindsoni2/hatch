@@ -1,11 +1,11 @@
-import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import {
   ArrowLeft, ExternalLink, Search, Brain, FileText,
   CheckCircle2, AlertTriangle, Clock, DollarSign,
 } from "lucide-react";
-import { fetchJob, fetchJobDecisions, fetchJobScore, type DecisionStep } from "@/lib/api";
+import type { DecisionStep, DecisionTrail, Job, JobScoreRead } from "@/lib/api";
+import { serverApiFetch } from "@/lib/server-api";
 import { ScoreRationale } from "@/components/ScoreRationale";
 
 export const revalidate = 60;
@@ -129,13 +129,11 @@ function StepCard({ step }: { step: DecisionStep }) {
 
 export default async function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [job, decisions, jobScore] = await Promise.all([
-    fetchJob(id).catch(() => null),
-    fetchJobDecisions(id).catch(() => null),
-    fetchJobScore(id).catch(() => null),
+  const job = await serverApiFetch<Job>(`/api/jobs/${id}`);
+  const [decisions, jobScore] = await Promise.all([
+    serverApiFetch<DecisionTrail>(`/api/jobs/${id}/decisions`).catch(() => null),
+    serverApiFetch<JobScoreRead>(`/api/v2/scoring/${id}`).catch(() => null),
   ]);
-
-  if (!job) notFound();
 
   const matchPct = job.match_score != null ? Math.round(job.match_score * 100) : null;
   const scoreColor =

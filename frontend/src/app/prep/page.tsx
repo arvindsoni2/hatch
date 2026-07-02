@@ -1,4 +1,5 @@
-import { listSessions, type SessionListItem } from "@/lib/api";
+import type { SessionListItem } from "@/lib/api";
+import { serverApiFetch } from "@/lib/server-api";
 import { PrepPageClient } from "./PrepPageClient";
 import type { PrepSession } from "@/components/hatch/screens/PrepScreen";
 
@@ -29,7 +30,7 @@ function sessionToPrep(s: SessionListItem): PrepSession {
 }
 
 export default async function PrepPage() {
-  const raw = await listSessions(20).catch((): SessionListItem[] => []);
+  const raw = await serverApiFetch<SessionListItem[]>("/api/coach/sessions?limit=20");
   const sessions = raw.map(sessionToPrep);
 
   return <PrepPageClient sessions={sessions} />;

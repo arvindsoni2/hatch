@@ -1,17 +1,15 @@
-import {
-  fetchPendingApprovals,
-  fetchPipelineStats,
-  fetchProfileStatus,
-  getOverdueFollowUps,
-  fetchApplications,
-  fetchAgentPerformance,
-  getUpcomingInterviews,
-  fetchApplication,
-  type PendingApproval,
-  type PipelineStats,
-  type ApplicationListItem,
-  type AgentPerformance,
+import type {
+  PendingApproval,
+  PipelineStats,
+  ApplicationListItem,
+  AgentPerformance,
+  PaginatedResponse,
+  ProfileStatus,
+  FollowUp,
+  InterviewRound,
+  Application,
 } from "@/lib/api";
+import { serverApiFetch } from "@/lib/server-api";
 import { TodayPageClient } from "./TodayPageClient";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 
@@ -54,13 +52,13 @@ function readyToApplyToHatchJob(a: ApplicationListItem): HatchJob {
 
 export default async function TodayPage() {
   const [approvals, readyToApplyPage, pipeline, profile, overdueFollowUps, agentPerf, upcomingInterviews] = await Promise.all([
-    fetchPendingApprovals().catch((): PendingApproval[] => []),
-    fetchApplications({ status: "ready_to_apply" }, 0, 20).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 20 })),
-    fetchPipelineStats().catch((): PipelineStats | null => null),
-    fetchProfileStatus().catch(() => null),
-    getOverdueFollowUps().catch(() => []),
-    fetchAgentPerformance().catch((): AgentPerformance | null => null),
-    getUpcomingInterviews(14).catch(() => []),
+    serverApiFetch<PendingApproval[]>("/api/agents/approvals/pending"),
+    serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=ready_to_apply&skip=0&limit=20"),
+    serverApiFetch<PipelineStats>("/api/agents/dashboard/pipeline"),
+    serverApiFetch<ProfileStatus>("/api/v2/profile/status"),
+    serverApiFetch<FollowUp[]>("/api/interviews/follow-ups/overdue"),
+    serverApiFetch<AgentPerformance>("/api/analytics/agent-performance"),
+    serverApiFetch<InterviewRound[]>("/api/interviews/upcoming?days=14"),
   ]);
 
   // Build upcoming interview card data if a real interview is scheduled
@@ -74,7 +72,7 @@ export default async function TodayPage() {
       let title = "Interview";
       let company = "";
       try {
-        const app = await fetchApplication(next.application_id);
+        const app = await serverApiFetch<Application>(`/api/applications/${next.application_id}`);
         title = app.job?.title ?? "Interview";
         company = app.job?.company ?? "";
       } catch {

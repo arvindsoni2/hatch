@@ -1,4 +1,5 @@
-import { getSessionReport } from "@/lib/api";
+import type { SessionFeedbackReport } from "@/lib/api";
+import { serverApiFetch } from "@/lib/server-api";
 import { FeedbackReport } from "@/components/coach/FeedbackReport";
 import { Brain, ArrowLeft } from "lucide-react";
 import Link from "next/link";
@@ -10,18 +11,7 @@ interface ReportPageProps {
 export default async function ReportPage({ params }: ReportPageProps) {
   const { id } = await params;
 
-  let report;
-  try {
-    report = await getSessionReport(id);
-  } catch {
-    return (
-      <main className="mx-auto max-w-3xl px-4 py-8">
-        <div className="flex h-64 items-center justify-center rounded-xl border border-slate-700 bg-slate-800">
-          <p className="text-slate-400">Report not found or session not yet completed.</p>
-        </div>
-      </main>
-    );
-  }
+  const report = await serverApiFetch<SessionFeedbackReport>(`/api/coach/sessions/${id}/report`);
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">

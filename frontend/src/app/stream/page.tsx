@@ -1,9 +1,9 @@
-import {
-  fetchPendingApprovals,
-  fetchApplications,
-  type PendingApproval,
-  type ApplicationListItem,
+import type {
+  PendingApproval,
+  ApplicationListItem,
+  PaginatedResponse,
 } from "@/lib/api";
+import { serverApiFetch } from "@/lib/server-api";
 import { StreamPageClient } from "./StreamPageClient";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 
@@ -40,12 +40,12 @@ function appToHatchJob(a: ApplicationListItem, state: HatchJob["state"]): HatchJ
 
 export default async function StreamPage() {
   const [approvals, preparingApps, failedApps, shortlistedApps, discoveredApps, readyToApplyApps] = await Promise.all([
-    fetchPendingApprovals().catch((): PendingApproval[] => []),
-    fetchApplications({ status: "preparing" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
-    fetchApplications({ status: "approved" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
-    fetchApplications({ status: "shortlisted" }, 0, 30).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 30 })),
-    fetchApplications({ status: "discovered" }, 0, 50).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 50 })),
-    fetchApplications({ status: "ready_to_apply" }, 0, 50).catch(() => ({ items: [] as ApplicationListItem[], total: 0, skip: 0, limit: 50 })),
+    serverApiFetch<PendingApproval[]>("/api/agents/approvals/pending"),
+    serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=preparing&skip=0&limit=30"),
+    serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=approved&skip=0&limit=30"),
+    serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=shortlisted&skip=0&limit=30"),
+    serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=discovered&skip=0&limit=50"),
+    serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=ready_to_apply&skip=0&limit=50"),
   ]);
 
   const readyIds = new Set(approvals.map((a) => a.application_id));

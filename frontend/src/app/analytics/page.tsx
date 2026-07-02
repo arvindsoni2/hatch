@@ -8,19 +8,20 @@ import {
 import { AgentPerformanceTable } from "@/components/AgentPerformanceTable";
 import { OutcomeLearningPanel } from "@/components/OutcomeLearningPanel";
 import { BackButton } from "@/components/hatch/BackButton";
-import {
-  fetchAnalyticsDashboard,
-  fetchAtsCorrelation,
-  fetchSkillFrequency,
-  fetchSkillGaps,
-  fetchScoreDistribution,
-  fetchCostsMonthly,
-  fetchCostsDaily,
-  fetchSearchQuality,
-  fetchRateLimitStatus,
-  fetchAgentPerformance,
-  fetchOutcomeLearningSummary,
+import type {
+  AnalyticsDashboard,
+  AtsCorrelation,
+  SkillFrequency,
+  SkillGaps,
+  ScoreDistribution,
+  MonthlyCosts,
+  DailyCosts,
+  SearchQuality,
+  RateLimitStatus,
+  AgentPerformance,
+  OutcomeLearningSummary,
 } from "@/lib/api";
+import { serverApiFetch } from "@/lib/server-api";
 import Link from "next/link";
 
 export const revalidate = 60;
@@ -89,17 +90,17 @@ export default async function AnalyticsPage() {
     agentPerf,
     outcomeSummary,
   ] = await Promise.all([
-    fetchAnalyticsDashboard().catch(() => null),
-    fetchAtsCorrelation().catch(() => null),
-    fetchSkillFrequency(20).catch(() => null),
-    fetchSkillGaps(15).catch(() => null),
-    fetchScoreDistribution().catch(() => null),
-    fetchCostsMonthly().catch(() => null),
-    fetchCostsDaily(30).catch(() => null),
-    fetchSearchQuality().catch(() => null),
-    fetchRateLimitStatus().catch(() => null),
-    fetchAgentPerformance().catch(() => null),
-    fetchOutcomeLearningSummary().catch(() => null),
+    serverApiFetch<AnalyticsDashboard>("/api/analytics/dashboard"),
+    serverApiFetch<AtsCorrelation>("/api/analytics/ats-correlation"),
+    serverApiFetch<SkillFrequency>("/api/analytics/skill-frequency?limit=20"),
+    serverApiFetch<SkillGaps>("/api/analytics/skill-gaps?limit=15"),
+    serverApiFetch<ScoreDistribution>("/api/analytics/score-distribution"),
+    serverApiFetch<MonthlyCosts>("/api/analytics/costs/monthly"),
+    serverApiFetch<DailyCosts>("/api/analytics/costs/daily?days=30"),
+    serverApiFetch<SearchQuality>("/api/analytics/search-quality"),
+    serverApiFetch<RateLimitStatus>("/api/agents/rate-limit-status"),
+    serverApiFetch<AgentPerformance>("/api/analytics/agent-performance"),
+    serverApiFetch<OutcomeLearningSummary>("/api/outcome-learning/summary"),
   ]);
 
   const { stats, funnel, trends, sources, avg_days_to_interview } = dashboard ?? {
