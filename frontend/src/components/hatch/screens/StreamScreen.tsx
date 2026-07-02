@@ -12,14 +12,14 @@ import type { HatchJob } from './TodayScreen';
 
 type StreamFilter = 'all' | 'ready' | 'tailoring' | 'apply' | 'parked';
 
-const STATUS_META: Record<string, { label: string; color: string; dot: boolean }> = {
-  ready:          { label: 'Ready to send',   color: 'var(--success)',    dot: true  },
-  tailoring:      { label: 'Tailoring…',      color: 'var(--success)',    dot: false },
-  tailoring_failed:{ label: 'Tailoring failed', color: 'var(--danger, #ef4444)', dot: true },
-  ready_to_apply: { label: 'Ready to apply',  color: 'var(--warning)',    dot: true  },
-  parked:         { label: 'Below match bar', color: 'var(--warning)',    dot: false },
-  applied:        { label: 'Applied',         color: 'var(--accent)',     dot: false },
-  rejected:       { label: 'Dismissed',       color: 'var(--text-muted)', dot: false },
+const STATUS_META: Record<string, { label: string; color: string; dot: boolean; pulse?: boolean }> = {
+  ready:           { label: 'Ready to review', color: 'var(--success)', dot: true },
+  tailoring:       { label: 'Preparing CV pack…', color: 'var(--warning)', dot: true, pulse: true },
+  tailoring_failed:{ label: 'CV pack was not generated', color: 'var(--danger)', dot: true },
+  ready_to_apply:  { label: 'Ready to apply', color: 'var(--warning)', dot: true },
+  parked:          { label: 'Below match bar', color: 'var(--warning)', dot: false },
+  applied:         { label: 'Applied', color: 'var(--accent)', dot: false },
+  rejected:        { label: 'Dismissed', color: 'var(--text-muted)', dot: false },
 };
 
 function stageOf(job: HatchJob): number {
@@ -68,7 +68,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
 
   const emptyState = (
     <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>
-      Nothing in this stage right now.
+      No roles match this view. Choose another stage to see more of your pipeline.
     </div>
   );
 
@@ -76,8 +76,8 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
     <div>
       {/* Mobile header */}
       {isMobile && <div style={{ padding: '8px 0 14px' }}>
-        <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Stream</div>
-        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Every role · every stage</div>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Pipeline</h1>
+        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Roles moving from discovery to application</div>
       </div>}
 
       {/* Filter chips */}
@@ -87,6 +87,9 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
           return (
             <button
               key={key}
+              type="button"
+              className="hatch-interactive"
+              aria-pressed={active}
               onClick={() => setFilter(key)}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -193,7 +196,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
 
                     {/* STATUS */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: m.color }}>
-                      {m.dot && <Dot color={m.color} size={6} pulse />}
+                      {m.dot && <Dot color={m.color} size={6} pulse={m.pulse} />}
                       {m.label}
                     </div>
 
@@ -207,7 +210,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                           disabled={approvingId === job.id}
                           onClick={(e) => { e.stopPropagation(); onApprove?.(job.id, job.jobPostingId); }}
                         >
-                          {approvingId === job.id ? 'Preparing…' : retryable ? 'Retry' : 'Approve'}
+                          {approvingId === job.id ? 'Preparing…' : retryable ? 'Retry CV pack' : 'Generate CV pack'}
                         </Btn>
                       ) : reviewable ? (
                         <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>
@@ -215,7 +218,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                         </Btn>
                       ) : (
                         <Btn kind="soft" size="sm" disabled>
-                          {job.state === 'tailoring' ? 'In progress' : 'Package ready'}
+                          {job.state === 'tailoring' ? 'In progress' : 'CV pack ready'}
                         </Btn>
                       )}
                     </div>
@@ -270,14 +273,14 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 }}>
                 <span style={{ fontSize: 11.5, fontWeight: 600, color: m.color, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  {m.dot && <Dot color={m.color} size={6} pulse />}{m.label}
+                  {m.dot && <Dot color={m.color} size={6} pulse={m.pulse} />}{m.label}
                 </span>
                 {ready || retryable
-                  ? <Btn kind="success" size="sm" icon="check" disabled={approvingId === job.id} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingId === job.id ? 'Preparing…' : retryable ? 'Retry' : 'Approve'}</Btn>
+                  ? <Btn kind="success" size="sm" icon="check" disabled={approvingId === job.id} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingId === job.id ? 'Preparing…' : retryable ? 'Retry CV pack' : 'Generate CV pack'}</Btn>
                   : reviewable
                     ? <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>Review</Btn>
                     : <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 600 }}>
-                        {job.state === 'tailoring' ? 'Tailor is working' : 'Package ready'}
+                        {job.state === 'tailoring' ? 'Tailor is preparing this pack' : 'CV pack ready'}
                       </span>
                 }
               </div>

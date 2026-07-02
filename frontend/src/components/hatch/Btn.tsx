@@ -15,6 +15,8 @@ interface BtnProps {
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
   type?: 'button' | 'submit' | 'reset';
   disabled?: boolean;
+  className?: string;
+  'aria-label'?: string;
 }
 
 const KIND_STYLES: Record<BtnKind, React.CSSProperties> = {
@@ -35,8 +37,10 @@ export function Btn({
   onClick,
   type = 'button',
   disabled,
+  className,
+  'aria-label': ariaLabel,
 }: BtnProps) {
-  const pad  = size === 'sm' ? '8px 12px' : '11px 16px';
+  const pad  = size === 'sm' ? '8px 12px' : '10px 16px';
   const fs   = size === 'sm' ? 13 : 14;
   const kStyle = KIND_STYLES[kind];
   const iconColor = String(kStyle.color ?? 'currentColor');
@@ -46,6 +50,8 @@ export function Btn({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
+      className={`hatch-interactive${className ? ` ${className}` : ''}`}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

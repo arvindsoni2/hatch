@@ -5,10 +5,10 @@ import { HatchIcon } from './HatchIcon';
 export type HatchTab = 'today' | 'stream' | 'tracker' | 'prep';
 
 const TABS: { key: HatchTab; label: string; icon: string; href: string }[] = [
-  { key: 'today',   label: 'Today',   icon: 'home',      href: '/today'   },
-  { key: 'stream',  label: 'Stream',  icon: 'layers',    href: '/stream'  },
-  { key: 'tracker', label: 'Tracker', icon: 'briefcase', href: '/tracker' },
-  { key: 'prep',    label: 'Prep',    icon: 'mic',       href: '/prep'    },
+  { key: 'today',   label: 'Today',          icon: 'home',      href: '/today'   },
+  { key: 'stream',  label: 'Pipeline',       icon: 'layers',    href: '/stream'  },
+  { key: 'tracker', label: 'Applications',   icon: 'briefcase', href: '/tracker' },
+  { key: 'prep',    label: 'Interview Prep', icon: 'mic',       href: '/prep'    },
 ];
 
 interface HatchNavProps {
@@ -34,13 +34,15 @@ export function HatchNav({ activeTab }: HatchNavProps) {
             key={key}
             href={href}
             data-active={active}
+            aria-current={active ? 'page' : undefined}
+            className="hatch-interactive"
             style={{
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               gap: 3,
-              padding: '4px 0',
+              padding: '4px 2px',
               textDecoration: 'none',
               color: active ? 'var(--accent)' : 'var(--text-muted)',
             }}

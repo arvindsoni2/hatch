@@ -31,10 +31,10 @@ const FUNNEL = { scout: 75, scorer: 12, tailor: 3, coach: 1 };
 // TodayScreen
 // ─────────────────────────────────────────────────────────────────────────────
 describe('TodayScreen', () => {
-  it('renders the briefing card with agent status', async () => {
+  it('renders agent progress as supporting evidence', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" />);
-    expect(screen.getByText(/Agent output/i)).toBeTruthy();
+    expect(screen.getByText(/Agent progress/i)).toBeTruthy();
   });
 
   it('shows the funnel step counts', async () => {
@@ -44,10 +44,10 @@ describe('TodayScreen', () => {
     expect(screen.getByText('12')).toBeTruthy();
   });
 
-  it('renders the Needs you section with correct count', async () => {
+  it('renders the Ready for you section with correct count', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" />);
-    expect(screen.getByText(/Needs you/i)).toBeTruthy();
+    expect(screen.getByText(/Ready for you/i)).toBeTruthy();
   });
 
   it('renders approve card listing each ready job title', async () => {
@@ -56,24 +56,24 @@ describe('TodayScreen', () => {
     expect(screen.getByText('Solutions Architect')).toBeTruthy();
   });
 
-  it('shows "Review & approve" CTA when ready jobs exist', async () => {
+  it('shows one outcome-led review CTA when ready jobs exist', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" />);
-    expect(screen.getByText(/Review.*approve/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Review CV packs' })).toBeTruthy();
   });
 
   it('shows empty state when no ready jobs', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     const noReadyJobs = [TAILORING_JOB, PARKED_JOB];
     render(<TodayScreen jobs={noReadyJobs} funnel={FUNNEL} profileName="Arvind" />);
-    expect(screen.getByText(/Approval queue clear/i)).toBeTruthy();
+    expect(screen.getByText(/No CV packs need review/i)).toBeTruthy();
   });
 
   it('calls onReview with ready job ids when CTA clicked', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     const onReview = vi.fn();
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" onReview={onReview} />);
-    fireEvent.click(screen.getByText(/Review.*approve/i));
+    fireEvent.click(screen.getByRole('button', { name: 'Review CV packs' }));
     expect(onReview).toHaveBeenCalledWith(expect.arrayContaining(['sa']));
   });
 
@@ -147,14 +147,14 @@ describe('StreamScreen', () => {
   it('shows empty state message when no jobs in filter', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={[TAILORING_JOB]} defaultFilter="ready" />);
-    expect(screen.getAllByText(/Nothing in this stage/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/No roles match this view/i).length).toBeGreaterThan(0);
   });
 
   it('calls onReview when a ready job card is clicked', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     const onReview = vi.fn();
     render(<StreamScreen jobs={[READY_JOB]} defaultFilter="ready" onReview={onReview} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate CV pack' }));
     expect(onReview).not.toHaveBeenCalled();
   });
 
@@ -216,7 +216,7 @@ describe('TrackerScreen', () => {
   it('renders the full left-to-right application journey', async () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
     render(<TrackerScreen applications={TRACKER_APPS} />);
-    for (const name of ['Discovered', 'Preparing', 'Ready to submit', 'Applied', 'Interview', 'Offered', 'Accepted']) {
+    for (const name of ['Discovered', 'Preparing', 'Ready to apply', 'Applied', 'Interview', 'Offered', 'Accepted']) {
       expect(screen.getByRole('heading', { name })).toBeTruthy();
     }
   });
@@ -336,7 +336,7 @@ describe('ReviewOverlay', () => {
     expect(screen.getByText(/Application 1 of 1/i)).toBeTruthy();
   });
 
-  it('primary button says "Approve & prepare"', async () => {
+  it('primary button describes choosing the reviewed version', async () => {
     const { ReviewOverlay } = await import('@/components/hatch/ReviewOverlay');
     render(
       <ReviewOverlay
@@ -346,10 +346,10 @@ describe('ReviewOverlay', () => {
         onClose={vi.fn()}
       />
     );
-    expect(screen.getByRole('button', { name: /Approve.*prepare/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Use this version/i })).toBeTruthy();
   });
 
-  it('calls onAction("approve") when Approve & prepare button clicked', async () => {
+  it('calls onAction("approve") when Use this version is clicked', async () => {
     const { ReviewOverlay } = await import('@/components/hatch/ReviewOverlay');
     const onAction = vi.fn();
     render(
@@ -360,11 +360,11 @@ describe('ReviewOverlay', () => {
         onClose={vi.fn()}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: /Approve.*prepare/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Use this version/i }));
     expect(onAction).toHaveBeenCalledWith('approve');
   });
 
-  it('calls onAction("reject") when Reject button clicked', async () => {
+  it('calls onAction("reject") when Dismiss role is clicked', async () => {
     const { ReviewOverlay } = await import('@/components/hatch/ReviewOverlay');
     const onAction = vi.fn();
     render(
@@ -375,7 +375,7 @@ describe('ReviewOverlay', () => {
         onClose={vi.fn()}
       />
     );
-    fireEvent.click(screen.getByText(/Reject/i));
+    fireEvent.click(screen.getByRole('button', { name: /Dismiss role/i }));
     expect(onAction).toHaveBeenCalledWith('reject');
   });
 

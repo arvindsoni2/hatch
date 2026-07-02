@@ -6,9 +6,9 @@ import { fetchProfileStatus } from '@/lib/api';
 
 const ROUTE_LABELS: Record<string, { title: string; sub?: string }> = {
   '/today':        { title: 'Today' },
-  '/stream':       { title: 'Stream' },
-  '/tracker':      { title: 'Tracker' },
-  '/prep':         { title: 'Prep' },
+  '/stream':       { title: 'Pipeline' },
+  '/tracker':      { title: 'Applications' },
+  '/prep':         { title: 'Interview Prep' },
   '/settings/resume':  { title: 'Master CV' },
   '/settings/profile': { title: 'Profile' },
   '/settings/ai':      { title: 'AI Provider' },

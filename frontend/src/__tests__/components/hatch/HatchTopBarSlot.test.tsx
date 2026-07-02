@@ -36,20 +36,20 @@ describe('HatchTopBarSlot', () => {
     expect(screen.getByText('Today')).toBeTruthy();
   });
 
-  it('shows "Stream" for /stream pathname', async () => {
+  it('shows "Pipeline" for /stream pathname', async () => {
     const nav = await import('next/navigation');
     vi.mocked(nav.usePathname).mockReturnValue('/stream');
     const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
     await act(async () => { render(<HatchTopBarSlot />); });
-    expect(screen.getByText('Stream')).toBeTruthy();
+    expect(screen.getByText('Pipeline')).toBeTruthy();
   });
 
-  it('shows "Tracker" for /tracker pathname', async () => {
+  it('shows "Applications" for /tracker pathname', async () => {
     const nav = await import('next/navigation');
     vi.mocked(nav.usePathname).mockReturnValue('/tracker');
     const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
     await act(async () => { render(<HatchTopBarSlot />); });
-    expect(screen.getByText('Tracker')).toBeTruthy();
+    expect(screen.getByText('Applications')).toBeTruthy();
   });
 
   it('shows "Profile" for /settings pathname', async () => {

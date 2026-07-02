@@ -63,7 +63,7 @@ function DetailView({ session, onCalendar, onPractice }: { session: PrepSession;
   return (
     <div style={{ flex: 1, overflow: 'auto' }}>
       {/* Header */}
-      <div style={{ padding: '0 0 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+      <div className="hatch-page-header" style={{ padding: '0 0 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <AgentBadge agent="coach" size={32} />
           <div>
@@ -71,8 +71,8 @@ function DetailView({ session, onCalendar, onPractice }: { session: PrepSession;
             {session.when && <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{session.when} · prepped by Coach</div>}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Btn kind="primary" size="sm" icon="mic" onClick={onPractice}>Practice</Btn>
+        <div className="hatch-page-actions" style={{ display: 'flex', gap: 8 }}>
+          <Btn kind="primary" size="sm" icon="mic" onClick={onPractice}>Start practice</Btn>
           <Btn kind="soft" size="sm" icon="calendar" onClick={onCalendar}>Add to calendar</Btn>
         </div>
       </div>
@@ -80,7 +80,7 @@ function DetailView({ session, onCalendar, onPractice }: { session: PrepSession;
       {/* Company research */}
       {session.companyResearch && (
         <Card style={{ padding: 14, marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 8 }}>COMPANY RESEARCH</div>
+          <h2 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Company research</h2>
           <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.55, color: 'var(--text-dim)' }}>{session.companyResearch}</p>
         </Card>
       )}
@@ -98,6 +98,9 @@ function DetailView({ session, onCalendar, onPractice }: { session: PrepSession;
           return (
             <Card key={i} style={{ padding: 0, overflow: 'hidden' }}>
               <button
+                type="button"
+                className="hatch-interactive"
+                aria-expanded={isOpen}
                 onClick={() => setOpenQ(isOpen ? null : i)}
                 style={{ width: '100%', display: 'flex', alignItems: 'flex-start', gap: 10, padding: 13, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}
               >
@@ -119,7 +122,7 @@ function DetailView({ session, onCalendar, onPractice }: { session: PrepSession;
                 <div style={{ padding: '0 13px 13px 39px' }}>
                   <div style={{ padding: 11, borderRadius: 10, background: 'var(--surface-2)', borderLeft: '2px solid var(--success)' }}>
                     <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', color: 'var(--success)', marginBottom: 5 }}>
-                      STAR ANSWER · from your story bank
+                      STAR answer · from your story bank
                     </div>
                     <p style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: 'var(--text-dim)' }}>{item.star}</p>
                   </div>
@@ -140,8 +143,8 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
     <div>
       {/* Page header */}
       <div style={{ padding: '8px 0 14px' }}>
-        <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Prep</div>
-        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>AI mock-interview coaching by Coach</div>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Interview Prep</h1>
+        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Research, likely questions, and practice for confirmed interviews</div>
       </div>
 
       {/* Unified layout: session list + optional detail pane.
@@ -154,9 +157,18 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
         >
           {/* Sessions sub-header with + New button */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.04em' }}>SESSIONS</span>
-            <Btn kind="soft" size="sm" icon="plus" onClick={onNewSession}>New</Btn>
+            <h2 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Sessions</h2>
+            <Btn kind="soft" size="sm" icon="plus" onClick={onNewSession}>New session</Btn>
           </div>
+
+          {sessions.length === 0 && (
+            <Card style={{ padding: 20, textAlign: 'center' }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>No interview prep sessions yet</div>
+              <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.5, color: 'var(--text-muted)' }}>
+                Add a session when an interview is confirmed.
+              </div>
+            </Card>
+          )}
 
           {sessions.map((s) => {
             const p = STATUS_PILL[s.status];
@@ -167,23 +179,33 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
             return (
               <Card
                 key={s.id}
-                onClick={() => canOpen && onSelectSession?.(s.id)}
-                style={{ padding: 15, cursor: canOpen ? 'pointer' : 'default', background: active ? 'var(--surface-2)' : 'var(--surface)' }}
+                style={{ padding: 10, background: active ? 'var(--surface-2)' : 'var(--surface)' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <AgentBadge agent="coach" size={34} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>{s.title}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
-                      {s.company}{s.when ? ` · ${s.when}` : age ? ` · ${age}` : ''}
+                  <button
+                    type="button"
+                    className={canOpen ? 'hatch-interactive' : undefined}
+                    disabled={!canOpen}
+                    aria-current={active ? 'true' : undefined}
+                    onClick={() => onSelectSession?.(s.id)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, padding: 5, textAlign: 'left', border: 0, background: 'transparent', cursor: canOpen ? 'pointer' : 'default' }}
+                  >
+                    <AgentBadge agent="coach" size={34} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>{s.title}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
+                        {s.company}{s.when ? ` · ${s.when}` : age ? ` · ${age}` : ''}
+                      </div>
                     </div>
-                  </div>
-                  <Chip color={p.color} bg={p.soft}>{p.label}</Chip>
+                    <Chip color={p.color} bg={p.soft}>{p.label}</Chip>
+                  </button>
                   {canRetry && onRetrySession && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); onRetrySession(s.id); }}
+                      type="button"
+                      className="hatch-interactive"
+                      onClick={() => onRetrySession(s.id)}
                       disabled={retryingIds[s.id]}
-                      title="Retry generation"
+                      aria-label={`Retry prep for ${s.title}`}
                       style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', cursor: retryingIds[s.id] ? 'wait' : 'pointer', padding: '6px 8px', borderRadius: 7, color: 'var(--text)', fontSize: 11, fontWeight: 700 }}
                     >
                       {retryingIds[s.id] ? 'Retrying' : 'Retry'}
@@ -191,9 +213,11 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
                   )}
                   {onDeleteSession && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id); }}
-                      title="Delete session"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6, color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}
+                      type="button"
+                      className="hatch-interactive"
+                      onClick={() => onDeleteSession(s.id)}
+                      aria-label={`Delete ${s.title} session`}
+                      style={{ width: 44, background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                       onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--danger, #ef4444)')}
                       onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
                     >

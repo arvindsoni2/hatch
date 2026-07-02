@@ -160,8 +160,8 @@ describe('Chip', () => {
 describe('Btn', () => {
   it('renders its label text', async () => {
     const { Btn } = await import('@/components/hatch/Btn');
-    render(<Btn>Review &amp; approve</Btn>);
-    expect(screen.getByText('Review & approve')).toBeTruthy();
+    render(<Btn>Review CV packs</Btn>);
+    expect(screen.getByText('Review CV packs')).toBeTruthy();
   });
 
   it('calls onClick when clicked', async () => {
@@ -191,6 +191,14 @@ describe('Btn', () => {
     const { container } = render(<Btn icon="check">With Icon</Btn>);
     const svg = container.querySelector('svg');
     expect(svg).toBeTruthy();
+  });
+
+  it('uses the shared interaction contract and native disabled semantics', async () => {
+    const { Btn } = await import('@/components/hatch/Btn');
+    render(<Btn disabled>Unavailable</Btn>);
+    const button = screen.getByRole('button', { name: 'Unavailable' });
+    expect(button.className).toContain('hatch-interactive');
+    expect(button.hasAttribute('disabled')).toBe(true);
   });
 });
 

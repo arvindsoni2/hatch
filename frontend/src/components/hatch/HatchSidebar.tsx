@@ -14,10 +14,10 @@ import {
 } from '@/lib/api';
 
 const NAV_ITEMS: { key: HatchTab; label: string; icon: string; href: string }[] = [
-  { key: 'today',   label: 'Today',   icon: 'home',      href: '/today'   },
-  { key: 'stream',  label: 'Stream',  icon: 'layers',    href: '/stream'  },
-  { key: 'tracker', label: 'Tracker', icon: 'briefcase', href: '/tracker' },
-  { key: 'prep',    label: 'Prep',    icon: 'mic',       href: '/prep'    },
+  { key: 'today',   label: 'Today',          icon: 'home',      href: '/today'   },
+  { key: 'stream',  label: 'Pipeline',       icon: 'layers',    href: '/stream'  },
+  { key: 'tracker', label: 'Applications',   icon: 'briefcase', href: '/tracker' },
+  { key: 'prep',    label: 'Interview Prep', icon: 'mic',       href: '/prep'    },
 ];
 
 interface HatchSidebarProps {
@@ -112,7 +112,8 @@ export function HatchSidebar({ activeTab }: HatchSidebarProps) {
             <Link
               key={key}
               href={href}
-              className="flex items-center gap-2.5 w-full font-medium transition-colors"
+              aria-current={active ? 'page' : undefined}
+              className="hatch-interactive flex items-center gap-2.5 w-full font-medium"
               style={{
                 padding: '10px 12px',
                 fontSize: 13.5,
@@ -149,7 +150,7 @@ export function HatchSidebar({ activeTab }: HatchSidebarProps) {
         })}
       </div>
 
-      {/* Agents running card */}
+      {/* Agent capability card — do not imply live activity without runtime state. */}
       <div
         className="mt-4 rounded-xl"
         style={{
@@ -159,9 +160,9 @@ export function HatchSidebar({ activeTab }: HatchSidebarProps) {
         }}
       >
         <div className="flex items-center gap-2 mb-3">
-          <Dot color="var(--success)" size={7} pulse />
+          <Dot color="var(--text-muted)" size={7} />
           <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', letterSpacing: '0.02em' }}>
-            Agents running
+            Your agents
           </span>
         </div>
         <div className="flex flex-col gap-2.5">

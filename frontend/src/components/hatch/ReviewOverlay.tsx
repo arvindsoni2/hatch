@@ -50,6 +50,9 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="review-title"
       style={{
         position: 'fixed',
         inset: 0,
@@ -89,9 +92,11 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
             Application {idx + 1} of {queue.length}
           </span>
           <button
+            type="button"
+            className="hatch-interactive"
             aria-label="Close review"
             onClick={onClose}
-            style={{ width: 34, height: 34, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
+            style={{ width: 44, height: 44, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
           >
             <HatchIcon name="x" size={16} color="var(--text-dim)" />
           </button>
@@ -99,7 +104,7 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
 
         {/* Scrollable body */}
         <div style={{ flex: 1, overflow: 'auto', padding: '0 18px' }}>
-          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', marginTop: 4 }}>{job.title}</div>
+          <h2 id="review-title" style={{ margin: '4px 0 0', fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em' }}>{job.title}</h2>
           <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 4 }}>
             {job.company} · {job.loc} · <span style={{ color: 'var(--text)', fontWeight: 600 }}>{job.rate}</span>
           </div>
@@ -132,6 +137,9 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
             {([['cv', 'CV'], ['cl', 'Cover letter']] as const).map(([k, l]) => (
               <button
                 key={k}
+                type="button"
+                className="hatch-interactive"
+                aria-pressed={tab === k}
                 onClick={() => setTab(k)}
                 style={{
                   flex: 1, padding: 8, borderRadius: 9, cursor: 'pointer',
@@ -167,7 +175,7 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
           <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', margin: '16px 0 18px', padding: 12, borderRadius: 12, background: 'var(--accent-soft)' }}>
             <HatchIcon name="arrowR" size={16} color="var(--accent)" style={{ marginTop: 1 }} />
             <span style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-              Approve and Hatch will prepare your application package. You&apos;ll submit on the company&apos;s site — you&apos;re always in control of the final click.
+              Use this version and Hatch will prepare your CV pack. You&apos;ll submit on the company&apos;s site — you&apos;re always in control of the final click.
             </span>
           </div>
         </div>
@@ -196,9 +204,9 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
           borderTop: isLoading && loadingMessage ? 'none' : '1px solid var(--border)',
           background: 'var(--bg-elevated)',
         }}>
-          <Btn kind="ghost" icon="x" disabled={isLoading} onClick={() => onAction('reject')}>Reject</Btn>
+          <Btn kind="ghost" icon="x" disabled={isLoading} onClick={() => onAction('reject')}>Dismiss role</Btn>
           <Btn kind="primary" full iconR={isLoading ? undefined : "arrowR"} disabled={isLoading} onClick={() => onAction('approve')}>
-            {isLoading ? 'Preparing…' : 'Approve & prepare'}
+            {isLoading ? 'Preparing CV pack…' : 'Use this version'}
           </Btn>
         </div>
         <div style={{ height: 30, flexShrink: 0 }} className="md:hidden" />

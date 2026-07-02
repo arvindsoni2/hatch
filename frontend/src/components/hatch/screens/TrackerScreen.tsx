@@ -54,7 +54,7 @@ interface TrackerScreenProps {
 const STAGES: StageDefinition[] = [
   { key: "discovered", label: "Discovered", description: "Roles being considered", color: "var(--accent)" },
   { key: "preparing", label: "Preparing", description: "Tailoring and review", color: "var(--purple)" },
-  { key: "ready_to_apply", label: "Ready to submit", description: "Package is complete", color: "var(--success)" },
+  { key: "ready_to_apply", label: "Ready to apply", description: "CV pack is complete", color: "var(--success)" },
   { key: "applied", label: "Applied", description: "Submission confirmed", color: "var(--purple)" },
   { key: "interview", label: "Interview", description: "Interview process", color: "var(--warning)" },
   { key: "offered", label: "Offered", description: "Offer received", color: "var(--success)" },
@@ -85,7 +85,7 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
   ready: "Awaiting approval",
   approved: "Approved",
   preparing: "Tailoring",
-  ready_to_apply: "Ready to submit",
+  ready_to_apply: "Ready to apply",
   applied: "Applied",
   interview: "Interview",
   offered: "Offered",
@@ -267,7 +267,7 @@ function JobCard({ application, onMove }: JobCardProps) {
             }}
             style={{
               maxWidth: 94,
-              height: 28,
+              minHeight: 44,
               borderRadius: 7,
               border: "1px solid var(--border)",
               background: "var(--surface-2)",
@@ -289,8 +289,8 @@ function JobCard({ application, onMove }: JobCardProps) {
             aria-label={next ? `Drag ${application.job_title ?? "application"} forward to ${STATUS_LABELS[next]}` : "No further stage available"}
             title={next ? `Drag forward to ${STATUS_LABELS[next]}` : "No further stage available"}
             style={{
-              width: 28,
-              height: 28,
+              width: 44,
+              height: 44,
               borderRadius: 7,
               border: "1px solid var(--border)",
               background: "var(--surface-2)",
@@ -472,12 +472,12 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
 
   return (
     <div>
-      <div style={{ padding: "8px 0 14px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 }}>
+      <div className="hatch-page-header" style={{ padding: "8px 0 14px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 }}>
         <div>
-          <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text)" }}>Tracker</div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text)" }}>Applications</h1>
           <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>Move applications forward as their real-world status changes</div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="hatch-page-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div aria-live="polite" style={{ maxWidth: 430, textAlign: "right", fontSize: 11.5, color: "var(--text-muted)" }}>{notice}</div>
           <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add application</Btn>
         </div>
@@ -516,9 +516,10 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
               </div>
               <button
                 type="button"
+                className="hatch-interactive"
                 onClick={() => setShowManualForm(false)}
                 aria-label="Close"
-                style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}
+                style={{ width: 44, height: 44, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}
               >
                 <HatchIcon name="x" size={16} color="currentColor" />
               </button>
@@ -530,7 +531,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
                 <input
                   value={manualForm.jobTitle}
                   onChange={(event) => setManualForm((current) => ({ ...current, jobTitle: event.target.value }))}
-                  style={{ height: 38, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
+                  style={{ height: 44, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
                 />
               </label>
               <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
@@ -538,7 +539,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
                 <input
                   value={manualForm.companyName}
                   onChange={(event) => setManualForm((current) => ({ ...current, companyName: event.target.value }))}
-                  style={{ height: 38, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
+                  style={{ height: 44, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
                 />
               </label>
               <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
@@ -546,7 +547,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
                 <input
                   value={manualForm.jobUrl}
                   onChange={(event) => setManualForm((current) => ({ ...current, jobUrl: event.target.value }))}
-                  style={{ height: 38, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
+                  style={{ height: 44, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
                 />
               </label>
               <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
@@ -554,7 +555,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
                 <input
                   value={manualForm.location}
                   onChange={(event) => setManualForm((current) => ({ ...current, location: event.target.value }))}
-                  style={{ height: 38, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
+                  style={{ height: 44, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
                 />
               </label>
               <label style={{ display: "grid", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
@@ -563,7 +564,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
                   type="date"
                   value={manualForm.appliedDate}
                   onChange={(event) => setManualForm((current) => ({ ...current, appliedDate: event.target.value }))}
-                  style={{ height: 38, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
+                  style={{ height: 44, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text)", padding: "0 10px" }}
                 />
               </label>
             </div>
@@ -606,7 +607,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <Btn kind="ghost" size="sm" onClick={() => setShowManualForm(false)}>Cancel</Btn>
               <Btn kind="primary" size="sm" icon="check" onClick={() => void saveManualApplication()} disabled={savingManual}>
-                {savingManual ? "Saving..." : "Save"}
+                {savingManual ? "Saving application…" : "Save to Applications"}
               </Btn>
             </div>
           </div>

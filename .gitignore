@@ -1,5 +1,13 @@
 # ──────────────────────── Docs / specs (internal only) ───────────────────────
 docs/
+!docs/
+docs/*
+!docs/design/
+docs/design/*
+!docs/design/HATCH_UX_AUDIT.md
+!docs/design/HATCH_DESIGN_SYSTEM.md
+!docs/design/HATCH_MICROINTERACTIONS.md
+!docs/design/HATCH_COPY_GUIDE.md
 design_handoff_onboarding/
 # ──────────────────────── Assignment / internal docs ─────────────────────────
 CLAUDE_Phase2.md

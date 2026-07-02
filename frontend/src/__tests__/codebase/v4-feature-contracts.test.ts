@@ -63,12 +63,11 @@ describe('Navigation cleanup (v4.1)', () => {
 
 // ── Two-step assisted apply invariants ───────────────────────────────────────
 describe('Two-step assisted apply (v4)', () => {
-  it('ReviewOverlay approve button says "Approve & prepare" not "Approve & apply"', () => {
+  it('ReviewOverlay keeps document choice separate from application submission', () => {
     const overlay = read('components', 'hatch', 'ReviewOverlay.tsx');
-    // Source may use HTML entity &amp; or literal & — check both forms
-    const hasApproveAndPrepare = overlay.includes('Approve & prepare') || overlay.includes('Approve &amp; prepare');
+    const hasChooseVersion = overlay.includes('Use this version');
     const hasApproveAndApply = overlay.includes('Approve & apply') || overlay.includes('Approve &amp; apply');
-    expect(hasApproveAndPrepare).toBe(true);
+    expect(hasChooseVersion).toBe(true);
     expect(hasApproveAndApply).toBe(false);
   });
 

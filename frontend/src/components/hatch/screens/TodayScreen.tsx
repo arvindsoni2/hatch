@@ -63,7 +63,7 @@ interface TodayScreenProps {
 const OUTPUT_LABELS: Record<string, string> = {
   scout: 'Jobs stored',
   scorer: 'Jobs scored',
-  tailor: 'Packages ready',
+  tailor: 'CV packs ready',
   coach: 'Sessions ready',
 };
 
@@ -114,14 +114,10 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
         style={{ padding: '8px 0 14px' }}
       >
         <div>
-          <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Today</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Your application workspace at a glance</div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Today</h1>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Your next job-search actions</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ position: 'relative' }}>
-            <HatchIcon name="bell" size={20} color="var(--text-dim)" />
-            <span style={{ position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 999, background: 'var(--danger)', border: '1.5px solid var(--bg)' }} />
-          </div>
           <UserAvatar size={32} initials={initials} />
         </div>
       </div>
@@ -133,51 +129,46 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
 
       {/* Desktop greeting */}
       <div className="hidden md:block" style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)' }}>
+        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--text)' }}>
           <TimeGreeting name={profileName} />
-        </div>
+        </h1>
         <div style={{ fontSize: 13.5, color: 'var(--text-muted)', marginTop: 4 }}>
-          {todayLabel ? `${todayLabel} — ` : ''}your application workspace at a glance
+          {todayLabel ? `${todayLabel} — ` : ''}here is what needs your attention
         </div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Briefing card */}
-        <Card style={{ padding: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <Dot color="var(--success)" size={8} pulse />
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>Agent output</span>
-            </div>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>all-time totals</span>
-          </div>
-          <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, color: 'var(--text-dim)' }}>
-            <strong style={{ color: 'var(--text)' }}>{funnel.scout} roles</strong> in your workspace ·{' '}
-            <strong style={{ color: 'var(--success)' }}>{ready.length} packages</strong> currently need review.
+        {/* One recommended action, before supporting telemetry. */}
+        <Card accent={ready.length > 0} style={{ padding: 18 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>Recommended next action</div>
+          <h2 style={{ margin: 0, fontSize: 20, lineHeight: 1.3, color: 'var(--text)' }}>
+            {ready.length > 0
+              ? `${ready.length} CV pack${ready.length === 1 ? ' is' : 's are'} ready to review`
+              : readyToApply.length > 0
+                ? `${readyToApply.length} application${readyToApply.length === 1 ? ' is' : 's are'} ready to finish`
+                : followUpCount > 0
+                  ? `${followUpCount} follow-up${followUpCount === 1 ? ' is' : 's are'} overdue`
+                  : 'You are caught up for now'}
+          </h2>
+          <p style={{ margin: '6px 0 16px', fontSize: 14, lineHeight: 1.55, color: 'var(--text-dim)' }}>
+            {ready.length > 0
+              ? 'Review the tailored documents before deciding whether to use them.'
+              : readyToApply.length > 0
+                ? 'Open the application, submit it on the employer site, then record the outcome here.'
+                : followUpCount > 0
+                  ? 'Review the application before deciding whether to contact the employer.'
+                  : 'New work will appear here when a CV pack or follow-up needs your attention.'}
           </p>
-          {/* Mini funnel */}
-          {(() => {
-            const transitArr = [
-              transit?.scout_to_scorer ?? 0,
-              transit?.scorer_to_tailor ?? 0,
-              transit?.tailor_to_coach ?? 0,
-            ];
-            return (
-              <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, padding: '4px 2px 0' }}>
-                {PIPELINE.map((k, i) => (
-                  <React.Fragment key={k}>
-                    <FunnelStep agent={k} count={funnel[k as keyof FunnelCounts]} />
-                    {i < PIPELINE.length - 1 && <FunnelArrow count={transitArr[i]} />}
-                  </React.Fragment>
-                ))}
-              </div>
-            );
-          })()}
+          {ready.length > 0 && (
+            <Btn kind="primary" iconR="arrowR" onClick={() => onReview?.(ready.map((j) => j.id))}>
+              Review CV packs
+            </Btn>
+          )}
         </Card>
 
-        {/* Needs you header */}
+        {/* Ready work */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>Needs you</span>
+          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>Ready for you</h2>
           <Chip color="var(--accent)" bg="var(--accent-soft)">{ready.length + (followUpCount > 0 ? 1 : 0)}</Chip>
         </div>
 
@@ -188,9 +179,9 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
               <AgentBadge agent="tailor" size={34} ring />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
-                  {ready.length} application{ready.length !== 1 ? 's' : ''} ready to send
+                  {ready.length} CV pack{ready.length !== 1 ? 's' : ''} ready
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>CV + cover letter drafted for each</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>CV and cover letter prepared for your review</div>
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 13 }}>
@@ -198,6 +189,7 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                 <button
                   key={job.id}
                   onClick={() => onReview?.([job.id])}
+                  className="hatch-interactive"
                   style={{
                     display: 'flex', alignItems: 'center', gap: 9,
                     padding: '7px 9px', borderRadius: 9,
@@ -218,17 +210,14 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                 </button>
               ))}
             </div>
-            <Btn kind="primary" full iconR="arrowR" onClick={() => onReview?.(ready.map((j) => j.id))}>
-              Review &amp; approve
-            </Btn>
           </Card>
         ) : (
           <Card style={{ padding: 20, textAlign: 'center' }}>
             <div style={{ width: 38, height: 38, borderRadius: 999, margin: '0 auto 10px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--success-soft)' }}>
               <HatchIcon name="checkCircle" size={20} color="var(--success)" />
             </div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Approval queue clear</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Everything you approved is on its way.</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>No CV packs need review</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>New packs will appear here after Tailor finishes.</div>
           </Card>
         )}
 
@@ -272,7 +261,12 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
 
         {/* Interview prep card — only shown when a real interview is scheduled */}
         {upcomingInterview && (
-          <div onClick={onOpenPrep} style={{ cursor: 'pointer' }}>
+          <button
+            type="button"
+            className="hatch-interactive"
+            onClick={onOpenPrep}
+            style={{ width: '100%', padding: 0, border: 0, background: 'transparent', textAlign: 'left', cursor: 'pointer' }}
+          >
             <Card style={{ padding: 15 }}>
               <div style={{ display: 'flex', gap: 11 }}>
                 <AgentBadge agent="coach" size={34} />
@@ -292,12 +286,12 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                       {upcomingInterview.title}{upcomingInterview.company ? ` · ${upcomingInterview.company}` : ''}
                     </div>
                   )}
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>Coach prepped questions + STAR answers</div>
-                  <div style={{ marginTop: 11 }}><Btn kind="soft" size="sm" iconR="arrowR">Review prep</Btn></div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>Coach prepared questions and STAR answers</div>
+                  <div style={{ marginTop: 11, color: 'var(--accent)', fontSize: 13, fontWeight: 700 }}>Review interview prep →</div>
                 </div>
               </div>
             </Card>
-          </div>
+          </button>
         )}
 
         {/* Follow-ups */}
@@ -315,6 +309,38 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
             </div>
           </Card>
         )}
+
+        {/* Historical evidence follows decisions. */}
+        <Card style={{ padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <Dot color="var(--text-muted)" size={8} />
+              <h2 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Agent progress</h2>
+            </div>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>All-time totals</span>
+          </div>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: 'var(--text-dim)' }}>
+            <strong style={{ color: 'var(--text)' }}>{funnel.scout} roles</strong> are in your workspace.
+            These totals show recorded progress, not live agent activity.
+          </p>
+          {(() => {
+            const transitArr = [
+              transit?.scout_to_scorer ?? 0,
+              transit?.scorer_to_tailor ?? 0,
+              transit?.tailor_to_coach ?? 0,
+            ];
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', marginTop: 16, padding: '4px 2px 0', overflowX: 'auto' }}>
+                {PIPELINE.map((k, i) => (
+                  <React.Fragment key={k}>
+                    <FunnelStep agent={k} count={funnel[k as keyof FunnelCounts]} />
+                    {i < PIPELINE.length - 1 && <FunnelArrow count={transitArr[i]} />}
+                  </React.Fragment>
+                ))}
+              </div>
+            );
+          })()}
+        </Card>
       </div>
     </div>
   );

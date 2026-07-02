@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { TodayScreen } from "@/components/hatch/screens/TodayScreen";
 import { ReviewOverlay } from "@/components/hatch/ReviewOverlay";
 import { ApplicationReadyCard } from "@/components/hatch/ApplicationReadyCard";
@@ -26,6 +27,7 @@ interface TodayPageClientProps {
 }
 
 export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCount, agentPerf, upcomingInterview }: TodayPageClientProps) {
+  const router = useRouter();
   const [localJobs, setLocalJobs] = useState<HatchJob[]>(jobs);
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
@@ -180,6 +182,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
             }}
             onMarkApplied={handleMarkApplied}
             onRevert={handleRevert}
+            onOpenPrep={() => router.push("/prep")}
           />
         </div>
         {/* Agent activity panel — desktop right column, mobile hidden (shows below) */}

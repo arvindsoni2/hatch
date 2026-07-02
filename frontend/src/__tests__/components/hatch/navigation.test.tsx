@@ -12,9 +12,9 @@ describe('HatchNav', () => {
     const { HatchNav } = await import('@/components/hatch/HatchNav');
     render(<HatchNav activeTab="today" />);
     expect(screen.getByText('Today')).toBeTruthy();
-    expect(screen.getByText('Stream')).toBeTruthy();
-    expect(screen.getByText('Tracker')).toBeTruthy();
-    expect(screen.getByText('Prep')).toBeTruthy();
+    expect(screen.getByText('Pipeline')).toBeTruthy();
+    expect(screen.getByText('Applications')).toBeTruthy();
+    expect(screen.getByText('Interview Prep')).toBeTruthy();
   });
 
   it('marks the active tab with accent colour', async () => {
@@ -43,6 +43,12 @@ describe('HatchNav', () => {
     expect(hrefs).toContain('/tracker');
     expect(hrefs).toContain('/prep');
   });
+
+  it('identifies the active destination semantically', async () => {
+    const { HatchNav } = await import('@/components/hatch/HatchNav');
+    render(<HatchNav activeTab="stream" />);
+    expect(screen.getByRole('link', { name: 'Pipeline' }).getAttribute('aria-current')).toBe('page');
+  });
 });
 
 // ── HatchSidebar ──────────────────────────────────────────────────────────────
@@ -51,9 +57,9 @@ describe('HatchSidebar', () => {
     const { HatchSidebar } = await import('@/components/hatch/HatchSidebar');
     render(<HatchSidebar activeTab="today" />);
     expect(screen.getByText('Today')).toBeTruthy();
-    expect(screen.getByText('Stream')).toBeTruthy();
-    expect(screen.getByText('Tracker')).toBeTruthy();
-    expect(screen.getByText('Prep')).toBeTruthy();
+    expect(screen.getByText('Pipeline')).toBeTruthy();
+    expect(screen.getByText('Applications')).toBeTruthy();
+    expect(screen.getByText('Interview Prep')).toBeTruthy();
   });
 
   it('links to all 4 routes', async () => {
@@ -79,6 +85,8 @@ describe('HatchSidebar', () => {
     expect(screen.getByText('Scorer')).toBeTruthy();
     expect(screen.getByText('Tailor')).toBeTruthy();
     expect(screen.getByText('Coach')).toBeTruthy();
+    expect(screen.getByText('Your agents')).toBeTruthy();
+    expect(screen.queryByText('Agents running')).toBeNull();
   });
 
   it('does not render the old Discover/Track/Prepare nav groups', async () => {

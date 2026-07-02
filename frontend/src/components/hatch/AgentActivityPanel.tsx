@@ -162,7 +162,9 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
         const isHovered = hoveredAgent === key;
 
         return (
-          <div
+          <button
+            type="button"
+            className="hatch-interactive"
             key={key}
             onClick={() => router.push(route)}
             onMouseEnter={() => setHoveredAgent(key)}
@@ -176,6 +178,8 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
               border: "1px solid var(--border)",
               cursor: "pointer",
               transition: "background 0.15s ease",
+              width: "100%",
+              textAlign: "left",
             }}
           >
             <AgentBadge agent={key as never} size={30} />
@@ -202,7 +206,7 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
                 </span>
               )}
             </div>
-          </div>
+          </button>
         );
       })}
 
