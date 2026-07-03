@@ -4,7 +4,7 @@ import { Card } from './Card';
 import { Chip } from './Chip';
 import { HatchIcon } from './HatchIcon';
 import type { HatchJob } from './screens/TodayScreen';
-import type { ApplicationPackage } from '@/lib/api';
+import { downloadDocument, type ApplicationPackage } from '@/lib/api';
 
 interface ApplicationReadyCardProps {
   job: HatchJob;
@@ -83,13 +83,13 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert, onRetr
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
           {pkg.cv_document_id && (
             <Btn kind="soft" size="sm" icon="arrowR"
-              onClick={() => window.open(`/api/tailor/document/${pkg.cv_document_id}/download`, '_blank')}>
+              onClick={() => void downloadDocument(pkg.cv_document_id!)}>
               Download CV
             </Btn>
           )}
           {pkg.cl_document_id && (
             <Btn kind="soft" size="sm" icon="arrowR"
-              onClick={() => window.open(`/api/tailor/document/${pkg.cl_document_id}/download`, '_blank')}>
+              onClick={() => void downloadDocument(pkg.cl_document_id!)}>
               Download Cover Letter
             </Btn>
           )}

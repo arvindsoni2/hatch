@@ -61,6 +61,18 @@ async def get_tailoring_review(
     return {"available": True, **review}
 
 
+@router.get("/quality/document/{document_id}")
+async def get_document_quality(document_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    from sqlalchemy import desc, select
+    from ..models.tailoring_review import TailoringReview
+    result = await db.execute(
+        select(TailoringReview).where(TailoringReview.cv_document_id == document_id)
+        .order_by(desc(TailoringReview.created_at)).limit(1)
+    )
+    row = result.scalar_one_or_none()
+    return (row.review_json.get("quality_gate", {}) if row else {})
+
+
 class DefaultTemplateRequest(BaseModel):
     template_id: str
     design_settings: dict | None = None

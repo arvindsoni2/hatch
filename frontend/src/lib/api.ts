@@ -796,6 +796,18 @@ export interface TailoringReview {
   template_id: string;
   variant: string;
   created_at: string;
+  quality_gate?: {
+    pre_generation: { status: string; keyword_gaps: string[] };
+    post_generation: {
+      ats_readability: string;
+      keyword_coverage: { coverage_pct: number; missing: string[] };
+      unsupported_claims: Array<{ claim: string; reason: string; severity: string }>;
+      export_confidence: "good" | "review_recommended" | "acknowledge_required";
+      core_sections: Record<string, boolean>;
+    };
+    document_id: string;
+    pack_version: number;
+  };
 }
 
 // ─────────────────── Phase 3 — API Functions ───────────────────
@@ -893,6 +905,17 @@ export async function getDocumentHistory(
 }
 
 export async function downloadDocument(documentId: string): Promise<void> {
+  const quality = await apiFetch<TailoringReview["quality_gate"]>(`/api/tailor/quality/document/${documentId}`);
+  if (quality?.post_generation.export_confidence === "acknowledge_required") {
+    const key = `quality-ack:${documentId}:${quality.pack_version}`;
+    if (!sessionStorage.getItem(key)) {
+      const accepted = window.confirm(
+        "This CV includes issues Hatch could not fully verify. You can still export it, but please review the warnings before sending.\n\nExport anyway?"
+      );
+      if (!accepted) return;
+      sessionStorage.setItem(key, new Date().toISOString());
+    }
+  }
   const url = `${API_BASE}/api/tailor/document/${documentId}/download`;
   const link = document.createElement("a");
   link.href = url;

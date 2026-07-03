@@ -603,6 +603,13 @@ class TailorService:
             template_id=template_id,
             variant=variant,
         )
+        from .cv_quality_gate import pre_generation_quality, post_generation_quality  # noqa: PLC0415
+        review["quality_gate"] = {
+            "pre_generation": pre_generation_quality(analysis, master_cv, template_id),
+            "post_generation": post_generation_quality(cv_path, tailored_cv, analysis, master_cv),
+            "document_id": cv_doc.id,
+            "pack_version": cv_version,
+        }
         await save_review(db, review)
         await db.commit()
         logger.info("Tailor package %s: package committed", application_id)

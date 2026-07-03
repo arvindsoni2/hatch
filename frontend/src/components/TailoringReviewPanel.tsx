@@ -1,6 +1,7 @@
 "use client";
 
 import type { TailoringReview } from "@/lib/api";
+import { CVQualityGatePanel } from "@/components/tailor/CVQualityGatePanel";
 
 const OPTIONS = [
   "Make more concise",
@@ -28,6 +29,7 @@ export function TailoringReviewPanel({
   }
   return (
     <div className="space-y-4">
+      {review.quality_gate ? <CVQualityGatePanel quality={review.quality_gate} /> : null}
       <section className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
         <div className="flex items-start justify-between gap-4">
           <div><p className="text-xs uppercase" style={{ color: "var(--text-muted)" }}>Match summary</p><h3 className="mt-1 font-semibold" style={{ color: "var(--text)" }}>{review.match_summary.role_title}</h3></div>
