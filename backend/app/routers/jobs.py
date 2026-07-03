@@ -25,6 +25,10 @@ from ..schemas.job import (
 )
 from ..services.archive_service import archive_old_jobs, unarchive_job
 from ..services.job_service import JobService
+from ..schemas.job_import import (
+    JobUrlImportPreviewRequest, JobUrlImportPreviewResponse,
+    JobUrlImportSaveRequest, JobUrlImportSaveResponse,
+)
 
 
 class DecisionStep(BaseModel):
@@ -62,6 +66,71 @@ def get_job_service(db: AsyncSession = Depends(get_db)) -> JobService:
     """Dependency factory: create a JobService with a fresh DB session."""
     repo = JobRepository(db)
     return JobService(repo)
+
+
+async def _existing_import(db: AsyncSession, urls: list[str]):
+    from ..models.job import JobPosting
+    from ..models.application import Application
+    result = await db.execute(select(JobPosting).where(JobPosting.url.in_(urls)))
+    job = result.scalars().first()
+    if not job:
+        return None, None
+    app_result = await db.execute(select(Application).where(Application.job_id == job.id))
+    return job, app_result.scalars().first()
+
+
+@router.post("/import-url/preview", response_model=JobUrlImportPreviewResponse)
+async def preview_job_url(body: JobUrlImportPreviewRequest, db: AsyncSession = Depends(get_db)):
+    from ..services.job_url_importer import preview_url
+    try:
+        draft = await preview_url(str(body.url))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    job, application = await _existing_import(
+        db, [draft["normalized_url"], draft["final_url"], draft["source_url"]]
+    )
+    return {**draft, "duplicate": bool(job), "existing_job_id": job.id if job else None,
+            "existing_application_id": application.id if application else None}
+
+
+@router.post("/import-url/save", response_model=JobUrlImportSaveResponse)
+async def save_imported_job(body: JobUrlImportSaveRequest, db: AsyncSession = Depends(get_db)):
+    from ..models.application import Application
+    from ..models.job import JobPosting
+    from ..services.job_url_importer import normalize_url, validate_public_url
+    final_url = body.draft.final_url or body.draft.normalized_url or normalize_url(body.draft.source_url)
+    try:
+        validate_public_url(final_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    job, application = await _existing_import(
+        db, [body.draft.source_url, normalize_url(body.draft.source_url), final_url]
+    )
+    duplicate = bool(job)
+    if not job:
+        if not body.draft.title:
+            raise HTTPException(status_code=422, detail="Job title is required")
+        job = JobPosting(
+            title=body.draft.title, company=body.draft.company, location=body.draft.location,
+            rate_text=body.draft.rate_text, description=body.draft.description,
+            url=final_url, source="manual_url_import",
+            legal_fields={"original_url": body.draft.source_url, "normalized_url": normalize_url(body.draft.source_url),
+                          "final_url": final_url, "apply_url": body.draft.apply_url},
+        )
+        db.add(job)
+        await db.flush()
+    stage = "saved" if body.next_action == "save_as_job_only" else "discovered"
+    if not application:
+        application = Application(job_id=job.id, status=stage, agent_created=False)
+        db.add(application)
+        await db.flush()
+    elif body.next_action != "save_as_job_only" and application.status == "saved":
+        application.status = "discovered"
+    await db.commit()
+    action = "tailor" if body.next_action == "save_and_tailor" else "applications" if body.next_action == "save_to_applications" else "saved"
+    warnings = ["This job is already saved. Opening the existing record."] if duplicate else []
+    return {"job_id": job.id, "application_id": application.id, "next_action": "existing" if duplicate and body.next_action == "save_as_job_only" else action,
+            "stage": application.status, "warnings": warnings}
 
 
 # ──────────────────────── Health Check ────────────────────────

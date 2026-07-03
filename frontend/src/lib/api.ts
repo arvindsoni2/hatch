@@ -308,7 +308,22 @@ export async function deleteJob(id: string): Promise<void> {
 export type ApplicationStatus =
   | "discovered" | "shortlisted" | "applied" | "interview"
   | "offered" | "accepted" | "rejected" | "withdrawn" | "declined"
-  | "parked" | "ready" | "approved" | "preparing" | "ready_to_apply";
+  | "parked" | "ready" | "approved" | "preparing" | "ready_to_apply" | "saved";
+
+export interface JobImportDraft {
+  source_url: string; normalized_url?: string | null; final_url?: string | null;
+  title?: string | null; company?: string | null; location?: string | null;
+  rate_text?: string | null; description?: string | null; apply_url?: string | null;
+}
+export interface JobImportPreview extends JobImportDraft {
+  confidence: "high" | "medium" | "low"; extraction_method: "direct" | "firecrawl" | "manual_required";
+  warnings: string[]; duplicate: boolean; existing_job_id?: string | null; existing_application_id?: string | null;
+}
+export const previewJobUrl = (url: string) => apiFetch<JobImportPreview>("/api/jobs/import-url/preview", { method: "POST", body: JSON.stringify({ url }) });
+export const saveImportedJob = (draft: JobImportDraft, next_action: "save_as_job_only" | "save_to_applications" | "save_and_tailor") =>
+  apiFetch<{ job_id: string; application_id: string | null; next_action: string; stage: string; warnings: string[] }>("/api/jobs/import-url/save", {
+    method: "POST", body: JSON.stringify({ draft, next_action }),
+  });
 
 export type Priority = "low" | "normal" | "high" | "urgent";
 

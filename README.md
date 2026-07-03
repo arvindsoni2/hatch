@@ -139,14 +139,30 @@ applications, generated documents, and other user data are preserved.
 
 ### Resume templates and tailoring review
 
-Tailor supports four DOCX templates: ATS Classic, Professional 2-page, Compact
-One-page, and Career Switcher. Set the default in Profile Settings and override
-it for an individual generation. PDF export remains intentionally unavailable.
+Resume Studio supports 10 ATS-safe DOCX templates with page-target, density,
+section-order, accent-colour, and safe-font controls. Hatch recommends
+templates using deterministic role and profile signals. Set global defaults in
+Profile Settings and override them for an individual generation.
+
+The HTML preview is approximate. DOCX remains the source of truth, and PDF
+export remains intentionally unavailable. CV and cover-letter documents share
+the selected design treatment.
 
 Each generated CV/cover-letter pack now stores a review containing match
 summary, ATS coverage, grounded evidence, unsupported requirements, and
-warnings. Regeneration creates new document versions and keeps earlier files in
-history.
+warnings. The CV Quality Gate also parses generated DOCX output to check
+readability, core sections, keyword coverage, and unsupported claims.
+High-risk first-party UI exports require acknowledgement. Regeneration creates
+new document versions and keeps earlier files in history.
+
+### Smart Job Import
+
+Open **Applications → Import from URL** to extract a public job page, review
+the normalized fields, and save it as a bookmark, application, or Tailor input.
+Direct JSON-LD and conservative HTML extraction run first. Firecrawl is an
+optional fallback, is disabled by default, and receives only the public job URL
+or page content. Hatch never sends profile, master CV, or proof-point data to
+Firecrawl.
 
 ### Profile summary
 

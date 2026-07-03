@@ -26,8 +26,10 @@ import { Btn } from "../Btn";
 import { Dot } from "../Dot";
 import { HatchIcon } from "../HatchIcon";
 import { ScorePill } from "../ScorePill";
+import { JobUrlImportModal } from "@/components/jobs/JobUrlImportModal";
 
 type BoardStage =
+  | "saved"
   | "discovered"
   | "preparing"
   | "ready_to_apply"
@@ -52,6 +54,7 @@ interface TrackerScreenProps {
 }
 
 const STAGES: StageDefinition[] = [
+  { key: "saved", label: "Saved", description: "Bookmarked roles", color: "var(--text-muted)" },
   { key: "discovered", label: "Discovered", description: "Roles being considered", color: "var(--accent)" },
   { key: "preparing", label: "Preparing", description: "Tailoring and review", color: "var(--purple)" },
   { key: "ready_to_apply", label: "Ready to apply", description: "CV pack is complete", color: "var(--success)" },
@@ -62,6 +65,7 @@ const STAGES: StageDefinition[] = [
 ];
 
 const STAGE_BY_STATUS: Record<ApplicationStatus, BoardStage | "closed"> = {
+  saved: "saved",
   discovered: "discovered",
   shortlisted: "discovered",
   parked: "discovered",
@@ -79,6 +83,7 @@ const STAGE_BY_STATUS: Record<ApplicationStatus, BoardStage | "closed"> = {
 };
 
 const STATUS_LABELS: Record<ApplicationStatus, string> = {
+  saved: "Saved",
   discovered: "Discovered",
   shortlisted: "Shortlisted",
   parked: "Parked",
@@ -96,6 +101,7 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
 };
 
 function nextStatus(status: ApplicationStatus): ApplicationStatus | null {
+  if (status === "saved") return "discovered";
   if (["discovered", "shortlisted", "parked", "ready"].includes(status)) return "applied";
   if (status === "ready_to_apply") return "applied";
   if (status === "applied") return "interview";
@@ -371,6 +377,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
   const [activeApplication, setActiveApplication] = useState<ApplicationListItem | null>(null);
   const [notice, setNotice] = useState("Drag cards forward, or use each card's Move to menu.");
   const [showManualForm, setShowManualForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [manualForm, setManualForm] = useState<ManualApplicationForm>(EMPTY_MANUAL_FORM);
   const [manualError, setManualError] = useState<string | null>(null);
   const [savingManual, setSavingManual] = useState(false);
@@ -379,6 +386,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
 
   const grouped = useMemo(() => {
     const result: Record<BoardStage, ApplicationListItem[]> = {
+      saved: [],
       discovered: [],
       preparing: [],
       ready_to_apply: [],
@@ -479,7 +487,8 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
         </div>
         <div className="hatch-page-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div aria-live="polite" style={{ maxWidth: 430, textAlign: "right", fontSize: 11.5, color: "var(--text-muted)" }}>{notice}</div>
-          <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add application</Btn>
+          <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
+          <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
         </div>
       </div>
 
@@ -491,6 +500,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
         </div>
         <DragOverlay>{activeApplication ? <CardPreview application={activeApplication} /> : null}</DragOverlay>
       </DndContext>
+      {showImport ? <JobUrlImportModal onClose={() => setShowImport(false)} onSaved={() => { setShowImport(false); router.refresh(); }} /> : null}
 
       {showManualForm && (
         <div

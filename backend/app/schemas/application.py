@@ -24,6 +24,7 @@ VALID_STATUSES = {
     "ready",      # tailoring done, awaiting human review
     "approved",   # human approved; package being prepared
     "parked",     # scored below threshold
+    "saved",      # passive bookmark imported by the user
 }
 VALID_PRIORITIES = {"low", "normal", "high", "urgent"}
 
