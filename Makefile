@@ -3,7 +3,8 @@
 
 .PHONY: dev dev-back dev-front scrape scrape-one test test-back test-front \
         test-be test-fe migrate migrate-new docker-up docker-down docker-build docker-logs \
-        docker-restart lint format models seed clean reset-user test-reset-user help ci
+        docker-restart lint format models seed clean reset-user reset-app-lock \
+        test-reset-user audit-scripts help ci
 
 # ──────────────────────── Development ────────────────────────
 
@@ -98,7 +99,7 @@ models: ## Download bundled llama.cpp model files (run once before first docker-
 # ──────────────────────── Code Quality ───────────────────────
 
 lint: ## Run linters
-	cd backend && ruff check app/ tests/ --fix
+	cd backend && ruff check app/ tests/
 	cd frontend && npm run lint
 
 format: ## Format code
@@ -112,6 +113,17 @@ reset-user: ## Wipe all local user data and return Hatch to first-run state
 
 test-reset-user: ## Verify reset behavior against an isolated temporary data directory
 	@bash scripts/tests/test_reset_user_data.sh
+
+reset-app-lock: ## Clear only the local app-lock password and sessions
+	@bash scripts/reset-app-lock.sh
+
+audit-scripts: ## Validate operational scripts without destructive live actions
+	@bash -n install.sh backend/entrypoint.sh scripts/*.sh scripts/tests/*.sh
+	@python -m compileall -q scripts backend/app/skills
+	@bash scripts/tests/test_reset_user_data.sh
+	@cd backend && pytest -q --no-cov tests/test_scripts/test_reset_app_lock.py
+	@python scripts/dead_code_check.py
+	@docker compose config --quiet
 
 clean: ## Remove generated files and caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

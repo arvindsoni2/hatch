@@ -105,7 +105,7 @@ echo "    • All scraped jobs, scores, and decisions"
 echo "    • All agent run history and events"
 echo "    • Local LangGraph checkpoints"
 echo "    • All generated CVs and cover letters"
-  echo "    • Coach recordings"
+echo "    • Coach recordings"
 if $RESET_PROFILE; then
   echo "    • profile.yaml → reset to the blank first-run template"
   echo "    • master_cv.json, metadata, and master_resume.*"

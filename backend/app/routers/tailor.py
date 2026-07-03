@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,6 +77,23 @@ async def get_document_quality(document_id: str, db: AsyncSession = Depends(get_
 class QualityPrecheckRequest(BaseModel):
     analysis: JDAnalysisResult
     design_settings: dict
+
+
+class TemplateRecommendationRequest(BaseModel):
+    analysis: JDAnalysisResult
+    profile_summary: dict = Field(default_factory=dict)
+
+
+@router.post("/templates/recommend")
+async def recommend_resume_templates(body: TemplateRecommendationRequest) -> dict:
+    import json
+    from ..services.resume_template_recommender import recommend_templates
+
+    try:
+        master_cv = json.loads(resolve_master_cv_path().read_text())
+    except Exception:
+        master_cv = {}
+    return recommend_templates(body.analysis, body.profile_summary, master_cv)
 
 
 @router.post("/quality/precheck")

@@ -84,73 +84,7 @@ if [ ! -f data/profile.yaml ]; then
     info "Creating data/profile.yaml from template…"
     cp data/profile.yaml.example data/profile.yaml
   else
-    info "Creating minimal data/profile.yaml…"
-    cat > data/profile.yaml <<'PROFILEEOF'
-locale: "uk"
-candidate:
-  name: ""
-  title: ""
-  years_experience: 0
-  summary: ""
-search:
-  target_roles: []
-  locations: []
-  contract_type: "any"
-compensation:
-  min_rate: 0
-  max_rate: 0
-  rate_type: "daily"
-  currency: ""
-  legal_preferences: {}
-skills:
-  primary: []
-  secondary: []
-  certifications: []
-domains:
-  preferred: []
-  excluded: []
-proof_points: []
-master_cv_path: "./data/master_cv.json"
-job_boards: []
-scoring:
-  weights:
-    skill_match: 0.35
-    experience_match: 0.30
-    rate_match: 0.20
-    location_match: 0.15
-  shortlist_threshold: 0.75
-  method: "auto"
-tailoring:
-  ats_target_score: 80
-  ats_retry_limit: 1
-llm:
-  provider: "llamacpp"
-  triage_model: "qwen3-0.6b-q8_0"
-  primary_model: "qwen3-8b-q5_k_m"
-  base_url: "http://llm-primary:8080/v1"
-  triage_base_url: "http://llm-triage:8081/v1"
-  api_key_env: ""
-  temperature: 0.3
-  max_retries: 3
-  track_costs: false
-  monthly_budget: 0.0
-  currency: ""
-preferences:
-  scrape_interval_hours: 4
-  max_tailor_batch: 5
-  follow_up_days: [5, 10, 15]
-  archive_after_days: 30
-outcome_learning:
-  enabled: true
-  minimum_total_applications: 15
-  minimum_segment_size: 5
-  maximum_score_adjustment: 0.10
-  maximum_signal_adjustment: 0.04
-  no_response_after_days: 35
-  recency_half_life_days: 120
-  enabled_signals: [source, role_family, seniority, working_pattern, employment_type, freshness]
-  learning_since: null
-PROFILEEOF
+    error "data/profile.yaml.example is missing. Re-clone Hatch before installing."
   fi
 
   warn "Edit data/profile.yaml with your details (name, target roles, location) before your first agent run."
@@ -159,20 +93,12 @@ fi
 # ── .env file ──────────────────────────────────────────────────────
 
 if [ ! -f .env ]; then
-  info "Creating .env from template…"
-  cat > .env <<'ENVEOF'
-# Hatch uses bundled Local AI (llama.cpp) by default — no API key required.
-# To use a cloud provider instead, uncomment one of the keys below
-# and select the provider during onboarding or in Settings:
-# ANTHROPIC_API_KEY=sk-ant-...
-# OPENAI_API_KEY=sk-...
-# GOOGLE_API_KEY=AIza...
-
-# Optional tuning
-# SCRAPE_INTERVAL_HOURS=4
-# SCORE_THRESHOLD=0.75
-# LOG_LEVEL=INFO
-ENVEOF
+  if [ -f .env.example ]; then
+    info "Creating .env from current template…"
+    cp .env.example .env
+  else
+    error ".env.example is missing. Re-clone Hatch before installing."
+  fi
 fi
 
 # ── Build & start ──────────────────────────────────────────────────

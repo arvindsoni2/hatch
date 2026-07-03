@@ -126,6 +126,21 @@ async def test_analyse_job_202(client):
 
 
 @pytest.mark.asyncio
+async def test_template_recommendation_endpoint(client, tmp_path):
+    master_cv = tmp_path / "master_cv.json"
+    master_cv.write_text('{"experience": [{}, {}, {}, {}, {}, {}]}')
+
+    with patch("app.routers.tailor.resolve_master_cv_path", return_value=master_cv):
+        resp = await client.post(
+            "/api/tailor/templates/recommend",
+            json={"analysis": MOCK_JD_RESPONSE.analysis.model_dump(mode="json")},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["recommendations"]
+
+
+@pytest.mark.asyncio
 async def test_analyse_job_returns_async_job(client):
     resp = await client.post("/api/tailor/analyse/test-job-123")
     assert resp.status_code == 202

@@ -82,7 +82,17 @@ scoring:
 tailoring:
   ats_target_score: 80              # Retry grounded CV tailoring below this score
   ats_retry_limit: 1                # Extra attempts; unsupported gaps are never invented
-  default_template_id: ats_classic  # ats_classic | professional_2_page | compact_one_page | career_switcher
+  default_template_id: ats_classic  # Choose from the 10 templates shown in Resume Studio
+  resume_design_defaults:
+    active_preset_id: default
+    presets:
+      default:
+        template_id: ats_classic
+        page_target: two_page
+        density: standard
+        section_order_preset: standard
+        accent_color: navy
+        font_family: aptos
 
 # ─── LLM Provider ────────────────────────────────────────────────────────────
 # Default: bundled llama.cpp models (local, free, no API key).

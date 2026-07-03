@@ -8,6 +8,11 @@ set -euo pipefail
 MODELS_DIR="$(realpath -m "${MODELS_DIR:-$(dirname "$0")/../data/models}")"
 mkdir -p "$MODELS_DIR"
 
+if ! command -v wget &>/dev/null && ! command -v curl &>/dev/null; then
+  echo "[fetch_models] ERROR: install curl or wget before downloading models." >&2
+  exit 1
+fi
+
 # ── Pinned sources ────────────────────────────────────────────────────────────
 # Official Qwen quantizations — no HF token required.
 PRIMARY_URL="https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q5_K_M.gguf"

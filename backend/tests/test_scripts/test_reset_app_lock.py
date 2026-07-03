@@ -1,6 +1,7 @@
 import importlib.util
 import sqlite3
 from pathlib import Path
+import pytest
 
 
 def _load_script():
@@ -31,3 +32,21 @@ def test_reset_clears_only_lock_data(tmp_path: Path) -> None:
         assert db.execute("SELECT id FROM jobs").fetchall() == [("preserved",)]
         assert db.execute("SELECT * FROM app_lock_sessions").fetchall() == []
         assert db.execute("SELECT password_hash, failed_attempt_count FROM app_lock_config").fetchone() == (None, 0)
+
+
+def test_reset_refuses_to_create_a_missing_database(tmp_path: Path) -> None:
+    db_path = tmp_path / "missing.db"
+
+    with pytest.raises(FileNotFoundError, match="Database not found"):
+        _load_script().reset_database(db_path)
+
+    assert not db_path.exists()
+
+
+def test_reset_reports_missing_lock_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "hatch.db"
+    with sqlite3.connect(db_path) as db:
+        db.execute("CREATE TABLE jobs (id TEXT PRIMARY KEY)")
+
+    with pytest.raises(RuntimeError, match="app-lock tables"):
+        _load_script().reset_database(db_path)

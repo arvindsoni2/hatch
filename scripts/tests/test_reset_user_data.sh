@@ -16,12 +16,18 @@ printf 'candidate:\n  name: "Existing User"\n' > "$FIXTURE_DIR/profile.yaml"
 printf '{"name":"Existing User"}\n' > "$FIXTURE_DIR/master_cv.json"
 printf '{}\n' > "$FIXTURE_DIR/master_cv.meta.json"
 printf 'resume text\n' > "$FIXTURE_DIR/master_resume.txt"
+printf 'pdf\n' > "$FIXTURE_DIR/master_resume.pdf"
+printf 'docx\n' > "$FIXTURE_DIR/master_resume.docx"
 printf 'SECRET=value\n' > "$FIXTURE_DIR/api_keys.env"
 touch \
   "$FIXTURE_DIR/jobpilot.db" \
+  "$FIXTURE_DIR/jobpilot.db-shm" \
   "$FIXTURE_DIR/jobpilot.db-wal" \
   "$FIXTURE_DIR/langgraph_checkpoints.db" \
+  "$FIXTURE_DIR/langgraph_checkpoints.db-shm" \
+  "$FIXTURE_DIR/langgraph_checkpoints.db-wal" \
   "$FIXTURE_DIR/generated/job-1/cv.docx" \
+  "$FIXTURE_DIR/generated/.stale" \
   "$FIXTURE_DIR/recordings/session-1/audio.webm" \
   "$FIXTURE_DIR/uploads/resume.pdf" \
   "$FIXTURE_DIR/models/model.gguf"
@@ -35,14 +41,20 @@ test -f "$FIXTURE_DIR/profile.yaml.example"
 cmp -s "$FIXTURE_DIR/profile.yaml.example" "$FIXTURE_DIR/profile.yaml"
 
 test ! -e "$FIXTURE_DIR/jobpilot.db"
+test ! -e "$FIXTURE_DIR/jobpilot.db-shm"
 test ! -e "$FIXTURE_DIR/jobpilot.db-wal"
 test ! -e "$FIXTURE_DIR/langgraph_checkpoints.db"
+test ! -e "$FIXTURE_DIR/langgraph_checkpoints.db-shm"
+test ! -e "$FIXTURE_DIR/langgraph_checkpoints.db-wal"
 test ! -e "$FIXTURE_DIR/generated/job-1/cv.docx"
+test ! -e "$FIXTURE_DIR/generated/.stale"
 test ! -e "$FIXTURE_DIR/recordings/session-1/audio.webm"
 test ! -e "$FIXTURE_DIR/uploads/resume.pdf"
 test ! -e "$FIXTURE_DIR/master_cv.json"
 test ! -e "$FIXTURE_DIR/master_cv.meta.json"
 test ! -e "$FIXTURE_DIR/master_resume.txt"
+test ! -e "$FIXTURE_DIR/master_resume.pdf"
+test ! -e "$FIXTURE_DIR/master_resume.docx"
 test -f "$FIXTURE_DIR/api_keys.env"
 test ! -s "$FIXTURE_DIR/api_keys.env"
 

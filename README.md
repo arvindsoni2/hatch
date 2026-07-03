@@ -132,6 +132,8 @@ forgotten database-backed password:
 
 ```bash
 bash scripts/reset-app-lock.sh
+# For automation after you have reviewed the action:
+bash scripts/reset-app-lock.sh --yes
 ```
 
 This removes only app-lock configuration and sessions. Profile, jobs,
@@ -240,6 +242,8 @@ make migrate         # run database migrations
 make scrape          # trigger Scout manually
 make reset-user      # return Hatch to first-run state after confirmation
 make test-reset-user # verify reset behavior in a temporary directory
+make reset-app-lock   # clear only the app-lock password and sessions
+make audit-scripts    # safely validate operational scripts and reset tests
 ```
 
 ## Architecture
