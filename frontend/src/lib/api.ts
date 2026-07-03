@@ -761,12 +761,26 @@ export interface ResumeTemplate {
   best_for: string[];
   layout: string;
   content_density: "standard" | "detailed" | "compact" | "transferable";
+  default_page_target: ResumeDesignSettings["page_target"];
+  default_section_order: ResumeDesignSettings["section_order_preset"];
+  ats_safety_notes: string[];
+}
+
+export interface ResumeDesignSettings {
+  template_id: string;
+  page_target: "one_page" | "two_page" | "auto";
+  density: "compact" | "standard" | "detailed" | "transferable";
+  section_order_preset: "standard" | "skills_first" | "project_led" | "leadership_first" | "compact" | "career_switcher";
+  accent_color: "navy" | "slate" | "teal" | "indigo" | "emerald" | "charcoal";
+  font_family: "aptos" | "calibri" | "arial" | "georgia";
 }
 
 export interface ResumeTemplateResponse {
   templates: ResumeTemplate[];
   default_template_id: string;
-  warning?: string | null;
+  default_design_settings: ResumeDesignSettings;
+  controls: Record<string, string[]>;
+  warnings?: string[];
 }
 
 export interface TailoringReview {
@@ -809,6 +823,7 @@ export async function generateAll(
     jobUrl?: string | null;
     templateId?: string | null;
     regenerationInstruction?: string | null;
+    designSettings?: ResumeDesignSettings;
   }
 ): Promise<AsyncJobRef> {
   return apiFetch<AsyncJobRef>(`/api/tailor/generate`, {
@@ -821,6 +836,7 @@ export async function generateAll(
       company_name: meta?.companyName ?? null,
       job_url: meta?.jobUrl ?? null,
       template_id: meta?.templateId ?? null,
+      design_settings: meta?.designSettings ?? null,
       regeneration_instruction: meta?.regenerationInstruction ?? null,
       custom_instructions: meta?.regenerationInstruction ?? null,
     }),
@@ -830,10 +846,10 @@ export async function generateAll(
 export const fetchResumeTemplates = () =>
   apiFetch<ResumeTemplateResponse>("/api/tailor/templates");
 
-export const setDefaultResumeTemplate = (templateId: string) =>
+export const setDefaultResumeTemplate = (templateId: string, designSettings?: ResumeDesignSettings) =>
   apiFetch<{ default_template_id: string }>("/api/tailor/templates/default", {
     method: "PUT",
-    body: JSON.stringify({ template_id: templateId }),
+    body: JSON.stringify({ template_id: templateId, design_settings: designSettings }),
   });
 
 export const fetchTailoringReview = (applicationId: string) =>

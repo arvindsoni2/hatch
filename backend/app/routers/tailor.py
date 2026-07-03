@@ -63,6 +63,7 @@ async def get_tailoring_review(
 
 class DefaultTemplateRequest(BaseModel):
     template_id: str
+    design_settings: dict | None = None
 
 
 @router.put("/templates/default")
@@ -73,9 +74,16 @@ async def set_default_template(body: DefaultTemplateRequest) -> dict:
     if warning:
         raise HTTPException(status_code=422, detail=warning)
     profile = load_profile_raw()
-    profile.setdefault("tailoring", {})["default_template_id"] = template["id"]
+    tailoring = profile.setdefault("tailoring", {})
+    tailoring["default_template_id"] = template["id"]
+    if body.design_settings:
+        from ..services.resume_design_settings import ResumeDesignSettings
+        settings = ResumeDesignSettings.model_validate({**body.design_settings, "template_id": template["id"]})
+        tailoring["resume_design_defaults"] = {
+            "active_preset_id": "default", "presets": {"default": settings.model_dump()}
+        }
     save_profile_raw(profile)
-    return {"default_template_id": template["id"]}
+    return {"default_template_id": template["id"], "design_settings": body.design_settings}
 
 
 # ---------------------------------------------------------------------------

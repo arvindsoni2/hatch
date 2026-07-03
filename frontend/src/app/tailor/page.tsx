@@ -16,12 +16,14 @@ import {
   type JDAnalysisResponse,
   type AsyncJobResponse,
   GeneratedDocument,
+  type ResumeDesignSettings,
 } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { ProfileSummaryCard } from "@/components/ProfileSummaryCard";
 import { TailoringReviewPanel } from "@/components/TailoringReviewPanel";
 import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { CheckCircle2, ChevronRight, Clock, ExternalLink, FileText, Loader2, XCircle, Zap } from "lucide-react";
+import { ResumeStudio } from "@/components/tailor/ResumeStudio";
 
 type Stage = "idle" | "analysing" | "analysed" | "generating" | "complete" | "error";
 
@@ -63,13 +65,18 @@ export default function TailorPage() {
   const [jdText, setJdText] = useState("");
   const [jobUrl, setJobUrl] = useState("");
   const [variant, setVariant] = useState<"A" | "B">("A");
-  const [templateOverride, setTemplateOverride] = useState<string | null>(null);
+  const [designSettings, setDesignSettings] = useState<ResumeDesignSettings>({
+    template_id: "ats_classic", page_target: "two_page", density: "standard",
+    section_order_preset: "standard", accent_color: "navy", font_family: "aptos",
+  });
   const { data: templateData } = useQuery({
     queryKey: ["resume-templates"],
     queryFn: fetchResumeTemplates,
   });
-  const selectedTemplateId = templateOverride ?? templateData?.default_template_id ?? "ats_classic";
-  const selectedTemplate = templateData?.templates.find((item) => item.id === selectedTemplateId);
+  useEffect(() => {
+    if (templateData?.default_design_settings) setDesignSettings(templateData.default_design_settings);
+  }, [templateData]);
+  const selectedTemplateId = designSettings.template_id;
 
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -174,9 +181,10 @@ export default function TailorPage() {
         companyName: undefined,
         jobUrl: jobUrl || undefined,
         templateId: selectedTemplateId,
+        designSettings,
       })
     );
-  }, [jdText, jobUrl, synthJdText, variant, analysis, selectedTemplateId, submitGenerate]);
+  }, [jdText, jobUrl, synthJdText, variant, analysis, selectedTemplateId, designSettings, submitGenerate]);
 
   const handleLoadHistory = useCallback(async () => {
     const appId = autoApplicationId;
@@ -202,9 +210,10 @@ export default function TailorPage() {
       applicationId: autoApplicationId,
       jobUrl: jobUrl || undefined,
       templateId: selectedTemplateId,
+      designSettings,
       regenerationInstruction: instruction,
     }));
-  }, [autoApplicationId, jdText, jobUrl, selectedTemplateId, submitGenerate, synthJdText, variant]);
+  }, [autoApplicationId, jdText, jobUrl, selectedTemplateId, designSettings, submitGenerate, synthJdText, variant]);
 
   const restoreAnalysis = useCallback((job: AsyncJobResponse<JDAnalysisResponse>) => {
     if (!job.result) return;
@@ -311,26 +320,8 @@ export default function TailorPage() {
                 </button>
               ))}
             </div>
-            <label className="mb-3 block text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              Resume template
-              <select
-                value={selectedTemplateId}
-                onChange={(event) => setTemplateOverride(event.target.value)}
-                className="mt-2 w-full rounded-lg px-3 py-2 text-sm normal-case"
-                style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }}
-              >
-                {templateData?.templates.map((template) => (
-                  <option key={template.id} value={template.id}>{template.name}</option>
-                ))}
-              </select>
-            </label>
-            {selectedTemplate ? (
-              <div className="mb-3 rounded-lg p-3 text-xs leading-5" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-                <strong style={{ color: "var(--text)" }}>{selectedTemplate.name}</strong><br />
-                {selectedTemplate.description}<br />
-                Density: {selectedTemplate.content_density}
-              </div>
-            ) : null}
+            <ResumeStudio data={templateData} value={designSettings} analysis={analysis}
+              generated={stage === "complete"} onChange={setDesignSettings} />
 
             <div className="flex gap-2">
               <Button
@@ -342,7 +333,7 @@ export default function TailorPage() {
                 {stage === "generating" ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
                 ) : (
-                  <><Zap className="mr-2 h-4 w-4" /> Generate All</>
+                  <><Zap className="mr-2 h-4 w-4" /> Generate application pack</>
                 )}
               </Button>
               {autoApplicationId && (
