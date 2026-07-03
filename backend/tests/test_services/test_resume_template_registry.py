@@ -18,14 +18,22 @@ def _cv() -> TailoredCVResult:
     )
 
 
-def test_registry_has_exactly_four_stable_templates() -> None:
+def test_registry_has_exactly_ten_stable_templates() -> None:
     assert [item["id"] for item in TEMPLATES] == [
         "ats_classic",
-        "professional_2_page",
-        "compact_one_page",
+        "modern_compact",
+        "executive_uk_2_page",
+        "consulting_clean",
+        "project_delivery",
+        "contractor_freelance",
+        "tech_product",
         "career_switcher",
+        "senior_leadership",
+        "minimal_one_page",
     ]
-    assert len(template_payload()["templates"]) == 4
+    assert len(template_payload()["templates"]) == 10
+    assert resolve_template("professional_2_page")[0]["id"] == "executive_uk_2_page"
+    assert resolve_template("compact_one_page")[0]["id"] == "modern_compact"
 
 
 def test_unknown_template_falls_back_with_warning() -> None:
