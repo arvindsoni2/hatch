@@ -882,6 +882,11 @@ export const setDefaultResumeTemplate = (templateId: string, designSettings?: Re
 export const fetchTailoringReview = (applicationId: string) =>
   apiFetch<TailoringReview>(`/api/tailor/review/${applicationId}`);
 
+export const fetchQualityPrecheck = (analysis: JDAnalysisResult, design_settings: ResumeDesignSettings) =>
+  apiFetch<{ status: string; keyword_gaps: string[]; weak_requirements: Array<{ requirement: string; reason: string; severity: string }> }>(
+    "/api/tailor/quality/precheck", { method: "POST", body: JSON.stringify({ analysis, design_settings }) }
+  );
+
 export async function generateCV(
   applicationId: string,
   jdText: string,

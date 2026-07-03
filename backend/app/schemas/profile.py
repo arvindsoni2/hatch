@@ -102,7 +102,10 @@ class TailoringConfig(BaseModel):
     ats_target_score: int = Field(default=80, ge=60, le=100)
     ats_retry_limit: int = Field(default=1, ge=0, le=3)
     default_template_id: Literal[
-        "ats_classic", "professional_2_page", "compact_one_page", "career_switcher"
+        "ats_classic", "modern_compact", "executive_uk_2_page", "consulting_clean",
+        "project_delivery", "contractor_freelance", "tech_product", "career_switcher",
+        "senior_leadership", "minimal_one_page",
+        "professional_2_page", "compact_one_page",
     ] = "ats_classic"
     resume_design_defaults: dict = Field(default_factory=dict)
 

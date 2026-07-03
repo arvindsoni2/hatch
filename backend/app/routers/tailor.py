@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..schemas.document import DocumentListItem, GeneratedDocumentRead
 from ..schemas.tailor import (
+    JDAnalysisResult,
     RegenerateSectionRequest,
     TailorRequest,
 )
@@ -71,6 +72,22 @@ async def get_document_quality(document_id: str, db: AsyncSession = Depends(get_
     )
     row = result.scalar_one_or_none()
     return (row.review_json.get("quality_gate", {}) if row else {})
+
+
+class QualityPrecheckRequest(BaseModel):
+    analysis: JDAnalysisResult
+    design_settings: dict
+
+
+@router.post("/quality/precheck")
+async def quality_precheck(body: QualityPrecheckRequest) -> dict:
+    import json
+    from ..services.cv_quality_gate import pre_generation_quality
+    try:
+        evidence = json.loads(resolve_master_cv_path().read_text())
+    except Exception:
+        evidence = {}
+    return pre_generation_quality(body.analysis, evidence, body.design_settings.get("template_id", "ats_classic"))
 
 
 class DefaultTemplateRequest(BaseModel):

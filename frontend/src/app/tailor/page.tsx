@@ -12,6 +12,7 @@ import {
   listTailorHistory,
   fetchResumeTemplates,
   fetchTailoringReview,
+  fetchQualityPrecheck,
   type TailoringReview,
   type JDAnalysisResponse,
   type AsyncJobResponse,
@@ -85,6 +86,7 @@ export default function TailorPage() {
   const [autoApplicationId, setAutoApplicationId] = useState<string | null>(null);
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
   const [review, setReview] = useState<TailoringReview | null>(null);
+  const [precheck, setPrecheck] = useState<{ status: string; keyword_gaps: string[] } | null>(null);
   const [activeTab, setActiveTab] = useState<"analysis" | "review" | "history">("analysis");
   const [analysisHistory, setAnalysisHistory] = useState<AsyncJobResponse<JDAnalysisResponse>[]>([]);
 
@@ -240,6 +242,10 @@ export default function TailorPage() {
     analyseState.status === "running";
 
   const canGenerate = !!(jdText.trim() || synthJdText.trim());
+  useEffect(() => {
+    if (!analysis) { setPrecheck(null); return; }
+    fetchQualityPrecheck(analysis.analysis, designSettings).then(setPrecheck).catch(() => setPrecheck(null));
+  }, [analysis, designSettings]);
 
   return (
     <div className="space-y-6">
@@ -322,6 +328,9 @@ export default function TailorPage() {
             </div>
             <ResumeStudio data={templateData} value={designSettings} analysis={analysis}
               generated={stage === "complete"} onChange={setDesignSettings} />
+            {precheck?.keyword_gaps.length ? <div className="my-3 rounded-lg p-3 text-xs" style={{ background: "var(--surface-2)", color: "var(--warning)" }}>
+              Pre-generation quality check: review missing evidence for {precheck.keyword_gaps.join(", ")}.
+            </div> : null}
 
             <div className="flex gap-2">
               <Button
