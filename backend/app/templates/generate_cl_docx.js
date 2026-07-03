@@ -20,10 +20,10 @@ const {
   convertInchesToTwip,
 } = require("docx");
 
-const FONT = "Calibri";
-const HEADING_COLOR = "1F4E79";
+let FONT = "Aptos";
+let HEADING_COLOR = "1F4E79";
 const DARK_GRAY = "333333";
-const MARGIN_DXA = 1440;
+let MARGIN_DXA = 1080;
 
 function hr() {
   return new Paragraph({
@@ -59,6 +59,13 @@ function buildCL(spec) {
     role_applied_for,
     company_name,
   } = spec;
+  const design = spec.design_settings || {};
+  const accents = { navy: "1F4E79", slate: "475569", teal: "0F766E", indigo: "4338CA", emerald: "047857", charcoal: "263238" };
+  const fonts = { aptos: "Aptos", calibri: "Calibri", arial: "Arial", georgia: "Georgia" };
+  const margins = { one_page: 720, two_page: 900, auto: 1080 };
+  FONT = fonts[design.font_family] || FONT;
+  HEADING_COLOR = accents[design.accent_color] || HEADING_COLOR;
+  MARGIN_DXA = margins[design.page_target] || MARGIN_DXA;
 
   const children = [];
 

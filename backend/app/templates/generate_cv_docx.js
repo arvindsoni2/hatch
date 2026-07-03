@@ -36,7 +36,7 @@ const {
 // ---------------------------------------------------------------------------
 const A4_WIDTH_DXA = 11906;  // twips
 let MARGIN_DXA = 1080;       // ~0.75 inch
-const FONT = "Calibri";
+let FONT = "Aptos";
 let HEADING_COLOR = "1F4E79";
 let BODY_SIZE = 20;
 const BLACK = "000000";
@@ -115,7 +115,16 @@ function experienceHeader(role, company, period) {
 // ---------------------------------------------------------------------------
 
 function buildCV(spec) {
-  const { personal, summary, skills, experience, education, certifications, role_applied_for, template } = spec;
+  const { personal, summary, skills, experience, education, certifications, role_applied_for, template, design_settings } = spec;
+  const accents = { navy: "1F4E79", slate: "475569", teal: "0F766E", indigo: "4338CA", emerald: "047857", charcoal: "263238" };
+  const fonts = { aptos: "Aptos", calibri: "Calibri", arial: "Arial", georgia: "Georgia" };
+  const margins = { one_page: 720, two_page: 900, auto: 1080 };
+  if (design_settings) {
+    FONT = fonts[design_settings.font_family] || FONT;
+    HEADING_COLOR = accents[design_settings.accent_color] || HEADING_COLOR;
+    MARGIN_DXA = margins[design_settings.page_target] || MARGIN_DXA;
+    BODY_SIZE = design_settings.density === "compact" ? 18 : design_settings.density === "detailed" ? 20 : 19;
+  }
   if (template?.style) {
     MARGIN_DXA = template.style.margin || MARGIN_DXA;
     HEADING_COLOR = template.style.accent || HEADING_COLOR;

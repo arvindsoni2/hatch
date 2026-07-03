@@ -32,13 +32,17 @@ def get_tailor_service() -> TailorService:
 
 @router.get("/templates")
 async def list_templates() -> dict:
-    from ..agents.tools.profile_loader import load_profile
+    from ..services.profile_service import load_profile_raw
     from ..services.resume_template_registry import template_payload
     try:
-        default_id = load_profile().tailoring.default_template_id
+        tailoring = load_profile_raw().get("tailoring", {})
+        design = tailoring.get("resume_design_defaults", {})
+        preset = design.get("presets", {}).get(design.get("active_preset_id", "default"), {})
+        if not preset:
+            preset = {"template_id": tailoring.get("default_template_id", "ats_classic")}
     except Exception:
-        default_id = "ats_classic"
-    return template_payload(default_id)
+        preset = {}
+    return template_payload(preset)
 
 
 @router.get("/review/{application_id}")
@@ -162,7 +166,8 @@ async def generate_cv(
                 jd_text,
                 db,
                 request.custom_instructions,
-                request.template_id,
+                request.design_settings.template_id if request.design_settings else request.template_id,
+                request.design_settings.model_dump() if request.design_settings else None,
             )
             await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
         except Exception as exc:
@@ -235,6 +240,7 @@ async def generate_all(
                         job_url=request.job_url,
                         custom_instructions=request.custom_instructions,
                         template_id=request.template_id,
+                        design_settings=request.design_settings.model_dump() if request.design_settings else None,
                     ),
                     timeout=7200,  # 2-hour ceiling (7 jobs × 3 calls × 180s = 3780s queue wait)
                 )

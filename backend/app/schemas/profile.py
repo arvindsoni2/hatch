@@ -104,6 +104,7 @@ class TailoringConfig(BaseModel):
     default_template_id: Literal[
         "ats_classic", "professional_2_page", "compact_one_page", "career_switcher"
     ] = "ats_classic"
+    resume_design_defaults: dict = Field(default_factory=dict)
 
 
 class ASRConfig(BaseModel):

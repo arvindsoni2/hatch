@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from ..services.resume_design_settings import ResumeDesignSettings
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +163,7 @@ class TailorRequest(BaseModel):
     generate_cover_letter: bool = True
     custom_instructions: str | None = None
     template_id: str | None = None
+    design_settings: ResumeDesignSettings | None = None
     regeneration_instruction: str | None = None
     jd_text: str | None = None
     # Used when application_id is None to create a pipeline entry automatically

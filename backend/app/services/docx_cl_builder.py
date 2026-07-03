@@ -29,6 +29,7 @@ class DocxCLBuilder:
         application_id: str,
         version: int,
         variant_label: str = "A",
+        design_settings: dict[str, Any] | None = None,
     ) -> tuple[str, int]:
         """Generate a cover letter .docx and return (file_path, file_size_bytes).
 
@@ -53,7 +54,7 @@ class DocxCLBuilder:
         if not str(out_path).startswith(str(expected_parent)):
             raise ValueError(f"Output path traversal detected: {out_path}")
 
-        spec = _build_cl_spec(cover_letter, jd_analysis, personal)
+        spec = _build_cl_spec(cover_letter, jd_analysis, personal, design_settings)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
             json.dump(spec, tf, indent=2)
@@ -83,6 +84,7 @@ def _build_cl_spec(
     cover_letter: CoverLetterResult,
     jd_analysis: JDAnalysisResult,
     personal: dict[str, Any],
+    design_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the JSON spec that generate_cl_docx.js consumes."""
     return {
@@ -94,4 +96,6 @@ def _build_cl_spec(
         "role_applied_for": jd_analysis.role_title,
         "company_name": jd_analysis.company_context.company_name or "the Company",
         "word_count": cover_letter.word_count,
+        "design_settings": design_settings or {},
+        "render_metadata": {"doc_kind": "cover_letter", "source_of_truth": "docx", "html_preview_is_approximate": True},
     }

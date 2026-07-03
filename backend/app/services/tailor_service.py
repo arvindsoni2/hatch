@@ -283,6 +283,7 @@ class TailorService:
         db: AsyncSession,
         custom_instructions: str | None = None,
         template_id: str | None = None,
+        design_settings: dict | None = None,
     ) -> GeneratedDocumentRead:
         """Generate a tailored CV and persist the document record.
 
@@ -298,6 +299,8 @@ class TailorService:
         Returns:
             GeneratedDocumentRead for the saved .docx record.
         """
+        if design_settings:
+            template_id = design_settings["template_id"]
         if not template_id:
             try:
                 template_id = load_profile().tailoring.default_template_id
@@ -460,6 +463,7 @@ class TailorService:
         job_url: str | None = None,
         custom_instructions: str | None = None,
         template_id: str | None = None,
+        design_settings: dict | None = None,
     ) -> TailorResultBundle:
         """Run the full pipeline: JD analysis → CV → Cover letter.
 
@@ -477,6 +481,8 @@ class TailorService:
         Returns:
             TailorResultBundle with document IDs and scores.
         """
+        if design_settings:
+            template_id = design_settings["template_id"]
         if not template_id:
             try:
                 template_id = load_profile().tailoring.default_template_id
@@ -527,7 +533,8 @@ class TailorService:
 
         cv_version = await doc_repo.get_latest_version(application_id, "cv") + 1
         cv_path, cv_size = self._cv_builder.build(
-            tailored_cv, analysis, personal, application_id, cv_version, variant, template_id
+            tailored_cv, analysis, personal, application_id, cv_version, variant, template_id,
+            design_settings,
         )
         cv_doc = await doc_repo.create(
             application_id=application_id,
@@ -540,6 +547,7 @@ class TailorService:
                 "variant": variant,
                 "custom_instructions": custom_instructions,
                 "template_id": template_id or "ats_classic",
+                "design_settings": design_settings,
             }),
             ats_score=ats_result.overall_score,
             ats_details=json.dumps(ats_result.model_dump()),
@@ -564,7 +572,8 @@ class TailorService:
         logger.info("Tailor package %s: cover letter content complete", application_id)
         cl_version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
         cl_path, cl_size = self._cl_builder.build(
-            cover_letter, analysis, personal, application_id, cl_version, variant
+            cover_letter, analysis, personal, application_id, cl_version, variant,
+            design_settings,
         )
         cl_doc = await doc_repo.create(
             application_id=application_id,
@@ -576,6 +585,7 @@ class TailorService:
             tailoring_params=json.dumps({
                 "variant": variant,
                 "template_id": template_id,
+                "design_settings": design_settings,
                 "regeneration_instruction": custom_instructions,
             }),
             variant_label=variant,
