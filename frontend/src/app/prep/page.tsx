@@ -13,6 +13,8 @@ function sessionToPrep(s: SessionListItem): PrepSession {
       ? "ready"
       : s.status === "abandoned"
       ? "failed"
+      : s.status === "failed"
+      ? "failed"
       : s.status === "in_progress"
       ? "progress"
       : ageMs > 30 * 60 * 1000

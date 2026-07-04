@@ -126,12 +126,24 @@ async def create_session(
 @router.get("/sessions", response_model=list[SessionListItem])
 async def list_sessions(
     limit: int = Query(default=20, ge=1, le=100),
-    status: Optional[str] = Query(None, description="Filter by status: setup|active|completed|abandoned"),
+    status: Optional[str] = Query(
+        None,
+        description="Filter by status: setup|active|completed|failed|abandoned",
+    ),
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
 ) -> list[SessionListItem]:
-    """List interview sessions, newest first."""
-    return await svc.list_sessions(db, limit=limit, status=status)
+    """List interview sessions, newest first.
+
+    Abandoned is the user-deleted state, so it is omitted from the default
+    collection. Callers may still request it explicitly for diagnostics.
+    """
+    return await svc.list_sessions(
+        db,
+        limit=limit,
+        status=status,
+        exclude_abandoned=status is None,
+    )
 
 
 @router.get("/sessions/{session_id}", response_model=SessionResponse)

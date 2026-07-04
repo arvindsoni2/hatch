@@ -70,13 +70,18 @@ class SessionRepository:
         return result.scalar_one_or_none()
 
     async def list_sessions(
-        self, limit: int = 20, status: str | None = None
+        self,
+        limit: int = 20,
+        status: str | None = None,
+        *,
+        exclude_abandoned: bool = False,
     ) -> list[SessionListItem]:
         """List interview sessions, newest first.
 
         Args:
             limit: Maximum number of results.
-            status: Optional status filter (setup|active|completed|abandoned).
+            status: Optional status filter (setup|active|completed|failed|abandoned).
+            exclude_abandoned: Hide sessions explicitly removed by the user.
 
         Returns:
             List of SessionListItem Pydantic schemas.
@@ -84,6 +89,8 @@ class SessionRepository:
         query = select(InterviewSession).order_by(InterviewSession.created_at.desc()).limit(limit)
         if status:
             query = query.where(InterviewSession.status == status)
+        elif exclude_abandoned:
+            query = query.where(InterviewSession.status != "abandoned")
         result = await self._session.execute(query)
         rows = result.scalars().all()
         return [

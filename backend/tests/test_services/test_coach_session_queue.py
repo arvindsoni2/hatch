@@ -63,3 +63,34 @@ async def test_queue_deduplicates_linked_application(db_session):
     assert result["created"] is False
     sessions = (await db_session.execute(select(InterviewSession))).scalars().all()
     assert len(sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_default_session_list_hides_user_abandoned_but_keeps_failed(db_session):
+    db_session.add_all(
+        [
+            InterviewSession(
+                application_id="app-deleted",
+                company_name="Veovo",
+                role_title="Agile Delivery Lead",
+                config={},
+                status="abandoned",
+            ),
+            InterviewSession(
+                application_id="app-failed",
+                company_name="Acme",
+                role_title="Delivery Lead",
+                config={},
+                status="failed",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    from app.repositories.session_repository import SessionRepository
+
+    visible = await SessionRepository(db_session).list_sessions(
+        exclude_abandoned=True,
+    )
+
+    assert [session.status for session in visible] == ["failed"]

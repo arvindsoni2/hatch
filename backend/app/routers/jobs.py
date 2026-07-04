@@ -572,7 +572,6 @@ async def approve_job(
         HTTPException 404: Job not found.
     """
     import json as _json_local
-    import asyncio
     from sqlalchemy import select, update
     from datetime import datetime
 
@@ -646,10 +645,11 @@ async def approve_job(
         try:
             async with AsyncSessionLocal() as own_db:
                 service = AssistedApplyService()
-                package = await asyncio.wait_for(
-                    service.prepare_application(job_id=job_id, db=own_db),
-                    timeout=2700,
-                )
+                # Do not impose a deadline on the complete multi-stage package
+                # workflow. Each LLM call already has its own bounded timeout;
+                # a 45-minute wrapper cancelled healthy queued jobs on local
+                # single-slot models just before document generation finished.
+                package = await service.prepare_application(job_id=job_id, db=own_db)
                 result = {
                     "job_id": package.job_id,
                     "job_url": package.job_url,

@@ -19,7 +19,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   const [approving, setApproving] = useState(false);
   const [approvingMessage, setApprovingMessage] = useState<string>("");
   const [approvingId, setApprovingId] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   // Hydrate packages for any ready_to_apply jobs that arrived via server props
   useEffect(() => {
@@ -37,14 +37,15 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   }, []);
 
   const startPolling = useCallback((asyncJobId: string, jobId: string, jobTitle: string, company: string | null) => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    const existing = pollRefs.current.get(jobId);
+    if (existing) clearInterval(existing);
 
-    pollRef.current = setInterval(async () => {
+    const interval = setInterval(async () => {
       try {
         const asyncJob = await getAsyncJob<ApplicationPackage>(asyncJobId);
         if (asyncJob.status === "done" && asyncJob.result) {
-          clearInterval(pollRef.current!);
-          pollRef.current = null;
+          clearInterval(interval);
+          pollRefs.current.delete(jobId);
           setApproving(false);
           setApprovingMessage("");
           setApprovingId(null);
@@ -63,8 +64,8 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
             });
           }
         } else if (asyncJob.status === "failed") {
-          clearInterval(pollRef.current!);
-          pollRef.current = null;
+          clearInterval(interval);
+          pollRefs.current.delete(jobId);
           setApproving(false);
           setApprovingMessage("");
           setApprovingId(null);
@@ -78,6 +79,12 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
         // network hiccup — keep polling
       }
     }, 5000);
+    pollRefs.current.set(jobId, interval);
+  }, []);
+
+  useEffect(() => () => {
+    pollRefs.current.forEach((interval) => clearInterval(interval));
+    pollRefs.current.clear();
   }, []);
 
   async function handleApprove(jobId: string, jobPostingId?: string) {

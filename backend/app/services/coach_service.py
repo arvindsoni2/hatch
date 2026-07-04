@@ -380,7 +380,12 @@ class CoachService:
         return await self.end_session.__wrapped__(self, session_id, db)  # type: ignore[attr-defined]
 
     async def list_sessions(
-        self, db: AsyncSession, limit: int = 20, status: str | None = None
+        self,
+        db: AsyncSession,
+        limit: int = 20,
+        status: str | None = None,
+        *,
+        exclude_abandoned: bool = False,
     ) -> list[SessionListItem]:
         """List interview sessions.
 
@@ -394,7 +399,11 @@ class CoachService:
         """
         from ..repositories.session_repository import SessionRepository
         session_repo = SessionRepository(db)
-        return await session_repo.list_sessions(limit, status)
+        return await session_repo.list_sessions(
+            limit,
+            status,
+            exclude_abandoned=exclude_abandoned,
+        )
 
     async def get_session(self, session_id: str, db: AsyncSession) -> SessionResponse:
         """Get a session with all questions.

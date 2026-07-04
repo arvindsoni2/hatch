@@ -74,10 +74,13 @@ async def queue_coach_session(
             except Exception as exc:
                 logger.error("Coach session job %s failed: %s", async_job.id, exc)
                 try:
-                    await SessionRepository(job_db).update_session_status(stub.id, "abandoned")
+                    # Keep generation failures distinct from user deletion.
+                    # The default session list hides only abandoned sessions,
+                    # while failed sessions remain visible and retryable.
+                    await SessionRepository(job_db).update_session_status(stub.id, "failed")
                     await job_db.commit()
                 except Exception:
-                    logger.exception("Could not mark Coach session %s abandoned", stub.id)
+                    logger.exception("Could not mark Coach session %s failed", stub.id)
                 await AsyncJobService._finish(async_job.id, None, str(exc))
 
     AsyncJobService.run(async_job.id, _work())

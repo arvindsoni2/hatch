@@ -432,6 +432,11 @@ export default function ResumePage() {
               </div>
 
               <div className="flex items-center gap-3 border-t border-border pt-4">
+                <Link href="/tailor">
+                  <Button size="sm">
+                    <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open Resume Studio
+                  </Button>
+                </Link>
                 <a href={`${API_BASE}/api/resume/json`} target="_blank" rel="noopener noreferrer">
                   <Button variant="outline" size="sm">
                     <ExternalLink className="h-3.5 w-3.5 mr-1" /> View JSON
