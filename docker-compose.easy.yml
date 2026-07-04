@@ -1,0 +1,58 @@
+services:
+  backend:
+    image: hatch-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env
+        required: false
+      - path: ${HATCH_HOME:-${HOME}/.hatch}/config/secrets.env
+        required: false
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:///./data/jobpilot.db
+      LANGGRAPH_CHECKPOINT_DB: sqlite+aiosqlite:///./data/langgraph_checkpoints.db
+      HATCH_CONFIG_DIR: /hatch-home/config
+      HATCH_MODELS_DIR: /models
+      PLAYWRIGHT_HEADLESS: "true"
+      AUTO_APPROVE: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data:z
+      - ./locales:/app/locales:ro,z
+      - ${HATCH_HOME:-${HOME}/.hatch}/config:/hatch-home/config:z
+      - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks: [hatch]
+
+  frontend:
+    image: hatch-frontend:latest
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        API_URL: http://backend:8000
+    environment:
+      API_URL: http://backend:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [hatch]
+
+networks:
+  hatch:
+    driver: bridge

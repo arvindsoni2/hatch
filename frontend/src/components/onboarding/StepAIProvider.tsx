@@ -1,7 +1,6 @@
 "use client";
 
 import { Loader2, CheckCircle, XCircle } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { Field, Choice, ToggleRow, Seg } from "./OnboardingPrimitives";
 import type { LocaleBoard } from "@/lib/api";
 
@@ -106,42 +105,13 @@ export function StepAIProvider({
       </Field>
 
       {needsKey && (
-        <Field
-          label="API key"
-          req
-          hint="Validated live, then saved to your local machine only — never committed to the repo."
-        >
-          <div className="flex gap-2">
-            <Input
-              type="password"
-              className="flex-1 font-mono text-[12.5px]"
-              placeholder={llm.api_key_env}
-              value={testApiKey}
-              onChange={(e) => { onTestApiKeyChange(e.target.value); }}
-            />
-            <button
-              type="button"
-              onClick={onTestConnection}
-              disabled={!testApiKey || testingConnection}
-              className="flex-shrink-0 px-4 rounded-[var(--r-field,8px)] border border-[var(--border-strong)] text-[13px] font-[550] text-[var(--text)] disabled:opacity-40 transition-colors hover:bg-[var(--surface-3)]"
-              style={{ background: "var(--surface-2)" }}
-            >
-              {testingConnection ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
-            </button>
-          </div>
-          {connectionResult && (
-            <div
-              className={`flex items-center gap-2 mt-2 text-sm px-3 py-2 rounded-[var(--r-field,8px)] ${
-                connectionResult.ok ? "text-[var(--success)]" : "text-[var(--danger)]"
-              }`}
-              style={{ background: connectionResult.ok ? "var(--success-soft)" : "var(--danger-soft)" }}
-            >
-              {connectionResult.ok
-                ? <><CheckCircle className="h-4 w-4" /> Connected — key works.</>
-                : <><XCircle className="h-4 w-4" /> {connectionResult.error ?? "Connection failed"}</>}
-            </div>
-          )}
-        </Field>
+        <div className="rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3">
+          <p className="text-[13px] font-[550] text-[var(--text)]">Add the provider key from your terminal</p>
+          <p className="mt-1 text-[12px] text-[var(--text-dim)]">
+            Hatch does not accept API keys in the browser. After onboarding, run{" "}
+            <code className="font-mono text-[11.5px]">hatch secrets set {llm.provider}</code>.
+          </p>
+        </div>
       )}
 
       {llm.provider === "llamacpp" && (

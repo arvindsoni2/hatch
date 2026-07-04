@@ -76,7 +76,7 @@ describe("StepAIProvider", () => {
     expect(screen.queryByText(/ollama/i)).not.toBeInTheDocument();
   });
 
-  it("shows API key input when non-llamacpp provider selected", () => {
+  it("shows the host CLI command instead of accepting an API key", () => {
     render(
       <StepAIProvider
         llm={defaultLlm}
@@ -93,7 +93,8 @@ describe("StepAIProvider", () => {
         onScrapeIntervalChange={vi.fn()}
       />
     );
-    expect(screen.getByPlaceholderText(/GOOGLE_API_KEY/i)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/GOOGLE_API_KEY/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/hatch secrets set google_genai/i)).toBeInTheDocument();
   });
 
   it("hides API key input for llamacpp provider", () => {
@@ -116,7 +117,7 @@ describe("StepAIProvider", () => {
     expect(screen.queryByPlaceholderText(/API_KEY/i)).not.toBeInTheDocument();
   });
 
-  it("calls onTestConnection when Test button is clicked", () => {
+  it("does not render a browser-side cloud connection test", () => {
     const onTestConnection = vi.fn();
     render(
       <StepAIProvider
@@ -134,8 +135,8 @@ describe("StepAIProvider", () => {
         onScrapeIntervalChange={vi.fn()}
       />
     );
-    fireEvent.click(screen.getByText("Test"));
-    expect(onTestConnection).toHaveBeenCalled();
+    expect(screen.queryByText("Test")).not.toBeInTheDocument();
+    expect(onTestConnection).not.toHaveBeenCalled();
   });
 
   it("switches to llamacpp and sets correct defaults (LLM-local)", () => {

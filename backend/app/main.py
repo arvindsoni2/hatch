@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
+from fastapi.responses import JSONResponse
 
 from .config import settings
 from .database import AsyncSessionLocal, init_db
@@ -40,6 +41,7 @@ from .routers.async_jobs import router as async_jobs_router
 from .routers.debug import router as debug_router
 from .routers.outcome_learning import router as outcome_learning_router
 from .routers.app_lock import router as app_lock_router
+from .routers.setup import router as setup_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
 from .services.llm_client import LLMClient
@@ -47,6 +49,7 @@ from .services.job_classifier import JobClassifier
 from .services.job_service import JobService
 from .services.email_generator import EmailGenerator
 from .services.reminder_service import ReminderService
+from .services.ai_setup import feature_enabled, load_runtime
 
 # ──────────────────────── Logging Setup ────────────────────────
 
@@ -102,8 +105,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     reminder_repo = ApplicationRepository(scheduler_session)
 
-    # AI classifier — provider-agnostic via llm_factory
-    job_classifier = JobClassifier()
+    ai_configured = load_runtime().get("ai_mode") != "not_configured"
+
+    # AI classifier — provider-agnostic via llm_factory. Keep it disabled when
+    # easy install has no AI configuration so background jobs do not fail.
+    job_classifier = JobClassifier() if ai_configured else None
 
     # Email generation still uses LLMClient directly (Anthropic-only for now)
     claude_client = LLMClient()
@@ -133,10 +139,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     # ── Agentic orchestrator ──────────────────────────────────────────
-    orchestrator = AgentOrchestrator(db_factory=AsyncSessionLocal)
-    orchestrator.start()
+    orchestrator = AgentOrchestrator(db_factory=AsyncSessionLocal) if ai_configured else None
+    if orchestrator is not None:
+        orchestrator.start()
     app.state.orchestrator = orchestrator
-    logger.info("Agent orchestrator started.")
+    logger.info("Agent orchestrator %s.", "started" if orchestrator else "disabled until AI setup")
 
     # ── Startup context assertion (llamacpp only) ─────────────────
     try:
@@ -151,7 +158,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("JobPilot shutting down...")
-    orchestrator.stop()
+    if orchestrator is not None:
+        orchestrator.stop()
     scheduler.shutdown(wait=False)
     await scheduler_session.close()
     logger.info("Scheduler stopped. Goodbye.")
@@ -182,6 +190,30 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+class AISetupGateMiddleware(BaseHTTPMiddleware):
+    """Return an actionable response when a disabled feature needs an LLM."""
+
+    _PREFIX_FEATURES = {
+        "/api/tailor": "cv_tailoring",
+        "/api/coach": "coach_interview_prep",
+        "/api/scoring": "cv_tailoring",
+    }
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if request.method in _MUTATING_METHODS:
+            for prefix, feature in self._PREFIX_FEATURES.items():
+                if request.url.path.startswith(prefix) and not feature_enabled(feature):
+                    return JSONResponse(
+                        {
+                            "detail": "AI is not configured for this feature.",
+                            "code": "ai_setup_required",
+                            "next_step": "Open Settings > AI Setup or run hatch apply-ai-config.",
+                        },
+                        status_code=409,
+                    )
+        return await call_next(request)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -313,6 +345,7 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Accept", "Authorization"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(AISetupGateMiddleware)
     app.add_middleware(AppLockMiddleware)
     app.add_middleware(AuthMiddleware, token=settings.HATCH_AUTH_TOKEN)
     app.add_middleware(
@@ -348,6 +381,7 @@ def create_app() -> FastAPI:
     app.include_router(debug_router)
     app.include_router(outcome_learning_router)
     app.include_router(app_lock_router)
+    app.include_router(setup_router)
 
     return app
 

@@ -4,6 +4,14 @@
 # Or locally: ./install.sh
 set -euo pipefail
 
+MODE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --mode) MODE="${2:-}"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
 CYAN="\033[0;36m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
@@ -38,10 +46,13 @@ fi
 ok "Compose command: $COMPOSE"
 
 check_cmd git "Install git from https://git-scm.com"
+check_cmd python3 "Install Python 3.10 or newer."
 
 # ── Clone or update ────────────────────────────────────────────────
 
 INSTALL_DIR="${HATCH_DIR:-$HOME/.local/share/hatch}"
+HATCH_HOME="${HATCH_HOME:-$HOME/.hatch}"
+export HATCH_HOME
 
 if [ -d "$INSTALL_DIR/.git" ]; then
   info "Existing install found at $INSTALL_DIR — updating…"
@@ -53,29 +64,43 @@ fi
 
 cd "$INSTALL_DIR"
 
-# ── Download AI model files ────────────────────────────────────────
-# Hatch uses bundled llama.cpp containers — no Ollama, no API key required.
-# Two official Qwen GGUF models are downloaded from Hugging Face (public, no auth):
-#   Primary:  Qwen3-8B-Q5_K_M.gguf (~5.9 GB)  port 8080
-#   Triage:   Qwen3-0.6B-Q8_0.gguf (~639 MB)  port 8081
+# ── Easy-install state + mode ─────────────────────────────────────
 
-mkdir -p data/models
+mkdir -p "$HATCH_HOME"/{bin,config,models,probe,logs,backups}
+chmod 700 "$HATCH_HOME" "$HATCH_HOME"/{bin,config,models,probe,logs,backups}
 
-PRIMARY_FILE="data/models/Qwen3-8B-Q5_K_M.gguf"
-TRIAGE_FILE="data/models/Qwen3-0.6B-Q8_0.gguf"
-
-if [ -f "$PRIMARY_FILE" ] && [ -f "$TRIAGE_FILE" ]; then
-  ok "AI model files already present — skipping download."
-else
-  info "Downloading AI model files (one-time, about 6.5 GB total)…"
-  warn "This may take a few minutes on a slow connection."
-  if bash scripts/fetch_models.sh; then
-    ok "Model files downloaded."
+if [ -z "$MODE" ]; then
+  if [ -t 0 ]; then
+    printf "AI setup: [1] later (recommended), [2] cloud, [3] local, [4] advanced: "
+    read -r MODE_CHOICE
+    case "$MODE_CHOICE" in
+      2) MODE="cloud" ;;
+      3) MODE="local" ;;
+      4) MODE="advanced" ;;
+      *) MODE="ai-later" ;;
+    esac
   else
-    warn "Model download failed — you can retry later with: bash scripts/fetch_models.sh"
-    warn "The llm containers will start in degraded mode without models."
+    MODE="ai-later"
   fi
 fi
+
+case "$MODE" in
+  ai-later|cloud|local|advanced) ;;
+  *) error "Unsupported mode '$MODE'. Use ai-later, cloud, local, or advanced." ;;
+esac
+
+cat > "$HATCH_HOME/config/install.json" <<EOF
+{
+  "schema_version": 1,
+  "managed": true,
+  "source_dir": "$INSTALL_DIR",
+  "installed_mode": "$MODE"
+}
+EOF
+chmod 600 "$HATCH_HOME/config/install.json"
+
+ln -sf "$INSTALL_DIR/hatch" "$HATCH_HOME/bin/hatch"
+chmod +x "$INSTALL_DIR/hatch" "$INSTALL_DIR/scripts/hatch_cli.py"
 
 # ── Data directory + profile.yaml ─────────────────────────────────
 
@@ -103,11 +128,15 @@ fi
 
 # ── Build & start ──────────────────────────────────────────────────
 
-info "Building containers (first run may take 2–3 minutes)…"
-$COMPOSE build
+info "Building and starting the beginner-safe stack…"
+docker compose -f docker-compose.easy.yml up -d --build
 
-info "Starting Hatch…"
-$COMPOSE up -d
+if [ "$MODE" = "local" ]; then
+  "$HATCH_HOME/bin/hatch" probe
+  "$HATCH_HOME/bin/hatch" models install
+elif [ "$MODE" = "cloud" ]; then
+  info "Choose a provider in Hatch, then run: hatch secrets set <provider>"
+fi
 
 # ── Optional: systemd user service ────────────────────────────────
 
@@ -134,7 +163,8 @@ echo "  API docs:   http://localhost:8000/docs"
 echo ""
 warn "First run? The onboarding wizard will appear automatically at http://localhost:3000"
 echo ""
-echo "  Manage:  cd $INSTALL_DIR && $COMPOSE ps"
-echo "  Logs:    cd $INSTALL_DIR && $COMPOSE logs -f"
-echo "  Stop:    cd $INSTALL_DIR && $COMPOSE down"
+echo "  Add to PATH: export PATH=\"$HATCH_HOME/bin:\$PATH\""
+echo "  Status:  $HATCH_HOME/bin/hatch status"
+echo "  Logs:    $HATCH_HOME/bin/hatch logs"
+echo "  Stop:    $HATCH_HOME/bin/hatch stop"
 echo ""

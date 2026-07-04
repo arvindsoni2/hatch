@@ -2126,41 +2126,6 @@ export async function fetchSkillGaps(limit = 15): Promise<SkillGaps> {
   return apiFetch<SkillGaps>(`/api/analytics/skill-gaps?limit=${limit}`);
 }
 
-// ── Settings / API key management ───────────────────────────────────
-
-export interface ProviderStatus {
-  env_var: string | null;
-  set: boolean;
-  masked: string | null;
-}
-
-export interface EnvStatus {
-  configured_providers: Record<string, ProviderStatus>;
-  current_provider: string;
-  tier: string;
-  api_keys_file: string;
-}
-
-export async function fetchEnvStatus(): Promise<EnvStatus> {
-  return apiFetch<EnvStatus>('/api/v2/settings/env/status');
-}
-
-export interface SaveApiKeyResult {
-  valid: boolean;
-  provider?: string;
-  models_available?: string[];
-  tier?: string;
-  error?: string;
-}
-
-export async function saveApiKey(keyName: string, keyValue: string): Promise<SaveApiKeyResult> {
-  return apiFetch<SaveApiKeyResult>('/api/v2/settings/env', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key_name: keyName, key_value: keyValue }),
-  });
-}
-
 export interface OllamaModelsResult {
   models: string[];
   base_url: string;

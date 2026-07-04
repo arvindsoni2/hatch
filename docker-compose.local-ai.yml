@@ -1,0 +1,26 @@
+services:
+  llm-primary:
+    profiles: ["local-primary"]
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: >
+      --model /models/${HATCH_PRIMARY_MODEL_FILE:-Qwen3-8B-Q5_K_M.gguf}
+      --ctx-size 16384 --parallel 1 --host 0.0.0.0 --port 8080
+    volumes:
+      - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    networks: [hatch]
+
+  llm-triage:
+    profiles: ["local-triage"]
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: >
+      --model /models/${HATCH_TRIAGE_MODEL_FILE:-Qwen3-0.6B-Q8_0.gguf}
+      --ctx-size 4096 --parallel 2 --host 0.0.0.0 --port 8081
+    volumes:
+      - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z
+    ports:
+      - "127.0.0.1:8081:8081"
+    restart: unless-stopped
+    networks: [hatch]

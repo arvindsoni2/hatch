@@ -3,7 +3,9 @@
 # Usage: iwr https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.ps1 | iex
 
 param (
-    [string]$InstallDir = "$env:LOCALAPPDATA\Hatch"
+    [string]$InstallDir = "$env:LOCALAPPDATA\Hatch",
+    [ValidateSet("AiLater", "Cloud", "Local", "Advanced")]
+    [string]$Mode
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,11 +21,28 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Fail "Git is required: https://git-scm.com/download/win"
 }
+if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Fail "Python 3.10 or newer is required: https://www.python.org/downloads/windows/"
+}
 
 try {
     docker compose version | Out-Null
 } catch {
     Write-Fail "Docker Compose is unavailable. Start or update Docker Desktop."
+}
+
+if (-not $Mode) {
+    if ($env:CI -or [Console]::IsInputRedirected) {
+        $Mode = "AiLater"
+    } else {
+        $Choice = Read-Host "AI setup: [1] later (recommended), [2] cloud, [3] local, [4] advanced"
+        $Mode = switch ($Choice) {
+            "2" { "Cloud" }
+            "3" { "Local" }
+            "4" { "Advanced" }
+            default { "AiLater" }
+        }
+    }
 }
 
 if (Test-Path (Join-Path $InstallDir ".git")) {
@@ -35,36 +54,19 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
 }
 
 Set-Location $InstallDir
-New-Item -ItemType Directory -Force -Path "data\models" | Out-Null
-
-$Models = @(
-    @{
-        Name = "Qwen3-8B-Q5_K_M.gguf"
-        Url = "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q5_K_M.gguf"
-    },
-    @{
-        Name = "Qwen3-0.6B-Q8_0.gguf"
-        Url = "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf"
-    }
-)
-
-foreach ($Model in $Models) {
-    $Destination = Join-Path "data\models" $Model.Name
-    if ((Test-Path $Destination) -and ((Get-Item $Destination).Length -gt 0)) {
-        Write-Ok "$($Model.Name) already exists"
-    } else {
-        $Partial = "$Destination.part"
-        Write-Info "Downloading $($Model.Name). This is a one-time download."
-        if (Test-Path $Partial) {
-            Remove-Item $Partial -Force
-        }
-        Invoke-WebRequest -Uri $Model.Url -OutFile $Partial -UseBasicParsing
-        if ((-not (Test-Path $Partial)) -or ((Get-Item $Partial).Length -eq 0)) {
-            Write-Fail "Downloaded $($Model.Name), but the file is empty. Re-run the installer to retry."
-        }
-        Move-Item $Partial $Destination -Force
-    }
+$HatchHome = if ($env:HATCH_HOME) { $env:HATCH_HOME } else { Join-Path $env:USERPROFILE ".hatch" }
+$env:HATCH_HOME = $HatchHome
+@("bin", "config", "models", "probe", "logs", "backups") | ForEach-Object {
+    New-Item -ItemType Directory -Force -Path (Join-Path $HatchHome $_) | Out-Null
 }
+$InstallState = @{
+    schema_version = 1
+    managed = $true
+    source_dir = $InstallDir
+    installed_mode = $Mode
+} | ConvertTo-Json
+$InstallState | Set-Content (Join-Path $HatchHome "config\install.json")
+Copy-Item (Join-Path $InstallDir "hatch.ps1") (Join-Path $HatchHome "bin\hatch.ps1") -Force
 
 if (-not (Test-Path "data\profile.yaml")) {
     if (Test-Path "data\profile.yaml.example") {
@@ -84,12 +86,16 @@ if (-not (Test-Path ".env")) {
 }
 
 Write-Info "Building Hatch containers"
-docker compose build
-Write-Info "Starting Hatch"
-docker compose up -d
+docker compose -f docker-compose.easy.yml up -d --build
+if ($Mode -eq "Local") {
+    & (Join-Path $HatchHome "bin\hatch.ps1") probe
+    & (Join-Path $HatchHome "bin\hatch.ps1") models install
+} elseif ($Mode -eq "Cloud") {
+    Write-Info "Choose a provider in Hatch, then run: hatch secrets set <provider>"
+}
 
 Write-Host ""
 Write-Ok "Hatch is running"
 Write-Host "  Dashboard: http://localhost:3000"
 Write-Host "  API docs:  http://localhost:8000/docs"
-Write-Host "  Logs:      docker compose logs -f"
+Write-Host "  CLI:       $HatchHome\bin\hatch.ps1 status"

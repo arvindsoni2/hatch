@@ -64,9 +64,30 @@ Both installers:
 
 - verify Docker Compose and Git;
 - clone or update `arvindsoni2/hatch`;
-- download the bundled Qwen3 GGUF models, about 6.5 GB total;
+- create the per-user state directory at `${HATCH_HOME:-~/.hatch}`;
+- start without downloading a local model;
 - create `data/profile.yaml` and `.env` when missing;
-- build and start the Docker Compose stack.
+- build and start the beginner-safe Docker Compose stack.
+
+The default mode is “configure AI later.” To choose a mode explicitly:
+
+```bash
+./install.sh --mode ai-later
+./install.sh --mode cloud
+./install.sh --mode local
+./install.sh --mode advanced
+```
+
+After installation, use the host-side command wrapper:
+
+```bash
+hatch status
+hatch doctor
+hatch probe
+hatch models list
+hatch models install
+hatch apply-ai-config
+```
 
 Open:
 
@@ -91,7 +112,12 @@ Complete onboarding at <http://localhost:3000> or edit `data/profile.yaml` befor
 
 ## Local AI
 
-The default stack runs two local llama.cpp services:
+Local AI is opt-in for beginner installs. Run `hatch probe`, review
+`hatch models list`, and then run `hatch models install`. Every download
+requires confirmation and SHA-256 verification. Managed model files live under
+`${HATCH_HOME}/models`.
+
+The existing developer stack continues to run two local llama.cpp services:
 
 | Service | Model | Port | Purpose |
 |---|---|---:|---|
@@ -100,7 +126,32 @@ The default stack runs two local llama.cpp services:
 
 The model ports bind to localhost only. Model files live in `data/models/` and are not committed.
 
-Cloud providers are optional. Add the relevant key to `.env` and select the provider during onboarding or in Settings.
+Cloud providers are optional. Easy installs store keys in
+`${HATCH_HOME}/config/secrets.env`, and only the host CLI may change that file:
+
+```bash
+hatch secrets set openai
+hatch secrets status
+hatch secrets unset openai
+```
+
+The browser never accepts or returns provider keys. Existing developer installs
+may continue to use `.env` or `data/api_keys.env`.
+
+### AI not configured
+
+Hatch starts without an AI provider. Profile editing, the application tracker,
+manual job entry, and settings remain available. Tailoring, cover-letter
+generation, and Coach actions show an actionable setup message until you
+configure cloud or local AI.
+
+### Easy-install maintenance
+
+`hatch update --dry-run` reports a managed update without changing files.
+Updates refuse dirty or unmanaged checkouts and back up configuration and data
+before migrations. `hatch uninstall` removes easy-install services and the
+command shim but preserves `${HATCH_HOME}`. Data removal requires an explicit
+`--purge-*` flag and confirmation.
 
 ## Configuration
 

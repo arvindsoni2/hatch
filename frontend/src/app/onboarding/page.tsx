@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   fetchLocales, fetchLocaleLegalFields, fetchLocaleBoards,
-  testLLMConnection, saveProfile, saveApiKey, triggerAgent,
+  testLLMConnection, saveProfile, triggerAgent,
   type LocaleSummary, type LocaleLegalField, type LocaleBoard,
 } from "@/lib/api";
 import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
@@ -60,7 +60,6 @@ export default function OnboardingPage() {
     temperature: 0.3, max_retries: 3,
     track_costs: false, monthly_budget: 0, currency: "USD",
   });
-  const [testApiKey, setTestApiKey] = useState("");
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [boards, setBoards] = useState<LocaleBoard[]>([]);
@@ -167,7 +166,7 @@ export default function OnboardingPage() {
   const handleTestConnection = async () => {
     setTestingConnection(true);
     setConnectionResult(null);
-    const result = await testLLMConnection(llm.provider, testApiKey).catch((e: unknown) => ({
+    const result = await testLLMConnection(llm.provider, "").catch((e: unknown) => ({
       ok: false, error: e instanceof Error ? e.message : "Unknown error",
     }));
     setConnectionResult(result);
@@ -202,12 +201,6 @@ export default function OnboardingPage() {
     setError("");
     try {
       await saveProfile(buildProfile());
-      if (testApiKey && llm.provider !== "llamacpp") {
-        const keyResult = await saveApiKey(llm.api_key_env, testApiKey);
-        if (!keyResult.valid) {
-          throw new Error(keyResult.error || "API key could not be saved");
-        }
-      }
       await triggerAgent("scout").catch(() => {});
       try { localStorage.removeItem(STORAGE_KEY); } catch {}
       setStep(SUCCESS);
@@ -280,7 +273,7 @@ export default function OnboardingPage() {
           {step === 6 && (
             <StepAIProvider
               llm={llm} onLlmChange={setLlm}
-              testApiKey={testApiKey} onTestApiKeyChange={(k) => { setTestApiKey(k); setConnectionResult(null); }}
+              testApiKey="" onTestApiKeyChange={() => { setConnectionResult(null); }}
               testingConnection={testingConnection} connectionResult={connectionResult} onTestConnection={handleTestConnection}
               boards={boards} enabledBoards={enabledBoards} onEnabledBoardsChange={setEnabledBoards}
               scrapeIntervalHours={scrapeIntervalHours} onScrapeIntervalChange={setScrapeIntervalHours}

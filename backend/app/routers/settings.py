@@ -83,83 +83,12 @@ _load_env_file()
 
 @router.put("/env")
 async def save_api_key(data: dict[str, Any]) -> dict[str, Any]:
-    """Validate and persist an API key for a provider.
-
-    Accepts {"key_name": "GOOGLE_API_KEY", "key_value": "AIza..."}.
-    Validates by making a test LLM call, writes to data/api_keys.env,
-    updates profile.yaml provider, and reloads LLM factory.
-    Never returns the key value in the response.
-    """
-    key_name: str = data.get("key_name", "").strip()
-    key_value: str = data.get("key_value", "").strip()
-
-    if not key_name or not key_value:
-        raise HTTPException(status_code=400, detail="key_name and key_value are required")
-    if key_name not in _KEY_PROVIDER_MAP:
-        raise HTTPException(status_code=400, detail=f"Unknown key_name: {key_name}")
-
-    provider = _KEY_PROVIDER_MAP[key_name]
-
-    # Temporarily set in env for test call
-    original = os.environ.get(key_name)
-    os.environ[key_name] = key_value
-    try:
-        from ..agents.tools.llm_factory import _build_model  # noqa: PLC0415
-        from ..services.profile_service import load_profile  # noqa: PLC0415
-        profile = load_profile()
-        # Build a minimal model with the new key
-        from ..schemas.profile import LLMConfig  # noqa: PLC0415
-        test_cfg = LLMConfig(
-            provider=provider,  # type: ignore[arg-type]
-            triage_model=_PROVIDER_MODELS[provider][0],
-            api_key_env=key_name,
-            # LLMConfig defaults target the bundled llama.cpp containers.
-            # Cloud-provider validation must not inherit those local endpoints.
-            base_url=None,
-            triage_base_url="",
-        )
-        # Set model temporarily
-        profile.llm.provider = provider  # type: ignore[assignment]
-        profile.llm.triage_model = test_cfg.triage_model
-        profile.llm.api_key_env = key_name
-        llm = _build_model(test_cfg.triage_model, test_cfg)
-        await llm.ainvoke("Reply with the single word OK.")
-    except Exception as exc:
-        # Restore env on failure
-        if original is not None:
-            os.environ[key_name] = original
-        else:
-            os.environ.pop(key_name, None)
-        logger.warning("API key validation failed for %s: %s", key_name, exc)
-        return {"valid": False, "error": str(exc)}
-    finally:
-        pass  # keep new key in env regardless — it was valid
-
-    # Persist key to file
-    _write_env_key(key_name, key_value)
-    logger.info("API key persisted for provider %s (env var: %s)", provider, key_name)
-
-    # Update profile.yaml provider field
-    try:
-        raw = load_profile_raw()
-        if "llm" not in raw:
-            raw["llm"] = {}
-        raw["llm"]["provider"] = provider
-        raw["llm"]["api_key_env"] = key_name
-        save_profile_raw(raw)
-        invalidate_cache()
-    except Exception as exc:
-        logger.warning("Could not update profile.yaml provider: %s", exc)
-
-    models = _PROVIDER_MODELS.get(provider, [])
-    tier = "free" if provider in _FREE_TIER_PROVIDERS else "paid"
-
-    return {
-        "valid": True,
-        "provider": provider,
-        "models_available": models,
-        "tier": tier,
-    }
+    """Reject browser/API secret writes; v1 secrets are host-CLI owned."""
+    del data
+    raise HTTPException(
+        status_code=410,
+        detail="API key writes moved to the host CLI. Run `hatch secrets set <provider>`.",
+    )
 
 
 @router.get("/env/status")
