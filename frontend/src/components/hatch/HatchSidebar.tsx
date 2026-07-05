@@ -15,11 +15,12 @@ const NAV_ITEMS: { key: HatchTab; label: string; icon: string; href: string }[] 
   { key: 'today',   label: 'Today',          icon: 'home',      href: '/today'   },
   { key: 'stream',  label: 'Pipeline',       icon: 'layers',    href: '/stream'  },
   { key: 'tracker', label: 'Applications',   icon: 'briefcase', href: '/tracker' },
+  { key: 'tailor',  label: 'CV Studio',      icon: 'fileText',  href: '/tailor'  },
   { key: 'prep',    label: 'Interview Prep', icon: 'mic',       href: '/prep'    },
 ];
 
 interface HatchSidebarProps {
-  activeTab: HatchTab;
+  activeTab: HatchTab | null;
   readyCount?: number;
 }
 

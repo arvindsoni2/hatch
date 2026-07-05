@@ -8,12 +8,13 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 // ── HatchNav (mobile bottom tab bar) ─────────────────────────────────────────
 describe('HatchNav', () => {
-  it('renders all 4 tab labels', async () => {
+  it('renders all 5 tab labels', async () => {
     const { HatchNav } = await import('@/components/hatch/HatchNav');
     render(<HatchNav activeTab="today" />);
     expect(screen.getByText('Today')).toBeTruthy();
     expect(screen.getByText('Pipeline')).toBeTruthy();
     expect(screen.getByText('Applications')).toBeTruthy();
+    expect(screen.getByText('CV Studio')).toBeTruthy();
     expect(screen.getByText('Interview Prep')).toBeTruthy();
   });
 
@@ -33,7 +34,7 @@ describe('HatchNav', () => {
     expect(screen.queryByText('Home')).toBeNull();
   });
 
-  it('renders 4 anchor/link elements pointing to the 4 routes', async () => {
+  it('renders links pointing to all primary routes', async () => {
     const { HatchNav } = await import('@/components/hatch/HatchNav');
     const { container } = render(<HatchNav activeTab="today" />);
     const links = container.querySelectorAll('a');
@@ -41,6 +42,7 @@ describe('HatchNav', () => {
     expect(hrefs).toContain('/today');
     expect(hrefs).toContain('/stream');
     expect(hrefs).toContain('/tracker');
+    expect(hrefs).toContain('/tailor');
     expect(hrefs).toContain('/prep');
   });
 
@@ -60,24 +62,41 @@ describe('HatchNav', () => {
   });
 });
 
+describe('HatchNavShell route matching', () => {
+  it('maps CV Studio to its own active destination', async () => {
+    const { deriveTab } = await import('@/components/hatch/HatchNavShell');
+    expect(deriveTab('/tailor')).toBe('tailor');
+    expect(deriveTab('/tailor?jobUrl=https%3A%2F%2Fexample.com')).toBe('tailor');
+  });
+
+  it('does not mark Today active on settings and utility routes', async () => {
+    const { deriveTab } = await import('@/components/hatch/HatchNavShell');
+    expect(deriveTab('/settings/resume')).toBeNull();
+    expect(deriveTab('/analytics')).toBeNull();
+    expect(deriveTab('/jobs')).toBeNull();
+  });
+});
+
 // ── HatchSidebar ──────────────────────────────────────────────────────────────
 describe('HatchSidebar', () => {
-  it('renders the 4 nav item labels', async () => {
+  it('renders the 5 nav item labels', async () => {
     const { HatchSidebar } = await import('@/components/hatch/HatchSidebar');
     render(<HatchSidebar activeTab="today" />);
     expect(screen.getByText('Today')).toBeTruthy();
     expect(screen.getByText('Pipeline')).toBeTruthy();
     expect(screen.getByText('Applications')).toBeTruthy();
+    expect(screen.getByText('CV Studio')).toBeTruthy();
     expect(screen.getByText('Interview Prep')).toBeTruthy();
   });
 
-  it('links to all 4 routes', async () => {
+  it('links to all primary routes', async () => {
     const { HatchSidebar } = await import('@/components/hatch/HatchSidebar');
     const { container } = render(<HatchSidebar activeTab="today" />);
     const hrefs = Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href'));
     expect(hrefs).toContain('/today');
     expect(hrefs).toContain('/stream');
     expect(hrefs).toContain('/tracker');
+    expect(hrefs).toContain('/tailor');
     expect(hrefs).toContain('/prep');
   });
 

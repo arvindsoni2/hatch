@@ -58,6 +58,7 @@ interface TodayScreenProps {
   onMarkApplied?: (id: string) => void;
   onRevert?: (id: string) => void;
   onOpenPrep?: () => void;
+  onOpenCvStudio?: () => void;
 }
 
 const OUTPUT_LABELS: Record<string, string> = {
@@ -92,7 +93,7 @@ function FunnelArrow({ count }: { count: number }) {
   );
 }
 
-export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount = 2, upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep }: TodayScreenProps) {
+export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount = 2, upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep, onOpenCvStudio }: TodayScreenProps) {
   const ready = jobs.filter((j) => j.state === 'ready');
   const readyToApply = jobs.filter((j) => j.state === 'ready_to_apply');
   const initials = profileName.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -162,6 +163,11 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
           {ready.length > 0 && (
             <Btn kind="primary" iconR="arrowR" onClick={() => onReview?.(ready.map((j) => j.id))}>
               Review roles
+            </Btn>
+          )}
+          {ready.length === 0 && readyToApply.length === 0 && followUpCount === 0 && (
+            <Btn kind="primary" iconR="arrowR" onClick={onOpenCvStudio}>
+              Open CV Studio
             </Btn>
           )}
         </Card>

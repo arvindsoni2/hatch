@@ -5,23 +5,26 @@ import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
 import {
   Home, Briefcase, Activity, Mic, Settings, BookOpen,
-  Search, TrendingUp, BarChart2, Bell,
+  Search, TrendingUp, BarChart2, Bell, FileEdit, FileText,
 } from "lucide-react";
 
 const COMMANDS = [
   { group: "Navigate", items: [
     { label: "Today",           icon: Home,       href: "/today" },
     { label: "Jobs",            icon: Briefcase,  href: "/jobs" },
-    { label: "Tracker",         icon: Activity,   href: "/tracker" },
+    { label: "Applications",    icon: Activity,   href: "/tracker" },
+    { label: "CV Studio",       icon: FileEdit,   href: "/tailor" },
     { label: "Coach",           icon: Mic,        href: "/coach" },
-    { label: "Prep",            icon: BookOpen,   href: "/prep" },
+    { label: "Interview Prep",  icon: BookOpen,   href: "/prep" },
     { label: "Analytics",       icon: BarChart2,  href: "/analytics" },
-    { label: "Activity Stream", icon: TrendingUp, href: "/stream" },
+    { label: "Pipeline",        icon: TrendingUp, href: "/stream" },
     { label: "Profile Settings", icon: Settings,  href: "/settings/profile" },
+    { label: "Master CV",        icon: FileText,  href: "/settings/resume" },
     { label: "AI Provider",      icon: Settings,  href: "/settings/ai" },
   ]},
   { group: "Actions", items: [
     { label: "Browse all jobs",  icon: Search,  href: "/jobs?showAll=true" },
+    { label: "Create application pack", icon: FileEdit, href: "/tailor" },
     { label: "System Logs",     icon: Bell,    href: "/settings/system" },
   ]},
 ];

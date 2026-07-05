@@ -59,14 +59,15 @@ describe('UserMenu', () => {
     expect(screen.getByText('Analytics')).toBeTruthy();
   });
 
-  it('renders all 4 settings navigation items', async () => {
+  it('renders the settings navigation items with Master CV terminology', async () => {
     const { UserMenu } = await import('@/components/hatch/UserMenu');
     render(<UserMenu {...defaultProps} />);
     fireEvent.click(screen.getByRole('button', { name: /open user menu/i }));
     expect(screen.getByText('Profile')).toBeTruthy();
     expect(screen.getByText('AI Provider')).toBeTruthy();
     expect(screen.getByText('System & Logs')).toBeTruthy();
-    expect(screen.getByText('Resume')).toBeTruthy();
+    expect(screen.getByText('Master CV')).toBeTruthy();
+    expect(screen.queryByText('Resume')).toBeNull();
   });
 
   it('renders Theme row as a clickable menu item', async () => {

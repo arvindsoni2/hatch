@@ -434,18 +434,27 @@ export default function ResumePage() {
               <div className="flex items-center gap-3 border-t border-border pt-4">
                 <Link href="/tailor">
                   <Button size="sm">
-                    <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open Resume Studio
+                    <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open CV Studio
                   </Button>
                 </Link>
-                <a href={`${API_BASE}/api/resume/json`} target="_blank" rel="noopener noreferrer">
-                  <Button variant="outline" size="sm">
-                    <ExternalLink className="h-3.5 w-3.5 mr-1" /> View JSON
-                  </Button>
-                </a>
                 <Link href="/settings/profile">
                   <Button variant="outline" size="sm">Edit proof points</Button>
                 </Link>
               </div>
+              <details className="border-t border-border pt-4">
+                <summary className="cursor-pointer text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+                  Advanced
+                </summary>
+                <a
+                  href={`${API_BASE}/api/resume/json`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 inline-flex items-center text-xs font-medium"
+                  style={{ color: "var(--accent)" }}
+                >
+                  <ExternalLink className="h-3.5 w-3.5 mr-1" /> View CV data as JSON
+                </a>
+              </details>
             </div>
           )}
 

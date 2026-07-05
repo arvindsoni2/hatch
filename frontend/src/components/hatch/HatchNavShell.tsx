@@ -3,11 +3,13 @@ import { usePathname } from 'next/navigation';
 import { HatchNav, type HatchTab } from './HatchNav';
 import { HatchSidebar } from './HatchSidebar';
 
-function deriveTab(pathname: string): HatchTab {
+export function deriveTab(pathname: string): HatchTab | null {
+  if (pathname.startsWith('/today'))   return 'today';
   if (pathname.startsWith('/stream'))  return 'stream';
   if (pathname.startsWith('/tracker')) return 'tracker';
+  if (pathname.startsWith('/tailor'))  return 'tailor';
   if (pathname.startsWith('/prep'))    return 'prep';
-  return 'today';
+  return null;
 }
 
 interface HatchNavShellProps {

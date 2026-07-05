@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ATSScoreCard } from "@/components/ATSScoreCard";
 import { SkillMatchMatrix } from "@/components/SkillMatchMatrix";
@@ -64,7 +65,10 @@ const LS_JD_PREFIX = "tailor_jd_";
 
 export default function TailorPage() {
   const [jdText, setJdText] = useState("");
-  const [jobUrl, setJobUrl] = useState("");
+  const [jobUrl, setJobUrl] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("jobUrl") ?? "";
+  });
   const [variant, setVariant] = useState<"A" | "B">("A");
   const [designSettings, setDesignSettings] = useState<ResumeDesignSettings>({
     template_id: "ats_classic", page_target: "two_page", density: "standard",
@@ -163,7 +167,7 @@ export default function TailorPage() {
           JSON.stringify({ jdText, jobUrl })
         );
       } catch {
-        // localStorage might be blocked — not critical
+        // localStorage might be blocked; this is not critical.
       }
       return ref;
     });
@@ -250,13 +254,22 @@ export default function TailorPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>
-          Resume tailoring
-        </h1>
-        <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
-          AI-powered CV and cover letter generation with ATS optimisation
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>
+            CV Studio
+          </h1>
+          <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
+            Turn a job description into an evidence-led CV and application pack.
+          </p>
+        </div>
+        <Link
+          href="/settings/resume"
+          className="hatch-interactive inline-flex min-h-10 items-center justify-center rounded-lg border px-3 text-sm font-medium sm:justify-start"
+          style={{ borderColor: "var(--border)", color: "var(--text-dim)", textDecoration: "none" }}
+        >
+          <FileText className="mr-2 h-4 w-4" /> Manage master CV
+        </Link>
       </div>
 
       <ProfileSummaryCard compact />
@@ -266,20 +279,31 @@ export default function TailorPage() {
         <div className="space-y-4">
           {/* JD Input */}
           <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              Job Description
+            <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>
+              1. Add the job
             </h2>
+            <p className="mb-4 mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              Paste the description or use the original job URL.
+            </p>
+            <label htmlFor="cv-studio-job-description" className="mb-1.5 block text-xs font-medium" style={{ color: "var(--text-dim)" }}>
+              Job description
+            </label>
             <textarea
+              id="cv-studio-job-description"
               style={{ ...inputStyle, resize: "vertical" }}
               rows={10}
-              placeholder="Paste the full job description here..."
+              placeholder="Paste the full job description"
               value={jdText}
               onChange={(e) => setJdText(e.target.value)}
             />
+            <label htmlFor="cv-studio-job-url" className="mb-1.5 mt-3 block text-xs font-medium" style={{ color: "var(--text-dim)" }}>
+              Job URL <span style={{ color: "var(--text-muted)" }}>(optional)</span>
+            </label>
             <input
+              id="cv-studio-job-url"
               type="url"
-              style={{ ...inputStyle, marginTop: 8 }}
-              placeholder="Or paste a job URL (optional)"
+              style={inputStyle}
+              placeholder="https://example.com/jobs/role"
               value={jobUrl}
               onChange={(e) => setJobUrl(e.target.value)}
             />
@@ -292,40 +316,45 @@ export default function TailorPage() {
               {isAnalysing ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analysing...</>
               ) : (
-                <>Analyse JD <ChevronRight className="ml-1 h-4 w-4" /></>
+                <>Analyse job <ChevronRight className="ml-1 h-4 w-4" /></>
               )}
             </Button>
           </div>
 
           {/* Generation Controls */}
           <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-              Generate Documents
+            <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>
+              2. Choose your CV
             </h2>
+            <p className="mb-4 mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              Set the writing style and ATS-safe presentation for this application.
+            </p>
             {!canGenerate && stage === "idle" && (
               <p className="mb-3 text-xs rounded-lg px-3 py-2" style={{ background: "var(--surface-2)", color: "var(--text-muted)" }}>
-                Analyse a JD above first — documents will be saved to your Pipeline automatically.
+                Analyse a job first. The completed pack will be saved to Applications.
               </p>
             )}
-            <div className="mb-3 flex gap-2">
+            <fieldset className="mb-4">
+              <legend className="mb-2 text-xs font-medium" style={{ color: "var(--text-dim)" }}>Writing style</legend>
+              <div className="grid grid-cols-2 gap-2">
               {(["A", "B"] as const).map((v) => (
                 <button
                   key={v}
+                  type="button"
                   onClick={() => setVariant(v)}
-                  className="flex-1 rounded-lg py-2 text-sm font-medium transition-colors"
+                  aria-pressed={variant === v}
+                  className="rounded-lg px-3 py-2 text-sm font-medium transition-colors"
                   style={{
                     border: variant === v ? "1px solid var(--accent)" : "1px solid var(--border)",
                     background: variant === v ? "var(--accent-soft)" : "var(--surface-2)",
                     color: variant === v ? "var(--accent)" : "var(--text-dim)",
                   }}
                 >
-                  Variant {v}
-                  <span className="ml-1 text-xs opacity-60">
-                    {v === "A" ? "(formal)" : "(conversational)"}
-                  </span>
+                  {v === "A" ? "Formal" : "Conversational"}
                 </button>
               ))}
-            </div>
+              </div>
+            </fieldset>
             <ResumeStudio data={templateData} value={designSettings} analysis={analysis}
               generated={stage === "complete"} onChange={setDesignSettings} />
             {precheck?.keyword_gaps.length ? <div className="my-3 rounded-lg p-3 text-xs" style={{ background: "var(--surface-2)", color: "var(--warning)" }}>
@@ -342,7 +371,7 @@ export default function TailorPage() {
                 {stage === "generating" ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
                 ) : (
-                  <><Zap className="mr-2 h-4 w-4" /> Generate application pack</>
+                  <><Zap className="mr-2 h-4 w-4" /> Create application pack</>
                 )}
               </Button>
               {autoApplicationId && (
@@ -360,7 +389,7 @@ export default function TailorPage() {
             {stage === "generating" && (
               <div className="mt-3 rounded-lg border p-3" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
                 <p className="text-xs text-center" style={{ color: "var(--text)" }}>
-                  Generating your CV and cover letter — this takes a few minutes.
+                  Creating your CV and cover letter. This takes a few minutes.
                 </p>
                 <p className="mt-1 text-xs text-center" style={{ color: "var(--text-muted)" }}>
                   {generateState.status === "pending" ? "Queuing…" : "Running pipeline…"}{" "}
@@ -373,9 +402,9 @@ export default function TailorPage() {
               <div className="mt-3 rounded-lg p-3" style={{ background: "var(--success-soft)", border: "1px solid var(--success)", color: "var(--success)" }}>
                 <p className="text-sm font-medium text-center">✓ Documents generated</p>
                 <p className="mt-1 text-xs text-center" style={{ color: "var(--text-muted)" }}>
-                  Saved to your Pipeline.{" "}
+                  Saved to Applications.{" "}
                   <a
-                    href={`/pipeline`}
+                    href="/tracker"
                     className="inline-flex items-center gap-0.5 font-medium underline"
                     style={{ color: "var(--accent)" }}
                   >
@@ -397,7 +426,7 @@ export default function TailorPage() {
           {analysisHistory.length > 0 && (
             <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                Recent Analyses
+                Recent job analyses
               </h2>
               <div className="space-y-1.5">
                 {analysisHistory.map((job) => {
@@ -440,7 +469,7 @@ export default function TailorPage() {
                         {new Date(job.created_at).toLocaleDateString("en-GB", {
                           day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
                         })}
-                        {!isRunning && !isFailed && " · click to restore"}
+                        {!isRunning && !isFailed && " - select to restore"}
                       </p>
                     </button>
                   );
@@ -452,6 +481,12 @@ export default function TailorPage() {
 
         {/* ── RIGHT: Results Panel ── */}
         <div className="space-y-4">
+          <div>
+            <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>3. Review and create</h2>
+            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              Check the match evidence, then create and review the finished documents.
+            </p>
+          </div>
           {/* Tabs */}
           <div className="flex rounded-lg p-1" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             {(["analysis", "review", "history"] as const).map((tab) => (
@@ -464,7 +499,7 @@ export default function TailorPage() {
                   color: activeTab === tab ? "var(--on-accent)" : "var(--text-dim)",
                 }}
               >
-                {tab === "analysis" ? "JD Analysis" : tab === "review" ? "Review" : "Documents"}
+                {tab === "analysis" ? "Job analysis" : tab === "review" ? "Review" : "Documents"}
               </button>
             ))}
           </div>
@@ -475,7 +510,7 @@ export default function TailorPage() {
               {/* Role overview */}
               <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                  Role Overview
+                  Role overview
                 </h3>
                 <p className="text-lg font-bold" style={{ color: "var(--text)" }}>{analysis.analysis.role_title}</p>
                 {analysis.analysis.seniority_level && (
@@ -526,7 +561,7 @@ export default function TailorPage() {
               {analysis.analysis.requirements.must_have.length > 0 && (
                 <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                   <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                    Must-Have Requirements
+                    Essential requirements
                   </h3>
                   <div className="flex flex-wrap gap-1.5">
                     {analysis.analysis.requirements.must_have.map((req) => (
@@ -545,7 +580,7 @@ export default function TailorPage() {
               {/* ATS Keywords */}
               <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
                 <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                  ATS Keywords
+                  ATS keywords
                 </h3>
                 {(["technical", "methodologies", "domain", "certifications"] as const).map((cat) => {
                   const kws = analysis.analysis.ats_keywords[cat];
@@ -584,7 +619,7 @@ export default function TailorPage() {
             <div className="rounded-xl p-12 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               <FileText className="mx-auto mb-3 h-10 w-10" style={{ color: "var(--border-strong)" }} />
               <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                Paste a job description and click Analyse JD to get started.
+                Add a job description, then select Analyse job to get started.
               </p>
               {analysisHistory.length > 0 && (
                 <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
@@ -602,7 +637,7 @@ export default function TailorPage() {
                 {analyseState.status === "pending" ? "Queuing analysis…" : "Extracting requirements…"}
               </p>
               <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
-                Results appear here in 1–3 minutes. You can navigate away — the{" "}
+                Results usually appear in 1-3 minutes. You can navigate away. The{" "}
                 <span className="font-medium" style={{ color: "var(--text)" }}>notification bell</span>{" "}
                 will alert you when done.
               </p>

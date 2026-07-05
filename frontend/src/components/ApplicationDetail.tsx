@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { X, Loader2, ExternalLink, FileText, Download, Sparkles } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -255,6 +256,16 @@ export function ApplicationDetail({
                       </div>
                     </div>
                   )}
+
+                  <div className="flex justify-end">
+                    <Link
+                      href={app.job?.url ? `/tailor?jobUrl=${encodeURIComponent(app.job.url)}` : "/tailor"}
+                      className="hatch-interactive inline-flex min-h-10 items-center justify-center rounded-lg border px-3 text-sm font-medium"
+                      style={{ borderColor: "var(--border)", color: "var(--text)", textDecoration: "none" }}
+                    >
+                      <FileText className="mr-2 h-4 w-4" /> Open in CV Studio
+                    </Link>
+                  </div>
 
                   {/* Generated documents */}
                   {documents.length > 0 && (

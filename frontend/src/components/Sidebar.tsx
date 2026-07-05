@@ -38,7 +38,7 @@ const NAV_GROUPS = [
   {
     label: "Prepare",
     items: [
-      { href: "/tailor", label: "Resume tailoring", icon: FileEdit },
+      { href: "/tailor", label: "CV Studio", icon: FileEdit },
       { href: "/coach", label: "Interview prep", icon: BookOpen },
     ],
   },

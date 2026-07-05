@@ -21,7 +21,7 @@ function exists(...parts: string[]) {
 
 // ── Direction A routes ────────────────────────────────────────────────────────
 describe('Direction A routes', () => {
-  for (const route of ['today', 'stream', 'tracker', 'prep']) {
+  for (const route of ['today', 'stream', 'tracker', 'tailor', 'prep']) {
     it(`app/${route}/page.tsx exists`, () => {
       expect(exists('app', route, 'page.tsx')).toBe(true);
     });
@@ -52,6 +52,21 @@ describe('Navigation cleanup (v4.1)', () => {
   it('HatchTopBar imports UserMenu (ThemeToggle moved into UserMenu dropdown)', () => {
     const topBar = read('components', 'hatch', 'HatchTopBar.tsx');
     expect(topBar).toContain('UserMenu');
+  });
+
+  it('primary navigation exposes CV Studio without changing its route', () => {
+    const sidebar = read('components', 'hatch', 'HatchSidebar.tsx');
+    const mobileNav = read('components', 'hatch', 'HatchNav.tsx');
+    expect(sidebar).toContain("label: 'CV Studio'");
+    expect(sidebar).toContain("href: '/tailor'");
+    expect(mobileNav).toContain("label: 'CV Studio'");
+    expect(mobileNav).toContain("href: '/tailor'");
+  });
+
+  it('mobile shell exposes the user menu', () => {
+    const mobileBar = read('components', 'hatch', 'HatchMobileBar.tsx');
+    expect(mobileBar).toContain('UserMenu');
+    expect(mobileBar).toContain('<UserMenu');
   });
 
   it('UserMenu.tsx exists with ThemeToggle inside (v4.1 user settings dropdown)', () => {

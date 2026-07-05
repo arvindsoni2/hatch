@@ -183,6 +183,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
             onMarkApplied={handleMarkApplied}
             onRevert={handleRevert}
             onOpenPrep={() => router.push("/prep")}
+            onOpenCvStudio={() => router.push("/tailor")}
           />
         </div>
         {/* Agent activity panel — desktop right column, mobile hidden (shows below) */}

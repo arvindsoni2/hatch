@@ -9,6 +9,7 @@ const ROUTE_LABELS: Record<string, { title: string; sub?: string }> = {
   '/stream':       { title: 'Pipeline' },
   '/tracker':      { title: 'Applications' },
   '/prep':         { title: 'Interview Prep' },
+  '/tailor':       { title: 'CV Studio', sub: 'Create a tailored CV and application pack' },
   '/settings/resume':  { title: 'Master CV' },
   '/settings/profile': { title: 'Profile' },
   '/settings/ai':      { title: 'AI Provider' },

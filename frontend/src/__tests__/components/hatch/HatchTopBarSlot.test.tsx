@@ -68,6 +68,14 @@ describe('HatchTopBarSlot', () => {
     expect(screen.getByText('Master CV')).toBeTruthy();
   });
 
+  it('shows "CV Studio" for /tailor pathname', async () => {
+    const nav = await import('next/navigation');
+    vi.mocked(nav.usePathname).mockReturnValue('/tailor');
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByText('CV Studio')).toBeTruthy();
+  });
+
   it('renders a notifications button', async () => {
     const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
     await act(async () => { render(<HatchTopBarSlot />); });

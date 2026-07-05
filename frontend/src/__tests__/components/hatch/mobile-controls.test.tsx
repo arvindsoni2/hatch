@@ -27,6 +27,12 @@ describe('HatchMobileBar', () => {
     expect(screen.getByRole('button', { name: /toggle dark mode/i })).toBeTruthy();
   });
 
+  it('renders an account menu for mobile settings access', async () => {
+    const { HatchMobileBar } = await import('@/components/hatch/HatchMobileBar');
+    await act(async () => { render(<HatchMobileBar />); });
+    expect(screen.getByRole('button', { name: /open user menu/i })).toBeTruthy();
+  });
+
   it('has md:hidden class so it is desktop-hidden', async () => {
     const { HatchMobileBar } = await import('@/components/hatch/HatchMobileBar');
     let container!: HTMLElement;

@@ -140,7 +140,7 @@ function CvUploadCard() {
 
       {state !== "done" && (
         <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">
-          You can upload or replace your CV at any time in Settings → Resume.
+          You can upload or replace your CV at any time in Settings, under Master CV.
         </p>
       )}
     </div>

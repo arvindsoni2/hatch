@@ -2,17 +2,18 @@
 import Link from 'next/link';
 import { HatchIcon } from './HatchIcon';
 
-export type HatchTab = 'today' | 'stream' | 'tracker' | 'prep';
+export type HatchTab = 'today' | 'stream' | 'tracker' | 'tailor' | 'prep';
 
 const TABS: { key: HatchTab; label: string; icon: string; href: string }[] = [
   { key: 'today',   label: 'Today',          icon: 'home',      href: '/today'   },
   { key: 'stream',  label: 'Pipeline',       icon: 'layers',    href: '/stream'  },
   { key: 'tracker', label: 'Applications',   icon: 'briefcase', href: '/tracker' },
+  { key: 'tailor',  label: 'CV Studio',      icon: 'fileText',  href: '/tailor'  },
   { key: 'prep',    label: 'Interview Prep', icon: 'mic',       href: '/prep'    },
 ];
 
 interface HatchNavProps {
-  activeTab: HatchTab;
+  activeTab: HatchTab | null;
 }
 
 export function HatchNav({ activeTab }: HatchNavProps) {
@@ -52,7 +53,7 @@ export function HatchNav({ activeTab }: HatchNavProps) {
               color={active ? 'var(--accent)' : 'var(--text-muted)'}
               strokeWidth={active ? 2.3 : 2}
             />
-            <span style={{ fontSize: 10.5, fontWeight: active ? 700 : 500, lineHeight: 1 }}>{label}</span>
+            <span style={{ fontSize: 10, fontWeight: active ? 700 : 500, lineHeight: 1, whiteSpace: 'nowrap' }}>{label}</span>
           </Link>
         );
       })}

@@ -207,6 +207,13 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
                 View original <ExternalLink className="h-3 w-3" />
               </a>
             )}
+            <Link
+              href={job.url ? `/tailor?jobUrl=${encodeURIComponent(job.url)}` : "/tailor"}
+              className="hatch-interactive inline-flex min-h-10 items-center justify-center rounded-lg px-3 text-sm font-medium"
+              style={{ background: "var(--accent)", color: "var(--on-accent)", textDecoration: "none" }}
+            >
+              <FileText className="mr-2 h-4 w-4" /> Create CV pack
+            </Link>
           </div>
         </div>
 

@@ -11,11 +11,11 @@ const data: ResumeTemplateResponse = {
 };
 
 describe("ResumeStudio", () => {
-  it("renders controls and approximate DOCX notice", () => {
+  it("renders CV design controls and the final-layout notice", () => {
     const onChange = vi.fn();
     render(<ResumeStudio data={data} value={settings} analysis={null} generated={false} onChange={onChange} />);
-    expect(screen.getByText("Resume Studio")).toBeTruthy();
-    expect(screen.getByText(/DOCX export is the source of truth/)).toBeTruthy();
+    expect(screen.getByText("CV design")).toBeTruthy();
+    expect(screen.getByText(/generated DOCX is the final layout/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Page target"), { target: { value: "two_page" } });
     expect(onChange).toHaveBeenCalled();
   });

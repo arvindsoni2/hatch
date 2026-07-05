@@ -15,7 +15,7 @@ const QUICK_LINKS: { label: string; icon: string; href: string }[] = [
 const SETTINGS_ITEMS: { label: string; icon: string; href: string }[] = [
   { label: 'Profile',       icon: 'user',     href: '/settings/profile' },
   { label: 'AI Provider',   icon: 'zap',      href: '/settings/ai'      },
-  { label: 'Resume',        icon: 'fileText', href: '/settings/resume'  },
+  { label: 'Master CV',      icon: 'fileText', href: '/settings/resume'  },
   { label: 'Security',      icon: 'lock',     href: '/settings/security' },
   { label: 'System & Logs', icon: 'settings', href: '/settings/system'  },
 ];
