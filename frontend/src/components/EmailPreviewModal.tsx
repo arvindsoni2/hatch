@@ -1,8 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, RefreshCw, X, ExternalLink, Send, SkipForward } from "lucide-react";
+import { Mail, RefreshCw, ExternalLink, Send, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  ResponsiveDialogContent,
+} from "@/components/ui/dialog";
 import {
   generateEmail,
   updateEmail,
@@ -33,10 +42,11 @@ export function EmailPreviewModal({ email: initialEmail, onClose, onSent }: Emai
   const [body, setBody] = useState(initialEmail.body_plain);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const recipientIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipientEmail.trim());
 
   const handleSendMailto = async () => {
-    if (!recipientEmail.trim()) {
-      setError("Recipient email is required");
+    if (!recipientIsValid) {
+      setError("Enter a valid recipient email address.");
       return;
     }
     setLoading(true);
@@ -60,8 +70,8 @@ export function EmailPreviewModal({ email: initialEmail, onClose, onSent }: Emai
   };
 
   const handleSendSmtp = async () => {
-    if (!recipientEmail.trim()) {
-      setError("Recipient email is required");
+    if (!recipientIsValid) {
+      setError("Enter a valid recipient email address.");
       return;
     }
     setLoading(true);
@@ -109,38 +119,41 @@ export function EmailPreviewModal({ email: initialEmail, onClose, onSent }: Emai
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
+    <Dialog onOpenChange={(open) => { if (!open && !loading) onClose(); }} open>
+      <ResponsiveDialogContent preventClose={loading}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+        <DialogHeader className="flex items-center gap-2">
           <div className="flex items-center gap-2">
-            <Mail className="h-5 w-5 text-brand-600" />
+            <Mail aria-hidden="true" className="h-5 w-5 text-[var(--accent)]" />
             <div>
-              <h2 className="text-sm font-semibold text-slate-900">
+              <DialogTitle className="text-sm">
                 {EMAIL_TYPE_LABELS[email.email_type] ?? email.email_type}
-              </h2>
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                Review the recipient, subject, and message before sending.
+              </DialogDescription>
               {(email.job_title || email.company) && (
-                <p className="text-xs text-slate-500">
-                  {email.job_title}{email.company ? ` · ${email.company}` : ""}
+                <p className="text-xs text-[var(--text-muted)]">
+                  {email.job_title}{email.company ? `, ${email.company}` : ""}
                 </p>
               )}
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+        </DialogHeader>
 
         {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        <DialogBody className="space-y-4">
           {/* Recipient */}
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">To</label>
             <input
               type="email"
+              autoComplete="email"
+              name="recipient_email"
+              aria-invalid={error && !recipientIsValid ? true : undefined}
               value={recipientEmail}
               onChange={(e) => setRecipientEmail(e.target.value)}
-              placeholder="recruiter@agency.co.uk"
+              placeholder="recruiter@example.com…"
               className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>
@@ -150,6 +163,8 @@ export function EmailPreviewModal({ email: initialEmail, onClose, onSent }: Emai
             <label className="block text-xs font-medium text-slate-700 mb-1">Subject</label>
             <input
               type="text"
+              autoComplete="off"
+              name="subject"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -195,14 +210,14 @@ export function EmailPreviewModal({ email: initialEmail, onClose, onSent }: Emai
           </div>
 
           {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2" role="alert">
               {error}
             </p>
           )}
-        </div>
+        </DialogBody>
 
         {/* Footer actions */}
-        <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+        <DialogFooter className="items-stretch justify-between sm:items-center">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -245,8 +260,8 @@ export function EmailPreviewModal({ email: initialEmail, onClose, onSent }: Emai
               Send Directly
             </Button>
           </div>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </ResponsiveDialogContent>
+    </Dialog>
   );
 }

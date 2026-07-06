@@ -1,7 +1,8 @@
 "use client";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { HatchIcon } from './HatchIcon';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface UserMenuProps {
   name: string;
@@ -30,6 +31,7 @@ const menuRow: React.CSSProperties = {
   alignItems: 'center',
   gap: 10,
   padding: '9px 16px',
+  minHeight: 44,
   background: 'none',
   border: 'none',
   cursor: 'pointer',
@@ -40,7 +42,6 @@ const menuRow: React.CSSProperties = {
 export function UserMenu({ name, role }: UserMenuProps) {
   const [open, setOpen] = useState(false);
   const [isDark, setIsDark] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const initials = getInitials(name);
 
@@ -58,31 +59,16 @@ export function UserMenu({ name, role }: UserMenuProps) {
     localStorage.setItem('theme', next ? 'dark' : 'light');
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
-
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button
-        aria-label="Open user menu"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          width: 32,
-          height: 32,
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger asChild>
+        <button
+          aria-label="Open user menu"
+          aria-haspopup="menu"
+          className="hatch-interactive"
+          style={{
+          width: 44,
+          height: 44,
           borderRadius: '50%',
           background: 'var(--accent)',
           color: 'var(--on-accent)',
@@ -94,27 +80,16 @@ export function UserMenu({ name, role }: UserMenuProps) {
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
-        }}
-      >
-        {initials}
-      </button>
+          }}
+        >
+          {initials}
+        </button>
+      </PopoverTrigger>
 
-      {open && (
-        <div
+      <PopoverContent
+          className="min-w-[220px] overflow-hidden p-0"
           role="menu"
           aria-label="User menu"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 8px)',
-            right: 0,
-            minWidth: 220,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 12,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-            overflow: 'hidden',
-            zIndex: 200,
-          }}
         >
           {/* Identity header */}
           <div style={{
@@ -202,8 +177,7 @@ export function UserMenu({ name, role }: UserMenuProps) {
               Re-run Onboarding
             </button>
           </div>
-        </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }

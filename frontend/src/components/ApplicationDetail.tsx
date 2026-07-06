@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { X, Loader2, ExternalLink, FileText, Download, Sparkles } from "lucide-react";
+import { Loader2, ExternalLink, FileText, Download, Sparkles } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
@@ -11,6 +11,12 @@ import { InterviewTimeline } from "./InterviewTimeline";
 import { FollowUpList } from "./FollowUpList";
 import { ActivityFeed } from "./ActivityFeed";
 import { RecruiterContact } from "./RecruiterContact";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   fetchApplication,
   getDocumentHistory,
@@ -98,7 +104,7 @@ export function ApplicationDetail({
       onStatusChange?.();
       await loadApp();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to update status");
+      setError(e instanceof Error ? e.message : "Failed to update status");
     }
   };
 
@@ -139,13 +145,14 @@ export function ApplicationDetail({
   const pendingFollowUps = app?.follow_ups?.filter((f) => !f.completed).length ?? 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div
-        className="relative w-full max-w-2xl h-full bg-white shadow-2xl overflow-y-auto flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Sheet onOpenChange={(open) => { if (!open) onClose(); }} open>
+      <SheetContent className="max-w-2xl">
+        <SheetTitle className="sr-only">Application Details</SheetTitle>
+        <SheetDescription className="sr-only">
+          Review the application, interviews, follow-ups, and activity.
+        </SheetDescription>
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-start justify-between z-10">
+        <div className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-4 pr-16">
           <div className="flex-1 min-w-0 pr-4">
             {app ? (
               <>
@@ -186,12 +193,6 @@ export function ApplicationDetail({
               <div className="h-6 bg-slate-200 rounded w-48 animate-pulse" />
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 transition-colors"
-          >
-            <X className="h-5 w-5" />
-          </button>
         </div>
 
         {/* Tabs */}
@@ -458,7 +459,7 @@ export function ApplicationDetail({
             </>
           ) : null}
         </div>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

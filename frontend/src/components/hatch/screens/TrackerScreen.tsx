@@ -27,6 +27,21 @@ import { Dot } from "../Dot";
 import { HatchIcon } from "../HatchIcon";
 import { ScorePill } from "../ScorePill";
 import { JobUrlImportModal } from "@/components/jobs/JobUrlImportModal";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type BoardStage =
   | "saved"
@@ -381,6 +396,10 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
   const [manualForm, setManualForm] = useState<ManualApplicationForm>(EMPTY_MANUAL_FORM);
   const [manualError, setManualError] = useState<string | null>(null);
   const [savingManual, setSavingManual] = useState(false);
+  const [pendingMove, setPendingMove] = useState<{
+    application: ApplicationListItem;
+    status: ApplicationStatus;
+  } | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const persistStatus = onStatusChange ?? updateApplicationStatus;
 
@@ -402,13 +421,18 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
     return result;
   }, [items]);
 
-  async function moveApplication(application: ApplicationListItem, status: ApplicationStatus) {
+  function requestMove(application: ApplicationListItem, status: ApplicationStatus) {
     if (!moveOptions(application.status).includes(status)) {
       setNotice("That move is not available. Applications move forward; use the close actions for rejected or withdrawn roles.");
       return;
     }
-    if (!window.confirm(confirmationMessage(application, status))) return;
+    setPendingMove({ application, status });
+  }
 
+  async function confirmMove() {
+    if (!pendingMove) return;
+    const { application, status } = pendingMove;
+    setPendingMove(null);
     const previousItems = items;
     setItems((current) => current.map((item) => item.id === application.id ? { ...item, status } : item));
     setNotice(`Moving ${application.job_title ?? "application"} to ${STATUS_LABELS[status]}...`);
@@ -436,7 +460,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
       setNotice("Only the next stage to the right is available. The card has not moved.");
       return;
     }
-    void moveApplication(application, targetStatus);
+    requestMove(application, targetStatus);
   }
 
   async function saveManualApplication() {
@@ -495,44 +519,48 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setActiveApplication(null)}>
         <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 18, alignItems: "flex-start", scrollSnapType: "x proximity" }}>
           {STAGES.map((stage) => (
-            <KanbanColumn key={stage.key} stage={stage} applications={grouped[stage.key]} onMove={(application, status) => void moveApplication(application, status)} />
+            <KanbanColumn key={stage.key} stage={stage} applications={grouped[stage.key]} onMove={requestMove} />
           ))}
         </div>
         <DragOverlay>{activeApplication ? <CardPreview application={activeApplication} /> : null}</DragOverlay>
       </DndContext>
+      <AlertDialog
+        onOpenChange={(open) => { if (!open) setPendingMove(null); }}
+        open={Boolean(pendingMove)}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle className="text-lg font-semibold text-[var(--text)]">
+            Move Application?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {pendingMove
+              ? confirmationMessage(pendingMove.application, pendingMove.status)
+              : "Confirm the application stage change."}
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void confirmMove()}
+              variant="default"
+            >
+              Move Application
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {showImport ? <JobUrlImportModal onClose={() => setShowImport(false)} onSaved={() => { setShowImport(false); router.refresh(); }} /> : null}
 
       {showManualForm && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Add application"
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 50,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(5, 7, 12, 0.68)",
-            padding: 16,
-          }}
+        <Dialog
+          onOpenChange={(open) => { if (!open && !savingManual) setShowManualForm(false); }}
+          open
         >
-          <div style={{ width: "min(620px, 100%)", maxHeight: "90vh", overflow: "auto", borderRadius: 12, border: "1px solid var(--border)", background: "var(--surface)", padding: 18, boxShadow: "0 24px 80px rgba(0,0,0,0.42)" }}>
+          <DialogContent className="max-w-[620px] overflow-y-auto p-[18px]" preventClose={savingManual}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>Add application</h2>
-                <p style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Track a role submitted outside Hatch</p>
+                <DialogTitle style={{ margin: 0, fontSize: 18, color: "var(--text)" }}>Add Application</DialogTitle>
+                <DialogDescription style={{ margin: "3px 0 0", fontSize: 12, color: "var(--text-muted)" }}>Track a role submitted outside Hatch.</DialogDescription>
               </div>
-              <button
-                type="button"
-                className="hatch-interactive"
-                onClick={() => setShowManualForm(false)}
-                aria-label="Close"
-                style={{ width: 44, height: 44, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)" }}
-              >
-                <HatchIcon name="x" size={16} color="currentColor" />
-              </button>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
@@ -620,8 +648,8 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
                 {savingManual ? "Saving application…" : "Save to Applications"}
               </Btn>
             </div>
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

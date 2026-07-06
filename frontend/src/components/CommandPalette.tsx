@@ -8,6 +8,12 @@ import {
   Search, TrendingUp, BarChart2, Bell, FileEdit, FileText,
 } from "lucide-react";
 import { PRODUCT_ROUTES } from "@/lib/product-routes";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const COMMANDS = [
   { group: "Navigate", items: [
@@ -42,33 +48,21 @@ export function CommandPalette() {
         e.preventDefault();
         handleOpen();
       }
-      if (e.key === "Escape" && open) {
-        setOpen(false);
-      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, handleOpen]);
-
-  if (!open) return null;
+  }, [handleOpen]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
-      onClick={() => setOpen(false)}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
-
-      {/* Palette */}
-      <div
-        className="relative w-full max-w-[520px] mx-4 rounded-[var(--r-card,12px)] shadow-2xl overflow-hidden"
-        style={{ background: "var(--surface)", border: "1px solid var(--border-strong)" }}
-        onClick={(e) => e.stopPropagation()}
+    <Dialog onOpenChange={setOpen} open={open}>
+      <DialogContent
+        className="top-[15vh] max-w-[520px] -translate-y-0 p-0"
+        hideClose
       >
+        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <DialogDescription className="sr-only">
+          Search pages and actions in Hatch.
+        </DialogDescription>
         <Command label="Command palette">
           <div
             className="flex items-center gap-3 px-4 py-3"
@@ -78,7 +72,6 @@ export function CommandPalette() {
             <Command.Input
               placeholder="Search pages and actions…"
               className="flex-1 bg-transparent text-[14px] text-[var(--text)] placeholder:text-[var(--text-dim)] outline-none"
-              autoFocus
             />
             <kbd className="text-[11px] text-[var(--text-dim)] shrink-0">ESC</kbd>
           </div>
@@ -123,7 +116,7 @@ export function CommandPalette() {
             <span><kbd>⌘K</kbd> toggle</span>
           </div>
         </Command>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

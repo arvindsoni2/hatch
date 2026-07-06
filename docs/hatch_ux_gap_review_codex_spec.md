@@ -1186,8 +1186,8 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR | Scope | Depends on | Status | Branch / commit | Handoff notes |
 |---|---|---|---|---|---|
 | PR 1 | Product vocabulary and route contract | None | Merged | `ux/01-route-contract` / `033ed49` | Merged as GitHub PR #5 |
-| PR 2 | Shared page and control foundation | PR 1 | In progress | `ux/02-ui-foundation` | Implementation validated; PR review and merge pending |
-| PR 3 | Accessible overlay primitives | PR 2 | Not started | `ux/03-overlay-primitives` | |
+| PR 2 | Shared page and control foundation | PR 1 | Merged | `ux/02-ui-foundation` / `e8bebd7` | Merged as GitHub PR #6 |
+| PR 3 | Accessible overlay primitives | PR 2 | In progress | `ux/03-overlay-primitives` / `2c9a4d7` | Implementation validated; PR review and merge pending |
 | PR 4 | App-lock security and recovery | PR 2, PR 3 | Not started | `ux/04-app-lock-security` | |
 | PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Not started | `ux/05-onboarding` | |
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Not started | `ux/06-settings-profile` | |
@@ -1351,6 +1351,18 @@ This PR is a decision gate. Do not start PR 2 until route ownership has review a
 - Destructive confirmation requires an explicit labelled action
 
 Split this PR if migration exceeds the review limit: PR 3A adds and proves primitives on one low-risk surface; PR 3B migrates the remaining inventory without changing the API.
+
+**PR 3 resume handoff:**
+
+- Shared Radix-backed Dialog, Alert Dialog, Sheet, and Popover wrappers now own naming, close controls, responsive sizing, focus trapping and return, Escape/outside-click policy, scroll locking, and inert backgrounds
+- Busy review, import, email, consent, and session-generation flows prevent accidental dismissal while work is in progress
+- Command palette, notification bell, user menu, job URL import, application detail, review queue, consent gate, email preview, Coach and Prep launchers, add-application flow, stage movement, Prep deletion, and Profile learning reset use the shared contracts
+- Browser `confirm` and `alert` calls in migrated surfaces were replaced by labelled Alert Dialogs or inline recoverable notices
+- Nested sheet/dialog behaviour is explicitly covered: closing the child restores focus inside the still-active parent
+- Validation passed: 400 Vitest tests, TypeScript type-check, production build, one Playwright Escape/focus-return test, and diff whitespace checks
+- Visual checks cover the shared user-menu popover at 375px and 1440px in light and dark themes
+- Existing build warnings remain in `AnswerTimer` and `OnboardingPrimitives`; existing test warnings remain in asynchronous component tests and FaceCapture
+- Do not start PR 4 until PR 3 has review approval and is marked `Merged`
 
 ### 9.6 PR 4: Harden app-lock security and recovery
 

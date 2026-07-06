@@ -237,12 +237,12 @@ describe('TrackerScreen', () => {
   it('provides a keyboard-accessible forward move control', async () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
     const onStatusChange = vi.fn().mockResolvedValue(undefined);
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<TrackerScreen applications={TRACKER_APPS} onStatusChange={onStatusChange} />);
     fireEvent.change(screen.getByLabelText('Move Cloud Architect to another stage'), { target: { value: 'interview' } });
+    expect(screen.getByRole('alertdialog', { name: 'Move Application?' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Move Application' }));
     await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith('a1', 'interview'));
     expect(within(screen.getByTestId('col-interview')).getByText('Cloud Architect')).toBeTruthy();
-    confirm.mockRestore();
   });
 });
 
