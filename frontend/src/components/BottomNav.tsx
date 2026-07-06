@@ -5,14 +5,15 @@ import { usePathname } from "next/navigation";
 import { Home, Search, CheckSquare, Columns3, BarChart3, GraduationCap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchPendingApprovals } from "@/lib/api";
+import { PRODUCT_ROUTES } from "@/lib/product-routes";
 
 const BOTTOM_NAV_ITEMS = [
   { href: "/", label: "Home", icon: Home, exact: true },
-  { href: "/jobs", label: "Jobs", icon: Search, exact: false },
+  { href: PRODUCT_ROUTES.jobs.href, label: PRODUCT_ROUTES.jobs.label, icon: Search, exact: false },
   { href: "/approvals", label: "Approvals", icon: CheckSquare, exact: false, badge: true },
-  { href: "/applications", label: "Pipeline", icon: Columns3, exact: false },
+  { href: PRODUCT_ROUTES.applications.href, label: PRODUCT_ROUTES.applications.label, icon: Columns3, exact: false },
   { href: "/analytics", label: "Analytics", icon: BarChart3, exact: false },
-  { href: "/coach", label: "Prep", icon: GraduationCap, exact: false },
+  { href: PRODUCT_ROUTES.interviewCoach.href, label: PRODUCT_ROUTES.interviewCoach.label, icon: GraduationCap, exact: false },
 ];
 
 export function BottomNav() {

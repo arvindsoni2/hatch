@@ -52,6 +52,14 @@ describe('HatchTopBarSlot', () => {
     expect(screen.getByText('Applications')).toBeTruthy();
   });
 
+  it('shows "Interview Coach" for /coach pathname', async () => {
+    const nav = await import('next/navigation');
+    vi.mocked(nav.usePathname).mockReturnValue('/coach');
+    const { HatchTopBarSlot } = await import('@/components/hatch/HatchTopBarSlot');
+    await act(async () => { render(<HatchTopBarSlot />); });
+    expect(screen.getByText('Interview Coach')).toBeTruthy();
+  });
+
   it('shows "Profile" for /settings pathname', async () => {
     const nav = await import('next/navigation');
     vi.mocked(nav.usePathname).mockReturnValue('/settings');

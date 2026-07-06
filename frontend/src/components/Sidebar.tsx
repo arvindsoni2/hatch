@@ -18,20 +18,21 @@ import {
   Bell,
 } from "lucide-react";
 import { fetchPendingApprovals, fetchRawProfile, fetchAllAgentStatus, type AllAgentStatus } from "@/lib/api";
+import { PRODUCT_ROUTES } from "@/lib/product-routes";
 
 const NAV_GROUPS = [
   {
     label: "Discover",
     items: [
       { href: "/", label: "Home", icon: Home, exact: true },
-      { href: "/jobs", label: "Inbox", icon: Inbox, badge: "approvals", badgeAccent: true },
+      { href: PRODUCT_ROUTES.jobs.href, label: PRODUCT_ROUTES.jobs.label, icon: Inbox, badge: "approvals", badgeAccent: true },
       { href: "/approvals", label: "Shortlist", icon: CheckCircle },
     ],
   },
   {
     label: "Track",
     items: [
-      { href: "/applications", label: "Pipeline", icon: LayoutDashboard },
+      { href: PRODUCT_ROUTES.applications.href, label: PRODUCT_ROUTES.applications.label, icon: LayoutDashboard },
       { href: "/analytics", label: "Analytics", icon: BarChart3 },
     ],
   },
@@ -39,7 +40,7 @@ const NAV_GROUPS = [
     label: "Prepare",
     items: [
       { href: "/tailor", label: "CV Studio", icon: FileEdit },
-      { href: "/coach", label: "Interview prep", icon: BookOpen },
+      { href: PRODUCT_ROUTES.interviewCoach.href, label: PRODUCT_ROUTES.interviewCoach.label, icon: BookOpen },
     ],
   },
 ];

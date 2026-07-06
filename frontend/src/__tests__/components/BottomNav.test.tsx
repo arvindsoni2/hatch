@@ -12,9 +12,9 @@ describe("BottomNav", () => {
     expect(screen.getByText("Home")).toBeInTheDocument();
     expect(screen.getByText("Jobs")).toBeInTheDocument();
     expect(screen.getByText("Approvals")).toBeInTheDocument();
-    expect(screen.getByText("Pipeline")).toBeInTheDocument();
+    expect(screen.getByText("Applications")).toBeInTheDocument();
     expect(screen.getByText("Analytics")).toBeInTheDocument();
-    expect(screen.getByText("Prep")).toBeInTheDocument();
+    expect(screen.getByText("Interview Coach")).toBeInTheDocument();
   });
 
   it("shows approval badge when there are pending approvals", async () => {

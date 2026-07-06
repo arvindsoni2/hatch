@@ -26,6 +26,7 @@ import { TailoringReviewPanel } from "@/components/TailoringReviewPanel";
 import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { CheckCircle2, ChevronRight, Clock, ExternalLink, FileText, Loader2, XCircle, Zap } from "lucide-react";
 import { ResumeStudio } from "@/components/tailor/ResumeStudio";
+import { PRODUCT_ROUTES } from "@/lib/product-routes";
 
 type Stage = "idle" | "analysing" | "analysed" | "generating" | "complete" | "error";
 
@@ -404,7 +405,7 @@ export default function TailorPage() {
                 <p className="mt-1 text-xs text-center" style={{ color: "var(--text-muted)" }}>
                   Saved to Applications.{" "}
                   <a
-                    href="/tracker"
+                    href={PRODUCT_ROUTES.applications.href}
                     className="inline-flex items-center gap-0.5 font-medium underline"
                     style={{ color: "var(--accent)" }}
                   >

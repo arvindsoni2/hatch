@@ -7,23 +7,24 @@ import {
   Home, Briefcase, Activity, Mic, Settings, BookOpen,
   Search, TrendingUp, BarChart2, Bell, FileEdit, FileText,
 } from "lucide-react";
+import { PRODUCT_ROUTES } from "@/lib/product-routes";
 
 const COMMANDS = [
   { group: "Navigate", items: [
     { label: "Today",           icon: Home,       href: "/today" },
-    { label: "Jobs",            icon: Briefcase,  href: "/jobs" },
-    { label: "Applications",    icon: Activity,   href: "/tracker" },
+    { label: PRODUCT_ROUTES.jobs.label, icon: Briefcase, href: PRODUCT_ROUTES.jobs.href },
+    { label: PRODUCT_ROUTES.applications.label, icon: Activity, href: PRODUCT_ROUTES.applications.href },
     { label: "CV Studio",       icon: FileEdit,   href: "/tailor" },
-    { label: "Coach",           icon: Mic,        href: "/coach" },
-    { label: "Interview Prep",  icon: BookOpen,   href: "/prep" },
+    { label: PRODUCT_ROUTES.interviewCoach.label, icon: Mic, href: PRODUCT_ROUTES.interviewCoach.href },
+    { label: PRODUCT_ROUTES.interviewPrep.label, icon: BookOpen, href: PRODUCT_ROUTES.interviewPrep.href },
     { label: "Analytics",       icon: BarChart2,  href: "/analytics" },
-    { label: "Pipeline",        icon: TrendingUp, href: "/stream" },
+    { label: PRODUCT_ROUTES.pipeline.label, icon: TrendingUp, href: PRODUCT_ROUTES.pipeline.href },
     { label: "Profile Settings", icon: Settings,  href: "/settings/profile" },
     { label: "Master CV",        icon: FileText,  href: "/settings/resume" },
     { label: "AI Provider",      icon: Settings,  href: "/settings/ai" },
   ]},
   { group: "Actions", items: [
-    { label: "Browse all jobs",  icon: Search,  href: "/jobs?showAll=true" },
+    { label: "Browse all jobs",  icon: Search,  href: `${PRODUCT_ROUTES.jobs.href}?showAll=true` },
     { label: "Create application pack", icon: FileEdit, href: "/tailor" },
     { label: "System Logs",     icon: Bell,    href: "/settings/system" },
   ]},

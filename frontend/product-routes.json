@@ -1,0 +1,32 @@
+{
+  "routes": {
+    "jobs": {
+      "href": "/jobs",
+      "label": "Jobs",
+      "purpose": "Review discovered roles and choose which opportunities to pursue."
+    },
+    "pipeline": {
+      "href": "/stream",
+      "label": "Pipeline",
+      "purpose": "Monitor roles while Hatch scores, tailors, and prepares them."
+    },
+    "applications": {
+      "href": "/tracker",
+      "label": "Applications",
+      "purpose": "Track submitted and active applications through each outcome."
+    },
+    "interviewPrep": {
+      "href": "/prep",
+      "label": "Interview Prep",
+      "purpose": "Create preparation plans and review interview sessions."
+    },
+    "interviewCoach": {
+      "href": "/coach",
+      "label": "Interview Coach",
+      "purpose": "Practise interviews and manage reusable interview stories."
+    }
+  },
+  "legacyRedirects": {
+    "/applications": "/tracker"
+  }
+}
