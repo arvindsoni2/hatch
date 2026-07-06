@@ -17,6 +17,14 @@ const gate = fs.readFileSync(
   'utf-8',
 );
 
+function collectPageFiles(directory: string): string[] {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return collectPageFiles(entryPath);
+    return entry.name === "page.tsx" ? [entryPath] : [];
+  });
+}
+
 describe('layout.tsx shell contract', () => {
   it('mounts the app-lock gate around the product shell', () => {
     expect(layout).toContain('<AppLockGate>');
@@ -35,6 +43,20 @@ describe('layout.tsx shell contract', () => {
   it('mounts HatchTopBarSlot (desktop top bar with bell + toggle)', () => {
     expect(gate).toContain('HatchTopBarSlot');
     expect(gate).toContain('<HatchTopBarSlot');
+  });
+
+  it('owns one main landmark and exposes a skip link target', () => {
+    expect(gate.match(/<main\b/g)).toHaveLength(2);
+    expect(gate).toContain('href="#main-content"');
+    expect(gate).toContain('id="main-content"');
+  });
+
+  it('does not nest route-level main landmarks inside the shell main', () => {
+    const appDirectory = path.join(__dirname, '../../../src/app');
+    const routeMains = collectPageFiles(appDirectory).filter((file) =>
+      fs.readFileSync(file, 'utf-8').includes('<main'),
+    );
+    expect(routeMains).toEqual([]);
   });
 
   it('mounts HatchMobileBar (mobile bell + toggle)', () => {

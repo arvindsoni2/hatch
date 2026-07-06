@@ -41,7 +41,7 @@ export default function CalendarPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50">
       <div className="max-w-6xl mx-auto px-6 py-8">
         <h1 className="text-2xl font-bold text-slate-900 mb-6">Calendar</h1>
         {loading ? (
@@ -67,6 +67,6 @@ export default function CalendarPage() {
           </div>
         )}
       </div>
-    </main>
+    </div>
   );
 }

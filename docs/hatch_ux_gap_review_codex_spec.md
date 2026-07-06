@@ -1185,8 +1185,8 @@ Update this table in the same commit that completes each PR. Record the branch, 
 
 | PR | Scope | Depends on | Status | Branch / commit | Handoff notes |
 |---|---|---|---|---|---|
-| PR 1 | Product vocabulary and route contract | None | In progress | `ux/01-route-contract` | Implementation validated; PR review and merge pending |
-| PR 2 | Shared page and control foundation | PR 1 | Not started | `ux/02-ui-foundation` | |
+| PR 1 | Product vocabulary and route contract | None | Merged | `ux/01-route-contract` / `033ed49` | Merged as GitHub PR #5 |
+| PR 2 | Shared page and control foundation | PR 1 | In progress | `ux/02-ui-foundation` | Implementation validated; PR review and merge pending |
 | PR 3 | Accessible overlay primitives | PR 2 | Not started | `ux/03-overlay-primitives` | |
 | PR 4 | App-lock security and recovery | PR 2, PR 3 | Not started | `ux/04-app-lock-security` | |
 | PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Not started | `ux/05-onboarding` | |
@@ -1307,6 +1307,22 @@ This PR is a decision gate. Do not start PR 2 until route ownership has review a
 - Button and field states cover default, hover, focus, disabled, loading, error, and destructive use
 - Pages can render one H1 and one `main` without route-specific exceptions
 - New shared controls meet the 44px mobile target and visible-focus requirements
+
+**PR 2 resume handoff:**
+
+- Shared primitives now include Button, Input, FormField, Icon, PageContainer, PageHeader, SectionCard, and StatusBadge
+- Semantic radius, focus, motion, control-height, and foreground-on-status tokens live in `frontend/src/app/globals.css`; legacy radius names remain as compatibility aliases
+- Lucide renders every Hatch string icon through a compatibility adapter; no hand-drawn paths remain in `HatchIcon`
+- The route owns its H1, while the desktop top bar contains utility context only
+- `AppLockGate` owns the single runtime `main` landmark and the first content control is a skip link
+- Route-level nested `main` elements were replaced without changing their layout classes
+- The old `Btn` API delegates to the shared Button while later screen PRs migrate call sites
+- Newsreader was removed; onboarding inherits the approved sans type family
+- Validation passed: 394 Vitest tests, TypeScript type-check, production build, four Playwright landmark/skip-link tests, and diff whitespace checks
+- Visual checks cover Today and Jobs at 375px and 1440px in light and dark themes
+- Existing build warnings remain in `AnswerTimer` and `OnboardingPrimitives`; existing test warnings remain in asynchronous component tests and FaceCapture
+- Keep the dark-mode catch-all compatibility layer until later screen migrations replace hard-coded utilities
+- Do not start PR 3 until PR 2 has review approval and is marked `Merged`
 
 ### 9.5 PR 3: Add accessible overlay primitives
 

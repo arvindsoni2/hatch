@@ -1,78 +1,51 @@
 "use client";
-import { HatchIcon } from './HatchIcon';
 
-type BtnKind = 'primary' | 'soft' | 'ghost' | 'success';
-type BtnSize = 'sm' | 'md';
+import { Button, type ButtonProps } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+import { cn } from "@/lib/utils";
 
-interface BtnProps {
+type BtnKind = "primary" | "soft" | "ghost" | "success";
+type BtnSize = "sm" | "md";
+
+interface BtnProps
+  extends Omit<ButtonProps, "children" | "size" | "variant"> {
   children: React.ReactNode;
   kind?: BtnKind;
   size?: BtnSize;
   icon?: string;
   iconR?: string;
   full?: boolean;
-  style?: React.CSSProperties;
-  onClick?: React.MouseEventHandler<HTMLButtonElement>;
-  type?: 'button' | 'submit' | 'reset';
-  disabled?: boolean;
-  className?: string;
-  'aria-label'?: string;
 }
 
-const KIND_STYLES: Record<BtnKind, React.CSSProperties> = {
-  primary: { background: 'var(--accent)', color: 'var(--on-accent)', border: 'none' },
-  soft:    { background: 'var(--surface-2)', color: 'var(--text)', border: '1px solid var(--border)' },
-  ghost:   { background: 'transparent', color: 'var(--text-dim)', border: '1px solid var(--border)' },
-  success: { background: 'var(--success)', color: 'var(--bg)', border: 'none' },
+const VARIANTS: Record<BtnKind, ButtonProps["variant"]> = {
+  primary: "default",
+  soft: "secondary",
+  ghost: "outline",
+  success: "success",
 };
 
 export function Btn({
   children,
-  kind = 'primary',
-  size = 'md',
+  kind = "primary",
+  size = "md",
   icon,
   iconR,
   full = false,
-  style,
-  onClick,
-  type = 'button',
-  disabled,
   className,
-  'aria-label': ariaLabel,
+  ...props
 }: BtnProps) {
-  const pad  = size === 'sm' ? '8px 12px' : '10px 16px';
-  const fs   = size === 'sm' ? 13 : 14;
-  const kStyle = KIND_STYLES[kind];
-  const iconColor = String(kStyle.color ?? 'currentColor');
+  const iconSize = size === "sm" ? 15 : 16;
 
   return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      className={`hatch-interactive${className ? ` ${className}` : ''}`}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 7,
-        padding: pad,
-        borderRadius: 10,
-        fontSize: fs,
-        fontWeight: 600,
-        fontFamily: 'var(--font-sans)',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        whiteSpace: 'nowrap',
-        width: full ? '100%' : 'auto',
-        opacity: disabled ? 0.5 : 1,
-        ...kStyle,
-        ...style,
-      }}
+    <Button
+      className={cn(full && "w-full", className)}
+      size={size === "sm" ? "sm" : "default"}
+      variant={VARIANTS[kind]}
+      {...props}
     >
-      {icon  && <HatchIcon name={icon}  size={fs + 2} color={iconColor} strokeWidth={2.2} />}
+      {icon ? <Icon name={icon} size={iconSize} strokeWidth={2.2} /> : null}
       {children}
-      {iconR && <HatchIcon name={iconR} size={fs + 2} color={iconColor} strokeWidth={2.2} />}
-    </button>
+      {iconR ? <Icon name={iconR} size={iconSize} strokeWidth={2.2} /> : null}
+    </Button>
   );
 }

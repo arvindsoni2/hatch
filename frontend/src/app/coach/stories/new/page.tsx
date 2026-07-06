@@ -24,7 +24,7 @@ export default function NewStoryPage() {
   };
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <div className="mx-auto max-w-3xl px-4 py-8">
       <div className="mb-6 flex items-center gap-3">
         <button onClick={() => router.back()} className="text-slate-400 hover:text-slate-700 transition-colors">
           <ArrowLeft className="h-5 w-5" />
@@ -46,6 +46,6 @@ export default function NewStoryPage() {
           saving={saving}
         />
       </div>
-    </main>
+    </div>
   );
 }

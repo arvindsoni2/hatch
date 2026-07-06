@@ -34,7 +34,7 @@ const VARIANTS: Record<
   "scraped-unscored": {
     icon: <Zap className="h-10 w-10 text-[var(--text-dim)]" />,
     title: "Scoring in progress",
-    body: "Jobs have been fetched. The AI scorer is working through them — check back in a few minutes.",
+    body: "Jobs have been fetched. The AI scorer is working through them. Check back in a few minutes.",
     action: "Refresh",
   },
   "no-results": {

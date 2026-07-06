@@ -90,14 +90,14 @@ export default function StoryDetailPage() {
   }
   if (error || !story) {
     return (
-      <main className="mx-auto max-w-3xl px-4 py-8">
+      <div className="mx-auto max-w-3xl px-4 py-8">
         <p className="text-red-600">{error || "Story not found"}</p>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <div className="mx-auto max-w-3xl px-4 py-8">
       {/* Header */}
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -203,6 +203,6 @@ export default function StoryDetailPage() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

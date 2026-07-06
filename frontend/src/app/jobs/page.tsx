@@ -167,12 +167,12 @@ export default function JobsPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Inbox</h1>
+          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Jobs</h1>
           <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }} aria-live="polite" aria-atomic="true">
             {showArchived
-              ? `Archived jobs — ${total.toLocaleString()} total`
+              ? `Archived jobs. ${total.toLocaleString()} total`
               : !showAll
-              ? `Showing matches ≥ ${thresholdPct}% — ${total.toLocaleString()} jobs`
+              ? `Showing matches ≥ ${thresholdPct}%, ${total.toLocaleString()} jobs`
               : `All ${total.toLocaleString()} jobs`}
           </p>
         </div>
@@ -234,7 +234,7 @@ export default function JobsPage() {
         <div className="flex items-center gap-2 text-sm rounded-lg px-4 py-2.5" style={{ background: "var(--surface-2)", color: "var(--text-dim)" }}>
           <Zap className="h-4 w-4" style={{ color: "var(--accent)" }} />
           {rescoreResult.queued > 0
-            ? `${rescoreResult.queued} job${rescoreResult.queued !== 1 ? "s" : ""} queued for scoring — results will appear within the next scrape cycle.`
+            ? `${rescoreResult.queued} job${rescoreResult.queued !== 1 ? "s" : ""} queued for scoring. Results will appear within the next scrape cycle.`
             : "All jobs are already scored."}
           <button onClick={() => setRescoreResult(null)} className="ml-auto text-xs underline">Dismiss</button>
         </div>
@@ -247,7 +247,7 @@ export default function JobsPage() {
         return (
           <div className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm" style={{ background: "var(--warning-soft, #fef3c7)", border: "1px solid var(--warning, #f59e0b)", color: "var(--text-dim)" }}>
             <Zap className="h-4 w-4 shrink-0" style={{ color: "var(--warning, #f59e0b)" }} />
-            <span><strong>{unscoredCount}</strong> job{unscoredCount !== 1 ? "s" : ""} {unscoredCount !== 1 ? "haven't" : "hasn't"} been scored yet — they were stored before the scoring pipeline ran.</span>
+            <span><strong>{unscoredCount}</strong> job{unscoredCount !== 1 ? "s" : ""} {unscoredCount !== 1 ? "haven't" : "hasn't"} been scored yet. They were stored before the scoring pipeline ran.</span>
             <button
               onClick={() => void handleRescore()}
               disabled={rescoring}
@@ -295,7 +295,7 @@ export default function JobsPage() {
             </span>
             <span className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "var(--warning)" }} />
-              {midPct}–{thresholdPct - 1}% parked
+              {midPct}-{thresholdPct - 1}% parked
             </span>
             <span className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full inline-block" style={{ background: "var(--border)" }} />
@@ -337,7 +337,7 @@ export default function JobsPage() {
           {total > PAGE_SIZE && (
             <div className="flex items-center justify-between">
               <p className="text-sm text-slate-500">
-                Showing {startItem}–{endItem} of {total.toLocaleString()} jobs
+                Showing {startItem}-{endItem} of {total.toLocaleString()} jobs
               </p>
               <div className="flex items-center gap-2">
                 <Button
