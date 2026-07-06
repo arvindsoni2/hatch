@@ -38,7 +38,7 @@ export default function StoryBankPage() {
   useEffect(load, [archetype, tag, minStrength]);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8">
+    <div className="mx-auto max-w-6xl px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <BookOpen className="h-6 w-6 text-indigo-600" />
@@ -87,6 +87,6 @@ export default function StoryBankPage() {
       ) : (
         <StoryBankGrid stories={stories} onSelect={(id) => router.push(`/coach/stories/${id}`)} />
       )}
-    </main>
+    </div>
   );
 }

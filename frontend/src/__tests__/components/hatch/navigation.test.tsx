@@ -130,26 +130,26 @@ describe('HatchSidebar', () => {
 describe('HatchTopBar', () => {
   it('renders a greeting with "Arvind" when name provided', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    render(<HatchTopBar name="Arvind" pageTitle="Today" />);
+    render(<HatchTopBar name="Arvind" />);
     expect(screen.getByText(/Arvind/)).toBeTruthy();
   });
 
-  it('renders the page title', async () => {
+  it('leaves page-title ownership to route content', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    render(<HatchTopBar name="Arvind" pageTitle="Stream" />);
-    expect(screen.getByText('Stream')).toBeTruthy();
+    render(<HatchTopBar name="Arvind" />);
+    expect(screen.queryByRole('heading')).toBeNull();
   });
 
   it('renders a search input', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    const { container } = render(<HatchTopBar name="Arvind" pageTitle="Today" />);
+    const { container } = render(<HatchTopBar name="Arvind" />);
     expect(container.querySelector('input[type="search"], input[placeholder]')).toBeTruthy();
   });
 
   it('submits a trimmed role search', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
     const onSearch = vi.fn();
-    render(<HatchTopBar name="Arvind" pageTitle="Today" onSearch={onSearch} />);
+    render(<HatchTopBar name="Arvind" onSearch={onSearch} />);
     const input = screen.getByRole('searchbox', { name: 'Search roles' });
     fireEvent.change(input, { target: { value: '  programme manager  ' } });
     fireEvent.submit(screen.getByRole('search'));
@@ -158,7 +158,7 @@ describe('HatchTopBar', () => {
 
   it('renders a bell notification button', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+    await act(async () => { render(<HatchTopBar name="Arvind" />); });
     const bellBtn = screen.getByRole('button', { name: /notification/i });
     expect(bellBtn).toBeTruthy();
   });
@@ -182,7 +182,7 @@ describe('HatchTopBar — live NotificationBell', () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => jobs });
 
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+    await act(async () => { render(<HatchTopBar name="Arvind" />); });
 
     const badge = screen.getByTestId('bell-badge');
     expect(badge.textContent).toBe('3');
@@ -192,7 +192,7 @@ describe('HatchTopBar — live NotificationBell', () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => [] });
 
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+    await act(async () => { render(<HatchTopBar name="Arvind" />); });
 
     expect(screen.queryByTestId('bell-badge')).toBeNull();
   });

@@ -25,7 +25,7 @@ describe('HatchTopBar — ThemeToggle (via UserMenu)', () => {
 
   it('renders a "Theme" menuitem button inside the user menu dropdown', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+    await act(async () => { render(<HatchTopBar name="Arvind" />); });
     const avatar = screen.getByRole('button', { name: /open user menu/i });
     await act(async () => { fireEvent.click(avatar); });
     expect(screen.getByRole('menuitem', { name: /theme/i })).toBeTruthy();
@@ -33,7 +33,7 @@ describe('HatchTopBar — ThemeToggle (via UserMenu)', () => {
 
   it('switches to light when Theme button is clicked from dark', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+    await act(async () => { render(<HatchTopBar name="Arvind" />); });
 
     const avatar = screen.getByRole('button', { name: /open user menu/i });
     await act(async () => { fireEvent.click(avatar); });
@@ -47,7 +47,7 @@ describe('HatchTopBar — ThemeToggle (via UserMenu)', () => {
 
   it('switches back to dark on second click', async () => {
     const { HatchTopBar } = await import('@/components/hatch/HatchTopBar');
-    await act(async () => { render(<HatchTopBar name="Arvind" pageTitle="Today" />); });
+    await act(async () => { render(<HatchTopBar name="Arvind" />); });
 
     const avatar = screen.getByRole('button', { name: /open user menu/i });
     await act(async () => { fireEvent.click(avatar); });

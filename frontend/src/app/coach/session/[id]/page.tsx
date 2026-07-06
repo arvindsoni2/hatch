@@ -246,7 +246,7 @@ export default function SessionPage() {
   const allAnswered = unansweredCount === 0;
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6">
+    <div className="mx-auto max-w-7xl px-4 py-6">
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <div>
@@ -447,6 +447,6 @@ export default function SessionPage() {
           )}
         </aside>
       </div>
-    </main>
+    </div>
   );
 }

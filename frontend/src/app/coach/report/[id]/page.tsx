@@ -14,7 +14,7 @@ export default async function ReportPage({ params }: ReportPageProps) {
   const report = await serverApiFetch<SessionFeedbackReport>(`/api/coach/sessions/${id}/report`);
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <div className="mx-auto max-w-3xl px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Brain className="h-6 w-6 text-indigo-400" />
@@ -33,6 +33,6 @@ export default async function ReportPage({ params }: ReportPageProps) {
       </div>
 
       <FeedbackReport report={report} />
-    </main>
+    </div>
   );
 }

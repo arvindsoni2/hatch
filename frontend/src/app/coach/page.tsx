@@ -51,7 +51,7 @@ export default function CoachPage() {
   };
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
+    <div className="mx-auto max-w-4xl px-4 py-8">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <Brain className="h-6 w-6 text-indigo-600" />
@@ -175,6 +175,6 @@ export default function CoachPage() {
           })}
         </div>
       )}
-    </main>
+    </div>
   );
 }

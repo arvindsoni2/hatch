@@ -1,15 +1,13 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { HatchIcon } from './HatchIcon';
+import { Icon } from '@/components/ui/icon';
 import { NotificationBell } from '@/components/NotificationBell';
 import { UserMenu } from './UserMenu';
 
 interface HatchTopBarProps {
   name: string;
   role?: string;
-  pageTitle: string;
-  pageSub?: string;
   onSearch?: (query: string) => void;
 }
 
@@ -20,7 +18,7 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-export function HatchTopBar({ name, role, pageTitle, pageSub, onSearch }: HatchTopBarProps) {
+export function HatchTopBar({ name, role, onSearch }: HatchTopBarProps) {
   const [greeting, setGreeting] = useState('Welcome');
   const [searchQuery, setSearchQuery] = useState('');
   const router = useRouter();
@@ -51,21 +49,16 @@ export function HatchTopBar({ name, role, pageTitle, pageSub, onSearch }: HatchT
         flexShrink: 0,
       }}
     >
-      {/* Greeting + page title */}
+      {/* Utility context. Route content owns the page title and H1. */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-3">
-          <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--text)' }}>
-            {pageTitle}
-          </span>
-          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            {pageSub ?? `${greeting}, ${name}`}
-          </span>
-        </div>
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          {greeting}, {name}
+        </span>
       </div>
 
       {/* Search */}
       <form className="relative" style={{ width: 240 }} role="search" onSubmit={submitSearch}>
-        <HatchIcon
+        <Icon
           name="search"
           size={15}
           color="var(--text-muted)"

@@ -175,15 +175,13 @@ describe('Btn', () => {
   it('renders as full-width when full=true', async () => {
     const { Btn } = await import('@/components/hatch/Btn');
     const { container } = render(<Btn full>Wide</Btn>);
-    expect((container.firstChild as HTMLElement).style.width).toBe('100%');
+    expect((container.firstChild as HTMLElement).className).toContain('w-full');
   });
 
-  it('applies accent bg for primary kind', async () => {
+  it('maps primary kind to the shared button treatment', async () => {
     const { Btn } = await import('@/components/hatch/Btn');
     const { container } = render(<Btn kind="primary">Primary</Btn>);
-    // primary uses var(--accent) or the resolved teal value
-    const bg = (container.firstChild as HTMLElement).style.background;
-    expect(bg).toBeTruthy();
+    expect((container.firstChild as HTMLElement).className).toContain('bg-[var(--accent)]');
   });
 
   it('renders leading icon when icon prop provided', async () => {

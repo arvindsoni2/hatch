@@ -56,6 +56,12 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      <a
+        className="fixed left-4 top-4 z-[300] -translate-y-24 rounded-[var(--radius-control)] bg-[var(--accent)] px-4 py-2 font-semibold text-[var(--on-accent)] transition-transform focus:translate-y-0"
+        href="#main-content"
+      >
+        Skip to main content
+      </a>
       <OnboardingGate />
       <OfflineIndicator />
       <div className="flex" style={{ minHeight: "100vh" }}>
@@ -63,7 +69,11 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col flex-1 min-w-0">
           <HatchMobileBar />
           <HatchTopBarSlot />
-          <main className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-6 md:pb-8">
+          <main
+            className="flex-1 px-4 py-6 pb-24 md:px-8 md:py-6 md:pb-8"
+            id="main-content"
+            tabIndex={-1}
+          >
             {children}
           </main>
         </div>

@@ -112,7 +112,7 @@ export default async function AnalyticsPage() {
   };
 
   return (
-    <main className="min-h-screen" style={{ background: "var(--bg)" }}>
+    <div className="min-h-screen" style={{ background: "var(--bg)" }}>
       <div className="max-w-6xl mx-auto px-4 py-6 sm:px-6 sm:py-8 space-y-8">
         <div>
           <BackButton href="/today" label="Today" />
@@ -370,6 +370,6 @@ export default async function AnalyticsPage() {
           <AgentPerformanceTable initialData={agentPerf} />
         </div>
       </div>
-    </main>
+    </div>
   );
 }
