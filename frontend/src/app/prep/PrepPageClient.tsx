@@ -1,12 +1,21 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { X } from "lucide-react";
 import { PrepScreen } from "@/components/hatch/screens/PrepScreen";
 import type { PrepSession, PrepQuestion } from "@/components/hatch/screens/PrepScreen";
-import { SessionLauncher } from "@/components/coach/SessionLauncher";
+import { SessionLauncherDialog } from "@/components/coach/SessionLauncher";
 import { getSession, fetchApplication, abandonSession, retrySession } from "@/lib/api";
 import type { SessionResponse } from "@/lib/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 
 interface PrepPageClientProps {
   sessions: PrepSession[];
@@ -46,6 +55,8 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
   const [sessionCache, setSessionCache] = useState<Record<string, SessionResponse>>({});
   const [showLauncher, setShowLauncher] = useState(false);
   const [retryingIds, setRetryingIds] = useState<Record<string, boolean>>({});
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Auto-fetch detail for the initially-selected session (state setter never triggers handleSelectSession)
   useEffect(() => {
@@ -56,12 +67,19 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openSessionId]);
 
-  const handleDeleteSession = async (id: string) => {
-    if (!confirm("Remove this prep session? This cannot be undone.")) return;
+  const handleDeleteSession = (id: string) => {
+    setPendingDeleteId(id);
+  };
+
+  const confirmDeleteSession = async () => {
+    if (!pendingDeleteId) return;
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
     try {
       await abandonSession(id);
     } catch {
-      // best-effort — remove from UI regardless
+      setNotice("Hatch could not remove this session from storage. Refresh and try again.");
+      return;
     }
     setSessions((prev) => prev.filter((s) => s.id !== id));
     if (openSessionId === id) setOpenSessionId(undefined);
@@ -87,7 +105,7 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
       setOpenSessionId(undefined);
       router.refresh();
     } catch {
-      alert("Could not retry this prep session.");
+      setNotice("Hatch could not retry this prep session. Check the connection and try again.");
     } finally {
       setRetryingIds((prev) => ({ ...prev, [id]: false }));
     }
@@ -125,7 +143,7 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
     // Manual session (no linked application) — generate ICS client-side from stored interview_date
     if (!full?.application_id) {
       if (!full?.interview_date) {
-        alert("No interview date on record — create a new session and enter the interview date to use this feature.");
+        setNotice("No interview date is saved. Create a new session and add the date first.");
         return;
       }
       const ics = buildIcs(full.role_title, full.company_name, full.interview_date);
@@ -150,7 +168,7 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
         .find((i) => new Date(i.scheduled_at!) >= new Date());
       const interview = upcoming ?? app.interviews[0];
       if (!interview) {
-        alert("No interview rounds found — add an interview round in the application first.");
+        setNotice("No interview rounds were found. Add an interview round to the application first.");
         return;
       }
       const a = document.createElement("a");
@@ -160,7 +178,7 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
       a.click();
       document.body.removeChild(a);
     } catch {
-      alert("Could not download calendar file.");
+      setNotice("Hatch could not download the calendar file. Check the connection and try again.");
     }
   };
 
@@ -178,18 +196,43 @@ export function PrepPageClient({ sessions: initialSessions }: PrepPageClientProp
         retryingIds={retryingIds}
       />
 
-      {showLauncher && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="relative w-full max-w-lg">
-            <button
-              onClick={() => setShowLauncher(false)}
-              className="absolute right-4 top-4 z-10 text-slate-500 hover:text-slate-700"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <SessionLauncher onSessionCreated={(session) => router.push(`/coach/session/${session.id}`)} />
-          </div>
+      {notice ? (
+        <div
+          className="my-3 flex items-start justify-between gap-3 rounded-[var(--radius-control)] border border-[var(--danger)] bg-[var(--danger-soft)] p-3 text-sm text-[var(--danger)]"
+          role="alert"
+        >
+          <p>{notice}</p>
+          <Button onClick={() => setNotice(null)} size="sm" variant="ghost">
+            Dismiss
+          </Button>
         </div>
+      ) : null}
+
+      <AlertDialog
+        onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}
+        open={Boolean(pendingDeleteId)}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle className="text-lg font-semibold text-[var(--text)]">
+            Remove Prep Session?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently removes the selected preparation session and cannot be undone.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmDeleteSession()}>
+              Remove Session
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {showLauncher && (
+        <SessionLauncherDialog
+          onClose={() => setShowLauncher(false)}
+          onSessionCreated={(session) => router.push(`/coach/session/${session.id}`)}
+        />
       )}
     </>
   );

@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { listSessions, SessionListItem, SessionResponse } from "@/lib/api";
-import { SessionLauncher } from "@/components/coach/SessionLauncher";
-import { Brain, BookOpen, ChevronRight, Loader2, Plus, X } from "lucide-react";
+import { SessionLauncherDialog } from "@/components/coach/SessionLauncher";
+import { Brain, BookOpen, ChevronRight, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -84,17 +84,10 @@ export default function CoachPage() {
 
       {/* Launcher modal */}
       {showLauncher && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="relative w-full max-w-lg">
-            <button
-              onClick={() => setShowLauncher(false)}
-              className="absolute right-4 top-4 z-10 text-slate-500 hover:text-slate-700"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <SessionLauncher onSessionCreated={handleSessionCreated} />
-          </div>
-        </div>
+        <SessionLauncherDialog
+          onClose={() => setShowLauncher(false)}
+          onSessionCreated={handleSessionCreated}
+        />
       )}
 
       {/* Session history */}

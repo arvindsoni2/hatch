@@ -5,6 +5,13 @@ import { Card } from './Card';
 import { HatchIcon } from './HatchIcon';
 import { ScorePill } from './ScorePill';
 import type { HatchJob } from './screens/TodayScreen';
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogTitle,
+  ResponsiveDialogContent,
+} from '@/components/ui/dialog';
 
 interface DimBarProps {
   label: string;
@@ -46,41 +53,16 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
   const verdict = job.score >= 0.9 ? 'Excellent match' : 'Strong match for you';
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="review-title"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 70,
-        background: 'var(--bg)',
-        color: 'var(--text)',
-        display: 'flex',
-        flexDirection: 'column',
-        animation: 'hatchOverlayRise .2s ease-out',
-        // Desktop: center as modal
-      }}
-      className="md:flex md:items-start md:justify-center"
-    >
-      {/* Desktop backdrop blur (md+) */}
-      <div
-        className="hidden md:block fixed inset-0 -z-10"
-        style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
-        onClick={onClose}
-      />
-
-      {/* Modal container */}
-      <div
-        className="md:relative md:rounded-2xl md:overflow-hidden md:shadow-2xl md:mt-12"
-        style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          maxHeight: '100%',
-          // Desktop max width
-        }}
+    <Dialog onOpenChange={(open) => { if (!open && !isLoading) onClose(); }} open>
+      <ResponsiveDialogContent
+        className="p-0 sm:max-w-2xl"
+        hideClose
+        preventClose={isLoading}
       >
+        <DialogTitle className="sr-only">Review Application</DialogTitle>
+        <DialogDescription className="sr-only">
+          Review match evidence before generating an application pack.
+        </DialogDescription>
         {/* Top bar */}
         <div style={{ height: 56, flexShrink: 0 }} className="md:hidden" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px 12px' }}>
@@ -88,15 +70,17 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
             Application {idx + 1} of {queue.length}
           </span>
-          <button
-            type="button"
-            className="hatch-interactive"
-            aria-label="Close review"
-            onClick={onClose}
-            style={{ width: 44, height: 44, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
-          >
-            <HatchIcon name="x" size={16} color="var(--text-dim)" />
-          </button>
+          <DialogClose asChild>
+            <button
+              type="button"
+              className="hatch-interactive"
+              aria-label="Close review"
+              disabled={isLoading}
+              style={{ width: 44, height: 44, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
+            >
+              <HatchIcon name="x" size={16} color="var(--text-dim)" />
+            </button>
+          </DialogClose>
         </div>
 
         {/* Scrollable body */}
@@ -180,7 +164,7 @@ export function ReviewOverlay({ queue, idx, onAction, onClose, isLoading = false
           </Btn>
         </div>
         <div style={{ height: 30, flexShrink: 0 }} className="md:hidden" />
-      </div>
-    </div>
+      </ResponsiveDialogContent>
+    </Dialog>
   );
 }

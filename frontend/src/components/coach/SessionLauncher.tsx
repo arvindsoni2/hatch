@@ -1,17 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createSession, CreateSessionRequest, type SessionResponse } from "@/lib/api";
 import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface SessionLauncherProps {
   onSessionCreated: (session: SessionResponse) => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
 const CATEGORIES = ["Technical", "Behavioural", "Situational", "Domain", "Culture", "Commercial"];
 
-export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
+export function SessionLauncher({ onSessionCreated, onBusyChange }: SessionLauncherProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [companyName, setCompanyName] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
@@ -32,6 +39,10 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
   });
 
   const loading = sessionState.status === "pending" || sessionState.status === "running";
+
+  useEffect(() => {
+    onBusyChange?.(loading);
+  }, [loading, onBusyChange]);
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories((prev) =>
@@ -60,7 +71,7 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
   const inputCls = "w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
   return (
-    <div className="mx-auto max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-lg">
+    <div className="mx-auto max-w-lg p-6">
       <div className="mb-6 flex items-center gap-2">
         {([1, 2, 3] as const).map((s) => (
           <div
@@ -76,38 +87,49 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">Company &amp; Role</h2>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-600">Company Name</label>
+            <label className="mb-1 block text-sm font-medium text-slate-600" htmlFor="session-company">Company Name</label>
             <input
               type="text"
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
-              placeholder="e.g. Accenture"
+              autoComplete="organization"
+              id="session-company"
+              name="company_name"
+              placeholder="Example: Accenture…"
               className={inputCls}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-600">Role Title</label>
+            <label className="mb-1 block text-sm font-medium text-slate-600" htmlFor="session-role">Role Title</label>
             <input
               type="text"
               value={roleTitle}
               onChange={(e) => setRoleTitle(e.target.value)}
-              placeholder="e.g. Solutions Architect"
+              autoComplete="organization-title"
+              id="session-role"
+              name="role_title"
+              placeholder="Example: Solutions Architect…"
               className={inputCls}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-600">Job Description <span className="font-normal text-slate-400">(optional)</span></label>
+            <label className="mb-1 block text-sm font-medium text-slate-600" htmlFor="session-description">Job Description <span className="font-normal text-slate-400">(optional)</span></label>
             <textarea
               value={jdText}
               onChange={(e) => setJdText(e.target.value)}
               rows={4}
-              placeholder="Paste the JD here for tailored questions..."
+              autoComplete="off"
+              id="session-description"
+              name="job_description"
+              placeholder="Paste the job description for tailored questions…"
               className={inputCls + " resize-none"}
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-600">Interview Date <span className="font-normal text-slate-400">(optional — for calendar)</span></label>
+            <label className="mb-1 block text-sm font-medium text-slate-600" htmlFor="session-date">Interview Date <span className="font-normal text-slate-400">(optional, for calendar)</span></label>
             <input
+              id="session-date"
+              name="interview_date"
               type="datetime-local"
               value={interviewDate}
               onChange={(e) => setInterviewDate(e.target.value)}
@@ -128,10 +150,12 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">Session Configuration</h2>
           <div>
-            <label className="mb-2 block text-sm font-medium text-slate-600">
+            <label className="mb-2 block text-sm font-medium text-slate-600" htmlFor="session-question-count">
               Questions: <span className="font-semibold text-indigo-600">{questionCount}</span>
             </label>
             <input
+              id="session-question-count"
+              name="question_count"
               type="range"
               min={3}
               max={20}
@@ -220,7 +244,7 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
           {(sessionState.status === "pending" || sessionState.status === "running") && (
             <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-center">
               <p className="text-xs text-slate-600">
-                {sessionState.status === "pending" ? "Queuing your session…" : "Generating your questions — this can take a few minutes."}
+                {sessionState.status === "pending" ? "Queuing your session…" : "Generating your questions. This can take a few minutes."}
               </p>
               <p className="mt-1 text-xs text-slate-400">
                 You can navigate away and check the <span className="font-medium text-slate-500">notification bell</span> when your session is ready.
@@ -230,5 +254,31 @@ export function SessionLauncher({ onSessionCreated }: SessionLauncherProps) {
         </div>
       )}
     </div>
+  );
+}
+
+interface SessionLauncherDialogProps extends SessionLauncherProps {
+  onClose: () => void;
+}
+
+export function SessionLauncherDialog({
+  onClose,
+  onSessionCreated,
+}: SessionLauncherDialogProps) {
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Dialog onOpenChange={(open) => { if (!open && !busy) onClose(); }} open>
+      <DialogContent className="max-w-lg" preventClose={busy}>
+        <DialogTitle className="sr-only">Start Interview Practice</DialogTitle>
+        <DialogDescription className="sr-only">
+          Configure the role, questions, and difficulty for a new practice session.
+        </DialogDescription>
+        <SessionLauncher
+          onBusyChange={setBusy}
+          onSessionCreated={onSessionCreated}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }

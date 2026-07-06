@@ -11,6 +11,15 @@ import { Badge } from "@/components/ui/badge";
 import { API_BASE, recomputeOutcomeLearning, resetOutcomeLearning } from "@/lib/api";
 import { TemplateDefaultSetting } from "@/components/TemplateDefaultSetting";
 import { ProfileSummaryCard } from "@/components/ProfileSummaryCard";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 async function fetchProfile(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_BASE}/api/v2/profile`);
@@ -115,6 +124,7 @@ export default function ProfileSettingsPage() {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
   const [learningAction, setLearningAction] = useState<"recompute" | "reset" | null>(null);
+  const [showResetLearning, setShowResetLearning] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,6 +162,21 @@ export default function ProfileSettingsPage() {
       cur = (cur as Record<string, unknown>)[key];
     }
     return cur ?? fallback;
+  };
+
+  const handleResetLearning = async () => {
+    setLearningAction("reset");
+    setError("");
+    try {
+      const result = await resetOutcomeLearning();
+      update(["outcome_learning", "learning_since"], result.learning_since);
+      setDirty(false);
+      setSavedOk(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Reset failed");
+    } finally {
+      setLearningAction(null);
+    }
   };
 
   const handleSave = async () => {
@@ -554,7 +579,7 @@ export default function ProfileSettingsPage() {
         </Field>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <Button type="button" variant="outline" disabled={learningAction !== null || dirty} onClick={async () => { setLearningAction("recompute"); setError(""); try { await recomputeOutcomeLearning(); setSavedOk(true); } catch (e) { setError(e instanceof Error ? e.message : "Recompute failed"); } finally { setLearningAction(null); } }}>{learningAction === "recompute" ? "Recomputing..." : "Recompute now"}</Button>
-          <Button type="button" variant="outline" disabled={learningAction !== null || dirty} onClick={async () => { if (!window.confirm("This starts a new learning window. It does not delete applications or documents.")) return; setLearningAction("reset"); setError(""); try { const result = await resetOutcomeLearning(); update(["outcome_learning", "learning_since"], result.learning_since); setDirty(false); setSavedOk(true); } catch (e) { setError(e instanceof Error ? e.message : "Reset failed"); } finally { setLearningAction(null); } }}>{learningAction === "reset" ? "Resetting..." : "Reset learning window"}</Button>
+          <Button type="button" variant="outline" disabled={learningAction !== null || dirty} onClick={() => setShowResetLearning(true)}>{learningAction === "reset" ? "Resetting…" : "Reset Learning Window"}</Button>
         </div>
       </SectionCard>
 
@@ -635,6 +660,26 @@ export default function ProfileSettingsPage() {
           </Button>
         </div>
       </div>
+
+      <AlertDialog onOpenChange={setShowResetLearning} open={showResetLearning}>
+        <AlertDialogContent>
+          <AlertDialogTitle className="text-lg font-semibold text-[var(--text)]">
+            Reset Learning Window?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Hatch will start a new learning window. Applications and documents will not be deleted.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleResetLearning()}
+              variant="default"
+            >
+              Reset Learning Window
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
