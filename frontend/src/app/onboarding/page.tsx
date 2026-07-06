@@ -52,8 +52,8 @@ export default function OnboardingPage() {
   // Step 6 — AI provider
   const [llm, setLlm] = useState<LLMData>({
     provider: "llamacpp",
-    triage_model: "qwen3-0.6b-q8_0",
-    primary_model: "qwen3-8b-q5_k_m",
+    triage_model: "qwen3.5-0.8b-q8_0",
+    primary_model: "qwen3.5-4b-q4_k_m",
     api_key_env: "",
     base_url: "http://llm-primary:8080/v1",
     triage_base_url: "http://llm-triage:8081/v1",
@@ -84,7 +84,7 @@ export default function OnboardingPage() {
         if (parsed.llm) {
           // Migrate old "ollama" sessions to the bundled llamacpp provider.
           const restoredLlm = parsed.llm.provider === "ollama"
-            ? { ...parsed.llm, provider: "llamacpp", base_url: "http://llm-primary:8080/v1", triage_base_url: "http://llm-triage:8081/v1", primary_model: "qwen3-8b-q5_k_m", triage_model: "qwen3-0.6b-q8_0", api_key_env: "" }
+            ? { ...parsed.llm, provider: "llamacpp", base_url: "http://llm-primary:8080/v1", triage_base_url: "http://llm-triage:8081/v1", primary_model: "qwen3.5-4b-q4_k_m", triage_model: "qwen3.5-0.8b-q8_0", api_key_env: "" }
             : parsed.llm;
           setLlm(restoredLlm);
         }

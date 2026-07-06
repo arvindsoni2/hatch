@@ -121,8 +121,8 @@ The existing developer stack continues to run two local llama.cpp services:
 
 | Service | Model | Port | Purpose |
 |---|---|---:|---|
-| `llm-primary` | `Qwen3-8B-Q5_K_M.gguf` | 8080 | CV, cover letter, detailed scoring, Coach |
-| `llm-triage` | `Qwen3-0.6B-Q8_0.gguf` | 8081 | Fast initial filtering |
+| `llm-primary` | `Qwen3.5-4B Q4_K_M` | 8080 | CV, cover letter, detailed scoring, Coach |
+| `llm-triage` | `Qwen3.5-0.8B Q8_0` | 8081 | Fast initial filtering |
 
 The model ports bind to localhost only. Model files live in `data/models/` and are not committed.
 
@@ -326,7 +326,7 @@ curl -f http://localhost:8000/api/health
 Confirm both files exist:
 
 ```bash
-ls -lh data/models/Qwen3-8B-Q5_K_M.gguf data/models/Qwen3-0.6B-Q8_0.gguf
+ls -lh data/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf data/models/Qwen_Qwen3.5-0.8B-Q8_0.gguf
 bash scripts/fetch_models.sh
 docker compose restart llm-primary llm-triage
 ```

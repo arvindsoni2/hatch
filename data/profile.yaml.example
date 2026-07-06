@@ -99,8 +99,8 @@ tailoring:
 # To use a cloud provider, change provider and set the API key in .env.
 llm:
   provider: "llamacpp"              # "llamacpp" | "anthropic" | "openai" | "google_genai" | "azure_openai"
-  triage_model: "qwen3-0.6b-q8_0"
-  primary_model: "qwen3-8b-q5_k_m"
+  triage_model: "qwen3.5-0.8b-q8_0"
+  primary_model: "qwen3.5-4b-q4_k_m"
   base_url: "http://llm-primary:8080/v1"
   triage_base_url: "http://llm-triage:8081/v1"
   api_key_env: ""                   # Env var name for cloud providers (e.g. ANTHROPIC_API_KEY)

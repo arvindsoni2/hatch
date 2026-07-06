@@ -3,16 +3,17 @@
 # Optional auto-start is provided by infrastructure/systemd/hatch.service.
 
 services:
-  # ── llama-server: primary model (Qwen3-8B Q5_K_M, :8080) ───────────────────
+  # ── llama-server: primary model (Qwen3.5-4B Q4_K_M, :8080) ─────────────────
   # Use ghcr.io/ggml-org/llama.cpp:server (rolling latest) or pin a bNNNN tag.
-  # Model file: run scripts/fetch_models.sh to download Qwen3-8B-Q5_K_M.gguf
+  # Model file: run scripts/fetch_models.sh to download the pinned GGUF.
   llm-primary:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: hatch-llm-primary
     command: >
-      --model /models/Qwen3-8B-Q5_K_M.gguf
+      --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf
       --ctx-size 16384
       --parallel 1
+      --reasoning off
       --host 0.0.0.0
       --port 8080
     volumes:
@@ -29,15 +30,16 @@ services:
     networks:
       - hatch
 
-  # ── llama-server: triage model (Qwen3-0.6B Q8_0, :8081) ────────────────────
+  # ── llama-server: triage model (Qwen3.5-0.8B Q8_0, :8081) ──────────────────
   # --parallel 2 gives 2048 tokens/slot (4096 / 2) — sufficient for TRIAGE (1536+256).
   llm-triage:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: hatch-llm-triage
     command: >
-      --model /models/Qwen3-0.6B-Q8_0.gguf
+      --model /models/Qwen_Qwen3.5-0.8B-Q8_0.gguf
       --ctx-size 4096
       --parallel 2
+      --reasoning off
       --host 0.0.0.0
       --port 8081
     volumes:

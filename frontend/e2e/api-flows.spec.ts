@@ -221,20 +221,20 @@ test.describe("LLM model verification", () => {
     expect((body as Record<string, unknown>).status).toBe("ok");
   });
 
-  test("llm-primary reports qwen3-4b model", async () => {
+  test("llm-primary reports qwen3.5-4b model", async () => {
     const res = await fetch("http://localhost:8080/v1/models");
     expect(res.status).toBe(200);
     const body = await res.json() as { data: Array<{ id: string }> };
     const modelId = body.data?.[0]?.id?.toLowerCase() ?? "";
-    expect(modelId).toContain("qwen3");
+    expect(modelId).toContain("qwen3.5-4b");
   });
 
-  test("llm-triage reports qwen3-0.6b model", async () => {
+  test("llm-triage reports qwen3.5-0.8b model", async () => {
     const res = await fetch("http://localhost:8081/v1/models");
     expect(res.status).toBe(200);
     const body = await res.json() as { data: Array<{ id: string }> };
     const modelId = body.data?.[0]?.id?.toLowerCase() ?? "";
-    expect(modelId).toContain("qwen3");
+    expect(modelId).toContain("qwen3.5-0.8b");
   });
 });
 

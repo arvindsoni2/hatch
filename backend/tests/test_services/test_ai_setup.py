@@ -11,7 +11,7 @@ from app.services import ai_setup
 def test_catalogue_is_pinned_and_valid() -> None:
     catalogue = ai_setup.load_catalog()
 
-    assert len(catalogue) == 3
+    assert len(catalogue) == 2
     assert {model["role"] for model in catalogue} == {
         "triage",
         "combined_capable_primary",
@@ -34,9 +34,8 @@ def test_recommendations_use_total_ram_and_are_exclusive(tmp_path: Path) -> None
     compatible = {item["model_id"] for item in result["compatible"]}
     rejected = {item["model_id"] for item in result["not_recommended"]}
 
-    assert "qwen3-0.6b-q8-triage" in recommended
-    assert "qwen3-4b-q4km-primary" in recommended
-    assert "qwen3-8b-q5km-primary" in compatible
+    assert "qwen3.5-0.8b-q8-triage" in recommended
+    assert "qwen3.5-4b-q4km-primary" in recommended
     assert not (recommended & compatible or recommended & rejected or compatible & rejected)
 
 
@@ -49,7 +48,7 @@ def test_recommendations_reject_unsupported_platform(tmp_path: Path) -> None:
         models_dir=tmp_path,
     )
 
-    assert len(result["not_recommended"]) == 3
+    assert len(result["not_recommended"]) == 2
     assert all(len(item["reasons"]) == 2 for item in result["not_recommended"])
 
 
