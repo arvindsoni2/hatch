@@ -1187,7 +1187,7 @@ Update this table in the same commit that completes each PR. Record the branch, 
 |---|---|---|---|---|---|
 | PR 1 | Product vocabulary and route contract | None | Merged | `ux/01-route-contract` / `033ed49` | Merged as GitHub PR #5 |
 | PR 2 | Shared page and control foundation | PR 1 | Merged | `ux/02-ui-foundation` / `e8bebd7` | Merged as GitHub PR #6 |
-| PR 3 | Accessible overlay primitives | PR 2 | In progress | `ux/03-overlay-primitives` | Implementation validated; PR review and merge pending |
+| PR 3 | Accessible overlay primitives | PR 2 | In progress | `ux/03-overlay-primitives` / `2c9a4d7` | Implementation validated; PR review and merge pending |
 | PR 4 | App-lock security and recovery | PR 2, PR 3 | Not started | `ux/04-app-lock-security` | |
 | PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Not started | `ux/05-onboarding` | |
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Not started | `ux/06-settings-profile` | |
