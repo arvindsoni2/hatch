@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { getAppLockStatus } from "@/lib/api";
@@ -23,6 +23,16 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     queryFn: getAppLockStatus,
     retry: 1,
   });
+  const [slowCheck, setSlowCheck] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setSlowCheck(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSlowCheck(true), 4000);
+    return () => window.clearTimeout(timer);
+  }, [isLoading]);
 
   useEffect(() => {
     if (!isUnlockRoute && data?.enabled && !data.is_unlocked) {
@@ -40,7 +50,11 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   if (isLoading || (data?.enabled && !data.is_unlocked)) {
     return (
       <div className="grid min-h-screen place-items-center" style={{ background: "var(--bg)" }}>
-        <div className="text-sm" style={{ color: "var(--text-muted)" }}>Securing Hatch…</div>
+        <div className="max-w-sm px-6 text-center text-sm text-[var(--text-muted)]" role="status">
+          {slowCheck
+            ? "Still checking the local backend. Make sure Hatch is running."
+            : "Checking app lock..."}
+        </div>
       </div>
     );
   }
@@ -48,7 +62,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     return (
       <div className="grid min-h-screen place-items-center p-6" style={{ background: "var(--bg)" }}>
         <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-          Hatch could not verify the lock state. Check that the backend is online.
+          Hatch could not verify the lock state. Check the backend is running, then reload this page.
         </p>
       </div>
     );
