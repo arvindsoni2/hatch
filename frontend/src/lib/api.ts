@@ -926,7 +926,7 @@ export async function getDocumentHistory(
 
 export async function downloadDocument(documentId: string): Promise<void> {
   const quality = await apiFetch<TailoringReview["quality_gate"]>(`/api/tailor/quality/document/${documentId}`);
-  if (quality?.post_generation.export_confidence === "acknowledge_required") {
+  if (quality?.post_generation?.export_confidence === "acknowledge_required") {
     const key = `quality-ack:${documentId}:${quality.pack_version}`;
     if (!sessionStorage.getItem(key)) {
       const accepted = window.confirm(
@@ -940,7 +940,9 @@ export async function downloadDocument(documentId: string): Promise<void> {
   const link = document.createElement("a");
   link.href = url;
   link.download = "";
+  document.body.appendChild(link);
   link.click();
+  link.remove();
 }
 
 export async function getATSScore(documentId: string): Promise<{ ats_score: number; details: ATSScore | null }> {
