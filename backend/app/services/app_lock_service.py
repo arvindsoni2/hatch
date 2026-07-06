@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.app_lock import AppLockConfig, AppLockSession
+from .password_policy import APP_LOCK_PASSWORD_POLICY, validate_new_password
 
 
 class AppLockError(Exception):
@@ -30,10 +31,6 @@ def _session_hash(token: str) -> str:
 
 def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def _valid_password(password: str) -> bool:
-    return len(password) >= 8 and bool(password.strip())
 
 
 class AppLockService:
@@ -79,6 +76,7 @@ class AppLockService:
             "configured_source": source,
             "is_configured": source != "none",
             "is_unlocked": not settings.HATCH_APP_LOCK_ENABLED or session is not None,
+            "password_policy": APP_LOCK_PASSWORD_POLICY.public(),
         }
         if not include_private and session is None:
             return base
@@ -100,8 +98,10 @@ class AppLockService:
         assert row is not None
         if row.password_hash:
             raise AppLockError("App lock is already configured.", 409)
-        if not _valid_password(password):
-            raise AppLockError("Password must be at least 8 characters.", 422)
+        try:
+            validate_new_password(password)
+        except ValueError as exc:
+            raise AppLockError(str(exc), 422) from exc
         row.password_hash = _hash_password(password)
         row.last_password_changed_at = _utcnow()
         return await self._create_session(row)
@@ -168,12 +168,16 @@ class AppLockService:
     async def change_password(self, current: str, new: str) -> str:
         if settings.HATCH_APP_PASSWORD:
             raise AppLockError("App lock password is controlled by environment configuration.", 409)
-        if not _valid_password(new):
-            raise AppLockError("Password must be at least 8 characters.", 422)
+        try:
+            validate_new_password(new)
+        except ValueError as exc:
+            raise AppLockError(str(exc), 422) from exc
         row = await self._config(create=True)
         assert row is not None
         if not await self._password_matches(current, row):
             raise AppLockError("Password is incorrect. Please try again.", 401)
+        if secrets.compare_digest(current, new):
+            raise AppLockError("New password must be different from the current password.", 422)
         row.password_hash = _hash_password(new)
         row.last_password_changed_at = _utcnow()
         await self._db.execute(delete(AppLockSession))

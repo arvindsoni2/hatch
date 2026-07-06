@@ -1187,8 +1187,8 @@ Update this table in the same commit that completes each PR. Record the branch, 
 |---|---|---|---|---|---|
 | PR 1 | Product vocabulary and route contract | None | Merged | `ux/01-route-contract` / `033ed49` | Merged as GitHub PR #5 |
 | PR 2 | Shared page and control foundation | PR 1 | Merged | `ux/02-ui-foundation` / `e8bebd7` | Merged as GitHub PR #6 |
-| PR 3 | Accessible overlay primitives | PR 2 | In progress | `ux/03-overlay-primitives` / `2c9a4d7` | Implementation validated; PR review and merge pending |
-| PR 4 | App-lock security and recovery | PR 2, PR 3 | Not started | `ux/04-app-lock-security` | |
+| PR 3 | Accessible overlay primitives | PR 2 | Merged | `ux/03-overlay-primitives` / `3e3533a` | Merged as GitHub PR #7 |
+| PR 4 | App-lock security and recovery | PR 2, PR 3 | In progress | `ux/04-app-lock-security` | Implementation validated; PR review and merge pending |
 | PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Not started | `ux/05-onboarding` | |
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Not started | `ux/06-settings-profile` | |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Not started | `ux/07-settings-tools` | |
@@ -1389,6 +1389,20 @@ Split this PR if migration exceeds the review limit: PR 3A adds and proves primi
 - Existing valid installations continue to unlock
 - Recovery copy states which local data is preserved or removed
 - No secret or password enters logs, analytics, browser persistence, or error detail
+
+**PR 4 resume handoff:**
+
+- The backend owns one app-lock password policy and publishes it through lock status: 12-128 characters, at least one letter and number, and no leading or trailing whitespace
+- First-run setup and Security settings validate against the published policy, show live requirements, support reveal/hide, link errors to fields, and keep submit disabled until valid
+- Unlock remains backward compatible with existing shorter passwords; the stronger policy applies only to setup and password change
+- Password changes reject reuse of the current password, clear other sessions, and announce inline success or errors without persisting or logging secrets
+- First-run, unlock, environment-managed, failed-attempt, slow-backend, and verification-error states now explain the local security boundary and keep protected content hidden
+- Recovery guidance documents `bash scripts/reset-app-lock.sh`, states that the password and sessions are removed, and confirms jobs, profile, CVs, and application data are preserved
+- Validation passed: 18 focused backend tests, focused backend Ruff checks, 414 frontend Vitest tests, TypeScript type-check, production build, two Playwright app-lock tests, and diff whitespace checks
+- Visual checks cover first-run setup and Security settings at 375px and 1440px in light and dark themes
+- Existing build warnings remain in `AnswerTimer` and `OnboardingPrimitives`; existing test warnings remain in asynchronous component tests and FaceCapture
+- The repository-wide backend lint command still reports pre-existing errors in unrelated services and tests; all PR 4 backend files pass Ruff
+- Do not start PR 5 until PR 4 has review approval and is marked `Merged`
 
 ### 9.7 PR 5: Isolate onboarding and protect draft data
 

@@ -19,6 +19,15 @@ export interface AppLockStatus {
   last_password_changed_at?: string | null;
   failed_attempt_count?: number;
   retry_after_seconds?: number;
+  password_policy?: PasswordPolicy;
+}
+
+export interface PasswordPolicy {
+  min_length: number;
+  max_length: number;
+  require_letter: boolean;
+  require_number: boolean;
+  reject_edge_whitespace: boolean;
 }
 
 export interface ProfileSummary {
