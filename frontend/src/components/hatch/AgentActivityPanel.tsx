@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { AgentBadge } from "./AgentBadge";
 import { AGENT_DEFS, PIPELINE } from "./agents";
+import { PRODUCT_ROUTES } from "@/lib/product-routes";
 
 interface FunnelCounts { scout: number; scorer: number; tailor: number; coach: number }
 interface TransitCounts { scout_to_scorer: number; scorer_to_tailor: number; tailor_to_coach: number }
@@ -120,10 +121,10 @@ export function AgentActivityPanel({ initialData, funnel, transit, avgMatch }: A
   const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
 
   const agentRoutes: Record<string, string> = {
-    scout: "/jobs?view=all",
-    scorer: "/stream",
-    tailor: "/tracker",
-    coach: "/prep",
+    scout: `${PRODUCT_ROUTES.jobs.href}?view=all`,
+    scorer: PRODUCT_ROUTES.pipeline.href,
+    tailor: PRODUCT_ROUTES.applications.href,
+    coach: PRODUCT_ROUTES.interviewPrep.href,
   };
 
   const agentMap = new Map((data?.agents ?? []).map((a) => [a.agent.toLowerCase(), a]));

@@ -7,6 +7,7 @@ const withPWA = (cfg) => cfg;
 // In container builds API_URL is injected as a Docker build arg; fall back to
 // the Compose service name so the rewrite works even if the arg is missing.
 const BACKEND_URL = process.env.API_URL || "http://backend:8000";
+const { legacyRedirects } = require("./product-routes.json");
 
 const nextConfig = {
   reactStrictMode: true,
@@ -17,6 +18,15 @@ const nextConfig = {
   skipTrailingSlashRedirect: true,
   // Proxy /api/** through Next.js so the browser uses same-origin requests.
   // This avoids IPv6 localhost resolution failures and CORS preflight overhead.
+  async redirects() {
+    return [
+      {
+        source: "/applications",
+        destination: legacyRedirects["/applications"],
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

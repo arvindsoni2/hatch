@@ -1,15 +1,16 @@
 "use client";
 import Link from 'next/link';
 import { HatchIcon } from './HatchIcon';
+import { PRODUCT_ROUTES } from '@/lib/product-routes';
 
 export type HatchTab = 'today' | 'stream' | 'tracker' | 'tailor' | 'prep';
 
 const TABS: { key: HatchTab; label: string; icon: string; href: string }[] = [
   { key: 'today',   label: 'Today',          icon: 'home',      href: '/today'   },
-  { key: 'stream',  label: 'Pipeline',       icon: 'layers',    href: '/stream'  },
-  { key: 'tracker', label: 'Applications',   icon: 'briefcase', href: '/tracker' },
+  { key: 'stream',  label: PRODUCT_ROUTES.pipeline.label,      icon: 'layers',    href: PRODUCT_ROUTES.pipeline.href },
+  { key: 'tracker', label: PRODUCT_ROUTES.applications.label,  icon: 'briefcase', href: PRODUCT_ROUTES.applications.href },
   { key: 'tailor',  label: 'CV Studio',      icon: 'fileText',  href: '/tailor'  },
-  { key: 'prep',    label: 'Interview Prep', icon: 'mic',       href: '/prep'    },
+  { key: 'prep',    label: PRODUCT_ROUTES.interviewPrep.label, icon: 'mic',       href: PRODUCT_ROUTES.interviewPrep.href },
 ];
 
 interface HatchNavProps {

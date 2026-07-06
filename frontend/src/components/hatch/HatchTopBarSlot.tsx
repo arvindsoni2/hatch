@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { HatchTopBar } from './HatchTopBar';
 import { fetchProfileStatus } from '@/lib/api';
+import { PRODUCT_ROUTES } from '@/lib/product-routes';
 
 const ROUTE_LABELS: Record<string, { title: string; sub?: string }> = {
   '/today':        { title: 'Today' },
-  '/stream':       { title: 'Pipeline' },
-  '/tracker':      { title: 'Applications' },
-  '/prep':         { title: 'Interview Prep' },
+  [PRODUCT_ROUTES.pipeline.href]:      { title: PRODUCT_ROUTES.pipeline.label },
+  [PRODUCT_ROUTES.applications.href]:  { title: PRODUCT_ROUTES.applications.label },
+  [PRODUCT_ROUTES.interviewPrep.href]: { title: PRODUCT_ROUTES.interviewPrep.label },
   '/tailor':       { title: 'CV Studio', sub: 'Create a tailored CV and application pack' },
   '/settings/resume':  { title: 'Master CV' },
   '/settings/profile': { title: 'Profile' },
@@ -16,9 +17,8 @@ const ROUTE_LABELS: Record<string, { title: string; sub?: string }> = {
   '/settings/system':  { title: 'System Logs' },
   '/settings/security': { title: 'Security' },
   '/settings':         { title: 'Profile' },
-  '/coach':        { title: 'Coach' },
-  '/jobs':         { title: 'Jobs' },
-  '/applications': { title: 'Applications' },
+  [PRODUCT_ROUTES.interviewCoach.href]: { title: PRODUCT_ROUTES.interviewCoach.label },
+  [PRODUCT_ROUTES.jobs.href]:           { title: PRODUCT_ROUTES.jobs.label },
   '/analytics':    { title: 'Analytics' },
   '/calendar':     { title: 'Calendar' },
 };

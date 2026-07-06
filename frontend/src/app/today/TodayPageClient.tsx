@@ -8,6 +8,7 @@ import { AgentActivityPanel } from "@/components/hatch/AgentActivityPanel";
 import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob, getApplicationPackage } from "@/lib/api";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 import type { ApplicationPackage, AgentPerformance } from "@/lib/api";
+import { PRODUCT_ROUTES } from "@/lib/product-routes";
 
 interface UpcomingInterview {
   scheduledAt: string;
@@ -182,7 +183,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
             }}
             onMarkApplied={handleMarkApplied}
             onRevert={handleRevert}
-            onOpenPrep={() => router.push("/prep")}
+            onOpenPrep={() => router.push(PRODUCT_ROUTES.interviewPrep.href)}
             onOpenCvStudio={() => router.push("/tailor")}
           />
         </div>
