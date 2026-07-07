@@ -1,8 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Cpu, ShieldCheck, TriangleAlert } from "lucide-react";
+import {
+  CheckCircle2,
+  Clipboard,
+  Cloud,
+  Cpu,
+  PlayCircle,
+  ShieldCheck,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { SettingsShell } from "@/components/settings/SettingsShell";
 import { API_BASE } from "@/lib/api";
 
 type ModelItem = {
@@ -58,6 +68,25 @@ const PROVIDERS = [
   { id: "anthropic", label: "Anthropic Claude" },
 ] as const;
 
+function formatMode(value?: string | null) {
+  if (!value || value === "not_configured") return "Not configured";
+  return value.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function recommendedTier(recommendations: RecommendationResponse | null) {
+  const recommendedIds = recommendations?.recommended.map((item) => item.model_id) ?? [];
+  if (recommendedIds.some((id) => /medium|8b|4b|primary/i.test(id))) return "medium";
+  if (recommendedIds.length > 0) return "small";
+  return "not available yet";
+}
+
+function friendlyError(error: unknown, fallback: string) {
+  if (!(error instanceof Error)) return fallback;
+  if (/failed to fetch|network/i.test(error.message)) return "Could not reach the local Hatch backend.";
+  if (/probe/i.test(error.message)) return "Run hatch probe, then refresh this page.";
+  return fallback;
+}
+
 export default function AiSettingsPage() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [hardware, setHardware] = useState<HardwareResponse | null>(null);
@@ -65,6 +94,7 @@ export default function AiSettingsPage() {
   const [recommendations, setRecommendations] = useState<RecommendationResponse | null>(null);
   const [selectedModels, setSelectedModels] = useState<Set<string>>(() => new Set());
   const [message, setMessage] = useState<string | null>(null);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const load = useCallback(async () => {
@@ -83,7 +113,7 @@ export default function AiSettingsPage() {
 
   useEffect(() => {
     void load().catch((error: unknown) => {
-      setMessage(error instanceof Error ? error.message : "Could not load AI setup.");
+      setMessage(friendlyError(error, "Could not load AI setup."));
     });
   }, [load]);
 
@@ -97,9 +127,15 @@ export default function AiSettingsPage() {
         setMessage(`Saved. Next: ${result.next_command ?? "hatch apply-ai-config"}`);
         await load();
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : "Could not save AI setup.");
+        setMessage(friendlyError(error, "Could not save AI setup."));
       }
     });
+  };
+
+  const copyCommand = async (command: string) => {
+    await navigator.clipboard.writeText(command);
+    setCopiedCommand(command);
+    window.setTimeout(() => setCopiedCommand(null), 1800);
   };
 
   const toggleModel = (modelId: string) => {
@@ -118,76 +154,179 @@ export default function AiSettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <Link href="/settings" className="inline-flex items-center gap-2 text-sm text-muted hover:text-fg">
-        <ArrowLeft className="h-4 w-4" /> Settings
-      </Link>
-
-      <header>
-        <h1 className="text-2xl font-semibold text-fg">AI setup</h1>
-        <p className="mt-1 text-sm text-muted">
-          Choose when and where Hatch runs AI. No model downloads start without your confirmation.
-        </p>
-      </header>
-
-      <section className="rounded-xl border border-border bg-surface p-5">
-        <div className="flex items-center gap-3">
-          <ShieldCheck className="h-5 w-5 text-accent" />
-          <div>
-            <h2 className="font-semibold text-fg">Current status</h2>
-            <p className="text-sm text-muted">
-              {status ? `${status.runtime.ai_mode} · ${status.runtime.quality_mode}` : "Loading…"}
-            </p>
+    <SettingsShell
+      activeHref="/settings/ai"
+      title="AI Provider"
+      description="Choose whether Hatch runs without AI for now, uses local models, or connects to a cloud provider through host-owned secrets."
+    >
+      <section className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 text-[var(--accent)]" aria-hidden="true" />
+            <div>
+              <h2 className="font-semibold text-[var(--text)]">Current setup</h2>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
+                {status ? `${formatMode(status.runtime.ai_mode)} · ${formatMode(status.runtime.quality_mode)}` : "Loading setup status..."}
+              </p>
+              <p className="mt-2 text-sm text-[var(--text-dim)]">
+                {status?.runtime.ai_mode === "not_configured"
+                  ? "Hatch is usable now. AI-assisted tailoring and coaching stay limited until setup is complete."
+                  : `Provider: ${status?.runtime.provider ?? "local/custom runtime"}`}
+              </p>
+            </div>
+          </div>
+          <div className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text-dim)]">
+            Test provider: <span className="font-semibold text-[var(--text)]">Not tested yet</span>
           </div>
         </div>
-        {message ? <p className="mt-4 rounded-lg bg-surface-2 p-3 text-sm text-fg">{message}</p> : null}
+        {message ? <p className="mt-4 rounded-[var(--radius-control)] bg-[var(--surface-2)] p-3 text-sm text-[var(--text)]" role="status">{message}</p> : null}
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2">
-        <button
-          type="button"
-          disabled={isPending}
-          onClick={() => saveMode("/api/setup/skip-ai")}
-          className="rounded-xl border border-border bg-surface p-5 text-left hover:border-accent disabled:opacity-50"
-        >
-          <h2 className="font-semibold text-fg">Use Hatch now, set up AI later</h2>
-          <p className="mt-2 text-sm text-muted">Profile, tracker, and manual application tools remain available.</p>
-        </button>
+      <section className="grid gap-4 xl:grid-cols-3">
+        <article className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
+          <div className="flex items-center gap-3">
+            <PlayCircle className="h-5 w-5 text-[var(--accent)]" aria-hidden="true" />
+            <h2 className="font-semibold text-[var(--text)]">Use Hatch now, set up AI later</h2>
+          </div>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Best for</dt>
+              <dd className="text-[var(--text-muted)]">Trying the app and using manual job-search workflows.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Privacy impact</dt>
+              <dd className="text-[var(--text-muted)]">No prompts are sent to an AI provider.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Status</dt>
+              <dd className="text-[var(--text-muted)]">Ready with limited AI features.</dd>
+            </div>
+          </dl>
+          <Button className="mt-4 w-full" disabled={isPending} onClick={() => saveMode("/api/setup/skip-ai")} type="button" variant="secondary">
+            Choose set up later
+          </Button>
+        </article>
 
-        {PROVIDERS.map((provider) => (
-          <button
-            key={provider.id}
-            type="button"
-            disabled={isPending}
-            onClick={() => saveMode("/api/setup/cloud-provider", { provider: provider.id })}
-            className="rounded-xl border border-border bg-surface p-5 text-left hover:border-accent disabled:opacity-50"
-          >
-            <h2 className="font-semibold text-fg">Use {provider.label}</h2>
-            <p className="mt-2 text-sm text-muted">
-              Prompts may be sent to this provider. Add the key afterward with{" "}
-              <code>hatch secrets set {provider.id}</code>.
-            </p>
-          </button>
-        ))}
+        <article className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
+          <div className="flex items-center gap-3">
+            <Cpu className="h-5 w-5 text-[var(--accent)]" aria-hidden="true" />
+            <h2 className="font-semibold text-[var(--text)]">Run AI locally</h2>
+          </div>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Best for</dt>
+              <dd className="text-[var(--text-muted)]">Privacy and cost control on your own machine.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Setup required</dt>
+              <dd className="text-[var(--text-muted)]">Run the hardware probe, select models, then install them from the host CLI.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Status</dt>
+              <dd className="text-[var(--text-muted)]">{hardware?.detected ? "Hardware detected" : "Not installed"}</dd>
+            </div>
+          </dl>
+          <div className="mt-4 rounded-[var(--radius-control)] bg-[var(--surface-2)] p-3 text-sm text-[var(--text-dim)]">
+            {hardware?.detected ? (
+              <div className="grid gap-1">
+                <p>Detected RAM: {hardware.snapshot?.memory.total_gb ?? 0} GB</p>
+                <p>Model storage free: {hardware.snapshot?.storage.models_dir_free_gb ?? 0} GB</p>
+                <p>Recommended local model tier: {recommendedTier(recommendations)}</p>
+                <p>Selected models: {selectedModels.size}</p>
+              </div>
+            ) : (
+              <p>Hardware not detected yet. Run hatch probe.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
+          <div className="flex items-center gap-3">
+            <Cloud className="h-5 w-5 text-[var(--accent)]" aria-hidden="true" />
+            <h2 className="font-semibold text-[var(--text)]">Use cloud AI provider</h2>
+          </div>
+          <dl className="mt-4 grid gap-3 text-sm">
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Best for</dt>
+              <dd className="text-[var(--text-muted)]">Quality and convenience when you already use a provider.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Privacy impact</dt>
+              <dd className="text-[var(--text-muted)]">Prompts may leave this machine and be processed by the provider.</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-[var(--text)]">Status</dt>
+              <dd className="text-[var(--text-muted)]">Missing secret until added from the host CLI. Not tested yet.</dd>
+            </div>
+          </dl>
+        </article>
       </section>
 
-      <section className="rounded-xl border border-border bg-surface p-5">
+      <section className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
         <div className="flex items-center gap-3">
-          <Cpu className="h-5 w-5 text-accent" />
+          <Cloud className="h-5 w-5 text-[var(--accent)]" aria-hidden="true" />
           <div>
-            <h2 className="font-semibold text-fg">Run AI locally</h2>
-            <p className="text-sm text-muted">
+            <h2 className="font-semibold text-[var(--text)]">Cloud provider commands</h2>
+            <p className="text-sm text-[var(--text-muted)]">Choose a provider here, then add its secret from your terminal. Hatch never asks for API keys in the browser.</p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          {PROVIDERS.map((provider) => {
+            const command = `hatch secrets set ${provider.id}`;
+            return (
+              <article className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] p-4" key={provider.id}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-semibold text-[var(--text)]">{provider.label}</h3>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">Status: missing secret · Not tested yet</p>
+                  </div>
+                  <Sparkles className="h-4 w-4 text-[var(--accent)]" aria-hidden="true" />
+                </div>
+                <code className="mt-3 block overflow-x-auto rounded-[var(--radius-control)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text)]">{command}</code>
+                <div className="mt-3 grid gap-2">
+                  <Button
+                    className="w-full"
+                    disabled={isPending}
+                    onClick={() => saveMode("/api/setup/cloud-provider", { provider: provider.id })}
+                    type="button"
+                    variant="outline"
+                  >
+                    Use {provider.label}
+                  </Button>
+                  <Button
+                    aria-label={`Copy ${provider.label} secret command`}
+                    className="w-full"
+                    onClick={() => void copyCommand(command)}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Clipboard className="h-4 w-4" aria-hidden="true" />
+                    Copy command
+                  </Button>
+                  {copiedCommand === command ? <p className="text-xs font-medium text-[var(--success)]" role="status">Command copied.</p> : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
+        <div className="flex items-center gap-3">
+          <Cpu className="h-5 w-5 text-[var(--accent)]" aria-hidden="true" />
+          <div>
+            <h2 className="font-semibold text-[var(--text)]">Local model selection</h2>
+            <p className="text-sm text-[var(--text-muted)]">
               {hardware?.detected
-                ? `${hardware.snapshot?.memory.total_gb} GB RAM · ${hardware.snapshot?.storage.models_dir_free_gb} GB model storage free`
-                : "Hardware not detected yet. Run hatch probe."}
+                ? "Select the models Hatch should install and run locally."
+                : "Hardware not detected yet. Run hatch probe, then refresh this page."}
             </p>
           </div>
         </div>
-
         {hardware?.detected ? (
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             {catalog.map((model) => (
-              <label key={model.id} className="rounded-lg border border-border p-4">
+              <label key={model.id} className="rounded-[var(--radius-control)] border border-[var(--border)] p-4">
                 <div className="flex items-start gap-3">
                   <input
                     type="checkbox"
@@ -196,9 +335,9 @@ export default function AiSettingsPage() {
                     className="mt-1"
                   />
                   <span>
-                    <span className="block font-medium text-fg">{model.display_name}</span>
-                    <span className="mt-1 block text-xs text-muted">{bucketFor(model.id)}</span>
-                    <span className="block text-xs text-muted">
+                    <span className="block font-medium text-[var(--text)]">{model.display_name}</span>
+                    <span className="mt-1 block text-xs text-[var(--text-muted)]">{bucketFor(model.id)}</span>
+                    <span className="block text-xs text-[var(--text-muted)]">
                       {model.download_size_gb} GB · {model.recommended_ram_gb} GB RAM recommended
                     </span>
                   </span>
@@ -207,12 +346,12 @@ export default function AiSettingsPage() {
             ))}
           </div>
         ) : (
-          <div className="mt-4 flex items-center gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="mt-4 flex items-center gap-2 rounded-[var(--radius-control)] bg-[var(--warning-soft)] p-3 text-sm text-[var(--warning)]">
             <TriangleAlert className="h-4 w-4" /> Run <code>hatch probe</code>, then refresh this page.
           </div>
         )}
 
-        <button
+        <Button
           type="button"
           disabled={isPending || selectedModels.size === 0}
           onClick={() =>
@@ -220,14 +359,14 @@ export default function AiSettingsPage() {
               selected_model_ids: Array.from(selectedModels),
             })
           }
-          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="mt-4"
         >
           <CheckCircle2 className="h-4 w-4" /> Save local selection
-        </button>
-        <p className="mt-2 text-xs text-muted">
+        </Button>
+        <p className="mt-2 text-xs text-[var(--text-muted)]">
           Saving records your choice only. Run <code>hatch models install</code> to confirm downloads.
         </p>
       </section>
-    </div>
+    </SettingsShell>
   );
 }
