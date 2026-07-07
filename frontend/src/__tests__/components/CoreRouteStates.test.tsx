@@ -67,4 +67,26 @@ describe("core job-search route states", () => {
     expect(reset).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("link", { name: "Open Diagnostics" })).toHaveAttribute("href", "/settings/system");
   });
+
+  it("renders a named Interview Coach loading skeleton", async () => {
+    const { default: Loading } = await import("@/app/coach/loading");
+
+    render(<Loading />);
+
+    expect(screen.getByRole("status", { name: "Loading Interview Coach" })).toBeVisible();
+    expect(screen.getAllByTestId("coach-loading-skeleton")).toHaveLength(3);
+  });
+
+  it("renders a recoverable Interview Coach error with Diagnostics", async () => {
+    const { default: ErrorState } = await import("@/app/coach/error");
+    const reset = vi.fn();
+
+    render(<ErrorState error={new Error("coach unavailable")} reset={reset} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Interview Coach could not load");
+    expect(screen.getByText("coach unavailable")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("link", { name: "Open Diagnostics" })).toHaveAttribute("href", "/settings/system");
+  });
 });

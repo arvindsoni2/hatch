@@ -150,3 +150,13 @@ describe('Settings pages — no light-only Tailwind', () => {
     });
   }
 });
+
+// ── Prep and Coach destructive actions ───────────────────────────────────────
+describe('Prep and Coach destructive actions', () => {
+  it('Coach story detail uses shared confirmation UI instead of browser confirm', () => {
+    const storyDetail = read('app', 'coach', 'stories', '[id]', 'page.tsx');
+
+    expect(storyDetail).not.toContain('confirm(');
+    expect(storyDetail).toContain('AlertDialog');
+  });
+});
