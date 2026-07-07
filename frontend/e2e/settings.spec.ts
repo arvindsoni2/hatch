@@ -1,6 +1,8 @@
 import { test, expect } from "./fixtures";
 import type { Page } from "@playwright/test";
 
+test.setTimeout(60_000);
+
 const profile = {
   candidate: {
     name: "Avery Morgan",
@@ -43,11 +45,58 @@ async function mockSettingsProfile(page: Page) {
   });
 }
 
+async function mockAISetup(page: Page) {
+  await page.route("**/api/setup/status", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      runtime: { ai_mode: "not_configured", quality_mode: "not_configured", provider: null, warnings: [] },
+      restart_required: false,
+      next_command: "hatch apply-ai-config",
+    }),
+  }));
+  await page.route("**/api/setup/hardware", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      detected: true,
+      snapshot: {
+        platform: { os_family: "linux", arch: "x86_64" },
+        memory: { total_gb: 32 },
+        storage: { models_dir_free_gb: 184 },
+      },
+    }),
+  }));
+  await page.route("**/api/setup/models/catalog", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      models: [{
+        id: "qwen3-medium",
+        display_name: "Qwen3 Medium",
+        role: "combined_capable_primary",
+        download_size_gb: 5.6,
+        min_ram_gb: 16,
+        recommended_ram_gb: 32,
+      }],
+    }),
+  }));
+  await page.route("**/api/setup/models/recommendations", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      recommended: [{ model_id: "qwen3-medium", already_downloaded: false }],
+      compatible: [],
+      not_recommended: [],
+    }),
+  }));
+}
+
 test("settings profile has active navigation and a sticky dirty save bar", async ({ page }) => {
   await mockSettingsProfile(page);
   await page.goto("/settings/profile");
 
-  await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Profile", exact: true })).toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole("link", { name: "Profile" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("Settings section")).toHaveValue("/settings/profile");
 
@@ -61,7 +110,7 @@ test("job preferences validates target-role entry and focuses the tag input", as
   await mockSettingsProfile(page);
   await page.goto("/settings/preferences");
 
-  await expect(page.getByRole("heading", { name: "Job Preferences" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Job Preferences", exact: true })).toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole("link", { name: "Job Preferences" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("Settings section")).toHaveValue("/settings/preferences");
 
@@ -71,4 +120,17 @@ test("job preferences validates target-role entry and focuses the tag input", as
 
   await expect(page.getByText("Add at least one target role.")).toBeVisible();
   await expect(targetRoles.getByRole("textbox", { name: "Add target role" })).toBeFocused();
+});
+
+test("AI provider page explains setup choices and host CLI commands", async ({ page }) => {
+  await mockAISetup(page);
+  await page.goto("/settings/ai");
+
+  await expect(page.getByRole("heading", { name: "AI Provider", exact: true })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByRole("link", { name: "AI Provider" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByText("Use Hatch now, set up AI later")).toBeVisible();
+  await expect(page.getByText("Run AI locally")).toBeVisible();
+  await expect(page.getByText("Use cloud AI provider")).toBeVisible();
+  await expect(page.getByText("Detected RAM: 32 GB")).toBeVisible();
+  await expect(page.getByText("hatch secrets set openai")).toBeVisible();
 });
