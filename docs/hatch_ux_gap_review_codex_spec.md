@@ -1189,7 +1189,7 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 2 | Shared page and control foundation | PR 1 | Merged | `ux/02-ui-foundation` / `e8bebd7` | Merged as GitHub PR #6 |
 | PR 3 | Accessible overlay primitives | PR 2 | Merged | `ux/03-overlay-primitives` / `3e3533a` | Merged as GitHub PR #7 |
 | PR 4 | App-lock security and recovery | PR 2, PR 3 | Merged | `ux/04-app-lock-security` / `b40cb5a` | Merged as GitHub PR #8 |
-| PR 5 | Onboarding privacy and flow | PR 2, PR 3 | In progress | `ux/05-onboarding` | Implementation validated; PR review and merge pending |
+| PR 5 | Onboarding privacy and flow | PR 2, PR 3 | In progress | `ux/05-onboarding` / `133ab35` | Implementation validated; PR review and merge pending |
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Not started | `ux/06-settings-profile` | |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Not started | `ux/07-settings-tools` | |
 | PR 8 | Core job-search screens | PR 1 to PR 3 | Not started | `ux/08-core-screens` | |
