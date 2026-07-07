@@ -1,41 +1,45 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import Link from "next/link";
-const API_BASE = "";
 import {
-  ArrowLeft, Upload, CheckCircle2, AlertCircle, FileText,
-  Loader2, RefreshCw, ExternalLink, Save, TriangleAlert,
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  FileText,
+  Loader2,
+  RefreshCw,
+  Save,
+  TriangleAlert,
+  Upload,
+  XCircle,
 } from "lucide-react";
+import { SettingsShell } from "@/components/settings/SettingsShell";
 import { Button } from "@/components/ui/button";
+import { SectionCard } from "@/components/ui/section-card";
+import { cn } from "@/lib/utils";
 import {
+  confirmCv,
   fetchResumeStatus,
   uploadResume,
-  confirmCv,
-  type ResumeStatus,
   type ParsePreviewResponse,
+  type ResumeStatus,
 } from "@/lib/api";
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+const API_BASE = "";
+const MAX_RESUME_BYTES = 10 * 1024 * 1024;
+const ALLOWED_TYPES = new Map([
+  [".pdf", "application/pdf"],
+  [".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+]);
 
-function SectionRow({ label, present }: { label: string; present: boolean }) {
-  return (
-    <div className="flex items-center gap-2 py-1.5">
-      {present ? (
-        <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-      ) : (
-        <AlertCircle className="h-4 w-4 text-amber-400 shrink-0" />
-      )}
-      <span className="text-sm text-fg">{label}</span>
-    </div>
-  );
-}
+type FlowStep = "select" | "uploading" | "parsing" | "review" | "confirm";
 
 interface ExperienceEntry {
   role?: string;
   company?: string;
   period?: string;
-  achievements?: Array<{ text: string }>;
+  achievements?: Array<{ text: string } | string>;
 }
 
 interface SkillGroup {
@@ -43,14 +47,121 @@ interface SkillGroup {
   items?: string[];
 }
 
+const SECTION_LABELS: Record<string, string> = {
+  personal: "Contact information",
+  summary: "Professional summary",
+  experience: "Work experience",
+  skills: "Skills",
+  education: "Education",
+  certifications: "Certifications",
+};
+
+const FLOW_STEPS: Array<{ key: FlowStep; label: string }> = [
+  { key: "select", label: "Select file" },
+  { key: "uploading", label: "Uploading" },
+  { key: "parsing", label: "Parsing" },
+  { key: "review", label: "Review extracted data" },
+  { key: "confirm", label: "Confirm save" },
+];
+
+function fileExtension(filename: string) {
+  const index = filename.lastIndexOf(".");
+  return index >= 0 ? filename.slice(index).toLowerCase() : "";
+}
+
+function validateResumeFile(file: File): string | null {
+  const extension = fileExtension(file.name);
+  const expectedType = ALLOWED_TYPES.get(extension);
+  if (!expectedType || file.type !== expectedType) {
+    return "Only PDF and DOCX files are supported.";
+  }
+  if (file.size > MAX_RESUME_BYTES) {
+    return "Choose a .docx or .pdf file under 10 MB.";
+  }
+  return null;
+}
+
+function SectionRow({ label, present }: { label: string; present: boolean }) {
+  return (
+    <div className="flex items-center gap-2 py-1.5">
+      {present ? (
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--success)]" aria-hidden="true" />
+      ) : (
+        <AlertCircle className="h-4 w-4 shrink-0 text-[var(--warning)]" aria-hidden="true" />
+      )}
+      <span className="text-sm text-[var(--text)]">{label}</span>
+    </div>
+  );
+}
+
+function FlowStepper({ activeStep }: { activeStep: FlowStep }) {
+  const activeIndex = FLOW_STEPS.findIndex((step) => step.key === activeStep);
+  return (
+    <ol className="grid gap-2 sm:grid-cols-5" aria-label="Master CV upload progress">
+      {FLOW_STEPS.map((step, index) => {
+        const complete = index < activeIndex;
+        const active = index === activeIndex;
+        return (
+          <li
+            className={cn(
+              "min-h-16 rounded-[var(--radius-control)] border px-3 py-2 text-sm",
+              complete ? "border-[var(--success)] bg-[var(--success-soft)] text-[var(--success)]" : null,
+              active ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : null,
+              !complete && !active ? "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]" : null,
+            )}
+            key={step.key}
+          >
+            <span className="block text-xs font-semibold">{index + 1}</span>
+            <span className="block font-medium">{step.label}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function fieldWarnings(warnings: string[], section: "contact" | "experience" | "skills" | "summary") {
+  return warnings.filter((warning) => {
+    const lower = warning.toLowerCase();
+    if (section === "skills") return lower.includes("skill");
+    if (section === "experience") return lower.includes("employment") || lower.includes("experience") || lower.includes("history");
+    if (section === "contact") return lower.includes("contact") || lower.includes("candidate");
+    return lower.includes("summary") || lower.includes("structure");
+  });
+}
+
+function WarningCallout({ warnings }: { warnings: string[] }) {
+  if (!warnings.length) return null;
+  return (
+    <div className="mt-2 rounded-[var(--radius-control)] border border-[var(--warning)] bg-[var(--warning-soft)] px-3 py-2 text-xs text-[var(--warning)]">
+      <div className="flex items-start gap-2">
+        <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+        <ul className="space-y-1">
+          {warnings.map((warning) => <li key={warning}>{warning}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function ParsePreviewCard({
-  preview,
-  onConfirm,
   confirming,
+  isReplacing,
+  onCancel,
+  onConfirm,
+  onUploadDifferent,
+  preview,
+  replacementAccepted,
+  setReplacementAccepted,
 }: {
-  preview: ParsePreviewResponse;
-  onConfirm: () => void;
   confirming: boolean;
+  isReplacing: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onUploadDifferent: () => void;
+  preview: ParsePreviewResponse;
+  replacementAccepted: boolean;
+  setReplacementAccepted: (accepted: boolean) => void;
 }) {
   const cv = preview.parsed_cv;
   const personal = cv.personal as Record<string, string> | undefined;
@@ -59,111 +170,111 @@ function ParsePreviewCard({
   const skills = (cv.skills as SkillGroup[]) ?? [];
   const certs = (cv.certifications as string[]) ?? [];
   const hasWarnings = preview.warnings.length > 0;
+  const confirmDisabled = confirming || (isReplacing && !replacementAccepted);
 
   return (
-    <div className="rounded-xl shadow-sm space-y-4" style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
-      {/* Header */}
-      <div className="border-b border-border px-5 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <FileText className="h-5 w-5 text-muted" />
-          <div>
-            <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>
-              {preview.filename}
+    <SectionCard
+      title="Review extracted data"
+      description="Check the parsed profile fields before saving them as your Master CV."
+      actions={<FileText className="h-5 w-5 text-[var(--text-muted)]" aria-hidden="true" />}
+    >
+      <div className="space-y-5">
+        <div className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3">
+          <p className="text-sm font-semibold text-[var(--text)]">{preview.filename}</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">
+            Hatch will only save what it can extract or what you confirm.
+          </p>
+        </div>
+
+        {isReplacing ? (
+          <div className="rounded-[var(--radius-control)] border border-[var(--warning)] bg-[var(--warning-soft)] px-4 py-3">
+            <p className="text-sm font-medium text-[var(--warning)]">
+              This will replace your current Master CV data after you confirm the parsed preview.
             </p>
-            <p className="text-xs text-muted">Review the extracted data, then click Confirm &amp; Save</p>
+            <label className="mt-3 flex items-start gap-2 text-sm text-[var(--text)]">
+              <input
+                checked={replacementAccepted}
+                className="mt-1"
+                onChange={(event) => setReplacementAccepted(event.target.checked)}
+                type="checkbox"
+              />
+              I understand this will replace current Master CV data after I confirm save.
+            </label>
           </div>
-        </div>
-      </div>
+        ) : null}
 
-      {/* Grounding warnings */}
-      {hasWarnings && (
-        <div className="mx-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-1">
-          <div className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
-            <TriangleAlert className="h-4 w-4 shrink-0" />
-            {preview.warnings.length} grounding warning{preview.warnings.length !== 1 ? "s" : ""}
+        {hasWarnings ? (
+          <div className="rounded-[var(--radius-control)] border border-[var(--warning)] bg-[var(--warning-soft)] px-4 py-3 text-sm text-[var(--warning)]">
+            <div className="flex items-center gap-2 font-medium">
+              <TriangleAlert className="h-4 w-4" aria-hidden="true" />
+              {preview.warnings.length} parse warning{preview.warnings.length === 1 ? "" : "s"} need review
+            </div>
           </div>
-          <ul className="text-xs text-amber-700 ml-5 list-disc space-y-0.5">
-            {preview.warnings.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+        ) : null}
 
-      <div className="px-5 space-y-5 pb-5">
-        {/* Personal */}
-        {personal && (
-          <section>
-            <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Contact</h3>
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-              {Object.entries(personal).map(([k, v]) =>
-                v ? (
-                  <div key={k} className="flex gap-1.5">
-                    <dt className="text-muted capitalize">{k.replace("_", " ")}:</dt>
-                    <dd className="text-fg truncate">{v}</dd>
-                  </div>
-                ) : null
-              )}
+        {personal ? (
+          <section aria-label="Contact" className="space-y-2">
+            <h3 className="text-sm font-semibold text-[var(--text)]">Contact</h3>
+            <dl className="grid gap-2 text-sm sm:grid-cols-2">
+              {Object.entries(personal).map(([key, value]) => value ? (
+                <div key={key} className="min-w-0 rounded-[var(--radius-control)] bg-[var(--surface-2)] px-3 py-2">
+                  <dt className="text-xs text-[var(--text-muted)]">{key.replace("_", " ")}</dt>
+                  <dd className="truncate text-[var(--text)]">{value}</dd>
+                </div>
+              ) : null)}
             </dl>
+            <WarningCallout warnings={fieldWarnings(preview.warnings, "contact")} />
           </section>
-        )}
+        ) : null}
 
-        {/* Summary */}
-        {summary && (
-          <section>
-            <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-1">Summary</h3>
-            <p className="text-sm text-fg leading-relaxed line-clamp-4">{summary}</p>
+        {summary ? (
+          <section aria-label="Summary" className="space-y-2">
+            <h3 className="text-sm font-semibold text-[var(--text)]">Summary</h3>
+            <p className="rounded-[var(--radius-control)] bg-[var(--surface-2)] px-3 py-2 text-sm leading-relaxed text-[var(--text)]">
+              {summary}
+            </p>
+            <WarningCallout warnings={fieldWarnings(preview.warnings, "summary")} />
           </section>
-        )}
+        ) : null}
 
-        {/* Experience */}
-        {experience.length > 0 && (
-          <section>
-            <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">
-              Experience ({experience.length} role{experience.length !== 1 ? "s" : ""})
-            </h3>
+        {experience.length > 0 ? (
+          <section aria-label="Experience" className="space-y-2">
+            <h3 className="text-sm font-semibold text-[var(--text)]">Experience</h3>
+            <WarningCallout warnings={fieldWarnings(preview.warnings, "experience")} />
             <div className="space-y-3">
-              {experience.map((exp, i) => (
-                <div key={i} className="rounded-lg border border-border bg-[var(--background)] px-3 py-2.5">
-                  <p className="text-sm font-medium text-fg">
-                    {exp.role || <span className="text-amber-500 italic">role missing</span>}
+              {experience.map((exp, index) => (
+                <div key={`${exp.role ?? "role"}-${index}`} className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5">
+                  <p className="text-sm font-medium text-[var(--text)]">
+                    {exp.role || <span className="text-[var(--warning)]">Role missing</span>}
                   </p>
-                  <p className="text-xs text-muted">
-                    {exp.company || <span className="text-amber-500 italic">company missing</span>}
-                    {exp.period ? ` · ${exp.period}` : ""}
+                  <p className="text-xs text-[var(--text-muted)]">
+                    {exp.company || <span className="text-[var(--warning)]">Company missing</span>}
+                    {exp.period ? ` - ${exp.period}` : ""}
                   </p>
-                  {exp.achievements && exp.achievements.length > 0 && (
-                    <ul className="mt-1.5 space-y-0.5 list-disc ml-4 text-xs text-muted">
-                      {exp.achievements.slice(0, 3).map((a, j) => (
-                        <li key={j}>{typeof a === "string" ? a : a.text}</li>
+                  {exp.achievements?.length ? (
+                    <ul className="ml-4 mt-2 list-disc space-y-1 text-xs text-[var(--text-muted)]">
+                      {exp.achievements.slice(0, 3).map((achievement, itemIndex) => (
+                        <li key={itemIndex}>{typeof achievement === "string" ? achievement : achievement.text}</li>
                       ))}
-                      {exp.achievements.length > 3 && (
-                        <li className="text-muted/60">+{exp.achievements.length - 3} more</li>
-                      )}
                     </ul>
-                  )}
+                  ) : null}
                 </div>
               ))}
             </div>
           </section>
-        )}
+        ) : null}
 
-        {/* Skills */}
-        {skills.length > 0 && (
-          <section>
-            <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Skills</h3>
+        {skills.length > 0 ? (
+          <section aria-label="Skills" className="space-y-2">
+            <h3 className="text-sm font-semibold text-[var(--text)]">Skills</h3>
+            <WarningCallout warnings={fieldWarnings(preview.warnings, "skills")} />
             <div className="space-y-2">
-              {skills.map((grp, i) => (
-                <div key={i}>
-                  {grp.category && (
-                    <p className="text-xs font-medium text-muted mb-1">{grp.category}</p>
-                  )}
+              {skills.map((group, index) => (
+                <div key={`${group.category ?? "skills"}-${index}`}>
+                  {group.category ? <p className="mb-1 text-xs font-medium text-[var(--text-muted)]">{group.category}</p> : null}
                   <div className="flex flex-wrap gap-1.5">
-                    {(grp.items ?? []).map((item, j) => (
-                      <span
-                        key={j}
-                        className="inline-block rounded-full border border-border px-2 py-0.5 text-xs text-fg"
-                      >
+                    {(group.items ?? []).map((item) => (
+                      <span key={item} className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--text)]">
                         {item}
                       </span>
                     ))}
@@ -172,47 +283,39 @@ function ParsePreviewCard({
               ))}
             </div>
           </section>
-        )}
+        ) : null}
 
-        {/* Certifications */}
-        {certs.length > 0 && (
-          <section>
-            <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-1">Certifications</h3>
+        {certs.length > 0 ? (
+          <section aria-label="Certifications" className="space-y-2">
+            <h3 className="text-sm font-semibold text-[var(--text)]">Certifications</h3>
             <div className="flex flex-wrap gap-1.5">
-              {certs.map((c, i) => (
-                <span
-                  key={i}
-                  className="inline-block rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-xs text-brand-700"
-                >
-                  {c}
+              {certs.map((cert) => (
+                <span key={cert} className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--text)]">
+                  {cert}
                 </span>
               ))}
             </div>
           </section>
-        )}
+        ) : null}
 
-        {/* Confirm action */}
-        <div className="border-t border-border pt-4 flex items-center gap-3">
-          <Button onClick={onConfirm} disabled={confirming}>
-            {confirming ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-            ) : (
-              <Save className="h-4 w-4 mr-1.5" />
-            )}
-            Confirm &amp; Save
+        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-4">
+          <Button onClick={onConfirm} disabled={confirmDisabled}>
+            {confirming ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            Confirm save
           </Button>
-          <p className="text-xs text-muted">
-            {hasWarnings
-              ? "Some fields were cleared due to grounding warnings — review above before saving."
-              : "This data will be used as the sole source for CV tailoring."}
-          </p>
+          <Button type="button" variant="outline" onClick={onUploadDifferent}>
+            <Upload className="h-4 w-4" aria-hidden="true" />
+            Upload a different file
+          </Button>
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            <XCircle className="h-4 w-4" aria-hidden="true" />
+            Cancel
+          </Button>
         </div>
       </div>
-    </div>
+    </SectionCard>
   );
 }
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ResumePage() {
   const [status, setStatus] = useState<ResumeStatus | null>(null);
@@ -223,12 +326,14 @@ export default function ResumePage() {
   const [preview, setPreview] = useState<ParsePreviewResponse | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [replacementAccepted, setReplacementAccepted] = useState(false);
+  const [flowStep, setFlowStep] = useState<FlowStep>("select");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
-      const s = await fetchResumeStatus();
-      setStatus(s);
+      const currentStatus = await fetchResumeStatus();
+      setStatus(currentStatus);
     } catch {
       setStatus(null);
     } finally {
@@ -238,21 +343,45 @@ export default function ResumePage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const resetInput = () => {
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const clearPreview = () => {
+    setPreview(null);
+    setReplacementAccepted(false);
+    setConfirmError(null);
+    setFlowStep("select");
+    resetInput();
+  };
+
   const handleFile = async (file: File) => {
-    if (!file.name.endsWith(".docx") && !file.name.endsWith(".pdf")) {
-      setUploadError("Only .docx and .pdf files are supported.");
+    const validationError = validateResumeFile(file);
+    if (validationError) {
+      setUploadError(validationError);
+      setPreview(null);
+      setFlowStep("select");
+      resetInput();
       return;
     }
+
     setUploading(true);
     setUploadError(null);
+    setConfirmError(null);
     setPreview(null);
+    setReplacementAccepted(false);
+    setFlowStep("uploading");
     try {
+      setFlowStep("parsing");
       const result = await uploadResume(file);
       setPreview(result);
-    } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "Upload failed");
+      setFlowStep("review");
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : "Upload failed.");
+      setFlowStep("select");
     } finally {
       setUploading(false);
+      resetInput();
     }
   };
 
@@ -260,221 +389,221 @@ export default function ResumePage() {
     if (!preview) return;
     setConfirming(true);
     setConfirmError(null);
+    setFlowStep("confirm");
     try {
       const saved = await confirmCv(preview.parsed_cv, preview.filename);
       setStatus(saved);
-      setPreview(null);
-    } catch (e) {
-      setConfirmError(e instanceof Error ? e.message : "Save failed");
+      clearPreview();
+    } catch (error) {
+      setConfirmError(error instanceof Error ? error.message : "Save failed.");
+      setFlowStep("review");
     } finally {
       setConfirming(false);
     }
   };
 
-  const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const onInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
     if (file) void handleFile(file);
   };
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
+    const file = event.dataTransfer.files[0];
     if (file) void handleFile(file);
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-muted" />
-      </div>
-    );
-  }
-
-  const SECTION_LABELS: Record<string, string> = {
-    personal: "Contact information",
-    summary: "Professional summary",
-    experience: "Work experience",
-    skills: "Skills",
-    education: "Education",
-    certifications: "Certifications",
-  };
+  const hasConfirmedCv = Boolean(status?.exists);
 
   return (
-    <div className="space-y-6 max-w-2xl">
-      {/* Nav */}
-      <Link href="/today" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
-        <ArrowLeft className="h-4 w-4" /> Today
-      </Link>
-
-      <div>
-        <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>Master CV</h1>
-        <p className="text-sm text-muted mt-1">
-          Upload your CV once. Hatch uses it as the <strong>sole source of truth</strong> for
-          tailored CVs and cover letters — it never invents content. Supported: <strong>.docx</strong> and <strong>.pdf</strong>.
-        </p>
-      </div>
-
-      {/* Upload zone */}
-      <div
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        className={`rounded-xl border-2 border-dashed p-10 text-center transition-colors cursor-pointer ${
-          dragOver
-            ? "border-brand-400 bg-brand-50"
-            : "border-[var(--border)] bg-[var(--surface)] hover:border-brand-300"
-        }`}
-        onClick={() => inputRef.current?.click()}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".docx,.pdf"
-          className="hidden"
-          onChange={onInputChange}
-        />
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-50">
-          {uploading ? (
-            <Loader2 className="h-6 w-6 animate-spin text-brand-600" />
-          ) : (
-            <Upload className="h-6 w-6 text-brand-600" />
-          )}
+    <SettingsShell
+      activeHref="/settings/resume"
+      title="Master CV"
+      description="Upload the CV Hatch keeps stored locally, parsed into structured profile fields, and used for tailoring, coaching, and matching."
+    >
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5 text-sm text-[var(--text-muted)]">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Loading Master CV…
         </div>
-        {uploading ? (
-          <div>
-            <p className="text-sm font-medium text-fg">Parsing with AI…</p>
-            <p className="text-xs text-muted mt-1">Extracting and grounding CV data</p>
-          </div>
-        ) : (
-          <>
-            <p className="text-sm font-medium text-fg">
-              Drag &amp; drop your CV here, or click to browse
-            </p>
-            <p className="mt-1 text-xs text-muted">.docx or .pdf · max 10 MB</p>
-          </>
-        )}
-      </div>
+      ) : null}
 
-      {uploadError && (
-        <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {uploadError}
-        </div>
-      )}
+      {!loading ? (
+        <>
+          <SectionCard
+            title="Upload and parse"
+            description="Hatch will only save what it can extract or what you confirm."
+          >
+            <div className="space-y-4">
+              <FlowStepper activeStep={flowStep} />
 
-      {confirmError && (
-        <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {confirmError}
-        </div>
-      )}
+              {hasConfirmedCv && !preview ? (
+                <div className="rounded-[var(--radius-control)] border border-[var(--warning)] bg-[var(--warning-soft)] px-4 py-3 text-sm text-[var(--warning)]">
+                  This will replace your current Master CV data after you confirm the parsed preview.
+                </div>
+              ) : null}
 
-      {/* Parse preview — shown after upload, before confirm */}
-      {preview && (
-        <ParsePreviewCard
-          preview={preview}
-          onConfirm={() => void handleConfirm()}
-          confirming={confirming}
-        />
-      )}
-
-      {/* Confirmed CV status */}
-      {!preview && status && (
-        <div className="rounded-xl shadow-sm" style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
-          <div className="border-b border-border px-5 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-muted" />
-              <div>
-                <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>
-                  {status.filename ?? "master_cv.json"}
-                </p>
-                {status.uploaded_at && (
-                  <p className="text-xs text-muted">
-                    Confirmed {new Date(status.uploaded_at).toLocaleDateString("en-GB", {
-                      day: "numeric", month: "long", year: "numeric",
-                    })}
-                  </p>
+              <div
+                className={cn(
+                  "cursor-pointer rounded-[var(--radius-card)] border-2 border-dashed p-8 text-center transition-colors",
+                  dragOver ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)] bg-[var(--surface-2)] hover:border-[var(--accent)]",
+                  uploading ? "pointer-events-none opacity-80" : null,
+                )}
+                onClick={() => inputRef.current?.click()}
+                onDragLeave={() => setDragOver(false)}
+                onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
+                onDrop={onDrop}
+              >
+                <input
+                  accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  aria-label="Upload Master CV"
+                  className="sr-only"
+                  disabled={uploading}
+                  onChange={onInputChange}
+                  ref={inputRef}
+                  type="file"
+                />
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
+                  {uploading ? (
+                    <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Upload className="h-6 w-6" aria-hidden="true" />
+                  )}
+                </div>
+                {uploading ? (
+                  <div>
+                    <p className="text-sm font-medium text-[var(--text)]">Uploading and parsing…</p>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">Extracting profile fields for review.</p>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-sm font-medium text-[var(--text)]">Drag and drop your CV here, or click to browse</p>
+                    <p className="mt-1 text-xs text-[var(--text-muted)]">PDF or DOCX, under 10 MB.</p>
+                  </div>
                 )}
               </div>
+
+              {uploadError ? (
+                <div className="flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]" role="alert">
+                  <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  {uploadError}
+                </div>
+              ) : null}
+
+              {confirmError ? (
+                <div className="flex items-center gap-2 rounded-[var(--radius-control)] border border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]" role="alert">
+                  <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  {confirmError}
+                </div>
+              ) : null}
             </div>
-            <Button variant="outline" size="sm" onClick={() => void load()}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh
-            </Button>
-          </div>
+          </SectionCard>
 
-          {status.parsed && (
-            <div className="px-5 py-4 space-y-4">
-              <div>
-                <h3 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">
-                  Confirmed sections
-                </h3>
-                <div className="grid grid-cols-2 gap-x-6">
-                  {Object.entries(status.sections).map(([key, present]) => (
-                    <SectionRow key={key} label={SECTION_LABELS[key] ?? key} present={present} />
-                  ))}
+          {preview ? (
+            <ParsePreviewCard
+              confirming={confirming}
+              isReplacing={hasConfirmedCv}
+              onCancel={clearPreview}
+              onConfirm={() => void handleConfirm()}
+              onUploadDifferent={() => {
+                clearPreview();
+                inputRef.current?.click();
+              }}
+              preview={preview}
+              replacementAccepted={replacementAccepted}
+              setReplacementAccepted={setReplacementAccepted}
+            />
+          ) : null}
+
+          {!preview && hasConfirmedCv && status ? (
+            <SectionCard
+              title="Current Master CV"
+              description={status.filename ?? "master_cv.json"}
+              actions={(
+                <Button variant="outline" size="sm" onClick={() => void load()}>
+                  <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  Refresh
+                </Button>
+              )}
+            >
+              {status.uploaded_at ? (
+                <p className="mb-4 text-xs text-[var(--text-muted)]">
+                  Confirmed {new Date(status.uploaded_at).toLocaleDateString("en-GB", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </p>
+              ) : null}
+
+              {status.parsed ? (
+                <div className="space-y-4">
+                  <div className="grid gap-x-6 sm:grid-cols-2">
+                    {Object.entries(status.sections).map(([key, present]) => (
+                      <SectionRow key={key} label={SECTION_LABELS[key] ?? key} present={present} />
+                    ))}
+                  </div>
+
+                  <div className="grid gap-3 border-t border-[var(--border)] pt-4 sm:grid-cols-3">
+                    <div>
+                      <p className="text-2xl font-bold text-[var(--text)]">{status.skills_count}</p>
+                      <p className="text-xs text-[var(--text-muted)]">Skills</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-[var(--text)]">{status.experience_count}</p>
+                      <p className="text-xs text-[var(--text-muted)]">Experience roles</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-[var(--text)]">{status.proof_points_count}</p>
+                      <p className="text-xs text-[var(--text-muted)]">Proof points</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-4">
+                    <Link href="/tailor">
+                      <Button size="sm">
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                        Open CV Studio
+                      </Button>
+                    </Link>
+                    <Link href="/settings/profile">
+                      <Button variant="outline" size="sm">Edit proof points</Button>
+                    </Link>
+                  </div>
+
+                  <details className="border-t border-[var(--border)] pt-4">
+                    <summary className="cursor-pointer text-xs font-medium text-[var(--text-muted)]">Advanced</summary>
+                    <a
+                      className="mt-3 inline-flex items-center text-xs font-medium text-[var(--accent)]"
+                      href={`${API_BASE}/api/resume/json`}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      <ExternalLink className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                      View CV data as JSON
+                    </a>
+                  </details>
                 </div>
+              ) : (
+                <div className="text-sm text-[var(--warning)]">CV file exists but could not be parsed. Try uploading again.</div>
+              )}
+            </SectionCard>
+          ) : null}
+
+          {!preview && !hasConfirmedCv ? (
+            <SectionCard>
+              <div className="text-center">
+                <AlertCircle className="mx-auto mb-2 h-6 w-6 text-[var(--warning)]" aria-hidden="true" />
+                <p className="text-sm font-medium text-[var(--text)]">No Master CV confirmed</p>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">
+                  Upload your CV above. Tailoring is available after you review and confirm the parsed data.
+                </p>
               </div>
-
-              <div className="grid grid-cols-3 gap-3 border-t border-border pt-4">
-                <div className="text-center">
-                  <p className="text-2xl font-bold" style={{ color: "var(--text)" }}>{status.skills_count}</p>
-                  <p className="text-xs text-muted">skills</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold" style={{ color: "var(--text)" }}>{status.experience_count}</p>
-                  <p className="text-xs text-muted">experience roles</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold" style={{ color: "var(--text)" }}>{status.proof_points_count}</p>
-                  <p className="text-xs text-muted">proof points</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 border-t border-border pt-4">
-                <Link href="/tailor">
-                  <Button size="sm">
-                    <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open CV Studio
-                  </Button>
-                </Link>
-                <Link href="/settings/profile">
-                  <Button variant="outline" size="sm">Edit proof points</Button>
-                </Link>
-              </div>
-              <details className="border-t border-border pt-4">
-                <summary className="cursor-pointer text-xs font-medium" style={{ color: "var(--text-muted)" }}>
-                  Advanced
-                </summary>
-                <a
-                  href={`${API_BASE}/api/resume/json`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-3 inline-flex items-center text-xs font-medium"
-                  style={{ color: "var(--accent)" }}
-                >
-                  <ExternalLink className="h-3.5 w-3.5 mr-1" /> View CV data as JSON
-                </a>
-              </details>
-            </div>
-          )}
-
-          {!status.parsed && status.exists && (
-            <div className="px-5 py-4 text-sm text-amber-700">
-              CV file exists but could not be parsed. Try re-uploading.
-            </div>
-          )}
-        </div>
-      )}
-
-      {!status?.exists && !preview && !loading && (
-        <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50 p-6 text-center">
-          <AlertCircle className="mx-auto mb-2 h-6 w-6 text-amber-500" />
-          <p className="text-sm font-medium text-amber-800">No master CV confirmed</p>
-          <p className="mt-1 text-xs text-amber-600">
-            Upload your CV above. Tailoring is disabled until you confirm a master CV.
-          </p>
-        </div>
-      )}
-    </div>
+            </SectionCard>
+          ) : null}
+        </>
+      ) : null}
+    </SettingsShell>
   );
 }
