@@ -1,5 +1,6 @@
 "use client";
 import { useState } from 'react';
+import Link from 'next/link';
 import { Card } from '../Card';
 import { Chip } from '../Chip';
 import { ScorePill } from '../ScorePill';
@@ -39,7 +40,13 @@ interface StreamScreenProps {
 }
 
 export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove, approvingId }: StreamScreenProps) {
-  const [filter, setFilter] = useState<StreamFilter>(defaultFilter);
+  const [filter, setFilter] = useState<StreamFilter>(() => {
+    if (typeof window === 'undefined') return defaultFilter;
+    const stage = new URLSearchParams(window.location.search).get('stage');
+    return stage === 'ready' || stage === 'tailoring' || stage === 'apply' || stage === 'parked' || stage === 'all'
+      ? stage
+      : defaultFilter;
+  });
   const isMobile = useIsMobile();
 
   const counts = {
@@ -66,9 +73,31 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
     { key: 'parked',   label: 'Parked'   },
   ];
 
+  function selectFilter(next: StreamFilter) {
+    setFilter(next);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (next === 'all') {
+      url.searchParams.delete('stage');
+    } else {
+      url.searchParams.set('stage', next);
+    }
+    window.history.pushState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
   const emptyState = (
-    <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>
-      No roles match this view. Choose another stage to see more of your pipeline.
+    <div role="status" aria-label="No roles in this Pipeline stage" style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>No roles match this stage</div>
+      <p style={{ margin: '6px auto 14px', maxWidth: 360, lineHeight: 1.5 }}>
+        Choose another stage to see more of your pipeline.
+      </p>
+      <Link
+        href="/jobs?view=all"
+        className="hatch-interactive"
+        style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 700, textDecoration: 'none' }}
+      >
+        View all jobs
+      </Link>
     </div>
   );
 
@@ -90,7 +119,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
               type="button"
               className="hatch-interactive"
               aria-pressed={active}
-              onClick={() => setFilter(key)}
+              onClick={() => selectFilter(key)}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '7px 12px', borderRadius: 999, cursor: 'pointer',
@@ -117,7 +146,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 72px 210px 148px 110px',
+                gridTemplateColumns: 'minmax(180px, 1.35fr) minmax(64px, 72px) minmax(160px, 210px) minmax(124px, 148px) minmax(104px, 110px)',
                 gap: '0 12px',
                 padding: '0 14px 8px',
                 fontSize: 10.5,
@@ -145,7 +174,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                     key={job.id}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '1fr 72px 210px 148px 110px',
+                      gridTemplateColumns: 'minmax(180px, 1.35fr) minmax(64px, 72px) minmax(160px, 210px) minmax(124px, 148px) minmax(104px, 110px)',
                       gap: '0 12px',
                       alignItems: 'center',
                       padding: '12px 14px',

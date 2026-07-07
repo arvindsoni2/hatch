@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -307,8 +308,8 @@ function JobCard({ application, onMove }: JobCardProps) {
             {...attributes}
             {...listeners}
             disabled={!next}
-            aria-label={next ? `Drag ${application.job_title ?? "application"} forward to ${STATUS_LABELS[next]}` : "No further stage available"}
-            title={next ? `Drag forward to ${STATUS_LABELS[next]}` : "No further stage available"}
+            aria-label={next ? `Move ${application.job_title ?? "application"} forward to ${STATUS_LABELS[next]}` : "No further stage available"}
+            title={next ? `Move forward to ${STATUS_LABELS[next]}` : "No further stage available"}
             style={{
               width: 44,
               height: 44,
@@ -390,7 +391,7 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
   const router = useRouter();
   const [items, setItems] = useState(applications);
   const [activeApplication, setActiveApplication] = useState<ApplicationListItem | null>(null);
-  const [notice, setNotice] = useState("Drag cards forward, or use each card's Move to menu.");
+  const [notice, setNotice] = useState("Move cards forward by dragging, or use each card's Move to menu.");
   const [showManualForm, setShowManualForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [manualForm, setManualForm] = useState<ManualApplicationForm>(EMPTY_MANUAL_FORM);
@@ -420,6 +421,8 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
     }
     return result;
   }, [items]);
+
+  const hasApplications = items.length > 0;
 
   function requestMove(application: ApplicationListItem, status: ApplicationStatus) {
     if (!moveOptions(application.status).includes(status)) {
@@ -509,21 +512,71 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text)" }}>Applications</h1>
           <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>Move applications forward as their real-world status changes</div>
         </div>
-        <div className="hatch-page-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div aria-live="polite" style={{ maxWidth: 430, textAlign: "right", fontSize: 11.5, color: "var(--text-muted)" }}>{notice}</div>
-          <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
-          <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
-        </div>
+        {hasApplications && (
+          <div className="hatch-page-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div aria-live="polite" style={{ maxWidth: 430, textAlign: "right", fontSize: 11.5, color: "var(--text-muted)" }}>{notice}</div>
+            <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
+            <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
+          </div>
+        )}
       </div>
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setActiveApplication(null)}>
-        <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 18, alignItems: "flex-start", scrollSnapType: "x proximity" }}>
-          {STAGES.map((stage) => (
-            <KanbanColumn key={stage.key} stage={stage} applications={grouped[stage.key]} onMove={requestMove} />
-          ))}
+      {!hasApplications ? (
+        <div
+          role="status"
+          aria-label="No applications tracked yet"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            minHeight: 260,
+            border: "1px solid var(--border)",
+            borderRadius: 16,
+            background: "var(--surface)",
+            padding: 24,
+            textAlign: "center",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 20, color: "var(--text)" }}>No applications tracked yet</h2>
+          <p style={{ margin: 0, maxWidth: 420, color: "var(--text-muted)", fontSize: 13.5, lineHeight: 1.55 }}>
+            Save a job or create your first application pack.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+            <Btn kind="primary" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
+            <Link
+              href="/jobs"
+              className="hatch-interactive"
+              style={{ color: "var(--accent)", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+            >
+              Browse Jobs
+            </Link>
+          </div>
         </div>
-        <DragOverlay>{activeApplication ? <CardPreview application={activeApplication} /> : null}</DragOverlay>
-      </DndContext>
+      ) : (
+        <>
+          <div
+            aria-hidden="true"
+            style={{
+              margin: "-2px 0 8px",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              textAlign: "right",
+            }}
+          >
+            Scroll sideways to see later stages.
+          </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setActiveApplication(null)}>
+            <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 18, alignItems: "flex-start", scrollSnapType: "x proximity" }}>
+              {STAGES.map((stage) => (
+                <KanbanColumn key={stage.key} stage={stage} applications={grouped[stage.key]} onMove={requestMove} />
+              ))}
+            </div>
+            <DragOverlay>{activeApplication ? <CardPreview application={activeApplication} /> : null}</DragOverlay>
+          </DndContext>
+        </>
+      )}
       <AlertDialog
         onOpenChange={(open) => { if (!open) setPendingMove(null); }}
         open={Boolean(pendingMove)}
