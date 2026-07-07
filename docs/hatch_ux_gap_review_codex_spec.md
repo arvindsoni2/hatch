@@ -1192,7 +1192,7 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Merged | `ux/05-onboarding` / `133ab35` | Merged as GitHub PR #10; merge commit `298ae0d` |
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | In progress | `ux/06-settings-profile` | Implementation validated locally; PR review and merge pending |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Not started | `ux/07-settings-tools` | |
-| PR 8 | Core job-search screens | PR 1 to PR 3 | In progress | `ux/10-core-empty-states-today-jobs` | Split PR 8A covers Today and Jobs first-use/loading/empty/error state alignment with visual evidence in `docs/visual-evidence/pr8a-today-jobs/`. Pipeline, Applications, and CV Studio remain for later PR 8 slices. |
+| PR 8 | Core job-search screens | PR 1 to PR 3 | In progress | `ux/11-pipeline-applications-states` | PR 8A merged for Today and Jobs. Split PR 8B covers Pipeline and Applications URL filters, first-use/loading/error states, move wording, and visual evidence in `docs/visual-evidence/pr8b-pipeline-applications/`. CV Studio remains for PR 8C. |
 | PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | Not started | `ux/09-secondary-screens` | |
 | PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | Not started | `ux/10-verification-cleanup` | |
 

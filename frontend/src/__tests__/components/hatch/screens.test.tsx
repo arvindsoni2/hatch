@@ -6,7 +6,7 @@
  * client components render). This makes them straightforwardly testable.
  */
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared seed data
@@ -133,6 +133,10 @@ describe('TodayScreen', () => {
 // StreamScreen
 // ─────────────────────────────────────────────────────────────────────────────
 describe('StreamScreen', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/stream');
+  });
+
   it('renders filter chips: All / Ready / Tailoring / Parked', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={ALL_JOBS} />);
@@ -169,7 +173,23 @@ describe('StreamScreen', () => {
   it('shows empty state message when no jobs in filter', async () => {
     const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
     render(<StreamScreen jobs={[TAILORING_JOB]} defaultFilter="ready" />);
-    expect(screen.getAllByText(/No roles match this view/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/No roles match this stage/i).length).toBeGreaterThan(0);
+  });
+
+  it('persists the selected Pipeline stage in the URL query string', async () => {
+    const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
+
+    render(<StreamScreen jobs={ALL_JOBS} defaultFilter="all" />);
+    fireEvent.click(screen.getByText('Ready').closest('button')!);
+
+    expect(new URL(window.location.href).searchParams.get('stage')).toBe('ready');
+  });
+
+  it('offers View all jobs from an empty Pipeline stage', async () => {
+    const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
+    render(<StreamScreen jobs={[TAILORING_JOB]} defaultFilter="ready" />);
+
+    expect(screen.getByRole('link', { name: 'View all jobs' })).toHaveAttribute('href', '/jobs?view=all');
   });
 
   it('calls onReview when a ready job card is clicked', async () => {
@@ -265,6 +285,32 @@ describe('TrackerScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move Application' }));
     await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith('a1', 'interview'));
     expect(within(screen.getByTestId('col-interview')).getByText('Cloud Architect')).toBeTruthy();
+  });
+
+  it('uses Move wording for the forward control instead of Drag-only language', async () => {
+    const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
+    render(<TrackerScreen applications={TRACKER_APPS} />);
+
+    expect(screen.getByRole('button', { name: 'Move Cloud Architect forward to Interview' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Drag Cloud Architect forward/i })).toBeNull();
+  });
+
+  it('gives first-use Applications users one primary setup action and one secondary Jobs link', async () => {
+    const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
+    render(<TrackerScreen applications={[]} />);
+
+    expect(screen.getByRole('heading', { name: 'No applications tracked yet' })).toBeTruthy();
+    expect(screen.getByText('Save a job or create your first application pack.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Browse Jobs' })).toHaveAttribute('href', '/jobs');
+    fireEvent.click(screen.getByRole('button', { name: 'Add manually' }));
+    expect(screen.getByRole('dialog', { name: 'Add Application' })).toBeTruthy();
+  });
+
+  it('explains horizontal lane scrolling when the Applications board has active cards', async () => {
+    const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
+    render(<TrackerScreen applications={TRACKER_APPS} />);
+
+    expect(screen.getByText('Scroll sideways to see later stages.')).toBeTruthy();
   });
 });
 
