@@ -16,6 +16,10 @@ const props = {
   },
   enabledBoardsCount: 3,
   totalBoardsCount: 5,
+  locations: [{ city: "London", country: "", radius_miles: 20, remote_preference: "hybrid" }],
+  domains: { preferred: ["Financial services"], excluded: [] },
+  legalPreferences: { work_authorization: "permanent_resident" },
+  warnings: [] as string[],
   error: "",
   saving: false,
   onFinish: vi.fn(),
@@ -24,7 +28,7 @@ const props = {
 describe("StepReview", () => {
   it("renders candidate name and locale", () => {
     render(<StepReview {...props} />);
-    expect(screen.getByText("Alex Smith")).toBeInTheDocument();
+    expect(screen.getByText(/Alex Smith - CTO/)).toBeInTheDocument();
     expect(screen.getByText("United Kingdom")).toBeInTheDocument();
   });
 
@@ -43,6 +47,22 @@ describe("StepReview", () => {
 
   it("shows error message when error prop is set", () => {
     render(<StepReview {...props} error="Something went wrong" />);
-    expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
+  });
+
+  it("shows skipped setup warnings before saving", () => {
+    render(
+      <StepReview
+        {...props}
+        warnings={[
+          "No target roles yet. Job discovery will be broad until you add them.",
+          "AI-assisted tailoring and coaching will be limited until a provider is configured.",
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Before you save" })).toBeInTheDocument();
+    expect(screen.getByText(/job discovery will be broad/i)).toBeInTheDocument();
+    expect(screen.getByText(/AI-assisted tailoring/i)).toBeInTheDocument();
   });
 });

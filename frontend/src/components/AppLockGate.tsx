@@ -18,6 +18,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isUnlockRoute = pathname === "/unlock";
+  const isOnboardingRoute = pathname.startsWith("/onboarding");
   const { data, isLoading, isError } = useQuery({
     queryKey: APP_LOCK_QUERY_KEY,
     queryFn: getAppLockStatus,
@@ -65,6 +66,13 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
           Hatch could not verify the lock state. Check the backend is running, then reload this page.
         </p>
       </div>
+    );
+  }
+  if (isOnboardingRoute) {
+    return (
+      <main className="min-h-[100dvh]" id="main-content" tabIndex={-1}>
+        {children}
+      </main>
     );
   }
 

@@ -12,6 +12,8 @@ interface StepMarketProps {
   search: SearchData;
   onSearchChange: (search: SearchData) => void;
   tried: boolean;
+  rolesSkipped?: boolean;
+  onRolesSkippedChange?: (skipped: boolean) => void;
 }
 
 const ROLE_SUGGESTIONS = [
@@ -21,17 +23,14 @@ const ROLE_SUGGESTIONS = [
 
 export function StepMarket({
   selectedLocale, locales, loadingLocales, onLocaleChange,
-  search, onSearchChange, tried,
+  search, onSearchChange, tried, rolesSkipped = false, onRolesSkippedChange,
 }: StepMarketProps) {
   return (
     <div className="ob-fadein px-5 pb-4">
       <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
-        Step 2 · Your market
+        Your market
       </p>
-      <h1
-        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
-        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-      >
+      <h1 className="mb-3 text-[31px] font-semibold leading-[1.16] tracking-[-0.025em] text-[var(--text)]">
         Where are you looking?
       </h1>
 
@@ -65,18 +64,35 @@ export function StepMarket({
           tried && search.target_roles.length === 0
             ? "Add at least one target job title."
             : search.target_roles.length
-            ? "Add a few variations — more titles, more matches."
+            ? "Add a few variations to find more relevant matches."
             : "Press Enter to add each title. Tap a suggestion to start."
         }
         hintTone={tried && search.target_roles.length === 0 ? "err" : ""}
       >
         <TagInput
           tags={search.target_roles}
-          onChange={(roles) => onSearchChange({ ...search, target_roles: roles })}
+          onChange={(roles) => {
+            onSearchChange({ ...search, target_roles: roles });
+            if (roles.length > 0) onRolesSkippedChange?.(false);
+          }}
           placeholder="Delivery Lead"
           suggestions={ROLE_SUGGESTIONS}
           invalid={tried && search.target_roles.length === 0}
         />
+        {search.target_roles.length === 0 && (
+          <button
+            type="button"
+            className="mt-3 min-h-11 text-sm font-semibold text-[var(--accent)] underline-offset-4 hover:underline"
+            onClick={() => onRolesSkippedChange?.(!rolesSkipped)}
+          >
+            {rolesSkipped ? "I will add target roles later" : "Add target roles later"}
+          </button>
+        )}
+        {rolesSkipped && (
+          <p className="mt-1 text-[12px] text-[var(--warning)]" role="status">
+            Job discovery will be broad until you add target roles in Settings.
+          </p>
+        )}
       </Field>
 
       <Field label="Employment type" hint="Filters matches to the kind of work you actually want.">

@@ -45,10 +45,11 @@ describe('layout.tsx shell contract', () => {
     expect(gate).toContain('<HatchTopBarSlot');
   });
 
-  it('owns one main landmark and exposes a skip link target', () => {
-    expect(gate.match(/<main\b/g)).toHaveLength(2);
+  it('owns one main landmark and exposes skip/onboarding main targets', () => {
+    expect(gate.match(/<main\b/g)).toHaveLength(3);
     expect(gate).toContain('href="#main-content"');
     expect(gate).toContain('id="main-content"');
+    expect(gate).toContain('isOnboardingRoute');
   });
 
   it('does not nest route-level main landmarks inside the shell main', () => {

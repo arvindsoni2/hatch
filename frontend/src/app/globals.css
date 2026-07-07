@@ -328,6 +328,32 @@
   color-scheme: dark;
 }
 
+[data-theme="light"] [data-onboarding="true"] {
+  --bg:               #f7f8fb;
+  --bg-elevated:      #ffffff;
+  --bg-elev:          #ffffff;
+  --surface:          #ffffff;
+  --surface-2:        #eef1f6;
+  --surface-3:        #e4e8f0;
+  --border:           #dce1ea;
+  --border-strong:    #c4ccd9;
+  --text:             #151923;
+  --text-dim:         #4b5565;
+  --text-muted:       #717b8c;
+  --accent:           #3d47d8;
+  --accent-hover:     #303bb7;
+  --accent-soft:      rgba(61, 71, 216, 0.09);
+  --accent-soft-strong: rgba(61, 71, 216, 0.18);
+  --on-accent:        #ffffff;
+  --success:          #12845a;
+  --success-soft:     rgba(18, 132, 90, 0.10);
+  --danger:           #c7283b;
+  --danger-soft:      rgba(199, 40, 59, 0.10);
+  --warning:          #a56312;
+  --warning-soft:     rgba(165, 99, 18, 0.12);
+  color-scheme: light;
+}
+
 /* Fade-in animation used by onboarding screens */
 @keyframes ob-fadein {
   from { opacity: 0; transform: translateY(6px); }

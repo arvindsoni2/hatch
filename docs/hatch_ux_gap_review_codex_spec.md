@@ -1188,8 +1188,8 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 1 | Product vocabulary and route contract | None | Merged | `ux/01-route-contract` / `033ed49` | Merged as GitHub PR #5 |
 | PR 2 | Shared page and control foundation | PR 1 | Merged | `ux/02-ui-foundation` / `e8bebd7` | Merged as GitHub PR #6 |
 | PR 3 | Accessible overlay primitives | PR 2 | Merged | `ux/03-overlay-primitives` / `3e3533a` | Merged as GitHub PR #7 |
-| PR 4 | App-lock security and recovery | PR 2, PR 3 | In progress | `ux/04-app-lock-security` / `82db518` | Implementation validated; PR review and merge pending |
-| PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Not started | `ux/05-onboarding` | |
+| PR 4 | App-lock security and recovery | PR 2, PR 3 | Merged | `ux/04-app-lock-security` / `b40cb5a` | Merged as GitHub PR #8 |
+| PR 5 | Onboarding privacy and flow | PR 2, PR 3 | In progress | `ux/05-onboarding` / `133ab35` | Implementation validated; PR review and merge pending |
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Not started | `ux/06-settings-profile` | |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Not started | `ux/07-settings-tools` | |
 | PR 8 | Core job-search screens | PR 1 to PR 3 | Not started | `ux/08-core-screens` | |
@@ -1402,7 +1402,7 @@ Split this PR if migration exceeds the review limit: PR 3A adds and proves primi
 - Visual checks cover first-run setup and Security settings at 375px and 1440px in light and dark themes
 - Existing build warnings remain in `AnswerTimer` and `OnboardingPrimitives`; existing test warnings remain in asynchronous component tests and FaceCapture
 - The repository-wide backend lint command still reports pre-existing errors in unrelated services and tests; all PR 4 backend files pass Ruff
-- Do not start PR 5 until PR 4 has review approval and is marked `Merged`
+- PR 4 merged as GitHub PR #8. Do not start PR 5 until PR 4 has review approval and is marked `Merged`
 
 ### 9.7 PR 5: Isolate onboarding and protect draft data
 
@@ -1429,6 +1429,19 @@ Split this PR if migration exceeds the review limit: PR 3A adds and proves primi
 - Stored drafts match the privacy copy exactly
 - A failed final save preserves safe user input and offers retry
 - Completion creates no duplicate records after retry
+
+**PR 5 resume handoff:**
+
+- `/onboarding` now renders through a dedicated `AppLockGate` branch that keeps the application shell, primary navigation, mobile bar, install prompt, and command palette unmounted while onboarding is active
+- Browser draft persistence moved from `hatch_onboarding_v1` to `hatch_onboarding_v2`; restored drafts intentionally keep only non-sensitive preferences and purge legacy sensitive draft data
+- Step validation now covers profile identity, target roles or explicit skip, city, minimum pay, maximum-pay range, and core skills or explicit skip
+- Final save is now preceded by a review screen with warnings for skipped or low-confidence setup areas, retry-safe save state, failure recovery copy, and a success transition
+- Onboarding adds dirty browser navigation protection while the user is in the flow, keeps user-entered data in React state after save failure, and guards duplicate save clicks while a save is already in flight
+- Onboarding form controls were given accessible names where labels were previously visual-only, and the onboarding token scope now supports both dark and light themes
+- Validation passed: 424 frontend Vitest tests, TypeScript type-check, production build, five Playwright onboarding tests, and diff whitespace checks
+- Visual evidence covers welcome, steps 1-6, review, and success at 375px and 1440px in light and dark themes: `docs/visual-evidence/pr5-onboarding/`
+- Existing build warning remains in `AnswerTimer`; existing test warnings remain in asynchronous component tests and FaceCapture's MediaPipe test environment
+- Do not start PR 6 until PR 5 has review approval and is marked `Merged`
 
 ### 9.8 PR 6: Add the Settings shell and split Profile
 
