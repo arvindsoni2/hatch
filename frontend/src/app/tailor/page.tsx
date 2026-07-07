@@ -27,6 +27,7 @@ import { useAsyncJob } from "@/hooks/useAsyncJob";
 import { CheckCircle2, ChevronRight, Clock, ExternalLink, FileText, Loader2, XCircle, Zap } from "lucide-react";
 import { ResumeStudio } from "@/components/tailor/ResumeStudio";
 import { PRODUCT_ROUTES } from "@/lib/product-routes";
+import { CVStudioProgress } from "@/components/tailor/CVStudioProgress";
 
 type Stage = "idle" | "analysing" | "analysed" | "generating" | "complete" | "error";
 
@@ -257,7 +258,7 @@ export default function TailorPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>
+          <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)" }}>
             CV Studio
           </h1>
           <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
@@ -275,13 +276,15 @@ export default function TailorPage() {
 
       <ProfileSummaryCard compact />
 
+      <CVStudioProgress stage={stage} />
+
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ── LEFT: Input Panel ── */}
         <div className="space-y-4">
           {/* JD Input */}
           <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>
-              1. Add the job
+              Add job
             </h2>
             <p className="mb-4 mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
               Paste the description or use the original job URL.
@@ -325,7 +328,7 @@ export default function TailorPage() {
           {/* Generation Controls */}
           <div className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
             <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>
-              2. Choose your CV
+              Choose CV
             </h2>
             <p className="mb-4 mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
               Set the writing style and ATS-safe presentation for this application.
@@ -400,7 +403,7 @@ export default function TailorPage() {
             )}
 
             {stage === "complete" && autoApplicationId && (
-              <div className="mt-3 rounded-lg p-3" style={{ background: "var(--success-soft)", border: "1px solid var(--success)", color: "var(--success)" }}>
+              <div role="status" className="mt-3 rounded-lg p-3" style={{ background: "var(--success-soft)", border: "1px solid var(--success)", color: "var(--success)" }}>
                 <p className="text-sm font-medium text-center">✓ Documents generated</p>
                 <p className="mt-1 text-xs text-center" style={{ color: "var(--text-muted)" }}>
                   Saved to Applications.{" "}
@@ -418,7 +421,7 @@ export default function TailorPage() {
 
           {/* Error */}
           {error && (
-            <div className="rounded-lg p-3 text-sm" style={{ background: "var(--danger-soft)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
+            <div role="alert" className="rounded-lg p-3 text-sm" style={{ background: "var(--danger-soft)", border: "1px solid var(--danger)", color: "var(--danger)" }}>
               {error}
             </div>
           )}
@@ -483,7 +486,7 @@ export default function TailorPage() {
         {/* ── RIGHT: Results Panel ── */}
         <div className="space-y-4">
           <div>
-            <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>3. Review and create</h2>
+            <h2 className="text-base font-semibold" style={{ color: "var(--text)" }}>Review evidence</h2>
             <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
               Check the match evidence, then create and review the finished documents.
             </p>
@@ -619,14 +622,23 @@ export default function TailorPage() {
           {activeTab === "analysis" && !analysis && !isAnalysing && (
             <div className="rounded-xl p-12 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
               <FileText className="mx-auto mb-3 h-10 w-10" style={{ color: "var(--border-strong)" }} />
-              <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                Add a job description, then select Analyse job to get started.
+              <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
+                Add a job description to start the CV Studio flow.
+              </p>
+              <p className="mx-auto mt-1 max-w-sm text-sm" style={{ color: "var(--text-muted)" }}>
+                Hatch will analyse the requirements, compare them with your Master CV evidence, and prepare an application pack when you choose to generate it.
               </p>
               {analysisHistory.length > 0 && (
                 <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
                   Or click a recent analysis on the left to restore it.
                 </p>
               )}
+              <Link
+                href="/settings/resume"
+                className="mt-4 inline-flex min-h-10 items-center justify-center rounded-[var(--radius-control)] px-3 text-sm font-semibold text-[var(--accent)] underline-offset-4 hover:underline"
+              >
+                Check Master CV
+              </Link>
             </div>
           )}
 

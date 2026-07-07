@@ -1192,7 +1192,7 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Merged | `ux/05-onboarding` / `133ab35` | Merged as GitHub PR #10; merge commit `298ae0d` |
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | In progress | `ux/06-settings-profile` | Implementation validated locally; PR review and merge pending |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Not started | `ux/07-settings-tools` | |
-| PR 8 | Core job-search screens | PR 1 to PR 3 | In progress | `ux/11-pipeline-applications-states` | PR 8A merged for Today and Jobs. Split PR 8B covers Pipeline and Applications URL filters, first-use/loading/error states, move wording, and visual evidence in `docs/visual-evidence/pr8b-pipeline-applications/`. CV Studio remains for PR 8C. |
+| PR 8 | Core job-search screens | PR 1 to PR 3 | In progress | `ux/12-cv-studio-states` | PR 8A merged for Today and Jobs as GitHub PR #15. PR 8B merged for Pipeline and Applications as GitHub PR #16. PR 8C is in progress for CV Studio route states, stage clarity, and visual evidence in `docs/visual-evidence/pr8c-cv-studio/`. |
 | PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | Not started | `ux/09-secondary-screens` | |
 | PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | Not started | `ux/10-verification-cleanup` | |
 
@@ -1536,6 +1536,16 @@ Split this PR if migration exceeds the review limit: PR 3A adds and proves primi
 - Status animation appears only for confirmed active work
 
 Split this PR by journey if the diff becomes difficult to review: PR 8A covers Today and Jobs; PR 8B covers Pipeline and Applications; PR 8C covers CV Studio. Keep the listed order.
+
+**PR 8C resume handoff:**
+
+- Branch: `ux/12-cv-studio-states`
+- Added named CV Studio loading and recoverable error route states aligned with Pipeline and Applications.
+- Added `CVStudioProgress` with named stages for Add job, Analyse fit, Choose CV, and Create pack; only active analysis/generation states animate.
+- Replaced decorative numbered CV Studio section headings with named workflow headings and added inline alert/status semantics for recoverable errors and generated-document success.
+- Visual evidence covers CV Studio at 375px and 1440px in light and dark themes: `docs/visual-evidence/pr8c-cv-studio/`
+- Validation passed: focused Vitest route/component tests, frontend type-check, production build, and diff whitespace checks.
+- Existing build warning remains in `AnswerTimer` for missing hook dependencies.
 
 ### 9.11 PR 9: Align Prep, Coach, and secondary screens
 
