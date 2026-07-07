@@ -69,6 +69,28 @@ describe('TodayScreen', () => {
     expect(screen.getByText(/No roles need review/i)).toBeTruthy();
   });
 
+  it('gives first-use users one setup action and one Jobs link', async () => {
+    const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
+    const onOpenCvStudio = vi.fn();
+
+    render(
+      <TodayScreen
+        jobs={[]}
+        funnel={{ scout: 0, scorer: 0, tailor: 0, coach: 0 }}
+        profileName="Arvind"
+        followUpCount={0}
+        onOpenCvStudio={onOpenCvStudio}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'No actions yet' })).toBeTruthy();
+    expect(screen.getByText('Start by uploading your Master CV or running Job Scout.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open CV Studio' }));
+    expect(onOpenCvStudio).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('link', { name: 'Browse Jobs' })).toHaveAttribute('href', '/jobs');
+  });
+
   it('calls onReview with ready job ids when CTA clicked', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     const onReview = vi.fn();
