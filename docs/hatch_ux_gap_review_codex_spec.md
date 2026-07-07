@@ -1189,8 +1189,8 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 2 | Shared page and control foundation | PR 1 | Merged | `ux/02-ui-foundation` / `e8bebd7` | Merged as GitHub PR #6 |
 | PR 3 | Accessible overlay primitives | PR 2 | Merged | `ux/03-overlay-primitives` / `3e3533a` | Merged as GitHub PR #7 |
 | PR 4 | App-lock security and recovery | PR 2, PR 3 | Merged | `ux/04-app-lock-security` / `b40cb5a` | Merged as GitHub PR #8 |
-| PR 5 | Onboarding privacy and flow | PR 2, PR 3 | In progress | `ux/05-onboarding` / `133ab35` | Implementation validated; PR review and merge pending |
-| PR 6 | Settings shell and Profile | PR 2, PR 3 | Not started | `ux/06-settings-profile` | |
+| PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Merged | `ux/05-onboarding` / `133ab35` | Merged as GitHub PR #10; merge commit `298ae0d` |
+| PR 6 | Settings shell and Profile | PR 2, PR 3 | In progress | `ux/06-settings-profile` | Implementation validated locally; PR review and merge pending |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Not started | `ux/07-settings-tools` | |
 | PR 8 | Core job-search screens | PR 1 to PR 3 | Not started | `ux/08-core-screens` | |
 | PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | Not started | `ux/09-secondary-screens` | |
@@ -1469,6 +1469,18 @@ Split this PR if migration exceeds the review limit: PR 3A adds and proves primi
 - Profile and Job Preferences save only their owned fields
 - Validation focuses the first invalid field
 - Sticky actions never cover content or mobile navigation
+
+**PR 6 resume handoff:**
+
+- Added a shared Settings shell with desktop side navigation, mobile section select, active route state, and consistent Settings destinations for Profile, Job Preferences, AI Provider, Master CV, Security, and Diagnostics
+- Split `/settings/profile` into an identity-only form for candidate name, title, years of experience, and professional summary; duplicate job-search, scoring, privacy, learning, and LLM controls were removed from Profile
+- Added `/settings/preferences` for market, target roles, location, job boards, compensation, skills, scoring, and Coach camera-analysis consent controls
+- Added shared Settings primitives for sticky save/discard actions and accessible tag entry, plus a full-profile save helper that preserves unrelated profile sections while each page mutates only its owned fields
+- Updated User Menu and Command Palette vocabulary so Job Preferences is discoverable and System Logs is presented as Diagnostics
+- Validation passed: 439 frontend Vitest tests, TypeScript type-check, production build, two Playwright Settings tests, and diff whitespace checks
+- Visual evidence covers Profile and Job Preferences at 375px and 1440px in light and dark themes: `docs/visual-evidence/pr6-settings-profile/`
+- Existing build warning remains in `AnswerTimer`; existing test warnings remain in asynchronous component tests and FaceCapture's MediaPipe test environment
+- Do not start PR 7 until PR 6 has review approval and is marked `Merged`
 
 ### 9.9 PR 7: Clarify AI Provider, Master CV, and Diagnostics
 

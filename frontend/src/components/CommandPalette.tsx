@@ -25,14 +25,15 @@ const COMMANDS = [
     { label: PRODUCT_ROUTES.interviewPrep.label, icon: BookOpen, href: PRODUCT_ROUTES.interviewPrep.href },
     { label: "Analytics",       icon: BarChart2,  href: "/analytics" },
     { label: PRODUCT_ROUTES.pipeline.label, icon: TrendingUp, href: PRODUCT_ROUTES.pipeline.href },
-    { label: "Profile Settings", icon: Settings,  href: "/settings/profile" },
+    { label: "Profile",          icon: Settings,  href: "/settings/profile" },
+    { label: "Job Preferences",  icon: Settings,  href: "/settings/preferences" },
     { label: "Master CV",        icon: FileText,  href: "/settings/resume" },
     { label: "AI Provider",      icon: Settings,  href: "/settings/ai" },
   ]},
   { group: "Actions", items: [
     { label: "Browse all jobs",  icon: Search,  href: `${PRODUCT_ROUTES.jobs.href}?showAll=true` },
     { label: "Create application pack", icon: FileEdit, href: "/tailor" },
-    { label: "System Logs",     icon: Bell,    href: "/settings/system" },
+    { label: "Diagnostics",     icon: Bell,    href: "/settings/system" },
   ]},
 ];
 

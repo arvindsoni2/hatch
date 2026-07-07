@@ -3,8 +3,10 @@ import { cn } from "@/lib/utils";
 
 interface FieldControlProps {
   id?: string;
+  "aria-label"?: string;
   "aria-describedby"?: string;
   "aria-invalid"?: boolean;
+  "aria-required"?: boolean;
 }
 
 export interface FormFieldProps {
@@ -39,16 +41,15 @@ export function FormField({
       <label className="text-sm font-medium text-[var(--text)]" htmlFor={id}>
         {label}
         {required ? (
-          <>
-            <span aria-hidden="true" className="text-[var(--danger)]"> *</span>
-            <span className="sr-only"> (required)</span>
-          </>
+          <span aria-hidden="true" className="text-[var(--danger)]"> *</span>
         ) : null}
       </label>
       {React.cloneElement(children, {
         id,
+        "aria-label": children.props["aria-label"] ?? label,
         "aria-describedby": describedBy,
         "aria-invalid": error ? true : children.props["aria-invalid"],
+        "aria-required": required ? true : undefined,
       })}
       {description ? (
         <p className="text-xs text-[var(--text-muted)]" id={descriptionId}>
