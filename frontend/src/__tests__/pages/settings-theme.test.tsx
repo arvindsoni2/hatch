@@ -11,7 +11,10 @@ import path from 'path';
 const SETTINGS_PAGES = [
   'settings/page.tsx',
   'settings/profile/page.tsx',
+  'settings/preferences/page.tsx',
+  'settings/ai/page.tsx',
   'settings/resume/page.tsx',
+  'settings/security/page.tsx',
   'settings/system/page.tsx',
 ];
 

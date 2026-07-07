@@ -15,7 +15,7 @@ class ResumeDesignSettings(BaseModel):
     accent_color: Literal["navy", "slate", "teal", "indigo", "emerald", "charcoal"] = "navy"
     font_family: Literal["aptos", "calibri", "arial", "georgia"] = "aptos"
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, _context: Any) -> None:
         template = require_template(self.template_id)
         self.template_id = template["id"]
 

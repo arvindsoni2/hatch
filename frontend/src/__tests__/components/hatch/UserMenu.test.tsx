@@ -64,8 +64,9 @@ describe('UserMenu', () => {
     render(<UserMenu {...defaultProps} />);
     fireEvent.click(screen.getByRole('button', { name: /open user menu/i }));
     expect(screen.getByText('Profile')).toBeTruthy();
+    expect(screen.getByText('Job Preferences')).toBeTruthy();
     expect(screen.getByText('AI Provider')).toBeTruthy();
-    expect(screen.getByText('System & Logs')).toBeTruthy();
+    expect(screen.getByText('Diagnostics')).toBeTruthy();
     expect(screen.getByText('Master CV')).toBeTruthy();
     expect(screen.queryByText('Resume')).toBeNull();
   });

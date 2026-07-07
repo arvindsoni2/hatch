@@ -132,7 +132,10 @@ describe('Settings pages — no light-only Tailwind', () => {
   const SETTINGS_FILES = [
     path.join(srcDir, 'app/settings/page.tsx'),
     path.join(srcDir, 'app/settings/profile/page.tsx'),
+    path.join(srcDir, 'app/settings/preferences/page.tsx'),
+    path.join(srcDir, 'app/settings/ai/page.tsx'),
     path.join(srcDir, 'app/settings/resume/page.tsx'),
+    path.join(srcDir, 'app/settings/security/page.tsx'),
     path.join(srcDir, 'app/settings/system/page.tsx'),
   ];
 
