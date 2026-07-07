@@ -45,4 +45,26 @@ describe("core job-search route states", () => {
     expect(reset).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("link", { name: "Open Diagnostics" })).toHaveAttribute("href", "/settings/system");
   });
+
+  it("renders a named CV Studio loading skeleton", async () => {
+    const { default: Loading } = await import("@/app/tailor/loading");
+
+    render(<Loading />);
+
+    expect(screen.getByRole("status", { name: "Loading CV Studio" })).toBeVisible();
+    expect(screen.getAllByTestId("cv-studio-loading-skeleton")).toHaveLength(3);
+  });
+
+  it("renders a recoverable CV Studio error with Diagnostics", async () => {
+    const { default: ErrorState } = await import("@/app/tailor/error");
+    const reset = vi.fn();
+
+    render(<ErrorState error={new Error("tailoring unavailable")} reset={reset} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("CV Studio could not load");
+    expect(screen.getByText("tailoring unavailable")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("link", { name: "Open Diagnostics" })).toHaveAttribute("href", "/settings/system");
+  });
 });
