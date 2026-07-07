@@ -12,6 +12,8 @@ export type EmptyStateCause =
 interface EmptyStateProps {
   cause?: EmptyStateCause;
   onAction?: () => void;
+  secondaryHref?: string;
+  secondaryLabel?: string;
   className?: string;
 }
 
@@ -27,9 +29,8 @@ const VARIANTS: Record<
   },
   "no-scrape": {
     icon: <Search className="h-10 w-10 text-[var(--text-dim)]" />,
-    title: "Scout hasn't run yet",
-    body: "Your profile is ready. Click below to trigger your first job search, or wait for the scheduled run.",
-    action: "Run Scout now",
+    title: "No jobs yet",
+    body: "Run Job Scout to fetch roles that match your profile.",
   },
   "scraped-unscored": {
     icon: <Zap className="h-10 w-10 text-[var(--text-dim)]" />,
@@ -50,12 +51,19 @@ const VARIANTS: Record<
   },
 };
 
-export function EmptyState({ cause = "generic", onAction, className = "" }: EmptyStateProps) {
+export function EmptyState({
+  cause = "generic",
+  onAction,
+  secondaryHref,
+  secondaryLabel,
+  className = "",
+}: EmptyStateProps) {
   const v = VARIANTS[cause];
   return (
     <div
       className={`flex flex-col items-center justify-center gap-4 rounded-[var(--r-card,12px)] border border-[var(--border)] bg-[var(--surface-2)] py-16 px-8 text-center ${className}`}
       role="status"
+      aria-label={v.title}
       aria-live="polite"
     >
       <span aria-hidden="true">{v.icon}</span>
@@ -71,6 +79,14 @@ export function EmptyState({ cause = "generic", onAction, className = "" }: Empt
         >
           {v.action}
         </button>
+      )}
+      {secondaryHref && secondaryLabel && (
+        <a
+          href={secondaryHref}
+          className="text-[13px] font-[550] text-[var(--accent)] underline-offset-4 hover:underline"
+        >
+          {secondaryLabel}
+        </a>
       )}
     </div>
   );

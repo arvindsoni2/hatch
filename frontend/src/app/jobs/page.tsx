@@ -16,9 +16,33 @@ import { FilterPanel, type FilterValues } from "@/components/FilterPanel";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { ChevronLeft, ChevronRight, Loader2, Eye, Archive, Zap } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Archive, Zap } from "lucide-react";
 
 const PAGE_SIZE = 50;
+
+function JobsLoadingSkeleton() {
+  return (
+    <div className="space-y-3" role="status" aria-live="polite" aria-label="Loading jobs">
+      <span className="sr-only">Loading jobs…</span>
+      {[0, 1, 2].map((index) => (
+        <div
+          key={index}
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4"
+          data-testid="jobs-loading-skeleton"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1 space-y-3">
+              <div className="h-4 w-2/3 animate-pulse rounded bg-[var(--surface-3)]" />
+              <div className="h-3 w-1/2 animate-pulse rounded bg-[var(--surface-2)]" />
+              <div className="h-3 w-5/6 animate-pulse rounded bg-[var(--surface-2)]" />
+            </div>
+            <div className="h-8 w-16 animate-pulse rounded-full bg-[var(--surface-3)]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function JobsPage() {
   const [threshold, setThreshold] = useState(0.75);
@@ -168,7 +192,10 @@ export default function JobsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-[28px] font-semibold" style={{ color: "var(--text)", letterSpacing: "-0.025em" }}>Jobs</h1>
-          <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }} aria-live="polite" aria-atomic="true">
+          <p className="mt-0.5 text-sm" style={{ color: "var(--text-muted)" }}>
+            Review discovered roles and choose which opportunities to pursue.
+          </p>
+          <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }} aria-live="polite" aria-atomic="true">
             {showArchived
               ? `Archived jobs. ${total.toLocaleString()} total`
               : !showAll
@@ -254,7 +281,7 @@ export default function JobsPage() {
               className="ml-auto shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold"
               style={{ background: "var(--warning, #f59e0b)", color: "#fff" }}
             >
-              {rescoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+              <Zap className="h-3 w-3" />
               {rescoring ? "Queuing…" : "Score now"}
             </button>
           </div>
@@ -307,22 +334,38 @@ export default function JobsPage() {
 
       {/* Results */}
       {loading ? (
-        <div className="flex items-center justify-center py-16" role="status" aria-live="polite" aria-label="Loading jobs">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" aria-hidden="true" />
-          <span className="ml-3 text-slate-500">Loading jobs…</span>
-        </div>
+        <JobsLoadingSkeleton />
       ) : error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-8 text-center">
-          <p className="text-red-700">{error}</p>
-          <Button onClick={() => void loadJobs()} variant="outline" size="sm" className="mt-4">
-            Retry
-          </Button>
+        <div className="rounded-xl border border-[var(--danger)] bg-[var(--danger-soft)] p-8 text-center">
+          <p className="font-medium text-[var(--danger)]">{error}</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-dim)]">
+            Try again, or open Diagnostics if the backend or scraper keeps failing.
+          </p>
+          <div className="mt-4 flex flex-col items-center justify-center gap-2 sm:flex-row">
+            <Button onClick={() => void loadJobs()} variant="outline" size="sm">
+              Retry
+            </Button>
+            <a
+              href="/settings/system"
+              className="inline-flex min-h-11 items-center rounded-[var(--radius-control)] px-3 text-sm font-semibold text-[var(--accent)] underline-offset-4 hover:underline sm:min-h-9"
+            >
+              Open Diagnostics
+            </a>
+          </div>
         </div>
       ) : jobs.length === 0 ? (
         (() => {
           if (showArchived) return <EmptyState cause="generic" />;
           if (showAll) return <EmptyState cause="no-results" onAction={() => setShowAll(false)} />;
-          if ((insights?.total_jobs_in_db ?? 0) === 0) return <EmptyState cause="no-scrape" />;
+          if ((insights?.total_jobs_in_db ?? 0) === 0) {
+            return (
+              <EmptyState
+                cause="no-scrape"
+                secondaryHref="/settings/preferences"
+                secondaryLabel="Review Job Preferences"
+              />
+            );
+          }
           if ((insights?.total_scored ?? 0) === 0) return <EmptyState cause="scraped-unscored" onAction={() => void loadJobs()} />;
           return <EmptyState cause="no-results" onAction={() => setShowAll(true)} />;
         })()

@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { AgentBadge } from '../AgentBadge';
 import { Btn } from '../Btn';
 import { Card } from '../Card';
@@ -96,6 +97,14 @@ function FunnelArrow({ count }: { count: number }) {
 export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount = 2, upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep, onOpenCvStudio }: TodayScreenProps) {
   const ready = jobs.filter((j) => j.state === 'ready');
   const readyToApply = jobs.filter((j) => j.state === 'ready_to_apply');
+  const isFirstUse =
+    jobs.length === 0 &&
+    followUpCount === 0 &&
+    !upcomingInterview &&
+    funnel.scout === 0 &&
+    funnel.scorer === 0 &&
+    funnel.tailor === 0 &&
+    funnel.coach === 0;
   const initials = profileName.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const [todayLabel, setTodayLabel] = useState('');
 
@@ -143,7 +152,9 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
         <Card accent={ready.length > 0} style={{ padding: 18 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>Recommended next action</div>
           <h2 style={{ margin: 0, fontSize: 20, lineHeight: 1.3, color: 'var(--text)' }}>
-            {ready.length > 0
+            {isFirstUse
+              ? 'No actions yet'
+              : ready.length > 0
               ? `${ready.length} role${ready.length === 1 ? ' is' : 's are'} ready to review`
               : readyToApply.length > 0
                 ? `${readyToApply.length} application${readyToApply.length === 1 ? ' is' : 's are'} ready to finish`
@@ -152,7 +163,9 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
                   : 'You are caught up for now'}
           </h2>
           <p style={{ margin: '6px 0 16px', fontSize: 14, lineHeight: 1.55, color: 'var(--text-dim)' }}>
-            {ready.length > 0
+            {isFirstUse
+              ? 'Start by uploading your Master CV or running Job Scout.'
+              : ready.length > 0
               ? 'Review the match evidence before deciding whether to generate a CV pack.'
               : readyToApply.length > 0
                 ? 'Open the application, submit it on the employer site, then record the outcome here.'
@@ -165,7 +178,21 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
               Review roles
             </Btn>
           )}
-          {ready.length === 0 && readyToApply.length === 0 && followUpCount === 0 && (
+          {isFirstUse && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <Btn kind="primary" iconR="arrowR" onClick={onOpenCvStudio}>
+                Open CV Studio
+              </Btn>
+              <Link
+                href="/jobs"
+                className="hatch-interactive"
+                style={{ color: 'var(--accent)', fontSize: 13, fontWeight: 700, textDecoration: 'none' }}
+              >
+                Browse Jobs
+              </Link>
+            </div>
+          )}
+          {!isFirstUse && ready.length === 0 && readyToApply.length === 0 && followUpCount === 0 && (
             <Btn kind="primary" iconR="arrowR" onClick={onOpenCvStudio}>
               Open CV Studio
             </Btn>
