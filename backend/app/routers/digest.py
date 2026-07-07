@@ -17,6 +17,12 @@ router = APIRouter(prefix="/api/digest", tags=["digest"])
 _digest_service: DigestService | None = None
 
 
+def _smtp_configured() -> bool:
+    from ..config import settings  # noqa: PLC0415
+
+    return bool(settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASS)
+
+
 def _get_service() -> DigestService:
     global _digest_service
     if _digest_service is None:
@@ -73,7 +79,7 @@ async def digest_status() -> dict[str, object]:
         "time": settings.DIGEST_TIME,
         "timezone": tz,
         "frequency": settings.DIGEST_FREQUENCY,
-        "smtp_configured": bool(settings.SMTP_HOST and settings.SMTP_USER),
+        "smtp_configured": _smtp_configured(),
         "recipient": settings.NOTIFICATION_EMAIL or None,
     }
 
@@ -140,6 +146,6 @@ async def update_digest_settings(data: dict[str, object]) -> dict[str, object]:
         "time": os.environ.get("DIGEST_TIME", settings.DIGEST_TIME),
         "timezone": os.environ.get("DIGEST_TIMEZONE", settings.DIGEST_TIMEZONE),
         "frequency": os.environ.get("DIGEST_FREQUENCY", settings.DIGEST_FREQUENCY),
-        "smtp_configured": bool(settings.SMTP_USER),
+        "smtp_configured": _smtp_configured(),
         "recipient": settings.NOTIFICATION_EMAIL or None,
     }
