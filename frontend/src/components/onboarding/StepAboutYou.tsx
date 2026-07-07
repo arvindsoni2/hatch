@@ -20,12 +20,9 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
   return (
     <div className="ob-fadein px-5 pb-4">
       <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
-        Step 1 · About you
+        About you
       </p>
-      <h1
-        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
-        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-      >
+      <h1 className="mb-3 text-[31px] font-semibold leading-[1.16] tracking-[-0.025em] text-[var(--text)]">
         Who are we writing for?
       </h1>
       <p className="text-[14px] leading-[1.5] text-[var(--text-dim)] mb-4">
@@ -41,6 +38,7 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
         >
           <Input
             id="name"
+            aria-label="Full name"
             value={candidate.name}
             onChange={(e) => onChange({ ...candidate, name: e.target.value })}
             placeholder="Alex Kim"
@@ -51,11 +49,12 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
         <Field
           label="Current or target title"
           req
-          hint={tried && !candidate.title.trim() ? "Title is required." : "The role you're aiming for — Hatch matches and writes toward this."}
+          hint={tried && !candidate.title.trim() ? "Title is required." : "The role you are aiming for. Hatch matches and writes toward this."}
           hintTone={tried && !candidate.title.trim() ? "err" : ""}
         >
           <Input
             id="title"
+            aria-label="Current or target title"
             value={candidate.title}
             onChange={(e) => onChange({ ...candidate, title: e.target.value })}
             placeholder="Senior Programme Manager"
@@ -67,6 +66,7 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
       <Field label="Years of experience" hint="Used to calibrate how senior the matched roles are.">
         <Input
           id="years"
+          aria-label="Years of experience"
           type="number"
           min={0}
           value={candidate.years_experience || ""}
@@ -75,9 +75,10 @@ export function StepAboutYou({ candidate, onChange, tried }: StepAboutYouProps) 
         />
       </Field>
 
-      <Field label="Professional summary" optional hint="2–3 sentences in your voice. Hatch adapts — not copies — this per application.">
+      <Field label="Professional summary" optional hint="Use 2-3 sentences in your voice. Hatch adapts this for each application.">
         <textarea
           id="summary"
+          aria-label="Professional summary"
           rows={3}
           value={candidate.summary}
           onChange={(e) => onChange({ ...candidate, summary: e.target.value })}

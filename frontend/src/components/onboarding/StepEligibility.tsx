@@ -13,7 +13,7 @@ interface StepEligibilityProps {
 
 const WORK_AUTH_OPTIONS = [
   { value: "permanent_resident", label: "Citizen / permanent resident" },
-  { value: "visa_holder",        label: "Visa holder — currently eligible to work" },
+  { value: "visa_holder",        label: "Visa holder, currently eligible to work" },
   { value: "other",              label: "Other / prefer not to say" },
 ];
 
@@ -25,12 +25,9 @@ export function StepEligibility({
   const header = (
     <div className="ob-fadein px-5 pb-4">
       <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
-        Step 4 · Eligibility
+        Eligibility
       </p>
-      <h1
-        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
-        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-      >
+      <h1 className="mb-3 text-[31px] font-semibold leading-[1.16] tracking-[-0.025em] text-[var(--text)]">
         {legalFields.length > 0 ? `A couple of ${locale?.name ?? ""} specifics.` : "Eligibility"}
       </h1>
       <Why>
@@ -38,7 +35,7 @@ export function StepEligibility({
         Hatch uses them to avoid surfacing roles you cannot take.
       </Why>
 
-      <Field label="Visa / work authorisation" hint="Your current right to work — used to filter roles that require sponsorship.">
+      <Field label="Visa / work authorisation" hint="Your current right to work. Hatch uses it to filter roles that require sponsorship.">
         <div className="grid grid-cols-1 gap-2">
           {WORK_AUTH_OPTIONS.map((opt) => (
             <Choice
@@ -63,12 +60,9 @@ export function StepEligibility({
   return (
     <div className="ob-fadein px-5 pb-4">
       <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
-        Step 4 · Eligibility
+        Eligibility
       </p>
-      <h1
-        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
-        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-      >
+      <h1 className="mb-3 text-[31px] font-semibold leading-[1.16] tracking-[-0.025em] text-[var(--text)]">
         A couple of {locale?.name ?? ""} specifics.
       </h1>
 
@@ -120,6 +114,7 @@ export function StepEligibility({
             </div>
           ) : (
             <input
+              aria-label={field.label}
               className="flex h-10 w-full rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
               value={compensation.legal_preferences[field.id] ?? ""}
               onChange={(e) =>

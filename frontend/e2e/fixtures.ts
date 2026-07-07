@@ -9,6 +9,25 @@
 import { test as base, expect, type Page } from "@playwright/test";
 
 export async function bypassOnboarding(page: Page) {
+  // App lock — tells AppLockGate to render protected routes in test runs
+  await page.route("**/api/app-lock/status", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        enabled: false,
+        is_unlocked: true,
+        policy: {
+          min_length: 12,
+          max_length: 128,
+          require_letter: true,
+          require_number: true,
+          disallow_surrounding_whitespace: true,
+        },
+      }),
+    });
+  });
+
   // Profile status — tells OnboardingGate not to redirect
   await page.route("**/api/v2/profile/status", (route) => {
     route.fulfill({

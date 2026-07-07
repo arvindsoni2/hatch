@@ -9,7 +9,7 @@ export const LLAMACPP_PRIMARY_MODEL = "qwen3.5-4b-q4_k_m";
 export const LLAMACPP_TRIAGE_MODEL  = "qwen3.5-0.8b-q8_0";
 
 export const LLM_PROVIDERS = [
-  { id: "llamacpp",     label: "Local AI (free)",    sub: "llama.cpp bundled in this stack — no API key, no cost, privacy-first", keyEnv: "", triageDefault: LLAMACPP_TRIAGE_MODEL, primaryDefault: LLAMACPP_PRIMARY_MODEL },
+  { id: "llamacpp",     label: "Local AI (free)",    sub: "llama.cpp bundled in this stack. No API key or usage cost", keyEnv: "", triageDefault: LLAMACPP_TRIAGE_MODEL, primaryDefault: LLAMACPP_PRIMARY_MODEL },
   { id: "google_genai", label: "Google Gemini",      sub: "Free tier available",                                                   keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
   { id: "anthropic",    label: "Anthropic Claude",   sub: "Strongest tailoring quality",                                           keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
   { id: "openai",       label: "OpenAI",             sub: "GPT-4o family",                                                         keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
@@ -42,6 +42,8 @@ interface StepAIProviderProps {
   onEnabledBoardsChange: (boards: Set<string>) => void;
   scrapeIntervalHours: number;
   onScrapeIntervalChange: (hours: number) => void;
+  setupLater?: boolean;
+  onSetupLaterChange?: (setupLater: boolean) => void;
 }
 
 export function StepAIProvider({
@@ -50,6 +52,7 @@ export function StepAIProvider({
   testingConnection, connectionResult, onTestConnection,
   boards, enabledBoards, onEnabledBoardsChange,
   scrapeIntervalHours, onScrapeIntervalChange,
+  setupLater = false, onSetupLaterChange,
 }: StepAIProviderProps) {
   const handleProviderChange = (providerId: string) => {
     const p = LLM_PROVIDERS.find((x) => x.id === providerId);
@@ -78,12 +81,9 @@ export function StepAIProvider({
   return (
     <div className="ob-fadein px-5 pb-4">
       <p className="text-[11px] font-[600] tracking-[0.1em] uppercase text-[var(--text-dim)] mb-2">
-        Step 6 · AI &amp; launch
+        AI and launch
       </p>
-      <h1
-        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
-        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-      >
+      <h1 className="mb-3 text-[31px] font-semibold leading-[1.16] tracking-[-0.025em] text-[var(--text)]">
         Pick the engine.
       </h1>
       <p className="text-[14px] leading-[1.5] text-[var(--text-dim)] mb-4">
@@ -103,6 +103,19 @@ export function StepAIProvider({
           ))}
         </div>
       </Field>
+
+      <button
+        type="button"
+        className="mb-4 min-h-11 text-sm font-semibold text-[var(--accent)] underline-offset-4 hover:underline"
+        onClick={() => onSetupLaterChange?.(!setupLater)}
+      >
+        {setupLater ? "AI setup deferred" : "Set up AI later"}
+      </button>
+      {setupLater && (
+        <p className="-mt-3 mb-4 text-[12px] leading-relaxed text-[var(--warning)]" role="status">
+          Hatch will still save your profile, but AI-assisted tailoring and coaching may be limited.
+        </p>
+      )}
 
       {needsKey && (
         <div className="rounded-[var(--r-field,8px)] border border-[var(--border)] bg-[var(--surface-2)] px-4 py-3">

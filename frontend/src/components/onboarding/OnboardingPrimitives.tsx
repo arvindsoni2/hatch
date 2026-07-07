@@ -75,11 +75,14 @@ export function TagInput({ tags, onChange, placeholder, suggestions = [], invali
   const [input, setInput] = useState("");
   const add = (t: string) => {
     const v = t.trim();
-    if (v && !tags.includes(v)) onChange([...tags, v]);
+    const duplicate = tags.some((tag) => tag.toLocaleLowerCase() === v.toLocaleLowerCase());
+    if (v && !duplicate) onChange([...tags, v]);
     setInput("");
   };
   const remove = (i: number) => onChange(tags.filter((_, idx) => idx !== i));
-  const avail = suggestions.filter((s) => !tags.includes(s));
+  const avail = suggestions.filter((suggestion) => (
+    !tags.some((tag) => tag.toLocaleLowerCase() === suggestion.toLocaleLowerCase())
+  ));
 
   return (
     <div>
@@ -109,6 +112,7 @@ export function TagInput({ tags, onChange, placeholder, suggestions = [], invali
           </span>
         ))}
         <input
+          aria-label={placeholder ?? "Add item"}
           className="flex-1 min-w-[100px] bg-transparent border-0 outline-none text-[14px] text-[var(--text)] placeholder:text-[var(--text-muted)] px-1 py-1"
           value={input}
           placeholder={tags.length ? "" : placeholder}
@@ -231,7 +235,7 @@ export function ToggleRow({ on, onToggle, title, sub }: ToggleRowProps) {
       <button
         type="button"
         role="switch"
-        aria-pressed={on}
+        aria-checked={on}
         onClick={onToggle}
         className={`relative w-10 h-6 rounded-full border-0 flex-shrink-0 cursor-pointer transition-colors ${
           on ? "bg-[var(--accent)]" : "bg-[var(--surface-3)]"
@@ -247,7 +251,7 @@ export function ToggleRow({ on, onToggle, title, sub }: ToggleRowProps) {
   );
 }
 
-/* ─── ChipInfo — read-only info chip ────────────────────────────────────── */
+/* ─── ChipInfo: read-only info chip ─────────────────────────────────────── */
 export function ChipInfo({ children }: { children: React.ReactNode }) {
   return (
     <div

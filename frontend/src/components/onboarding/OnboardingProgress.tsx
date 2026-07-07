@@ -10,7 +10,7 @@ const STEP_LABELS = [
 ];
 
 interface OnboardingProgressProps {
-  formStep: number;  // 1–6 for form steps; 0 = no progress shown (Welcome/Success)
+  formStep: number;  // 1-6 for form steps; 0 = no progress shown (Welcome/Success)
 }
 
 export function OnboardingProgress({ formStep }: OnboardingProgressProps) {
@@ -26,10 +26,7 @@ export function OnboardingProgress({ formStep }: OnboardingProgressProps) {
       aria-valuemax={6}
       aria-label={`Step ${formStep} of 6: ${label}`}
     >
-      <span
-        className="text-[40px] leading-[0.9] font-[500] tracking-[-0.015em] text-[var(--text)]"
-        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-      >
+      <span className="text-[40px] leading-[0.9] font-semibold tracking-[-0.025em] text-[var(--text)]">
         {String(formStep).padStart(2, "0")}
       </span>
       <span className="text-[15px] text-[var(--text-muted)]">/ 06</span>

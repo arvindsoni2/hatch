@@ -50,10 +50,19 @@ describe("TagInput", () => {
   it("adds a tag on Enter", () => {
     const onChange = vi.fn();
     render(<TagInput tags={[]} onChange={onChange} placeholder="Add skill" />);
-    const input = screen.getByPlaceholderText("Add skill");
+    const input = screen.getByRole("textbox");
     fireEvent.change(input, { target: { value: "Python" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onChange).toHaveBeenCalledWith(["Python"]);
+  });
+
+  it("rejects duplicate tags regardless of letter case", () => {
+    const onChange = vi.fn();
+    render(<TagInput tags={["React"]} onChange={onChange} placeholder="Add skill" />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "react" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("removes a tag when × clicked", () => {

@@ -6,7 +6,7 @@ const VALUE_STEPS = [
   { Icon: Search,        title: "Discover", sub: "Scans your job boards every few hours" },
   { Icon: Scale,         title: "Score",    sub: "Ranks each role against your profile" },
   { Icon: FileText,      title: "Tailor",   sub: "Drafts a tuned CV + cover letter" },
-  { Icon: Kanban,        title: "Track",    sub: "You approve — it never applies on its own" },
+  { Icon: Kanban,        title: "Track",    sub: "You approve. It never applies on its own" },
   { Icon: MessageSquare, title: "Coach",    sub: "Preps you when an interview lands" },
 ];
 
@@ -30,15 +30,12 @@ export function ScreenWelcome({ hasSaved, onStart }: ScreenWelcomeProps) {
         Welcome to Hatch
       </p>
 
-      <h1
-        className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-3"
-        style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-      >
+      <h1 className="mb-3 text-[31px] font-semibold leading-[1.16] tracking-[-0.025em] text-[var(--text)]">
         Your job search,<br />on autopilot.
       </h1>
 
       <p className="text-[14px] leading-[1.5] text-[var(--text-dim)] mb-5">
-        Hatch finds, scores and tailors applications for roles that fit you — then hands you the
+        Hatch finds, scores and tailors applications for roles that fit you, then hands you the
         decisions that matter. You stay in control; it never applies on its own. Setup takes about
         3 minutes.
       </p>
@@ -73,7 +70,7 @@ export function ScreenWelcome({ hasSaved, onStart }: ScreenWelcomeProps) {
           style={{ background: "var(--surface)" }}
         >
           <ShieldCheck size={13} className="text-[var(--success)]" />
-          Self-hosted — data stays on your machine
+          Self-hosted. Data stays on your machine
         </span>
         <span
           className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--text-dim)] px-2.5 py-1.5 rounded-full border border-[var(--border)]"

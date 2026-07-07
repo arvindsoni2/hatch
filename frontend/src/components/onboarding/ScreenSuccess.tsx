@@ -36,16 +36,13 @@ export function ScreenSuccess({
           <Check size={34} strokeWidth={2.4} />
         </div>
 
-        <h1
-          className="text-[31px] font-[500] leading-[1.16] tracking-[-0.015em] text-[var(--text)] mb-2"
-          style={{ fontFamily: "var(--font-hero, 'Newsreader', Georgia, serif)" }}
-        >
+        <h1 className="mb-2 text-[31px] font-semibold leading-[1.16] tracking-[-0.025em] text-[var(--text)]">
           Your search is hatching.
         </h1>
 
         <p className="text-[14px] leading-[1.5] text-[var(--text-dim)] mb-4">
           Scout is scanning {enabledBoardsCount} {localeName} board{enabledBoardsCount !== 1 ? "s" : ""} right now.
-          Matches will land in your inbox — you approve before anything goes out.
+          Matches will land in your inbox. You approve before anything goes out.
         </p>
 
         {/* Live indicator */}
@@ -61,9 +58,9 @@ export function ScreenSuccess({
       {/* Summary */}
       <div className="border border-[var(--border)] rounded-[var(--r-card,10px)] overflow-hidden mb-6">
         {[
-          { k: "Profile",  v: `${candidate.name || "—"} · ${candidate.title || "—"}` },
-          { k: "Market",   v: `${localeFlag} ${localeName} · ${targetRolesCount} title${targetRolesCount !== 1 ? "s" : ""}` },
-          { k: "Pay",      v: minRate ? `${currency} ${minRate}+ ${rateType}` : "—" },
+          { k: "Profile",  v: `${candidate.name || "Not provided"} - ${candidate.title || "Not provided"}` },
+          { k: "Market",   v: `${localeFlag} ${localeName} - ${targetRolesCount} title${targetRolesCount !== 1 ? "s" : ""}` },
+          { k: "Pay",      v: minRate ? `${currency} ${minRate}+ ${rateType}` : "Not provided" },
           { k: "Engine",   v: providerName },
         ].map(({ k, v }) => (
           <div key={k} className="flex items-start gap-3 px-3.5 py-3 border-b border-[var(--border)] last:border-b-0">
