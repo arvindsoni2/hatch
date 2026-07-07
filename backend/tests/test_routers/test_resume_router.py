@@ -35,6 +35,17 @@ async def test_resume_upload_invalid_file_type_returns_422(client: AsyncClient) 
 
 
 @pytest.mark.asyncio
+async def test_resume_upload_rejects_extension_with_wrong_mime_type(client: AsyncClient) -> None:
+    """POST /api/resume/upload requires the extension and content type to agree."""
+    resp = await client.post(
+        "/api/resume/upload",
+        files={"file": ("resume.pdf", io.BytesIO(b"plain text"), "text/plain")},
+    )
+    assert resp.status_code == 422
+    assert "PDF and DOCX" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_resume_upload_falls_back_when_structured_parse_times_out(
     client: AsyncClient,
     tmp_path,

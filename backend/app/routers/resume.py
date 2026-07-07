@@ -346,6 +346,10 @@ async def get_resume_status() -> ResumeStatus:
 
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_ALLOWED_UPLOAD_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 # Next.js' rewrite proxy has a 30-second upstream timeout. Keep enough headroom
 # for document extraction and response serialization; heuristic parsing remains
 # available when the configured LLM is slow or unavailable.
@@ -392,8 +396,9 @@ async def upload_resume(file: UploadFile = File(...)) -> ParsePreviewResponse:
     """
     filename = file.filename or ""
     suffix = Path(filename).suffix.lower()
-    if suffix not in (".docx", ".pdf"):
-        raise HTTPException(status_code=422, detail="Only .docx and .pdf files are supported.")
+    expected_content_type = _ALLOWED_UPLOAD_TYPES.get(suffix)
+    if not expected_content_type or file.content_type != expected_content_type:
+        raise HTTPException(status_code=422, detail="Only PDF and DOCX files are supported.")
 
     content = await file.read(_MAX_UPLOAD_BYTES + 1)
     if len(content) > _MAX_UPLOAD_BYTES:
