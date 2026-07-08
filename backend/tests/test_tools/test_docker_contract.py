@@ -28,6 +28,10 @@ def _compose(path: str) -> dict:
     return yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))
 
 
+def _backend_service(path: str) -> dict:
+    return _compose(path)["services"]["backend"]
+
+
 def test_backend_dockerfile_exposes_expected_runtime_targets() -> None:
     """Future compose files should be able to select explicit backend targets."""
     text = _dockerfile_text()
@@ -66,9 +70,34 @@ def test_core_target_uses_core_requirements_only() -> None:
 def test_default_compose_files_build_backend_core_target() -> None:
     """Both default startup paths should build the lightweight backend target."""
     for compose_file in ("docker-compose.yml", "docker-compose.easy.yml"):
-        backend = _compose(compose_file)["services"]["backend"]
+        backend = _backend_service(compose_file)
 
         assert backend["image"] == "hatch-backend:latest"
         assert backend["build"]["context"] == "./backend"
         assert backend["build"]["dockerfile"] == "Dockerfile"
         assert backend["build"]["target"] == "core"
+
+
+def test_optional_backend_override_files_select_non_default_targets() -> None:
+    """Advanced backend capabilities should be opt-in Compose overlays."""
+    expected = {
+        "docker-compose.browser.yml": ("hatch-backend:browser", "browser"),
+        "docker-compose.local-embeddings.yml": ("hatch-backend:local-ai", "local-ai"),
+        "docker-compose.full.yml": ("hatch-backend:full", "full"),
+    }
+
+    for compose_file, (image, target) in expected.items():
+        backend = _backend_service(compose_file)
+
+        assert backend["image"] == image
+        assert backend["build"]["context"] == "./backend"
+        assert backend["build"]["dockerfile"] == "Dockerfile"
+        assert backend["build"]["target"] == target
+
+
+def test_local_ai_overlay_remains_llamacpp_only() -> None:
+    """The existing local-AI overlay means llama.cpp services, not embeddings."""
+    services = _compose("docker-compose.local-ai.yml")["services"]
+
+    assert "backend" not in services
+    assert set(services) == {"llm-primary", "llm-triage"}

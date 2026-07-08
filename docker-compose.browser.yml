@@ -1,0 +1,10 @@
+services:
+  backend:
+    image: hatch-backend:browser
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: browser
+    environment:
+      PLAYWRIGHT_HEADLESS: "true"
+      HATCH_BROWSER_ENABLED: "true"

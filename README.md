@@ -243,7 +243,7 @@ spacing, focus, touch-target, and responsive form principles.
 | Service | Local address | Notes |
 |---|---|---|
 | Frontend | `127.0.0.1:3000` | Next.js UI |
-| Backend | `127.0.0.1:8000` | FastAPI and agent workers |
+| Backend | `127.0.0.1:8000` | FastAPI and agent workers; lightweight core image by default |
 | Primary LLM | `127.0.0.1:8080` | llama.cpp server |
 | Triage LLM | `127.0.0.1:8081` | llama.cpp server |
 
@@ -258,6 +258,25 @@ docker compose restart backend frontend
 docker compose down
 docker compose up -d --build
 ```
+
+The default backend image is lightweight. Browser automation, local
+sentence-transformer embeddings, and perception/voice dependencies are opt-in
+backend capabilities:
+
+```bash
+# JS-rendered job-board scraping via Playwright
+docker compose -f docker-compose.yml -f docker-compose.browser.yml up -d --build backend
+
+# Local sentence-transformer semantic scoring
+docker compose -f docker-compose.yml -f docker-compose.local-embeddings.yml up -d --build backend
+
+# Full backend capability image
+docker compose -f docker-compose.yml -f docker-compose.full.yml up -d --build backend
+```
+
+`docker-compose.local-ai.yml` has a separate meaning: it adds the bundled
+llama.cpp model services after local model selection. It does not switch the
+Python backend to the local-embeddings image.
 
 On Linux, `install.sh` can optionally install
 `infrastructure/systemd/hatch.service` as a user service for startup on login.

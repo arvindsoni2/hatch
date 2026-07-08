@@ -1,0 +1,12 @@
+services:
+  backend:
+    image: hatch-backend:full
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: full
+    environment:
+      PLAYWRIGHT_HEADLESS: "true"
+      HATCH_BROWSER_ENABLED: "true"
+      HATCH_LOCAL_EMBEDDINGS_ENABLED: "true"
+      HATCH_PERCEPTION_ENABLED: "true"
