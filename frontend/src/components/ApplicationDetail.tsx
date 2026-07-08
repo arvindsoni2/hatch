@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Loader2, ExternalLink, FileText, Download, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, ExternalLink, FileText, Download, Sparkles } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { StatusBadge } from "./ui/status-badge";
 import { InterviewTimeline } from "./InterviewTimeline";
 import { FollowUpList } from "./FollowUpList";
 import { ActivityFeed } from "./ActivityFeed";
@@ -143,29 +143,39 @@ export function ApplicationDetail({
   };
 
   const pendingFollowUps = app?.follow_ups?.filter((f) => !f.completed).length ?? 0;
+  const title = app?.job?.title ?? app?.agency_name ?? "Manual Application";
+  const sheetTitle = app ? `${title} application details` : "Application details";
 
   return (
     <Sheet onOpenChange={(open) => { if (!open) onClose(); }} open>
       <SheetContent className="max-w-2xl">
-        <SheetTitle className="sr-only">Application Details</SheetTitle>
+        <SheetTitle className="sr-only">{sheetTitle}</SheetTitle>
         <SheetDescription className="sr-only">
           Review the application, interviews, follow-ups, and activity.
         </SheetDescription>
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-start justify-between border-b border-slate-200 bg-white px-6 py-4 pr-16">
+        <div className="sticky top-0 z-10 flex items-start gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-6 py-4 pr-16">
+          <button
+            type="button"
+            onClick={onClose}
+            className="hatch-interactive mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-control)] text-[var(--text-dim)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+            aria-label="Back to Applications"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
           <div className="flex-1 min-w-0 pr-4">
             {app ? (
               <>
                 <div className="flex items-center gap-2 min-w-0">
-                  <h2 className="text-lg font-semibold text-slate-800 truncate">
-                    {app.job?.title ?? app.agency_name ?? "Manual Application"}
+                  <h2 className="truncate text-lg font-semibold text-[var(--text)]">
+                    {title}
                   </h2>
                   {app.job?.url && (
                     <a
                       href={app.job.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="shrink-0 text-slate-400 hover:text-indigo-500 transition-colors"
+                      className="shrink-0 text-[var(--text-muted)] transition-colors hover:text-[var(--accent)]"
                       title="View original job posting"
                     >
                       <ExternalLink className="h-4 w-4" />
@@ -173,30 +183,28 @@ export function ApplicationDetail({
                   )}
                 </div>
                 {app.job?.company && (
-                  <p className="text-sm text-slate-500 truncate">{app.job.company}</p>
+                  <p className="truncate text-sm text-[var(--text-dim)]">{app.job.company}</p>
                 )}
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <Badge variant={`status-${app.status}` as Parameters<typeof Badge>[0]["variant"]}>
-                    {app.status}
-                  </Badge>
-                  <Badge variant={`priority-${app.priority}` as Parameters<typeof Badge>[0]["variant"]}>
+                  <StatusBadge tone="warning">{app.status}</StatusBadge>
+                  <StatusBadge tone={app.priority === "urgent" || app.priority === "high" ? "warning" : "neutral"}>
                     {app.priority}
-                  </Badge>
+                  </StatusBadge>
                   {app.applied_date && (
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-[var(--text-dim)]">
                       Applied {format(new Date(app.applied_date), "d MMM yyyy")}
                     </span>
                   )}
                 </div>
               </>
             ) : (
-              <div className="h-6 bg-slate-200 rounded w-48 animate-pulse" />
+              <div className="h-6 w-48 animate-pulse rounded bg-[var(--surface-2)]" />
             )}
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="border-b border-slate-200 px-6">
+        <div className="border-b border-[var(--border)] px-6">
           <div className="flex gap-0">
             {TABS.map((tab) => (
               <button
@@ -205,13 +213,13 @@ export function ApplicationDetail({
                 className={cn(
                   "px-4 py-3 text-sm font-medium border-b-2 transition-colors",
                   activeTab === tab
-                    ? "border-indigo-500 text-indigo-600"
-                    : "border-transparent text-slate-500 hover:text-slate-700",
+                    ? "border-[var(--accent)] text-[var(--accent)]"
+                    : "border-transparent text-[var(--text-dim)] hover:text-[var(--text)]",
                 )}
               >
                 {tab}
                 {tab === "Follow-ups" && pendingFollowUps > 0 && (
-                  <span className="ml-1 text-xs bg-red-100 text-red-600 rounded-full px-1.5 py-0.5">
+                  <span className="ml-1 rounded-full bg-[var(--danger-soft)] px-1.5 py-0.5 text-xs text-[var(--danger)]">
                     {pendingFollowUps}
                   </span>
                 )}
@@ -224,10 +232,10 @@ export function ApplicationDetail({
         <div className="flex-1 px-6 py-6">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-indigo-400" />
+              <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
             </div>
           ) : error ? (
-            <div className="text-center py-12 text-red-500">{error}</div>
+            <div className="py-12 text-center text-[var(--danger)]">{error}</div>
           ) : app ? (
             <>
               {activeTab === "Overview" && (
