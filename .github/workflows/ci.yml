@@ -25,7 +25,18 @@ jobs:
           vulture backend/app --min-confidence 90
       - name: Audit Python dependencies
         # Non-blocking until the current tree is fully clean; remove || true to enforce
-        run: pip install pip-audit && pip-audit -r backend/requirements.txt || true
+        run: |
+          pip install pip-audit
+          for req in \
+            backend/requirements.txt \
+            backend/requirements-core.txt \
+            backend/requirements-browser.txt \
+            backend/requirements-local-ai.txt \
+            backend/requirements-perception.txt \
+            backend/requirements-full.txt; do
+            echo "Auditing $req"
+            pip-audit -r "$req" || true
+          done
 
   frontend:
     runs-on: ubuntu-latest

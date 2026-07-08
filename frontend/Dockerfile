@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # ──────────────────────── Stage 1: Deps ────────────────────────
 FROM node:20-alpine AS deps
 
@@ -5,7 +7,7 @@ WORKDIR /app
 
 # Install dependencies
 COPY package.json package-lock.json* ./
-RUN npm ci --frozen-lockfile 2>/dev/null || npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 
 # ──────────────────────── Stage 2: Builder ────────────────────────
