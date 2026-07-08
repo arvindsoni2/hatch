@@ -51,25 +51,25 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-slate-800">
+        <h2 className="text-lg font-semibold text-[var(--text)]">
           {format(currentMonth, "MMMM yyyy")}
         </h2>
         <div className="flex gap-1">
           <button
             onClick={() => setCurrentMonth((m) => subMonths(m, 1))}
-            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+            className="rounded-lg p-2 text-[var(--text-dim)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             onClick={() => setCurrentMonth(new Date())}
-            className="px-3 py-1.5 text-sm rounded-lg hover:bg-slate-100 transition-colors text-slate-600"
+            className="rounded-lg px-3 py-1.5 text-sm text-[var(--text-dim)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
           >
             Today
           </button>
           <button
             onClick={() => setCurrentMonth((m) => addMonths(m, 1))}
-            className="p-2 rounded-lg hover:bg-slate-100 transition-colors"
+            className="rounded-lg p-2 text-[var(--text-dim)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -81,7 +81,7 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
           <div
             key={d}
-            className="text-xs font-medium text-slate-400 text-center py-1"
+            className="py-1 text-center text-xs font-medium text-[var(--text-muted)]"
           >
             {d}
           </div>
@@ -108,11 +108,11 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
                 )
               }
               className={cn(
-                "relative h-10 rounded-lg flex flex-col items-center justify-center text-sm transition-colors",
-                isToday(day) && "font-bold text-indigo-600",
-                !isSameMonth(day, currentMonth) && "text-slate-300",
-                isSelected ? "bg-indigo-500 text-white" : "hover:bg-slate-100",
-                hasEvents && !isSelected && "bg-slate-50",
+                "relative flex h-10 flex-col items-center justify-center rounded-lg text-sm text-[var(--text)] transition-colors",
+                isToday(day) && "font-bold text-[var(--accent)]",
+                !isSameMonth(day, currentMonth) && "text-[var(--text-muted)]",
+                isSelected ? "bg-[var(--accent)] text-[var(--on-accent)]" : "hover:bg-[var(--surface-2)]",
+                hasEvents && !isSelected && "bg-[var(--surface-2)]",
               )}
             >
               {format(day, "d")}
@@ -122,7 +122,7 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
                     <div
                       className={cn(
                         "h-1 w-1 rounded-full",
-                        isSelected ? "bg-white" : "bg-blue-500",
+                        isSelected ? "bg-[var(--on-accent)]" : "bg-[var(--accent)]",
                       )}
                     />
                   )}
@@ -131,10 +131,10 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
                       className={cn(
                         "h-1 w-1 rounded-full",
                         isSelected
-                          ? "bg-white"
+                          ? "bg-[var(--on-accent)]"
                           : dayFollowUps.some((f) => !f.completed)
-                            ? "bg-amber-400"
-                            : "bg-green-400",
+                            ? "bg-[var(--warning)]"
+                            : "bg-[var(--success)]",
                       )}
                     />
                   )}
@@ -148,25 +148,25 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
       {/* Selected day detail */}
       {selectedDay !== null &&
         (selectedInterviews.length > 0 || selectedFollowUps.length > 0) && (
-          <div className="mt-4 border-t border-slate-200 pt-4">
-            <h3 className="text-sm font-medium text-slate-700 mb-3">
+          <div className="mt-4 border-t border-[var(--border)] pt-4">
+            <h3 className="mb-3 text-sm font-medium text-[var(--text)]">
               {format(selectedDay, "EEEE d MMMM")}
             </h3>
             {selectedInterviews.map((i) => (
               <div key={i.id} className="flex items-center gap-2 text-sm py-1">
-                <div className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />
-                <span className="text-slate-700">
+                <div className="h-2 w-2 shrink-0 rounded-full bg-[var(--accent)]" />
+                <span className="text-[var(--text)]">
                   {i.type.replace(/_/g, " ")} interview
                 </span>
                 {i.scheduled_at && (
-                  <span className="text-slate-400">
+                  <span className="text-[var(--text-muted)]">
                     {format(new Date(i.scheduled_at), "HH:mm")}
                   </span>
                 )}
                 <button
                   onClick={() => void downloadInterviewIcs(i.id)}
                   title="Export to calendar"
-                  className="ml-auto text-indigo-400 hover:text-indigo-600"
+                  className="ml-auto text-[var(--accent)] hover:opacity-80"
                 >
                   <CalendarPlus className="h-3.5 w-3.5" />
                 </button>
@@ -176,14 +176,14 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
               <div key={f.id} className="flex items-center gap-2 text-sm py-1">
                 <div
                   className={cn(
-                    "h-2 w-2 rounded-full shrink-0",
-                    f.completed ? "bg-green-400" : "bg-amber-400",
+                    "h-2 w-2 shrink-0 rounded-full",
+                    f.completed ? "bg-[var(--success)]" : "bg-[var(--warning)]",
                   )}
                 />
                 <span
                   className={cn(
-                    "text-slate-700",
-                    f.completed && "line-through text-slate-400",
+                    "text-[var(--text)]",
+                    f.completed && "line-through text-[var(--text-muted)]",
                   )}
                 >
                   Follow-up: {f.type.replace(/_/g, " ")}

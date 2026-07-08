@@ -39,7 +39,7 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
 
   if (followUps.length === 0) {
     return (
-      <p className="text-sm text-slate-400 py-4 text-center">No follow-ups scheduled.</p>
+      <p className="py-4 text-center text-sm text-[var(--text-muted)]">No follow-ups scheduled.</p>
     );
   }
 
@@ -94,10 +94,10 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
               className={cn(
                 "flex items-start gap-3 p-3 rounded-lg border",
                 fu.completed
-                  ? "bg-slate-50 border-slate-200 opacity-60"
+                  ? "border-[var(--border)] bg-[var(--surface-2)] opacity-60"
                   : overdue
-                    ? "bg-red-50 border-red-200"
-                    : "bg-white border-slate-200",
+                    ? "border-[var(--danger)] bg-[var(--danger-soft)]"
+                    : "border-[var(--border)] bg-[var(--surface)]",
               )}
             >
               <button
@@ -106,10 +106,10 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
                 className={cn(
                   "mt-0.5 shrink-0 rounded-full p-0.5 transition-colors",
                   fu.completed
-                    ? "text-green-500 cursor-default"
+                    ? "text-[var(--success)] cursor-default"
                     : overdue
-                      ? "text-red-400 hover:text-red-600"
-                      : "text-slate-300 hover:text-slate-500",
+                      ? "text-[var(--danger)] hover:opacity-80"
+                      : "text-[var(--text-muted)] hover:text-[var(--text)]",
                 )}
               >
                 {fu.completed ? (
@@ -125,18 +125,18 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
                     className={cn(
                       "text-xs font-medium px-2 py-0.5 rounded-full",
                       fu.type === "check_in"
-                        ? "bg-blue-100 text-blue-700"
+                        ? "bg-[var(--accent-soft)] text-[var(--accent)]"
                         : fu.type === "thank_you"
-                          ? "bg-purple-100 text-purple-700"
+                          ? "bg-[var(--purple-soft)] text-[var(--purple)]"
                           : fu.type === "negotiation"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-600",
+                            ? "bg-[var(--warning-soft)] text-[var(--warning)]"
+                            : "bg-[var(--surface-2)] text-[var(--text-dim)]",
                     )}
                   >
                     {TYPE_LABELS[fu.type] ?? fu.type}
                   </span>
                   {overdue && (
-                    <span className="flex items-center gap-1 text-xs text-red-600 font-medium">
+                    <span className="flex items-center gap-1 text-xs font-medium text-[var(--danger)]">
                       <AlertCircle className="h-3 w-3" />
                       Overdue
                     </span>
@@ -146,7 +146,7 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
                     hasEmailDraft ? (
                       <button
                         onClick={() => handleOpenEmail(fu.id)}
-                        className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
+                        className="flex items-center gap-1 rounded-full bg-[var(--success-soft)] px-2 py-0.5 text-xs font-medium text-[var(--success)] transition-colors hover:opacity-80"
                       >
                         <Mail className="h-3 w-3" />
                         Email Ready
@@ -155,7 +155,7 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
                       <button
                         onClick={() => handleGenerateEmail(fu)}
                         disabled={generatingFor === fu.id}
-                        className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 hover:bg-brand-100 transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1 rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-xs font-medium text-[var(--accent)] transition-colors hover:opacity-80 disabled:opacity-50"
                       >
                         {generatingFor === fu.id ? (
                           <Loader2 className="h-3 w-3 animate-spin" />
@@ -168,9 +168,9 @@ export function FollowUpList({ followUps, applicationId, onComplete }: FollowUpL
                   )}
                 </div>
                 {fu.note && (
-                  <p className="text-xs text-slate-600 mt-1 line-clamp-2">{fu.note}</p>
+                  <p className="mt-1 line-clamp-2 text-xs text-[var(--text-dim)]">{fu.note}</p>
                 )}
-                <p className={cn("text-xs mt-1", overdue ? "text-red-500" : "text-slate-400")}>
+                <p className={cn("mt-1 text-xs", overdue ? "text-[var(--danger)]" : "text-[var(--text-muted)]")}>
                   Due {format(new Date(fu.due_date), "EEE d MMM")}
                   {!fu.completed &&
                     ` · ${formatDistanceToNow(new Date(fu.due_date), { addSuffix: true })}`}

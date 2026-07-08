@@ -1193,7 +1193,7 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Merged | `ux/06-settings-profile` / `f5b6f42` | Merged as GitHub PR #11 |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Merged | split PRs: `ux/07-ai-provider-setup` / `569d79c`, `ux/08-master-cv-upload-flow` / `74641e8`, `ux/09-email-preview-send-safety` / `2f0f501` | Merged as GitHub PRs #12, #13, and #14; Diagnostics completion should be rechecked during PR 10 final verification. |
 | PR 8 | Core job-search screens | PR 1 to PR 3 | Merged | split PRs: `ux/10-core-empty-states-today-jobs` / `b7a9228`, `ux/11-pipeline-applications-states` / `366b343`, `ux/12-cv-studio-states` / `981b09d` | Merged as GitHub PRs #15, #16, and #17 |
-| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | In progress | `ux/13-prep-coach-states` | PR 9A in progress for Prep and Coach route states, purpose clarity, Coach landing styling, and Coach story destructive confirmation. |
+| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | In progress | split PRs: `ux/13-prep-coach-states` / `178e3d6`, `ux/14-analytics-calendar-states` | PR 9A merged as GitHub PR #18. PR 9B is in progress for Analytics and Calendar grouping, empty states, and semantic tokens. |
 | PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | Not started | `ux/10-verification-cleanup` | |
 
 Allowed status values are `Not started`, `In progress`, `Blocked`, and `Merged`. Do not mark a PR `Merged` until its remote PR has merged.
@@ -1584,6 +1584,17 @@ Split this PR by subsystem if needed: PR 9A covers Prep and Coach; PR 9B covers 
 - Validation passed: `npm test -- CoreRouteStates CoachPage`, `npm test -- v4-feature-contracts`, `npm run type-check`, full `npm test` (477 tests), `npm run build`, host-proxy `API_URL=http://127.0.0.1:8000 npm run build` for screenshot setup, and `git diff --check`.
 - Visual evidence was attempted against `http://127.0.0.1:3001/coach` but blocked by the local app-lock password; the lock was not reset or bypassed.
 - Remaining PR 9A work before review: capture visual evidence after unlocking the local app, and decide whether Coach session/report detail styling stays deferred to the PR 9C detail-template pass.
+
+**PR 9B resume handoff:**
+
+- Branch: `ux/14-analytics-calendar-states`
+- Grouped Analytics into Outcomes, Match Quality, AI Usage, and Reliability sections so dense evidence has clear scan paths.
+- Added Calendar shared page header, tokenized loading skeleton, and route-level empty state with an Open Applications action.
+- Tokenized Analytics chart colours, Calendar month controls, day markers, selected-day details, and embedded follow-up states.
+- Added focused Vitest coverage for Analytics grouping and Calendar empty actions.
+- Validation passed: `npm test -- AnalyticsCalendarPage`, `npm test -- no-light-tailwind v4-feature-contracts`, `npm run type-check`, full `npm test` (479 tests), `npm run build`, and `git diff --check`.
+- Visual evidence still requires an unlocked local app session; do not reset or bypass app lock just to capture screenshots.
+- Remaining PR 9B work before review: capture visual evidence if the local app can be unlocked.
 
 ### 9.12 PR 10: Verify the complete experience and retire legacy UI
 
