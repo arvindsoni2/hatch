@@ -1,0 +1,6 @@
+-r requirements-core.txt
+
+# Local semantic scoring. Docker builds must use the CPU PyTorch wheel index
+# when installing this group so sentence-transformers does not pull GPU wheels.
+sentence-transformers>=5.0,<6.0
+transformers>=5.0.0,<6.0
