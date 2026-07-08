@@ -1,12 +1,12 @@
 "use client";
 
-import { Search, Scale, FileText, Kanban, MessageSquare, ShieldCheck, Check } from "lucide-react";
+import { Search, Scale, FileText, ClipboardList, MessageSquare, ShieldCheck, Check } from "lucide-react";
 
 const VALUE_STEPS = [
   { Icon: Search,        title: "Discover", sub: "Scans your job boards every few hours" },
   { Icon: Scale,         title: "Score",    sub: "Ranks each role against your profile" },
   { Icon: FileText,      title: "Tailor",   sub: "Drafts a tuned CV + cover letter" },
-  { Icon: Kanban,        title: "Track",    sub: "You approve. It never applies on its own" },
+  { Icon: ClipboardList, title: "Track",    sub: "You approve. It never applies on its own" },
   { Icon: MessageSquare, title: "Coach",    sub: "Preps you when an interview lands" },
 ];
 
