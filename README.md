@@ -76,6 +76,7 @@ The default mode is “configure AI later.” To choose a mode explicitly:
 ./install.sh --mode cloud
 ./install.sh --mode local
 ./install.sh --mode advanced
+./install.sh --mode advanced --backend-profile full
 ```
 
 After installation, use the host-side command wrapper:
@@ -87,6 +88,11 @@ hatch probe
 hatch models list
 hatch models install
 hatch apply-ai-config
+hatch capabilities status
+hatch capabilities enable browser
+hatch capabilities enable local-embeddings
+hatch capabilities enable full
+hatch capabilities disable
 ```
 
 Open:
@@ -261,7 +267,33 @@ docker compose up -d --build
 
 The default backend image is lightweight. Browser automation, local
 sentence-transformer embeddings, and perception/voice dependencies are opt-in
-backend capabilities:
+backend capabilities. The normal easy-install path is the host CLI:
+
+```bash
+hatch capabilities status
+hatch capabilities enable browser
+hatch capabilities enable local-embeddings
+hatch capabilities enable full
+hatch capabilities disable
+```
+
+AI mode and backend capability profile are separate. AI mode decides
+cloud/local intelligence setup. Backend capability profile decides which
+optional backend packages are installed.
+
+Install-time profile selection is also available:
+
+```bash
+./install.sh --mode cloud --backend-profile core
+./install.sh --mode advanced --backend-profile full
+```
+
+```powershell
+.\install.ps1 -Mode cloud -BackendProfile core
+.\install.ps1 -Mode advanced -BackendProfile full
+```
+
+Developers can still use the manual Compose overrides directly:
 
 ```bash
 # JS-rendered job-board scraping via Playwright

@@ -30,6 +30,7 @@ RUNTIME_PATH = CONFIG_DIR / "ai_runtime.json"
 INTENT_PATH = CONFIG_DIR / "ai_setup_intent.json"
 SECRETS_PATH = CONFIG_DIR / "secrets.env"
 INSTALL_PATH = CONFIG_DIR / "install.json"
+BACKEND_CAPABILITIES_PATH = CONFIG_DIR / "backend_capabilities.json"
 PROVIDERS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -38,6 +39,75 @@ PROVIDERS = {
     "groq": "GROQ_API_KEY",
     "azure_openai": "AZURE_OPENAI_API_KEY",
 }
+BACKEND_PROFILE_ENABLED = {
+    "core": [],
+    "browser": ["browser"],
+    "local-embeddings": ["local-embeddings"],
+    "full": ["browser", "local-embeddings", "perception", "advanced-coach"],
+}
+BACKEND_PROFILE_COMPOSE = {
+    "core": None,
+    "browser": "docker-compose.browser.yml",
+    "local-embeddings": "docker-compose.local-embeddings.yml",
+    "full": "docker-compose.full.yml",
+}
+
+
+def enabled_capabilities_for_profile(profile: str) -> list[str]:
+    try:
+        return list(BACKEND_PROFILE_ENABLED[profile])
+    except KeyError:
+        fail(f"Unsupported backend capability profile: {profile}")
+
+
+def default_backend_capabilities() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "profile": "core",
+        "enabled": [],
+        "updated_at": None,
+        "updated_by": "default",
+    }
+
+
+def read_backend_capabilities() -> dict[str, Any]:
+    try:
+        payload = json.loads(BACKEND_CAPABILITIES_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return default_backend_capabilities()
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"[hatch] Invalid backend capability config; using core: {exc}", file=sys.stderr)
+        return default_backend_capabilities()
+
+    profile = payload.get("profile", "core")
+    if profile not in BACKEND_PROFILE_ENABLED:
+        print(
+            f"[hatch] Unsupported backend capability profile '{profile}'; using core.",
+            file=sys.stderr,
+        )
+        return default_backend_capabilities()
+    return {
+        "schema_version": 1,
+        "profile": profile,
+        "enabled": enabled_capabilities_for_profile(profile),
+        "updated_at": payload.get("updated_at"),
+        "updated_by": payload.get("updated_by", "unknown"),
+    }
+
+
+def write_backend_capabilities(profile: str, *, updated_by: str) -> None:
+    if profile not in BACKEND_PROFILE_ENABLED:
+        fail(
+            "Unsupported backend capability profile: "
+            f"{profile}. Choose: {', '.join(BACKEND_PROFILE_ENABLED)}"
+        )
+    write_json(BACKEND_CAPABILITIES_PATH, {
+        "schema_version": 1,
+        "profile": profile,
+        "enabled": enabled_capabilities_for_profile(profile),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": updated_by,
+    })
 
 
 def ensure_home() -> None:
@@ -94,10 +164,20 @@ def run(
     )
 
 
-def compose_files(local: bool | None = None) -> list[str]:
+def compose_files(local: bool | None = None, backend_profile: str | None = None) -> list[str]:
     if local is None:
         local = read_json(RUNTIME_PATH, {}).get("ai_mode") == "local"
+    profile = backend_profile or read_backend_capabilities()["profile"]
+    if profile not in BACKEND_PROFILE_COMPOSE:
+        print(
+            f"[hatch] Unsupported backend capability profile '{profile}'; using core.",
+            file=sys.stderr,
+        )
+        profile = "core"
     files = ["-f", str(ROOT / "docker-compose.easy.yml")]
+    compose_file = BACKEND_PROFILE_COMPOSE[profile]
+    if compose_file:
+        files += ["-f", str(ROOT / compose_file)]
     if local:
         files += ["-f", str(ROOT / "docker-compose.local-ai.yml")]
         runtime = read_json(RUNTIME_PATH, {})
@@ -497,11 +577,99 @@ def cmd_secrets(args: argparse.Namespace) -> None:
 
 def cmd_status(_: argparse.Namespace) -> None:
     runtime = read_json(RUNTIME_PATH, base_runtime("not_configured"))
+    capabilities = read_backend_capabilities()
     result = run(["docker", "compose", *compose_files(), "ps", "--format", "json"], check=False, capture=True)
     print("Hatch status")
     print(f"Services: {'available' if result.returncode == 0 else 'stopped or unavailable'}")
     print(f"AI mode: {runtime.get('ai_mode', 'not_configured')}")
+    print(f"Backend capability profile: {capabilities['profile']}")
     print(f"Local models: {sum(1 for model in catalog() if (MODELS_DIR / model['filename']).is_file())} ready")
+    print("Optional backend capabilities:")
+    enabled = set(capabilities["enabled"])
+    print(f"  Browser automation: {'installed' if 'browser' in enabled else 'not installed'}")
+    print(f"  Local embeddings: {'installed' if 'local-embeddings' in enabled else 'not installed'}")
+    print(
+        "  Perception/advanced coach extras: "
+        f"{'installed' if 'perception' in enabled else 'not installed'}"
+    )
+
+
+def cmd_capabilities_list(_: argparse.Namespace) -> None:
+    current = read_backend_capabilities()["profile"]
+    print("Backend capability profiles:")
+    print("  core              Smallest backend image. Recommended for most users.")
+    print("  browser           Adds Playwright/browser automation for supported imports.")
+    print("  local-embeddings  Adds local semantic embedding packages.")
+    print("  full              Adds browser, local embeddings, perception, and advanced coach packages.")
+    print("")
+    print(f"Current profile: {current}")
+
+
+def cmd_capabilities_status(_: argparse.Namespace) -> None:
+    capabilities = read_backend_capabilities()
+    profile = capabilities["profile"]
+    enabled = set(capabilities["enabled"])
+    print(f"Backend capability profile: {profile}")
+    print(
+        "Enabled backend packages: "
+        f"{', '.join(capabilities['enabled']) if capabilities['enabled'] else 'none'}"
+    )
+    print("")
+    print("Available optional backend capabilities:")
+    print(f"  Browser automation: {'installed' if 'browser' in enabled else 'not installed'}")
+    print(f"  Local embeddings: {'installed' if 'local-embeddings' in enabled else 'not installed'}")
+    print(
+        "  Perception/advanced coach extras: "
+        f"{'installed' if 'perception' in enabled else 'not installed'}"
+    )
+    print("")
+    print("Enable commands:")
+    print("  hatch capabilities enable browser")
+    print("  hatch capabilities enable local-embeddings")
+    print("  hatch capabilities enable full")
+
+
+def _confirm_capability_change(current: str, target: str, args: argparse.Namespace) -> None:
+    if args.yes:
+        return
+    print(f"This will switch the backend capability profile from {current} to {target}.")
+    print("It may download/build a larger backend image with optional backend dependencies.")
+    if args.restart_all:
+        print("The full selected stack will be recreated.")
+    elif args.no_restart:
+        print("Services will not be restarted until you run hatch start or hatch restart.")
+    else:
+        print("The frontend and local model services will not be restarted.")
+    if input("Continue? [y/N] ").lower() != "y":
+        fail("Cancelled.", 2)
+
+
+def cmd_capabilities_enable(args: argparse.Namespace) -> None:
+    profile = args.profile
+    if profile not in BACKEND_PROFILE_ENABLED:
+        fail(
+            "Unsupported backend capability profile: "
+            f"{profile}. Choose: {', '.join(BACKEND_PROFILE_ENABLED)}"
+        )
+    current = read_backend_capabilities()["profile"]
+    _confirm_capability_change(current, profile, args)
+    write_backend_capabilities(profile, updated_by="hatch_cli")
+    print(f"Backend capability profile set to: {profile}")
+    if args.no_restart:
+        print("Restart required. Run: hatch restart")
+        return
+    if args.restart_all:
+        print("Recreating selected Hatch stack...")
+        compose("up", ["-d", "--build"])
+    else:
+        print("Recreating backend with selected capability profile...")
+        compose("up", ["-d", "--build", "backend"])
+    cmd_capabilities_status(args)
+
+
+def cmd_capabilities_disable(args: argparse.Namespace) -> None:
+    args.profile = "core"
+    cmd_capabilities_enable(args)
 
 
 def cmd_doctor(_: argparse.Namespace) -> None:
@@ -529,7 +697,11 @@ def cmd_update(args: argparse.Namespace) -> None:
         fail("Managed checkout has uncommitted changes; update refused.")
     commands = [["git", "fetch", "--all", "--tags"], ["git", "pull", "--ff-only"]]
     if args.dry_run:
-        print("Would back up config/data, fetch the configured branch, validate Compose, and restart services.")
+        profile = read_backend_capabilities()["profile"]
+        print(
+            "Would back up config/data, fetch the configured branch, validate "
+            f"Compose for backend profile '{profile}', and restart services."
+        )
         return
     backup = BACKUPS_DIR / f"update-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     backup.mkdir(parents=True)
@@ -538,7 +710,7 @@ def cmd_update(args: argparse.Namespace) -> None:
             shutil.copytree(path, backup / path.name, dirs_exist_ok=True)
     for command in commands:
         run(command)
-    run(["docker", "compose", "-f", "docker-compose.easy.yml", "config", "--quiet"])
+    run(["docker", "compose", *compose_files(), "config", "--quiet"])
     if not args.no_restart:
         compose("up", ["-d", "--build"])
 
@@ -603,6 +775,21 @@ def parser() -> argparse.ArgumentParser:
     update = sub.add_parser("update")
     update.add_argument("--dry-run", action="store_true")
     update.add_argument("--no-restart", action="store_true")
+    capabilities = sub.add_parser("capabilities")
+    capabilities_sub = capabilities.add_subparsers(dest="capabilities_action", required=True)
+    capabilities_sub.add_parser("list")
+    capabilities_sub.add_parser("status")
+    enable = capabilities_sub.add_parser("enable")
+    enable.add_argument("profile", choices=sorted(BACKEND_PROFILE_ENABLED))
+    enable.add_argument("--yes", action="store_true")
+    enable_restart = enable.add_mutually_exclusive_group()
+    enable_restart.add_argument("--no-restart", action="store_true")
+    enable_restart.add_argument("--restart-all", action="store_true")
+    disable = capabilities_sub.add_parser("disable")
+    disable.add_argument("--yes", action="store_true")
+    disable_restart = disable.add_mutually_exclusive_group()
+    disable_restart.add_argument("--no-restart", action="store_true")
+    disable_restart.add_argument("--restart-all", action="store_true")
     uninstall = sub.add_parser("uninstall")
     uninstall.add_argument("--yes", action="store_true")
     uninstall.add_argument("--purge-config", action="store_true")
@@ -642,6 +829,13 @@ def main() -> None:
         cmd_secrets(args)
     elif args.command == "update":
         cmd_update(args)
+    elif args.command == "capabilities":
+        {
+            "list": cmd_capabilities_list,
+            "status": cmd_capabilities_status,
+            "enable": cmd_capabilities_enable,
+            "disable": cmd_capabilities_disable,
+        }[args.capabilities_action](args)
     elif args.command == "uninstall":
         cmd_uninstall(args)
 

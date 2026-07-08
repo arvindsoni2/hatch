@@ -4,8 +4,8 @@
 
 param (
     [string]$InstallDir = "$env:LOCALAPPDATA\Hatch",
-    [ValidateSet("AiLater", "Cloud", "Local", "Advanced")]
-    [string]$Mode
+    [string]$Mode,
+    [string]$BackendProfile
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +14,61 @@ function Write-Info { param($Message) Write-Host "[hatch] $Message" -ForegroundC
 function Write-Ok { param($Message) Write-Host "[hatch] $Message" -ForegroundColor Green }
 function Write-Warn { param($Message) Write-Host "[hatch] $Message" -ForegroundColor Yellow }
 function Write-Fail { param($Message) Write-Host "[hatch] $Message" -ForegroundColor Red; exit 1 }
+
+function Resolve-InstallMode {
+    param([string]$Value)
+    switch -Regex ($Value) {
+        "^(?i:ai-?later|ailater)$" { return "AiLater" }
+        "^(?i:cloud)$" { return "Cloud" }
+        "^(?i:local)$" { return "Local" }
+        "^(?i:advanced)$" { return "Advanced" }
+        default { Write-Fail "Unsupported mode '$Value'. Use ai-later, cloud, local, or advanced." }
+    }
+}
+
+function Resolve-BackendProfile {
+    param([string]$Value)
+    switch -Regex ($Value) {
+        "^(?i:core)$" { return "core" }
+        "^(?i:browser)$" { return "browser" }
+        "^(?i:local-?embeddings)$" { return "local-embeddings" }
+        "^(?i:full)$" { return "full" }
+        default { Write-Fail "Unsupported backend profile '$Value'. Use core, browser, local-embeddings, LocalEmbeddings, or full." }
+    }
+}
+
+function Get-BackendEnabled {
+    param([string]$Profile)
+    switch ($Profile) {
+        "core" { return @() }
+        "browser" { return @("browser") }
+        "local-embeddings" { return @("local-embeddings") }
+        "full" { return @("browser", "local-embeddings", "perception", "advanced-coach") }
+    }
+}
+
+function Write-BackendCapabilities {
+    param([string]$Profile, [string]$HatchHome)
+    $Payload = @{
+        schema_version = 1
+        profile = $Profile
+        enabled = @(Get-BackendEnabled $Profile)
+        updated_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        updated_by = "install"
+    } | ConvertTo-Json
+    $Payload | Set-Content (Join-Path $HatchHome "config\backend_capabilities.json")
+}
+
+function Get-ComposeArgsForBackendProfile {
+    param([string]$Profile)
+    $Args = @("-f", "docker-compose.easy.yml")
+    switch ($Profile) {
+        "browser" { $Args += @("-f", "docker-compose.browser.yml") }
+        "local-embeddings" { $Args += @("-f", "docker-compose.local-embeddings.yml") }
+        "full" { $Args += @("-f", "docker-compose.full.yml") }
+    }
+    return $Args
+}
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Fail "Docker Desktop is required: https://www.docker.com/products/docker-desktop/"
@@ -44,6 +99,31 @@ if (-not $Mode) {
         }
     }
 }
+$Mode = Resolve-InstallMode $Mode
+
+if (-not $BackendProfile) {
+    $BackendProfile = "core"
+    if (-not $env:CI -and -not [Console]::IsInputRedirected) {
+        if ($Mode -eq "Advanced") {
+            Write-Warn "Advanced AI mode can use optional backend capabilities such as browser automation,"
+            Write-Warn "local embeddings, and perception/advanced coach extras."
+            Write-Warn "Hatch stays lightweight unless you explicitly enable those packages."
+        }
+        Write-Host "Backend capability profile:"
+        Write-Host "  [1] Core only - smallest image, recommended"
+        Write-Host "  [2] Browser automation - adds Playwright/browser-backed imports"
+        Write-Host "  [3] Local embeddings - adds heavier local semantic scoring packages"
+        Write-Host "  [4] Full - browser + local embeddings + perception/advanced coach extras"
+        $BackendChoice = Read-Host "Choose backend capability profile [1]"
+        $BackendProfile = switch ($BackendChoice) {
+            "2" { "browser" }
+            "3" { "local-embeddings" }
+            "4" { "full" }
+            default { "core" }
+        }
+    }
+}
+$BackendProfile = Resolve-BackendProfile $BackendProfile
 
 if (Test-Path (Join-Path $InstallDir ".git")) {
     Write-Info "Updating the existing install at $InstallDir"
@@ -64,8 +144,10 @@ $InstallState = @{
     managed = $true
     source_dir = $InstallDir
     installed_mode = $Mode
+    backend_capability_profile = $BackendProfile
 } | ConvertTo-Json
 $InstallState | Set-Content (Join-Path $HatchHome "config\install.json")
+Write-BackendCapabilities $BackendProfile $HatchHome
 Copy-Item (Join-Path $InstallDir "hatch.ps1") (Join-Path $HatchHome "bin\hatch.ps1") -Force
 
 if (-not (Test-Path "data\profile.yaml")) {
@@ -86,7 +168,8 @@ if (-not (Test-Path ".env")) {
 }
 
 Write-Info "Building Hatch containers"
-docker compose -f docker-compose.easy.yml up -d --build
+$ComposeArgs = Get-ComposeArgsForBackendProfile $BackendProfile
+docker compose @ComposeArgs up -d --build
 if ($Mode -eq "Local") {
     & (Join-Path $HatchHome "bin\hatch.ps1") probe
     & (Join-Path $HatchHome "bin\hatch.ps1") models install
