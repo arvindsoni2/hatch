@@ -1,0 +1,10 @@
+# Full capability backend image/audit dependency set.
+#
+# The current default Dockerfile still installs requirements.txt plus
+# requirements-perception.txt. Future Docker targets should switch to this file
+# only for an explicit full backend image.
+
+-r requirements-core.txt
+-r requirements-browser.txt
+-r requirements-local-ai.txt
+-r requirements-perception.txt

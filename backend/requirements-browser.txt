@@ -1,0 +1,4 @@
+-r requirements-core.txt
+
+# Browser automation for JS-rendered job boards.
+playwright==1.60.0
