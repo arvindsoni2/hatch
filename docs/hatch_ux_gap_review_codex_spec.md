@@ -1193,7 +1193,7 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Merged | `ux/06-settings-profile` / `f5b6f42` | Merged as GitHub PR #11 |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Merged | split PRs: `ux/07-ai-provider-setup` / `569d79c`, `ux/08-master-cv-upload-flow` / `74641e8`, `ux/09-email-preview-send-safety` / `2f0f501` | Merged as GitHub PRs #12, #13, and #14; Diagnostics completion should be rechecked during PR 10 final verification. |
 | PR 8 | Core job-search screens | PR 1 to PR 3 | Merged | split PRs: `ux/10-core-empty-states-today-jobs` / `b7a9228`, `ux/11-pipeline-applications-states` / `366b343`, `ux/12-cv-studio-states` / `981b09d` | Merged as GitHub PRs #15, #16, and #17 |
-| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | In progress | split PRs: `ux/13-prep-coach-states` / `178e3d6`, `ux/14-analytics-calendar-states` | PR 9A merged as GitHub PR #18. PR 9B is in progress for Analytics and Calendar grouping, empty states, and semantic tokens. |
+| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | In progress | split PRs: `ux/13-prep-coach-states` / `178e3d6`, `ux/14-analytics-calendar-states` / `a2e9dc1`, `ux/15-agents-approvals-details` | PR 9A merged as GitHub PR #18. PR 9B merged as GitHub PR #19. PR 9C is in progress for Agents and Approvals; detail-route polish remains. |
 | PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | Not started | `ux/10-verification-cleanup` | |
 
 Allowed status values are `Not started`, `In progress`, `Blocked`, and `Merged`. Do not mark a PR `Merged` until its remote PR has merged.
@@ -1595,6 +1595,16 @@ Split this PR by subsystem if needed: PR 9A covers Prep and Coach; PR 9B covers 
 - Validation passed: `npm test -- AnalyticsCalendarPage`, `npm test -- no-light-tailwind v4-feature-contracts`, `npm run type-check`, full `npm test` (479 tests), `npm run build`, and `git diff --check`.
 - Visual evidence still requires an unlocked local app session; do not reset or bypass app lock just to capture screenshots.
 - Remaining PR 9B work before review: capture visual evidence if the local app can be unlocked.
+
+**PR 9C resume handoff:**
+
+- Branch: `ux/15-agents-approvals-details`
+- Scope: align Agents and Approvals operational states, destructive-action confirmation, and secondary-route evidence using shared page, status, action, and semantic token patterns.
+- Updated Agents to show explicit refresh evidence, distinguish running, idle, failed, waiting, never-run, and unknown states, and stop treating pending events as active spinners.
+- Updated Approvals to use clearer no-pending next actions and a shared confirmation dialog before rejecting an application.
+- Added focused Vitest coverage for agent status evidence, no-pending approval actions, and reject confirmation.
+- Validation passed: `npm test -- AgentsApprovalsPage`, `npm test -- no-light-tailwind v4-feature-contracts`, `npm run type-check`, full `npm test` (482 tests), `npm run build`, and `git diff --check`. Build still reports the pre-existing `AnswerTimer` hook dependency warning.
+- Remaining PR 9C work after this slice: detail-route breadcrumb/title/metadata/back-navigation polish and authenticated visual evidence if the local app can be unlocked.
 
 ### 9.12 PR 10: Verify the complete experience and retire legacy UI
 
