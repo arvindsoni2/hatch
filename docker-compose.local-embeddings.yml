@@ -1,0 +1,9 @@
+services:
+  backend:
+    image: hatch-backend:local-ai
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: local-ai
+    environment:
+      HATCH_LOCAL_EMBEDDINGS_ENABLED: "true"
