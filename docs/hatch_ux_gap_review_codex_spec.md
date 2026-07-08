@@ -1194,7 +1194,7 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Merged | split PRs: `ux/07-ai-provider-setup` / `569d79c`, `ux/08-master-cv-upload-flow` / `74641e8`, `ux/09-email-preview-send-safety` / `2f0f501` | Merged as GitHub PRs #12, #13, and #14; Diagnostics completion should be rechecked during PR 10 final verification. |
 | PR 8 | Core job-search screens | PR 1 to PR 3 | Merged | split PRs: `ux/10-core-empty-states-today-jobs` / `b7a9228`, `ux/11-pipeline-applications-states` / `366b343`, `ux/12-cv-studio-states` / `981b09d` | Merged as GitHub PRs #15, #16, and #17 |
 | PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | Merged | split PRs: `ux/13-prep-coach-states` / `178e3d6`, `ux/14-analytics-calendar-states` / `a2e9dc1`, `ux/15-agents-approvals-details` / `8e5eafd`, `ux/16-detail-route-patterns` / `92e09ba` | PR 9A merged as GitHub PR #18. PR 9B merged as GitHub PR #19. PR 9C Agents/Approvals merged as GitHub PR #20. PR 9D detail-route polish merged as GitHub PR #21. |
-| PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | In progress | split PRs: `ux/17-verification-cleanup-dialogs` / `71e8f91`, `ux/18-verification-route-matrix` | PR 10A merged as GitHub PR #22. PR 10B adds protected-route landmark/H1 matrix coverage. |
+| PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | In progress | split PRs: `ux/17-verification-cleanup-dialogs` / `71e8f91`, `ux/18-verification-route-matrix` / `ab80d5c`, `ux/19-ux-spec-closure` | PR 10A merged as GitHub PR #22. PR 10B merged as GitHub PR #23. PR 10C closes the spec with final verification notes and bounded follow-ups. |
 
 Allowed status values are `Not started`, `In progress`, `Blocked`, and `Merged`. Do not mark a PR `Merged` until its remote PR has merged.
 
@@ -1663,7 +1663,17 @@ Split this PR by subsystem if needed: PR 9A covers Prep and Coach; PR 9B covers 
 - Added `frontend/e2e/protected-route-matrix.spec.ts`, which verifies one shell `main`, one visible route-owned `h1`, and no lock/onboarding redirect for `/jobs`, `/tailor`, `/coach`, `/calendar`, `/agents`, `/approvals`, `/settings/profile`, `/settings/preferences`, `/settings/ai`, `/settings/resume`, `/settings/security`, and `/settings/system`.
 - Server-rendered routes `/today`, `/stream`, `/tracker`, `/prep`, and `/analytics` remain listed as skipped Playwright checks until the backend app-lock session is unlocked or a test-only server-side auth path is provided; the current local backend returns `423 Hatch is locked` for protected API calls, so these routes stream an empty shell `main` instead of route content.
 - Validation passed: `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3001 npx playwright test e2e/protected-route-matrix.spec.ts --project=chromium` (12 passed, 5 skipped), `npm run type-check`, full `npm test` (486 tests), `npm run build`, and `git diff --check`. Build still reports the pre-existing `AnswerTimer` hook dependency warning.
+- Merged as GitHub PR #23 with merge commit `ab80d5c`.
 - Remaining PR 10 work after this slice: run the skipped server-rendered route matrix with an unlocked backend, authenticated visual matrix, reduced-motion, 200% zoom, content-stress checks, and final compatibility-adapter retirement.
+
+**PR 10C resume handoff:**
+
+- Branch: `ux/19-ux-spec-closure`
+- Scope: close the UX remediation spec with final verification evidence and bounded follow-ups so the project can move to the next specification discussion.
+- Added `docs/design/HATCH_UX_FINAL_VERIFICATION.md` with completed work, validation evidence, remaining lock-blocked verification tasks, and the adapter-retirement decision.
+- Confirmed `HatchIcon` and `Btn` still have active runtime imports and should not be removed in PR 10C.
+- Confirmed the running backend still has no `HATCH_AUTH_TOKEN` and protected API calls return `423 Hatch is locked`; server-rendered route screenshots and skipped route-matrix checks remain environment-gated rather than implementation-gated.
+- Remaining after PR 10C: no broad UX implementation work. Follow-up verification can run when an unlocked app-lock session or test-only server-side auth path is available.
 
 ### 9.13 Resume protocol
 
