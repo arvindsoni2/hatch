@@ -34,6 +34,7 @@ from .routers.interviews_ical import router as interviews_ical_router
 from .routers.jobs import health_router, router as jobs_router
 from .routers.coach import router as coach_router
 from .routers.settings import router as settings_router
+from .routers.system import router as system_router
 from .routers.tailor import router as tailor_router
 from .routers.gap_analysis import router as gap_analysis_router
 from .routers.scoring import router as scoring_router
@@ -376,6 +377,7 @@ def create_app() -> FastAPI:
     app.include_router(locales_router)
     app.include_router(resume_router)
     app.include_router(settings_router)
+    app.include_router(system_router)
     app.include_router(scoring_router)
     app.include_router(async_jobs_router)
     app.include_router(debug_router)

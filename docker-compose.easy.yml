@@ -15,6 +15,11 @@ services:
       LANGGRAPH_CHECKPOINT_DB: sqlite+aiosqlite:///./data/langgraph_checkpoints.db
       HATCH_CONFIG_DIR: /hatch-home/config
       HATCH_MODELS_DIR: /models
+      HATCH_BACKEND_PROFILE: core
+      HATCH_BROWSER_AUTOMATION_ENABLED: "0"
+      HATCH_LOCAL_EMBEDDINGS_ENABLED: "0"
+      HATCH_PERCEPTION_ENABLED: "0"
+      HATCH_ADVANCED_COACH_ENABLED: "0"
       PLAYWRIGHT_HEADLESS: "true"
       AUTO_APPROVE: "false"
     ports:

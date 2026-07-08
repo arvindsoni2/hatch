@@ -69,6 +69,11 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:///./data/jobpilot.db
       - LANGGRAPH_CHECKPOINT_DB=sqlite+aiosqlite:///./data/langgraph_checkpoints.db
       - LANGGRAPH_STRICT_MSGPACK=true
+      - HATCH_BACKEND_PROFILE=core
+      - HATCH_BROWSER_AUTOMATION_ENABLED=0
+      - HATCH_LOCAL_EMBEDDINGS_ENABLED=0
+      - HATCH_PERCEPTION_ENABLED=0
+      - HATCH_ADVANCED_COACH_ENABLED=0
       - PLAYWRIGHT_HEADLESS=true
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SCRAPE_INTERVAL_HOURS=${SCRAPE_INTERVAL_HOURS:-4}
