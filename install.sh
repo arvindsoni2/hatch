@@ -5,9 +5,11 @@
 set -euo pipefail
 
 MODE=""
+BACKEND_PROFILE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode) MODE="${2:-}"; shift 2 ;;
+    --backend-profile) BACKEND_PROFILE="${2:-}"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -22,6 +24,46 @@ info()  { echo -e "${CYAN}[hatch]${RESET} $*"; }
 ok()    { echo -e "${GREEN}[hatch]${RESET} $*"; }
 warn()  { echo -e "${YELLOW}[hatch]${RESET} $*"; }
 error() { echo -e "${RED}[hatch]${RESET} $*" >&2; exit 1; }
+
+validate_backend_profile() {
+  case "$1" in
+    core|browser|local-embeddings|full) ;;
+    *) error "Unsupported backend profile '$1'. Use core, browser, local-embeddings, or full." ;;
+  esac
+}
+
+backend_enabled_json() {
+  case "$1" in
+    core) printf '[]' ;;
+    browser) printf '["browser"]' ;;
+    local-embeddings) printf '["local-embeddings"]' ;;
+    full) printf '["browser", "local-embeddings", "perception", "advanced-coach"]' ;;
+  esac
+}
+
+write_backend_capabilities() {
+  local profile="$1"
+  cat > "$HATCH_HOME/config/backend_capabilities.json" <<EOF
+{
+  "schema_version": 1,
+  "profile": "$profile",
+  "enabled": $(backend_enabled_json "$profile"),
+  "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "updated_by": "install"
+}
+EOF
+  chmod 600 "$HATCH_HOME/config/backend_capabilities.json"
+}
+
+compose_files_for_backend_profile() {
+  local profile="$1"
+  COMPOSE_FILES=(-f docker-compose.easy.yml)
+  case "$profile" in
+    browser) COMPOSE_FILES+=(-f docker-compose.browser.yml) ;;
+    local-embeddings) COMPOSE_FILES+=(-f docker-compose.local-embeddings.yml) ;;
+    full) COMPOSE_FILES+=(-f docker-compose.full.yml) ;;
+  esac
+}
 
 # ── Prerequisites ──────────────────────────────────────────────────
 
@@ -89,15 +131,44 @@ case "$MODE" in
   *) error "Unsupported mode '$MODE'. Use ai-later, cloud, local, or advanced." ;;
 esac
 
+if [ -z "$BACKEND_PROFILE" ]; then
+  BACKEND_PROFILE="core"
+  if [ -t 0 ]; then
+    if [ "$MODE" = "advanced" ]; then
+      echo ""
+      warn "Advanced AI mode can use optional backend capabilities such as browser automation,"
+      warn "local embeddings, and perception/advanced coach extras."
+      warn "Hatch stays lightweight unless you explicitly enable those packages."
+    fi
+    echo ""
+    echo "Backend capability profile:"
+    echo "  [1] Core only - smallest image, recommended"
+    echo "  [2] Browser automation - adds Playwright/browser-backed imports"
+    echo "  [3] Local embeddings - adds heavier local semantic scoring packages"
+    echo "  [4] Full - browser + local embeddings + perception/advanced coach extras"
+    printf "Choose backend capability profile [1]: "
+    read -r BACKEND_PROFILE_CHOICE
+    case "$BACKEND_PROFILE_CHOICE" in
+      2) BACKEND_PROFILE="browser" ;;
+      3) BACKEND_PROFILE="local-embeddings" ;;
+      4) BACKEND_PROFILE="full" ;;
+      *) BACKEND_PROFILE="core" ;;
+    esac
+  fi
+fi
+validate_backend_profile "$BACKEND_PROFILE"
+
 cat > "$HATCH_HOME/config/install.json" <<EOF
 {
   "schema_version": 1,
   "managed": true,
   "source_dir": "$INSTALL_DIR",
-  "installed_mode": "$MODE"
+  "installed_mode": "$MODE",
+  "backend_capability_profile": "$BACKEND_PROFILE"
 }
 EOF
 chmod 600 "$HATCH_HOME/config/install.json"
+write_backend_capabilities "$BACKEND_PROFILE"
 
 ln -sf "$INSTALL_DIR/hatch" "$HATCH_HOME/bin/hatch"
 chmod +x "$INSTALL_DIR/hatch" "$INSTALL_DIR/scripts/hatch_cli.py"
@@ -129,7 +200,8 @@ fi
 # ── Build & start ──────────────────────────────────────────────────
 
 info "Building and starting the beginner-safe stack…"
-docker compose -f docker-compose.easy.yml up -d --build
+compose_files_for_backend_profile "$BACKEND_PROFILE"
+docker compose "${COMPOSE_FILES[@]}" up -d --build
 
 if [ "$MODE" = "local" ]; then
   "$HATCH_HOME/bin/hatch" probe
