@@ -1,9 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import Link from "next/link";
+import { CalendarPlus } from "lucide-react";
 import { CalendarView } from "@/components/CalendarView";
 import { FollowUpList } from "@/components/FollowUpList";
+import { buttonVariants } from "@/components/ui/button";
+import { PageContainer, PageHeader } from "@/components/ui/page-layout";
+import { cn } from "@/lib/utils";
 import {
   getUpcomingInterviews,
   getOverdueFollowUps,
@@ -40,24 +44,67 @@ export default function CalendarPage() {
     await load();
   };
 
+  const isEmpty = !loading && interviews.length === 0 && overdue.length === 0;
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <h1 className="text-2xl font-bold text-slate-900 mb-6">Calendar</h1>
+    <PageContainer width="wide" className="px-4 py-8">
+      <PageHeader
+        title="Calendar"
+        description="Upcoming interviews and follow-ups from tracked applications."
+        actions={(
+          <Link
+            href="/tracker"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "min-h-11 sm:min-h-9")}
+          >
+            Open Applications
+          </Link>
+        )}
+      />
+
         {loading ? (
-          <div className="flex items-center justify-center py-24">
-            <Loader2 className="h-8 w-8 animate-spin text-indigo-400" />
+          <div className="grid gap-6 md:grid-cols-3" role="status" aria-label="Loading Calendar">
+            <div className="md:col-span-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
+              <div className="h-6 w-44 animate-pulse rounded bg-[var(--surface-3)]" />
+              <div className="mt-5 grid grid-cols-7 gap-1">
+                {Array.from({ length: 35 }).map((_, index) => (
+                  <div key={index} className="h-10 animate-pulse rounded-lg bg-[var(--surface-2)]" />
+                ))}
+              </div>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
+              <div className="h-5 w-36 animate-pulse rounded bg-[var(--surface-3)]" />
+              <div className="mt-4 space-y-3">
+                {[0, 1, 2].map((index) => (
+                  <div key={index} className="h-14 animate-pulse rounded-lg bg-[var(--surface-2)]" />
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : isEmpty ? (
+          <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-14 text-center">
+            <CalendarPlus className="mx-auto h-10 w-10 text-[var(--text-muted)]" />
+            <h2 className="mt-4 text-base font-semibold text-[var(--text)]">
+              No interviews or follow-ups scheduled
+            </h2>
+            <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-dim)]">
+              Add an interview round or follow-up from an application to see it here.
+            </p>
+            <div className="mt-5 flex justify-center">
+              <Link href="/tracker" className={cn(buttonVariants({ variant: "default" }), "min-h-11")}>
+                Open Applications
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="grid md:grid-cols-3 gap-6">
-            <div className="md:col-span-2 bg-white rounded-xl border border-slate-200 p-6">
+            <div className="md:col-span-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
               <CalendarView interviews={interviews} followUps={overdue} />
             </div>
-            <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h2 className="text-sm font-semibold text-slate-700 mb-4">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6">
+              <h2 className="text-sm font-semibold text-[var(--text)] mb-4">
                 Overdue Follow-ups
                 {overdue.length > 0 && (
-                  <span className="ml-2 bg-red-100 text-red-600 text-xs px-2 py-0.5 rounded-full">
+                  <span className="ml-2 rounded-full bg-[var(--danger-soft)] px-2 py-0.5 text-xs text-[var(--danger)]">
                     {overdue.length}
                   </span>
                 )}
@@ -66,7 +113,6 @@ export default function CalendarPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </PageContainer>
   );
 }

@@ -19,7 +19,14 @@ import {
 } from "recharts";
 import type { AnalyticsDashboard, ScoreDistributionBucket, DailyCostEntry } from "@/lib/api";
 
-const COLORS = ["#6366f1", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
+const COLORS = [
+  "var(--accent)",
+  "var(--success)",
+  "var(--warning)",
+  "var(--danger)",
+  "var(--purple)",
+  "var(--info, #06b6d4)",
+];
 
 interface FunnelChartProps {
   stages: AnalyticsDashboard["funnel"]["stages"];
@@ -33,7 +40,7 @@ export function FunnelChart({ stages }: FunnelChartProps) {
         <XAxis type="number" tick={{ fontSize: 11 }} />
         <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} />
         <Tooltip />
-        <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]} />
+        <Bar dataKey="count" fill="var(--accent)" radius={[0, 4, 4, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -58,15 +65,15 @@ export function TrendChart({ weeks }: TrendChartProps) {
         <Area
           type="monotone"
           dataKey="new_applications"
-          stroke="#6366f1"
-          fill="#e0e7ff"
+          stroke="var(--accent)"
+          fill="var(--accent-soft)"
           name="New Applications"
         />
         <Area
           type="monotone"
           dataKey="reached_interview"
-          stroke="#10b981"
-          fill="#d1fae5"
+          stroke="var(--success)"
+          fill="var(--success-soft)"
           name="Reached Interview"
         />
       </AreaChart>
@@ -129,13 +136,13 @@ export function ScoreDistributionChart({
         <Tooltip formatter={(v) => [v, "Jobs"]} />
         <ReferenceLine
           x={`${Math.round(threshold * 10) * 10}–${Math.round(threshold * 10) * 10 + 10}%`}
-          stroke="#6366f1"
+          stroke="var(--accent)"
           strokeDasharray="4 2"
-          label={{ value: "Threshold", fontSize: 10, fill: "#6366f1" }}
+          label={{ value: "Threshold", fontSize: 10, fill: "var(--accent)" }}
         />
         <Bar dataKey="count" radius={[3, 3, 0, 0]}>
           {data.map((entry, i) => (
-            <Cell key={i} fill={entry.aboveThreshold ? "#10b981" : "#cbd5e1"} />
+            <Cell key={i} fill={entry.aboveThreshold ? "var(--success)" : "var(--surface-3)"} />
           ))}
         </Bar>
       </BarChart>
@@ -144,11 +151,11 @@ export function ScoreDistributionChart({
 }
 
 const AGENT_COLORS: Record<string, string> = {
-  scout: "#6366f1",
-  scorer: "#10b981",
-  tailor: "#f59e0b",
-  coach: "#8b5cf6",
-  unknown: "#94a3b8",
+  scout: "var(--accent)",
+  scorer: "var(--success)",
+  tailor: "var(--warning)",
+  coach: "var(--purple)",
+  unknown: "var(--text-muted)",
 };
 
 export function DailyCostChart({ days }: { days: DailyCostEntry[] }) {
