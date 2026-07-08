@@ -1,8 +1,13 @@
 "use client";
 
-import { GeneratedDocument, downloadDocument } from "@/lib/api";
+import {
+  DocumentQualityAcknowledgementRequiredError,
+  GeneratedDocument,
+  downloadDocument,
+} from "@/lib/api";
 import { Download, FileText, FileCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useState } from "react";
 
 interface DocumentHistoryProps {
   documents: GeneratedDocument[];
@@ -24,6 +29,24 @@ function statusStyle(status: string): { background: string; color: string } {
 }
 
 export function DocumentHistory({ documents }: DocumentHistoryProps) {
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [acknowledgementDocumentId, setAcknowledgementDocumentId] = useState<string | null>(null);
+
+  const handleDownload = async (documentId: string, acknowledgeQualityWarnings = false) => {
+    try {
+      setDownloadNotice(null);
+      setAcknowledgementDocumentId(null);
+      await downloadDocument(documentId, { acknowledgeQualityWarnings });
+    } catch (error) {
+      if (error instanceof DocumentQualityAcknowledgementRequiredError) {
+        setDownloadNotice(error.message);
+        setAcknowledgementDocumentId(documentId);
+        return;
+      }
+      setDownloadNotice(error instanceof Error ? error.message : "Could not download this document.");
+    }
+  };
+
   if (documents.length === 0) {
     return (
       <div className="rounded-xl p-6 text-center" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
@@ -41,6 +64,23 @@ export function DocumentHistory({ documents }: DocumentHistoryProps) {
 
   return (
     <div className="space-y-4">
+      {downloadNotice && (
+        <div className="flex flex-wrap items-center gap-2" role="status">
+          <p className="text-xs" style={{ color: "var(--danger)" }}>
+            {downloadNotice}
+          </p>
+          {acknowledgementDocumentId && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => void handleDownload(acknowledgementDocumentId, true)}
+            >
+              Download anyway
+            </Button>
+          )}
+        </div>
+      )}
       {Object.entries(grouped).map(([docType, docs]) => (
         <div key={docType} className="rounded-xl p-5" style={{ background: "var(--surface)", border: "1px solid var(--border)" }}>
           <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--text)" }}>
@@ -92,7 +132,7 @@ export function DocumentHistory({ documents }: DocumentHistoryProps) {
                     size="sm"
                     className="h-7 w-7 p-0"
                     style={{ color: "var(--text-dim)" }}
-                    onClick={() => downloadDocument(doc.id)}
+                    onClick={() => void handleDownload(doc.id)}
                   >
                     <Download className="h-3.5 w-3.5" />
                   </Button>

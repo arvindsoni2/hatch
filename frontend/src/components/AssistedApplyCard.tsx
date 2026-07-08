@@ -53,10 +53,11 @@ export function AssistedApplyCard({
 
   const handleOpenApplication = () => {
     const url = pkg?.job_url ?? application.job_url;
+    setErrorMsg(null);
     if (url) {
       window.open(url, "_blank", "noopener,noreferrer");
     } else {
-      alert("No application URL available for this job.");
+      setErrorMsg("No application URL available for this job.");
     }
   };
 
@@ -181,6 +182,12 @@ export function AssistedApplyCard({
           Mark as applied
         </button>
       </div>
+
+      {errorMsg && (
+        <p className="text-xs" role="status" style={{ color: "var(--danger)" }}>
+          {errorMsg}
+        </p>
+      )}
 
       {/* Reassurance text */}
       <p className="text-xs italic" style={{ color: "var(--text-muted)" }}>

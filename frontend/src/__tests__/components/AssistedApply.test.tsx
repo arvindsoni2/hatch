@@ -71,6 +71,18 @@ describe("AssistedApplyCard", () => {
     expect(screen.getByRole("button", { name: /Open application/i })).toBeInTheDocument();
   });
 
+  it("shows an inline message instead of browser alert when no application URL is available", () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const app = makeApproval({ status: "ready_to_apply", job_url: null });
+    render(<AssistedApplyCard application={app} onStatusChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Open application/i }));
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(screen.getByText("No application URL available for this job.")).toBeVisible();
+    alertSpy.mockRestore();
+  });
+
   it("no_auto_submit_button — no Auto-submit or Submit automatically button exists", () => {
     const app = makeApproval({ status: "approved" });
     render(<AssistedApplyCard application={app} onStatusChange={vi.fn()} />);

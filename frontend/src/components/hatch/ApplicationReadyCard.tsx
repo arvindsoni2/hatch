@@ -1,10 +1,15 @@
 "use client";
+import { useState } from 'react';
 import { Btn } from './Btn';
 import { Card } from './Card';
 import { Chip } from './Chip';
 import { HatchIcon } from './HatchIcon';
 import type { HatchJob } from './screens/TodayScreen';
-import { downloadDocument, type ApplicationPackage } from '@/lib/api';
+import {
+  DocumentQualityAcknowledgementRequiredError,
+  downloadDocument,
+  type ApplicationPackage,
+} from '@/lib/api';
 
 interface ApplicationReadyCardProps {
   job: HatchJob;
@@ -18,6 +23,23 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert, onRetr
   const hasScreeningAnswers = Object.keys(pkg.screening_answers ?? {}).length > 0;
   const hasPasteMap = Object.keys(pkg.paste_map ?? {}).length > 0;
   const hasCompletePackage = Boolean(pkg.cv_document_id && pkg.cl_document_id);
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [acknowledgementDocumentId, setAcknowledgementDocumentId] = useState<string | null>(null);
+
+  const handleDownload = async (documentId: string, acknowledgeQualityWarnings = false) => {
+    try {
+      setDownloadNotice(null);
+      setAcknowledgementDocumentId(null);
+      await downloadDocument(documentId, { acknowledgeQualityWarnings });
+    } catch (error) {
+      if (error instanceof DocumentQualityAcknowledgementRequiredError) {
+        setDownloadNotice(error.message);
+        setAcknowledgementDocumentId(documentId);
+        return;
+      }
+      setDownloadNotice(error instanceof Error ? error.message : 'Could not download this document.');
+    }
+  };
 
   return (
     <Card accent style={{ padding: 16 }}>
@@ -83,14 +105,24 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert, onRetr
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
           {pkg.cv_document_id && (
             <Btn kind="soft" size="sm" icon="arrowR"
-              onClick={() => void downloadDocument(pkg.cv_document_id!)}>
+              onClick={() => void handleDownload(pkg.cv_document_id!)}>
               Download CV
             </Btn>
           )}
           {pkg.cl_document_id && (
             <Btn kind="soft" size="sm" icon="arrowR"
-              onClick={() => void downloadDocument(pkg.cl_document_id!)}>
+              onClick={() => void handleDownload(pkg.cl_document_id!)}>
               Download Cover Letter
+            </Btn>
+          )}
+        </div>
+      )}
+      {downloadNotice && (
+        <div role="status" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', margin: '-4px 0 12px' }}>
+          <span style={{ fontSize: 11.5, color: 'var(--danger)' }}>{downloadNotice}</span>
+          {acknowledgementDocumentId && (
+            <Btn kind="soft" size="sm" icon="arrowR" onClick={() => void handleDownload(acknowledgementDocumentId, true)}>
+              Download anyway
             </Btn>
           )}
         </div>

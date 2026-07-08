@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { downloadDocument } from "@/lib/api";
+import { DocumentQualityAcknowledgementRequiredError, downloadDocument } from "@/lib/api";
 
 describe("downloadDocument", () => {
   beforeEach(() => {
@@ -28,6 +28,42 @@ describe("downloadDocument", () => {
     expect(clickedLink.href).toContain("/api/tailor/document/cover-letter-id/download");
     expect(clickedLink.download).toBe("");
     expect(document.body.contains(clickedLink)).toBe(false);
+    click.mockRestore();
+  });
+
+  it("throws a typed error when quality warnings need acknowledgement", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        post_generation: {
+          export_confidence: "acknowledge_required",
+        },
+        pack_version: "pack-v1",
+      }),
+    } as Response);
+
+    await expect(downloadDocument("cv-id")).rejects.toBeInstanceOf(
+      DocumentQualityAcknowledgementRequiredError,
+    );
+    expect(sessionStorage.getItem("quality-ack:cv-id:pack-v1")).toBeNull();
+  });
+
+  it("records acknowledgement and downloads when the caller confirms quality warnings inline", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        post_generation: {
+          export_confidence: "acknowledge_required",
+        },
+        pack_version: "pack-v1",
+      }),
+    } as Response);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    await downloadDocument("cv-id", { acknowledgeQualityWarnings: true });
+
+    expect(sessionStorage.getItem("quality-ack:cv-id:pack-v1")).toBeTruthy();
+    expect(click).toHaveBeenCalledOnce();
     click.mockRestore();
   });
 });

@@ -24,6 +24,7 @@ import {
   addApplicationNote,
   completeFollowUp,
   createInterview,
+  DocumentQualityAcknowledgementRequiredError,
   downloadDocument,
   type Application,
   type ApplicationStatus,
@@ -77,6 +78,8 @@ export function ApplicationDetail({
   const [newInterviewDate, setNewInterviewDate] = useState("");
   const [addingInterview, setAddingInterview] = useState(false);
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
+  const [documentDownloadNotice, setDocumentDownloadNotice] = useState<string | null>(null);
+  const [acknowledgementDocumentId, setAcknowledgementDocumentId] = useState<string | null>(null);
 
   const loadApp = useCallback(async () => {
     try {
@@ -117,6 +120,21 @@ export function ApplicationDetail({
       await loadApp();
     } finally {
       setAddingNote(false);
+    }
+  };
+
+  const handleDocumentDownload = async (documentId: string, acknowledgeQualityWarnings = false) => {
+    try {
+      setDocumentDownloadNotice(null);
+      setAcknowledgementDocumentId(null);
+      await downloadDocument(documentId, { acknowledgeQualityWarnings });
+    } catch (e) {
+      if (e instanceof DocumentQualityAcknowledgementRequiredError) {
+        setDocumentDownloadNotice(e.message);
+        setAcknowledgementDocumentId(documentId);
+        return;
+      }
+      setDocumentDownloadNotice(e instanceof Error ? e.message : "Could not download this document.");
     }
   };
 
@@ -282,6 +300,23 @@ export function ApplicationDetail({
                       <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
                         Generated Documents
                       </h3>
+                      {documentDownloadNotice && (
+                        <div className="mb-2 flex flex-wrap items-center gap-2" role="status">
+                          <p className="text-xs text-rose-600">
+                            {documentDownloadNotice}
+                          </p>
+                          {acknowledgementDocumentId && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => void handleDocumentDownload(acknowledgementDocumentId, true)}
+                            >
+                              Download anyway
+                            </Button>
+                          )}
+                        </div>
+                      )}
                       <div className="space-y-2">
                         {documents.map((doc) => (
                           <div
@@ -306,7 +341,7 @@ export function ApplicationDetail({
                               </div>
                             </div>
                             <button
-                              onClick={() => void downloadDocument(doc.id)}
+                              onClick={() => void handleDocumentDownload(doc.id)}
                               className="shrink-0 ml-3 text-slate-400 hover:text-indigo-500 transition-colors"
                               title="Download"
                             >
