@@ -6,7 +6,10 @@ services:
       dockerfile: Dockerfile
       target: full
     environment:
+      HATCH_BACKEND_PROFILE: full
+      HATCH_BROWSER_AUTOMATION_ENABLED: "1"
+      HATCH_LOCAL_EMBEDDINGS_ENABLED: "1"
+      HATCH_PERCEPTION_ENABLED: "1"
+      HATCH_ADVANCED_COACH_ENABLED: "1"
       PLAYWRIGHT_HEADLESS: "true"
       HATCH_BROWSER_ENABLED: "true"
-      HATCH_LOCAL_EMBEDDINGS_ENABLED: "true"
-      HATCH_PERCEPTION_ENABLED: "true"

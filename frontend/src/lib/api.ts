@@ -48,6 +48,25 @@ export interface ProfileSummary {
   warnings: Array<{ code: string; message: string }>;
 }
 
+export interface BackendCapabilityStatus {
+  configured: boolean;
+  installed: boolean;
+  available: boolean;
+  reason: string | null;
+  enable_command: string | null;
+}
+
+export interface SystemCapabilities {
+  backend_profile: "core" | "browser" | "local-embeddings" | "full" | string;
+  ai_mode: string;
+  capabilities: {
+    core_backend: BackendCapabilityStatus;
+    browser_automation: BackendCapabilityStatus;
+    local_embeddings: BackendCapabilityStatus;
+    perception_advanced_coach: BackendCapabilityStatus;
+  };
+}
+
 // ──────────────────────── Types ────────────────────────
 
 export interface Job {
@@ -186,6 +205,9 @@ export const changeAppLockPassword = (currentPassword: string, newPassword: stri
 
 export const fetchProfileSummary = () =>
   apiFetch<ProfileSummary>("/api/v2/profile/summary");
+
+export const getSystemCapabilities = () =>
+  apiFetch<SystemCapabilities>("/api/system/capabilities", { cache: "no-store" });
 
 function buildQueryString(params: Record<string, string | number | boolean | undefined>): string {
   const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== "");

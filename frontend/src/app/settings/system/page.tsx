@@ -9,7 +9,8 @@ import {
   Loader2, Trash2, Zap, Server, Activity, Cpu, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, getSystemCapabilities } from "@/lib/api";
+import type { BackendCapabilityStatus, SystemCapabilities } from "@/lib/api";
 
 interface LLMTrace {
   id: number;
@@ -76,6 +77,29 @@ const SERVICE_LABELS: Record<string, { label: string; icon: ReactNode }> = {
   "llm-triage": { label: "Triage LLM", icon: <Zap className="h-4 w-4" aria-hidden="true" /> },
 };
 
+const CAPABILITY_ROWS: Array<{
+  key: keyof SystemCapabilities["capabilities"];
+  label: string;
+  action?: string;
+}> = [
+  { key: "core_backend", label: "Core backend" },
+  {
+    key: "browser_automation",
+    label: "Browser automation",
+    action: "Enable browser automation from your terminal:",
+  },
+  {
+    key: "local_embeddings",
+    label: "Local embeddings",
+    action: "Enable local embeddings from your terminal:",
+  },
+  {
+    key: "perception_advanced_coach",
+    label: "Perception/advanced coach extras",
+    action: "Enable all optional backend capabilities from your terminal:",
+  },
+];
+
 function money(amount: number): string {
   if (amount === 0) return "$0.00";
   if (amount < 0.01) return `$${amount.toFixed(5)}`;
@@ -88,6 +112,16 @@ function serviceTone(status: RuntimeService["status"]) {
   return { text: "var(--danger)", bg: "var(--danger-soft)", label: "Offline" };
 }
 
+function capabilityTone(capability: BackendCapabilityStatus) {
+  if (capability.available) {
+    return { text: "var(--success)", bg: "var(--success-soft)", label: "Installed" };
+  }
+  if (capability.configured) {
+    return { text: "var(--warning)", bg: "var(--warning-soft)", label: "Configured, not installed" };
+  }
+  return { text: "var(--text-dim)", bg: "var(--surface-2)", label: "Not installed" };
+}
+
 export default function SystemLogPage() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -96,6 +130,8 @@ export default function SystemLogPage() {
   const [filter, setFilter] = useState({ agent: "", status: "", type: "" });
   const [costs, setCosts] = useState<CostSummary | null>(null);
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
+  const [capabilities, setCapabilities] = useState<SystemCapabilities | null>(null);
+  const [capabilitiesError, setCapabilitiesError] = useState(false);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [traces, setTraces] = useState<LLMTrace[]>([]);
   const [expandedTrace, setExpandedTrace] = useState<number | null>(null);
@@ -148,6 +184,16 @@ export default function SystemLogPage() {
     }
   }, []);
 
+  const loadCapabilities = useCallback(async () => {
+    try {
+      const data = await getSystemCapabilities();
+      setCapabilities(data);
+      setCapabilitiesError(false);
+    } catch {
+      setCapabilitiesError(true);
+    }
+  }, []);
+
   const clearTraces = async () => {
     await fetch(`${API_BASE}/api/debug/llm-traces`, { method: "DELETE" });
     setTraces([]);
@@ -157,6 +203,7 @@ export default function SystemLogPage() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { void loadCosts(); }, [loadCosts]);
   useEffect(() => { void loadRuntime(); }, [loadRuntime]);
+  useEffect(() => { void loadCapabilities(); }, [loadCapabilities]);
   useEffect(() => {
     void loadTraces();
     traceTimerRef.current = setInterval(() => {
@@ -201,7 +248,7 @@ export default function SystemLogPage() {
           <ArrowLeft className="h-4 w-4" /> Today
         </Link>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => { void load(); void loadRuntime(); void loadTraces(); }}>
+          <Button variant="outline" size="sm" onClick={() => { void load(); void loadRuntime(); void loadTraces(); void loadCapabilities(); }}>
             <RefreshCw className="h-3.5 w-3.5 mr-1" /> Refresh
           </Button>
           <Button variant="outline" size="sm" onClick={exportCsv}>
@@ -215,6 +262,75 @@ export default function SystemLogPage() {
         <p className="mt-1 text-sm text-muted">
           Runtime health, LLM calls, and agent events from the local Hatch stack.
         </p>
+      </div>
+
+      {/* Backend capabilities */}
+      <div className="rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+        <div className="flex flex-col gap-3 border-b border-border bg-surface-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-fg">Backend capabilities</h2>
+            <p className="mt-1 text-xs text-muted">
+              Hatch installs the lightweight backend by default. Some advanced features need optional backend capabilities.
+            </p>
+          </div>
+          {capabilities && (
+            <div className="grid grid-cols-2 gap-2 text-xs sm:min-w-64">
+              <div className="rounded-lg px-3 py-2" style={{ background: "var(--surface)" }}>
+                <p className="text-muted">Backend profile</p>
+                <p className="mt-0.5 font-semibold text-fg">{capabilities.backend_profile}</p>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ background: "var(--surface)" }}>
+                <p className="text-muted">AI mode</p>
+                <p className="mt-0.5 font-semibold text-fg">{capabilities.ai_mode}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {capabilitiesError ? (
+          <div className="flex items-start gap-2 px-4 py-4">
+            <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-500" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-medium text-fg">Capability status is temporarily unavailable.</p>
+              <p className="mt-1 text-xs text-muted">System logs and runtime diagnostics are still available.</p>
+            </div>
+          </div>
+        ) : capabilities ? (
+          <div className="divide-y divide-border">
+            {CAPABILITY_ROWS.map((row) => {
+              const capability = capabilities.capabilities[row.key];
+              const tone = capabilityTone(capability);
+              return (
+                <div key={row.key} className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-medium text-fg">{row.label}</p>
+                      <span className="rounded-full px-2 py-0.5 text-xs font-semibold" style={{ background: tone.bg, color: tone.text }}>
+                        {tone.label}
+                      </span>
+                    </div>
+                    {capability.reason && (
+                      <p className="mt-1 text-xs text-muted">{capability.reason}</p>
+                    )}
+                  </div>
+                  {row.action && capability.enable_command && (
+                    <div className="min-w-0 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--surface-2)" }}>
+                      <p className="text-muted">{row.action}</p>
+                      <code className="mt-1 block whitespace-normal break-words font-mono font-semibold text-fg">
+                        {capability.enable_command}
+                      </code>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-4 py-4 text-sm text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Checking backend capabilities...
+          </div>
+        )}
       </div>
 
       {/* Runtime health */}
