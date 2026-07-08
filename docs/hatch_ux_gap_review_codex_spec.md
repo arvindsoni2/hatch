@@ -1193,8 +1193,8 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 6 | Settings shell and Profile | PR 2, PR 3 | Merged | `ux/06-settings-profile` / `f5b6f42` | Merged as GitHub PR #11 |
 | PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Merged | split PRs: `ux/07-ai-provider-setup` / `569d79c`, `ux/08-master-cv-upload-flow` / `74641e8`, `ux/09-email-preview-send-safety` / `2f0f501` | Merged as GitHub PRs #12, #13, and #14; Diagnostics completion should be rechecked during PR 10 final verification. |
 | PR 8 | Core job-search screens | PR 1 to PR 3 | Merged | split PRs: `ux/10-core-empty-states-today-jobs` / `b7a9228`, `ux/11-pipeline-applications-states` / `366b343`, `ux/12-cv-studio-states` / `981b09d` | Merged as GitHub PRs #15, #16, and #17 |
-| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | In progress | split PRs: `ux/13-prep-coach-states` / `178e3d6`, `ux/14-analytics-calendar-states` / `a2e9dc1`, `ux/15-agents-approvals-details` / `8e5eafd`, `ux/16-detail-route-patterns` | PR 9A merged as GitHub PR #18. PR 9B merged as GitHub PR #19. PR 9C Agents/Approvals merged as GitHub PR #20. Detail-route polish is in progress. |
-| PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | Not started | `ux/10-verification-cleanup` | |
+| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | Merged | split PRs: `ux/13-prep-coach-states` / `178e3d6`, `ux/14-analytics-calendar-states` / `a2e9dc1`, `ux/15-agents-approvals-details` / `8e5eafd`, `ux/16-detail-route-patterns` / `92e09ba` | PR 9A merged as GitHub PR #18. PR 9B merged as GitHub PR #19. PR 9C Agents/Approvals merged as GitHub PR #20. PR 9D detail-route polish merged as GitHub PR #21. |
+| PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | In progress | `ux/17-verification-cleanup-dialogs` | PR 10A starts cleanup with browser-dialog guards and confirmed-unused legacy shell removal. |
 
 Allowed status values are `Not started`, `In progress`, `Blocked`, and `Merged`. Do not mark a PR `Merged` until its remote PR has merged.
 
@@ -1614,6 +1614,7 @@ Split this PR by subsystem if needed: PR 9A covers Prep and Coach; PR 9B covers 
 - Updated Application detail sheet to use the actual application title as the accessible dialog name, add a Back to Applications control, and align its header/status/tabs with shared tokens.
 - Added focused Vitest coverage for Jobs detail breadcrumb/metadata/action patterns and Application detail sheet naming/back action.
 - Validation passed: `npm test -- DetailRoutePatterns`, `npm test -- no-light-tailwind v4-feature-contracts`, `npm run type-check`, full `npm test` (484 tests), `npm run build`, and `git diff --check`. Build still reports the pre-existing `AnswerTimer` hook dependency warning.
+- Merged as GitHub PR #21 with merge commit `92e09ba`.
 
 ### 9.12 PR 10: Verify the complete experience and retire legacy UI
 
@@ -1641,6 +1642,17 @@ Split this PR by subsystem if needed: PR 9A covers Prep and Coach; PR 9B covers 
 - No browser `alert` or `confirm` remains in user-facing flows
 - The production build completes without new warnings
 - Every ledger entry records its merged commit and handoff
+
+**PR 10A resume handoff:**
+
+- Branch: `ux/17-verification-cleanup-dialogs`
+- Scope: start PR 10 cleanup by removing browser-native `alert`/`confirm` usage and deleting confirmed-unused legacy shell components.
+- Replaced the Assisted Apply missing-URL browser alert with an inline announced status message.
+- Replaced the document quality-warning browser confirmation path with a typed API error and inline `Download anyway` acknowledgement controls in document download surfaces.
+- Removed the retired `Sidebar` and `BottomNav` components after confirming the active shell uses `HatchSidebar` and `HatchMobileBar`; kept `HatchIcon` and `Btn` because active Hatch surfaces still import them.
+- Added a PR 10 codebase guard that fails if runtime frontend code reintroduces browser-native `alert`/`confirm` calls or the retired shell files.
+- Validation passed: `npm test -- pr10-cleanup-contract api-download AssistedApply DetailRoutePatterns`, `npm test -- hatch/screens`, `npm test -- no-light-tailwind v4-feature-contracts shell-contract pr10-cleanup-contract api-download AssistedApply DetailRoutePatterns hatch/screens`, `npm run type-check`, full `npm test` (486 tests), `npm run build`, and `git diff --check`. Build still reports the pre-existing `AnswerTimer` hook dependency warning.
+- Remaining PR 10 work after this slice: authenticated visual matrix, one-H1/one-`main` sweep, reduced-motion, 200% zoom, content-stress checks, final compatibility-adapter retirement, and final documentation closure.
 
 ### 9.13 Resume protocol
 

@@ -933,15 +933,21 @@ export async function getDocumentHistory(
   return apiFetch<GeneratedDocument[]>(`/api/tailor/history/${applicationId}?${params}`);
 }
 
-export async function downloadDocument(documentId: string): Promise<void> {
+export class DocumentQualityAcknowledgementRequiredError extends Error {
+  constructor() {
+    super("This CV includes issues Hatch could not fully verify. Review the quality warnings before exporting.");
+    this.name = "DocumentQualityAcknowledgementRequiredError";
+  }
+}
+
+export async function downloadDocument(documentId: string, options?: { acknowledgeQualityWarnings?: boolean }): Promise<void> {
   const quality = await apiFetch<TailoringReview["quality_gate"]>(`/api/tailor/quality/document/${documentId}`);
   if (quality?.post_generation?.export_confidence === "acknowledge_required") {
     const key = `quality-ack:${documentId}:${quality.pack_version}`;
     if (!sessionStorage.getItem(key)) {
-      const accepted = window.confirm(
-        "This CV includes issues Hatch could not fully verify. You can still export it, but please review the warnings before sending.\n\nExport anyway?"
-      );
-      if (!accepted) return;
+      if (!options?.acknowledgeQualityWarnings) {
+        throw new DocumentQualityAcknowledgementRequiredError();
+      }
       sessionStorage.setItem(key, new Date().toISOString());
     }
   }
