@@ -6,13 +6,16 @@ import Link from "next/link";
 import { listSessions, SessionListItem, SessionResponse } from "@/lib/api";
 import { SessionLauncherDialog } from "@/components/coach/SessionLauncher";
 import { Brain, BookOpen, ChevronRight, Loader2, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { PageContainer, PageHeader } from "@/components/ui/page-layout";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { cn } from "@/lib/utils";
 
-const STATUS_COLORS: Record<string, string> = {
-  active: "bg-blue-100 text-blue-700",
-  completed: "bg-emerald-100 text-emerald-700",
-  setup: "bg-amber-100 text-amber-700",
-  abandoned: "bg-red-100 text-red-700",
+const STATUS_TONES: Record<string, "info" | "success" | "warning" | "danger" | "neutral"> = {
+  active: "info",
+  completed: "success",
+  setup: "warning",
+  abandoned: "danger",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -51,32 +54,58 @@ export default function CoachPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8">
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Brain className="h-6 w-6 text-indigo-600" />
+    <PageContainer width="default" className="px-4 py-8">
+      <PageHeader
+        title="Interview Coach"
+        description="Run live mock interviews and score answers. Use Interview Prep when you want saved research, likely questions, and calendar material before practice."
+        actions={(
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/prep"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "min-h-11 sm:min-h-9")}
+            >
+              <BookOpen className="h-4 w-4" />
+              Review Prep Materials
+            </Link>
+            <Button onClick={() => setShowLauncher(true)} className="gap-2" size="sm">
+              <Plus className="h-4 w-4" />
+              New Session
+            </Button>
+          </div>
+        )}
+      />
+
+      <div className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+        <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Interview Coach</h1>
-            <p className="text-sm text-slate-500">AI-powered mock interview practice</p>
+            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+              <BookOpen className="h-4 w-4 text-[var(--accent)]" />
+              Interview Prep
+            </div>
+            <p className="mt-1 text-sm text-[var(--text-dim)]">
+              Prepared material for confirmed interviews: research, likely questions, and saved session notes.
+            </p>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+              <Brain className="h-4 w-4 text-[var(--accent)]" />
+              Interview Coach
+            </div>
+            <p className="mt-1 text-sm text-[var(--text-dim)]">
+              Live mock interviews that evaluate answers, generate feedback, and build follow-up practice.
+            </p>
           </div>
         </div>
-        <Button
-          onClick={() => setShowLauncher(true)}
-          className="gap-2 bg-indigo-600 hover:bg-indigo-700 min-h-[44px] sm:min-h-0 self-start"
-        >
-          <Plus className="h-4 w-4" />
-          New Session
-        </Button>
       </div>
 
       {/* Sub-navigation */}
-      <div className="mb-6 flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
-        <span className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white">
+      <div className="mb-6 flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-1">
+        <span className="flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-[var(--on-accent)]">
           <Brain className="h-3.5 w-3.5" /> Sessions
         </span>
         <Link
           href="/coach/stories"
-          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-slate-500 hover:bg-white hover:text-slate-900 transition-colors"
+          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-[var(--text-dim)] hover:bg-[var(--surface)] hover:text-[var(--text)] transition-colors"
         >
           <BookOpen className="h-3.5 w-3.5" /> Story Bank
         </Link>
@@ -94,17 +123,19 @@ export default function CoachPage() {
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-16 animate-pulse rounded-xl bg-slate-100" />
+            <div key={i} className="h-16 animate-pulse rounded-xl bg-[var(--surface-2)]" />
           ))}
         </div>
       ) : sessions.length === 0 ? (
-        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center">
-          <Brain className="h-10 w-10 text-slate-300" />
-          <p className="text-slate-500">No sessions yet. Start your first mock interview!</p>
-          <Button
-            onClick={() => setShowLauncher(true)}
-            className="gap-2 bg-indigo-600 hover:bg-indigo-700"
-          >
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-16 text-center">
+          <Brain className="h-10 w-10 text-[var(--text-muted)]" />
+          <div>
+            <p className="font-semibold text-[var(--text)]">No live practice sessions yet</p>
+            <p className="mt-1 max-w-md text-sm text-[var(--text-dim)]">
+              Start a mock interview when you are ready to answer questions out loud or in writing.
+            </p>
+          </div>
+          <Button onClick={() => setShowLauncher(true)} className="gap-2">
             <Plus className="h-4 w-4" />
             New Session
           </Button>
@@ -117,12 +148,12 @@ export default function CoachPage() {
             return (
               <div
                 key={session.id}
-                className={`flex items-center justify-between rounded-xl border bg-white px-4 py-3 shadow-sm transition-colors ${
+                className={`flex items-center justify-between rounded-xl border bg-[var(--surface)] px-4 py-3 shadow-sm transition-colors ${
                   isGenerating
-                    ? "border-amber-200 cursor-default"
+                    ? "border-[var(--warning)] cursor-default"
                     : isFailed
-                    ? "border-red-200 cursor-default opacity-70"
-                    : "border-slate-200 cursor-pointer hover:border-indigo-200 hover:shadow-sm"
+                    ? "border-[var(--danger)] cursor-default opacity-70"
+                    : "border-[var(--border)] cursor-pointer hover:border-[var(--accent)] hover:shadow-sm"
                 }`}
                 onClick={() => {
                   if (isGenerating || isFailed) return;
@@ -136,10 +167,10 @@ export default function CoachPage() {
                     <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-amber-500" />
                   )}
                   <div className="flex flex-col gap-0.5 min-w-0">
-                    <p className="font-medium text-slate-900 truncate">
-                      {session.role_title} — {session.company_name}
+                    <p className="font-medium text-[var(--text)] truncate">
+                      {session.role_title} - {session.company_name}
                     </p>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-[var(--text-muted)]">
                       {isGenerating
                         ? "Questions being generated — check the notification bell when ready"
                         : new Date(session.created_at).toLocaleDateString("en-GB", {
@@ -151,16 +182,16 @@ export default function CoachPage() {
                   </div>
                 </div>
                 <div className="flex flex-shrink-0 items-center gap-3">
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[session.status] ?? "bg-slate-100 text-slate-600"}`}>
+                  <StatusBadge tone={STATUS_TONES[session.status] ?? "neutral"}>
                     {STATUS_LABELS[session.status] ?? session.status}
-                  </span>
+                  </StatusBadge>
                   {session.overall_score != null && (
-                    <span className={`text-sm font-bold ${session.overall_score >= 8 ? "text-emerald-600" : session.overall_score >= 6 ? "text-amber-600" : "text-red-600"}`}>
+                    <span className={`text-sm font-bold ${session.overall_score >= 8 ? "text-[var(--success)]" : session.overall_score >= 6 ? "text-[var(--warning)]" : "text-[var(--danger)]"}`}>
                       {session.overall_score.toFixed(1)}/10
                     </span>
                   )}
                   {!isGenerating && !isFailed && (
-                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                    <ChevronRight className="h-4 w-4 text-[var(--text-muted)]" />
                   )}
                 </div>
               </div>
@@ -168,6 +199,6 @@ export default function CoachPage() {
           })}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

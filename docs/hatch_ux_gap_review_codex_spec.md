@@ -1190,10 +1190,10 @@ Update this table in the same commit that completes each PR. Record the branch, 
 | PR 3 | Accessible overlay primitives | PR 2 | Merged | `ux/03-overlay-primitives` / `3e3533a` | Merged as GitHub PR #7 |
 | PR 4 | App-lock security and recovery | PR 2, PR 3 | Merged | `ux/04-app-lock-security` / `b40cb5a` | Merged as GitHub PR #8 |
 | PR 5 | Onboarding privacy and flow | PR 2, PR 3 | Merged | `ux/05-onboarding` / `133ab35` | Merged as GitHub PR #10; merge commit `298ae0d` |
-| PR 6 | Settings shell and Profile | PR 2, PR 3 | In progress | `ux/06-settings-profile` | Implementation validated locally; PR review and merge pending |
-| PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Not started | `ux/07-settings-tools` | |
-| PR 8 | Core job-search screens | PR 1 to PR 3 | In progress | `ux/12-cv-studio-states` | PR 8A merged for Today and Jobs as GitHub PR #15. PR 8B merged for Pipeline and Applications as GitHub PR #16. PR 8C is in progress for CV Studio route states, stage clarity, and visual evidence in `docs/visual-evidence/pr8c-cv-studio/`. |
-| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | Not started | `ux/09-secondary-screens` | |
+| PR 6 | Settings shell and Profile | PR 2, PR 3 | Merged | `ux/06-settings-profile` / `f5b6f42` | Merged as GitHub PR #11 |
+| PR 7 | AI Provider, Master CV, and Diagnostics | PR 6 | Merged | split PRs: `ux/07-ai-provider-setup` / `569d79c`, `ux/08-master-cv-upload-flow` / `74641e8`, `ux/09-email-preview-send-safety` / `2f0f501` | Merged as GitHub PRs #12, #13, and #14; Diagnostics completion should be rechecked during PR 10 final verification. |
+| PR 8 | Core job-search screens | PR 1 to PR 3 | Merged | split PRs: `ux/10-core-empty-states-today-jobs` / `b7a9228`, `ux/11-pipeline-applications-states` / `366b343`, `ux/12-cv-studio-states` / `981b09d` | Merged as GitHub PRs #15, #16, and #17 |
+| PR 9 | Prep, Coach, and secondary screens | PR 1 to PR 3 | In progress | `ux/13-prep-coach-states` | PR 9A in progress for Prep and Coach route states, purpose clarity, Coach landing styling, and Coach story destructive confirmation. |
 | PR 10 | Cross-app verification and cleanup | PR 4 to PR 9 | Not started | `ux/10-verification-cleanup` | |
 
 Allowed status values are `Not started`, `In progress`, `Blocked`, and `Merged`. Do not mark a PR `Merged` until its remote PR has merged.
@@ -1573,6 +1573,17 @@ Split this PR by journey if the diff becomes difficult to review: PR 8A covers T
 - Charts and statuses use semantic colours in both themes
 
 Split this PR by subsystem if needed: PR 9A covers Prep and Coach; PR 9B covers Analytics and Calendar; PR 9C covers Agents, Approvals, and details.
+
+**PR 9A resume handoff:**
+
+- Branch: `ux/13-prep-coach-states`
+- Added named Interview Coach loading and recoverable error route states aligned with Pipeline, Applications, and CV Studio.
+- Updated the Interview Coach landing page to explain how live practice differs from Interview Prep materials, added a direct Prep link, and moved Coach session list states to shared page, button, and status tokens.
+- Replaced the Coach story detail browser confirmation with the shared `AlertDialog` destructive-action pattern.
+- Added focused Vitest coverage for Coach route states, Coach purpose copy, and the no-browser-confirm contract for Coach story deletion.
+- Validation passed: `npm test -- CoreRouteStates CoachPage`, `npm test -- v4-feature-contracts`, `npm run type-check`, full `npm test` (477 tests), `npm run build`, host-proxy `API_URL=http://127.0.0.1:8000 npm run build` for screenshot setup, and `git diff --check`.
+- Visual evidence was attempted against `http://127.0.0.1:3001/coach` but blocked by the local app-lock password; the lock was not reset or bypassed.
+- Remaining PR 9A work before review: capture visual evidence after unlocking the local app, and decide whether Coach session/report detail styling stays deferred to the PR 9C detail-template pass.
 
 ### 9.12 PR 10: Verify the complete experience and retire legacy UI
 

@@ -11,6 +11,15 @@ import {
   ArrowLeft, BookOpen, Edit2, Trash2, Star, TrendingUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const STRENGTH_COLOR = (s: number) =>
   s >= 8 ? "text-emerald-600" : s >= 5 ? "text-amber-600" : "text-slate-400";
@@ -49,6 +58,7 @@ export default function StoryDetailPage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
     if (params.id) {
@@ -74,8 +84,9 @@ export default function StoryDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!story || !confirm("Delete this story? This cannot be undone.")) return;
+    if (!story) return;
     await deleteStory(story.id);
+    setDeleteDialogOpen(false);
     router.push("/coach/stories");
   };
 
@@ -117,7 +128,7 @@ export default function StoryDetailPage() {
                 <Edit2 className="h-3.5 w-3.5" />
                 Edit
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleDelete} className="gap-1.5 text-red-500 hover:text-red-700">
+              <Button variant="ghost" size="sm" onClick={() => setDeleteDialogOpen(true)} className="gap-1.5 text-red-500 hover:text-red-700">
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete
               </Button>
@@ -203,6 +214,22 @@ export default function StoryDetailPage() {
           </div>
         </div>
       )}
+      <AlertDialog onOpenChange={setDeleteDialogOpen} open={deleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogTitle className="text-lg font-semibold text-[var(--text)]">
+            Delete Story?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently removes the selected story from the Coach story bank and cannot be undone.
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleDelete()}>
+              Delete Story
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
