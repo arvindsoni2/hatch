@@ -21,6 +21,49 @@ async def test_cloud_endpoint_rejects_secret_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cloud_endpoint_canonicalizes_google_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    response = await setup.select_cloud_provider({"provider": "google_gemini"})
+
+    assert response["intent"]["provider"] == "google_genai"
+    assert response["next_command"] == "hatch secrets set google_genai"
+
+
+@pytest.mark.asyncio
+async def test_cloud_endpoint_accepts_openrouter_model_without_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    response = await setup.select_cloud_provider({
+        "provider": "openrouter",
+        "provider_metadata": {"model": "openai/gpt-4o-mini"},
+    })
+
+    assert response["intent"]["provider"] == "openrouter"
+    assert response["intent"]["provider_metadata"] == {"model": "openai/gpt-4o-mini"}
+    assert response["next_command"] == "hatch secrets set openrouter"
+
+
+@pytest.mark.asyncio
+async def test_cloud_endpoint_rejects_unknown_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    with pytest.raises(setup.HTTPException) as error:
+        await setup.select_cloud_provider({"provider": "made_up"})
+
+    assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_hardware_endpoint_gives_host_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -33,6 +76,63 @@ async def test_hardware_endpoint_gives_host_command(
         "detected": False,
         "message": "Hardware not detected yet.",
         "next_command": "hatch probe",
+    }
+
+
+@pytest.mark.asyncio
+async def test_hardware_post_gives_safe_cli_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    response = await setup.refresh_hardware_probe()
+
+    assert response == {
+        "started": False,
+        "detected": False,
+        "message": "Run hatch probe from the host, then refresh this page.",
+        "next_command": "hatch probe",
+    }
+
+
+@pytest.mark.asyncio
+async def test_capabilities_endpoint_reports_openrouter_missing_secret(
+    client: AsyncClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    await setup.select_cloud_provider({"provider": "openrouter"})
+
+    response = await client.get("/api/setup/capabilities")
+
+    assert response.status_code == 200
+    capabilities = {item["id"]: item for item in response.json()["capabilities"]}
+    assert capabilities["openrouter_provider"]["status"] == "needs_setup"
+    assert capabilities["openrouter_provider"]["requiresSecret"] is True
+    assert capabilities["openrouter_provider"]["docsCommand"] == "hatch secrets set openrouter"
+
+
+@pytest.mark.asyncio
+async def test_provider_test_reports_missing_openrouter_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    response = await setup.test_provider_connection({
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini",
+    })
+
+    assert response == {
+        "ok": False,
+        "status": "missing_secret",
+        "error": "OPENROUTER_API_KEY is not configured.",
+        "next_command": "hatch secrets set openrouter",
     }
 
 

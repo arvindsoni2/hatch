@@ -68,6 +68,17 @@ def test_intent_write_is_non_secret_and_atomic(tmp_path: Path, monkeypatch: pyte
     assert (tmp_path / "ai_setup_intent.json").stat().st_mode & 0o777 == 0o600
 
 
+def test_provider_aliases_canonicalize_to_stored_ids() -> None:
+    assert ai_setup.canonical_provider("google_gemini") == "google_genai"
+    assert ai_setup.canonical_provider("google") == "google_genai"
+    assert ai_setup.canonical_provider("openrouter") == "openrouter"
+
+
+def test_provider_secret_env_includes_openrouter() -> None:
+    assert ai_setup.provider_secret_env("openrouter") == "OPENROUTER_API_KEY"
+    assert ai_setup.provider_secret_env("google_gemini") == "GOOGLE_API_KEY"
+
+
 def test_easy_install_defaults_to_not_configured(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

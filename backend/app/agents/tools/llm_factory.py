@@ -345,6 +345,19 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
             model_kwargs={"extra_body": extra_body},
         ), model_name)
 
+    if llm_cfg.provider == "openrouter":
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        api_key = os.getenv(llm_cfg.api_key_env or "OPENROUTER_API_KEY", "")
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY is not configured. Run: hatch secrets set openrouter")
+        return _attach_tracer(ChatOpenAI(
+            model=model_name,
+            base_url=llm_cfg.base_url or "https://openrouter.ai/api/v1",
+            openai_api_key=api_key,
+            temperature=llm_cfg.temperature,
+            max_retries=llm_cfg.max_retries,
+        ), model_name)
+
     provider = llm_cfg.provider
 
     kwargs: dict[str, Any] = {
