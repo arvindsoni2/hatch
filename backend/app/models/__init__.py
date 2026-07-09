@@ -19,6 +19,7 @@ from .opportunity_score import OpportunityScore  # noqa: F401
 from .app_lock import AppLockConfig, AppLockSession  # noqa: F401
 from .tailoring_review import TailoringReview  # noqa: F401
 from .company_watchlist import CompanyWatchlistItem, WatchlistScanRun, DiscoveredRoleFingerprint  # noqa: F401
+from .question_bank import QuestionBankItem  # noqa: F401
 
 __all__ = [
     "JobPosting", "ScrapeLog", "Application", "InterviewRound", "FollowUp",
@@ -31,4 +32,5 @@ __all__ = [
     "AppLockConfig", "AppLockSession",
     "TailoringReview",
     "CompanyWatchlistItem", "WatchlistScanRun", "DiscoveredRoleFingerprint",
+    "QuestionBankItem",
 ]

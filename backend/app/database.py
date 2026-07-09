@@ -86,6 +86,7 @@ async def init_db() -> None:
     from .models import app_lock as _app_lock_models  # noqa: F401
     from .models import tailoring_review as _tailoring_review_models  # noqa: F401
     from .models import company_watchlist as _company_watchlist_models  # noqa: F401
+    from .models import question_bank as _question_bank_models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
