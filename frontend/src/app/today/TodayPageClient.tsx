@@ -19,6 +19,7 @@ interface UpcomingInterview {
 
 interface TodayPageClientProps {
   jobs: HatchJob[];
+  watchedCompanyJobs?: HatchJob[];
   funnel: { scout: number; scorer: number; tailor: number; coach: number };
   transit?: { scout_to_scorer: number; scorer_to_tailor: number; tailor_to_coach: number };
   profileName?: string;
@@ -27,9 +28,9 @@ interface TodayPageClientProps {
   upcomingInterview?: UpcomingInterview | null;
 }
 
-export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCount, agentPerf, upcomingInterview }: TodayPageClientProps) {
+export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit, profileName, followUpCount, agentPerf, upcomingInterview }: TodayPageClientProps) {
   const router = useRouter();
-  const [localJobs, setLocalJobs] = useState<HatchJob[]>(jobs);
+  const [localJobs, setLocalJobs] = useState<HatchJob[]>([...watchedCompanyJobs, ...jobs]);
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
   const [packages, setPackages] = useState<Record<string, ApplicationPackage>>({});
@@ -158,7 +159,8 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
   // Jobs with packages are shown as ApplicationReadyCard below — exclude from TodayScreen
   // to avoid showing the same job in two places simultaneously.
   const packagedIds = new Set(readyToApplyWithPkg.map(({ job }) => job.id));
-  const jobsForScreen = localJobs.filter((j) => !packagedIds.has(j.id));
+  const watchedForScreen = localJobs.filter((j) => j.source === "watched_company" && !packagedIds.has(j.id));
+  const jobsForScreen = localJobs.filter((j) => j.source !== "watched_company" && !packagedIds.has(j.id));
 
   const avgMatch = localJobs.length > 0
     ? Math.round(localJobs.reduce((sum, j) => sum + j.score, 0) / localJobs.length * 100)
@@ -171,6 +173,7 @@ export function TodayPageClient({ jobs, funnel, transit, profileName, followUpCo
         <div className="flex-1 min-w-0">
           <TodayScreen
             jobs={jobsForScreen}
+            watchedCompanyJobs={watchedForScreen}
             funnel={funnel}
             transit={transit}
             profileName={profileName ?? "there"}

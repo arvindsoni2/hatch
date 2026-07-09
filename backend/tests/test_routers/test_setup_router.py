@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from app.models.app_lock import AppLockConfig
 from app.models.application import Application
+from app.models.company_watchlist import CompanyWatchlistItem
 from app.models.job import JobPosting
 from app.routers import setup
 
@@ -159,6 +160,13 @@ async def test_reset_preview_reports_preserved_secrets_and_clearable_data(
             source="manual",
         )
     )
+    db_session.add(
+        CompanyWatchlistItem(
+            company_name="Example",
+            careers_url="https://example.com/careers",
+            source_type="generic_careers_page",
+        )
+    )
     await db_session.commit()
 
     response = await client.get("/api/setup/reset/preview?mode=onboarding")
@@ -169,7 +177,9 @@ async def test_reset_preview_reports_preserved_secrets_and_clearable_data(
     assert body["can_apply"] is True
     assert "api_keys.env" in body["preserves"]
     assert "job_postings" in body["deletes"]
+    assert "company_watchlist_items" in body["deletes"]
     assert body["counts"]["database"]["job_postings"] == 1
+    assert body["counts"]["database"]["company_watchlist_items"] == 1
     assert body["counts"]["files"]["master_cv.json"] == 1
     assert body["requires_confirmation"] is True
 
@@ -198,8 +208,13 @@ async def test_reset_apply_clears_workspace_data_but_preserves_app_lock_and_secr
         source="manual",
     )
     app = Application(status="discovered", priority="normal")
+    watchlist_item = CompanyWatchlistItem(
+        company_name="Example",
+        careers_url="https://example.com/careers",
+        source_type="generic_careers_page",
+    )
     lock = AppLockConfig(id=1, password_hash="hash")
-    db_session.add_all([job, app, lock])
+    db_session.add_all([job, app, watchlist_item, lock])
     await db_session.commit()
 
     response = await client.post(
@@ -211,6 +226,7 @@ async def test_reset_apply_clears_workspace_data_but_preserves_app_lock_and_secr
     assert response.json()["applied"] is True
     assert await db_session.scalar(select(func.count()).select_from(JobPosting)) == 0
     assert await db_session.scalar(select(func.count()).select_from(Application)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(CompanyWatchlistItem)) == 0
     assert (await db_session.get(AppLockConfig, 1)).password_hash == "hash"
     assert (tmp_path / "api_keys.env").read_text() == "OPENAI_API_KEY=kept\n"
     assert (tmp_path / "profile.yaml").read_text() == "candidate:\n  name: ''\n"

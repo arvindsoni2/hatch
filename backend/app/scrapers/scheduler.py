@@ -134,6 +134,25 @@ async def run_ghost_analysis(db_factory: object) -> None:
         logger.error("Ghost analysis job failed: %s", exc)
 
 
+async def run_company_watchlist_due(db_factory: object) -> None:
+    """Run due daily/weekly company watchlist scans."""
+    from ..services.company_watchlist import run_due_watchlist_scans
+
+    try:
+        async with db_factory() as db:  # type: ignore[attr-defined]
+            result = await run_due_watchlist_scans(db)
+            await db.commit()
+            if result["due"]:
+                logger.info(
+                    "Company watchlist scans: due=%d completed=%d failed=%d",
+                    result["due"],
+                    result["completed"],
+                    result["failed"],
+                )
+    except Exception as exc:
+        logger.error("Company watchlist scheduled scan failed: %s", exc)
+
+
 async def run_scraper(scraper_class: type, job_service: "JobService") -> None:
     """Instantiate a scraper, run it, and save results via job_service.
 
@@ -232,6 +251,18 @@ def create_scheduler(
         )
 
     if db_factory is not None:
+        scheduler.add_job(
+            run_company_watchlist_due,
+            IntervalTrigger(hours=1),
+            args=[db_factory],
+            id="company_watchlist_due",
+            name="Company watchlist due scans",
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+        )
+        logger.info("Scheduled company watchlist due scans (every 1 hour).")
+
         scheduler.add_job(
             run_ghost_analysis,
             CronTrigger(hour=3, minute=0),

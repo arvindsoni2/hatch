@@ -113,6 +113,32 @@ describe('TodayScreen', () => {
     expect(screen.getByText(/Solutions Architect/i)).toBeTruthy();
   });
 
+  it('shows new roles from watched companies separately', async () => {
+    const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
+    const watchedJob = {
+      id: 'watch-1',
+      title: 'Delivery Lead',
+      company: 'Example Cloud',
+      loc: 'London',
+      rate: '—',
+      score: 0.72,
+      state: 'ready' as const,
+    };
+
+    render(
+      <TodayScreen
+        jobs={[]}
+        watchedCompanyJobs={[watchedJob]}
+        funnel={FUNNEL}
+        profileName="Arvind"
+      />,
+    );
+
+    expect(screen.getByText('New roles from watched companies')).toBeTruthy();
+    expect(screen.getByText('Delivery Lead')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open watched companies' })).toHaveAttribute('href', '/tracker/watched-companies');
+  });
+
   it('does not show finish-applying section when no ready_to_apply jobs', async () => {
     const { TodayScreen } = await import('@/components/hatch/screens/TodayScreen');
     render(<TodayScreen jobs={ALL_JOBS} funnel={FUNNEL} profileName="Arvind" />);
