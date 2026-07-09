@@ -11,6 +11,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { API_BASE, getSystemCapabilities } from "@/lib/api";
 import type { BackendCapabilityStatus, SystemCapabilities } from "@/lib/api";
+import {
+  LEGACY_ONBOARDING_STORAGE_KEY,
+  ONBOARDING_STORAGE_KEY,
+} from "@/lib/onboardingDraft";
 
 interface LLMTrace {
   id: number;
@@ -55,6 +59,20 @@ interface RuntimeService {
 interface RuntimeStatus {
   services: RuntimeService[];
   checked_at: number;
+}
+
+interface SetupResetPreview {
+  mode: "onboarding" | "demo" | "factory";
+  can_apply: boolean;
+  deletes: string[];
+  preserves: string[];
+  counts: {
+    database: Record<string, number>;
+    files: Record<string, number>;
+  };
+  requires_confirmation: boolean;
+  fallback_command?: string | null;
+  warning?: string;
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -135,6 +153,9 @@ export default function SystemLogPage() {
   const [retrying, setRetrying] = useState<string | null>(null);
   const [traces, setTraces] = useState<LLMTrace[]>([]);
   const [expandedTrace, setExpandedTrace] = useState<number | null>(null);
+  const [resetPreview, setResetPreview] = useState<SetupResetPreview | null>(null);
+  const [resetStatus, setResetStatus] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
   const traceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const LIMIT = 50;
 
@@ -237,6 +258,47 @@ export default function SystemLogPage() {
     a.click();
   };
 
+  const previewOnboardingReset = async () => {
+    setResetBusy(true);
+    setResetStatus("");
+    try {
+      const response = await fetch(`${API_BASE}/api/setup/reset/preview?mode=onboarding`);
+      if (!response.ok) throw new Error(await response.text());
+      setResetPreview(await response.json());
+    } catch {
+      setResetStatus("Could not load reset preview.");
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
+  const applyOnboardingReset = async () => {
+    setResetBusy(true);
+    setResetStatus("");
+    try {
+      const response = await fetch(`${API_BASE}/api/setup/reset/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "onboarding", confirmation: "RESET" }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      try {
+        window.localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+        window.localStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
+        window.sessionStorage.clear();
+      } catch {
+        // Browser storage cleanup is best-effort; backend reset is authoritative.
+      }
+      setResetStatus("Onboarding reset complete.");
+      setResetPreview(null);
+      await Promise.allSettled([load(), loadTraces(), loadRuntime(), loadCapabilities()]);
+    } catch {
+      setResetStatus("Could not apply onboarding reset.");
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Back nav */}
@@ -331,6 +393,58 @@ export default function SystemLogPage() {
             Checking backend capabilities...
           </div>
         )}
+      </div>
+
+      {/* Setup reset */}
+      <div className="rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
+        <div className="flex flex-col gap-3 border-b border-border bg-surface-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-fg">Workspace reset</h2>
+            <p className="mt-1 text-xs text-muted">
+              Restart onboarding and clear stale workspace data while preserving app-lock and host-owned secrets.
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void previewOnboardingReset()} disabled={resetBusy}>
+            <RotateCcw className="h-3.5 w-3.5 mr-1" /> Preview onboarding reset
+          </Button>
+        </div>
+        <div className="grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto]">
+          <div>
+            <p className="text-sm font-medium text-fg">Safe local reset</p>
+            <p className="mt-1 text-xs text-muted">
+              This clears roles, applications, agent activity, generated files, uploads, and Master CV/profile data. It keeps <code>api_keys.env</code> unless you use the host CLI with an explicit secret-delete option.
+            </p>
+            {resetStatus ? <p className="mt-3 text-sm font-medium text-fg" role="status">{resetStatus}</p> : null}
+            {resetPreview ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+                  <p className="text-xs font-semibold text-fg">Will delete</p>
+                  <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-muted">
+                    {resetPreview.deletes.slice(0, 16).map((item) => <li key={`delete-${item}`}>{item}</li>)}
+                  </ul>
+                </div>
+                <div className="rounded-lg p-3" style={{ background: "var(--surface-2)" }}>
+                  <p className="text-xs font-semibold text-fg">Will preserve</p>
+                  <ul className="mt-2 space-y-1 text-xs text-muted">
+                    {resetPreview.preserves.map((item) => <li key={`preserve-${item}`}>{item}</li>)}
+                  </ul>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-2 md:w-56">
+            <Button
+              variant="destructive"
+              disabled={resetBusy || !resetPreview?.can_apply}
+              onClick={() => void applyOnboardingReset()}
+            >
+              <Trash2 className="h-4 w-4" /> Reset onboarding data
+            </Button>
+            <Link className="text-center text-xs font-medium text-muted hover:text-fg" href="/onboarding">
+              Open onboarding
+            </Link>
+          </div>
+        </div>
       </div>
 
       {/* Runtime health */}

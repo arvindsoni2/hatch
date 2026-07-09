@@ -15,6 +15,16 @@ CATALOG_PATH = Path(__file__).parents[1] / "config" / "model_catalog.json"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 MODEL_ROLES = {"triage", "combined_capable_primary"}
 AI_MODES = {"not_configured", "cloud", "local", "custom"}
+PROVIDER_SECRET_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google_genai": "GOOGLE_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+PROVIDER_ALIASES = {
+    "google": "google_genai",
+    "google_gemini": "google_genai",
+}
 
 
 class AISetupIntent(BaseModel):
@@ -25,6 +35,15 @@ class AISetupIntent(BaseModel):
     provider_metadata: dict[str, str] = Field(default_factory=dict)
     restart_required: bool = False
     hardware_probe_id: str | None = None
+
+
+def canonical_provider(provider: str | None) -> str:
+    value = (provider or "").strip().lower()
+    return PROVIDER_ALIASES.get(value, value)
+
+
+def provider_secret_env(provider: str | None) -> str | None:
+    return PROVIDER_SECRET_ENV.get(canonical_provider(provider))
 
 
 def config_dir() -> Path:

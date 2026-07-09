@@ -26,6 +26,7 @@ _KEY_PROVIDER_MAP: dict[str, str] = {
     "GOOGLE_API_KEY": "google_genai",
     "AZURE_OPENAI_API_KEY": "azure_openai",
     "GOOGLE_GENAI_API_KEY": "google_genai",
+    "OPENROUTER_API_KEY": "openrouter",
 }
 
 # Known free-tier models per provider
@@ -37,6 +38,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-2.5-flash-lite",
     ],
     "azure_openai": ["gpt-4o-mini", "gpt-4o"],
+    "openrouter": ["openai/gpt-4o-mini", "openai/gpt-4o", "anthropic/claude-3.5-sonnet"],
     "ollama": [],  # dynamically populated from /api/v2/settings/ollama-models
 }
 

@@ -5,6 +5,7 @@ export const FALLBACK_PASSWORD_POLICY: PasswordPolicy = {
   max_length: 128,
   require_letter: true,
   require_number: true,
+  require_symbol: true,
   reject_edge_whitespace: true,
 };
 
@@ -12,6 +13,7 @@ export interface PasswordChecks {
   length: boolean;
   letter: boolean;
   number: boolean;
+  symbol: boolean;
   edgeWhitespace: boolean;
 }
 
@@ -23,6 +25,7 @@ export function checkPassword(
     length: password.length >= policy.min_length && password.length <= policy.max_length,
     letter: !policy.require_letter || /[A-Za-z]/.test(password),
     number: !policy.require_number || /\d/.test(password),
+    symbol: policy.require_symbol === false || /[^A-Za-z0-9\s]/.test(password),
     edgeWhitespace:
       password.length > 0
       && (!policy.reject_edge_whitespace || password === password.trim()),
@@ -46,6 +49,7 @@ export function passwordError(
   }
   if (!checks.letter) return "Include at least one letter.";
   if (!checks.number) return "Include at least one number.";
+  if (!checks.symbol) return "Include at least one symbol or punctuation mark.";
   if (!checks.edgeWhitespace) return "Remove spaces from the beginning and end.";
   return undefined;
 }

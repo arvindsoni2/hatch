@@ -13,6 +13,7 @@ import {
   getProgressTrend,
   getCoachCapabilities,
   getTTSQuestionUrl,
+  saveQuestionBankFromInterviewAnswer,
   SessionResponse,
   SessionQuestion,
   AnswerEvaluation,
@@ -52,6 +53,8 @@ export default function SessionPage() {
   const [textAnswer, setTextAnswer] = useState("");
   const [research, setResearch] = useState<CompanyResearchResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [savingToBank, setSavingToBank] = useState(false);
+  const [bankMessage, setBankMessage] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Phase C — follow-up + progress trend
@@ -119,6 +122,26 @@ export default function SessionPage() {
     if (!textAnswer.trim()) return;
     await handleAnswer(textAnswer, { filler_count: 0, wpm: 0, hedging_count: 0, duration_ms: 0, pause_count: 0 }, 0);
     setTextAnswer("");
+  };
+
+  const handleSaveToQuestionBank = async () => {
+    if (!session || !currentQuestion || !textAnswer.trim()) return;
+    setSavingToBank(true);
+    setBankMessage(null);
+    try {
+      await saveQuestionBankFromInterviewAnswer({
+        session_id: session.id,
+        question_id: currentQuestion.id,
+        answer_draft: textAnswer.trim(),
+        title: currentQuestion.text,
+        confidence: "draft",
+      });
+      setBankMessage("Saved to Question Bank.");
+    } catch {
+      setBankMessage("Could not save to Question Bank.");
+    } finally {
+      setSavingToBank(false);
+    }
   };
 
   const handleAudioSubmit = useCallback(
@@ -334,6 +357,18 @@ export default function SessionPage() {
                       >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Submit Answer"}
                       </Button>
+                      <Button
+                        onClick={handleSaveToQuestionBank}
+                        disabled={!textAnswer.trim() || submitting || savingToBank}
+                        className="w-full border-slate-600 text-slate-200 hover:bg-slate-700"
+                        variant="outline"
+                      >
+                        {savingToBank ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        {savingToBank ? "Saving…" : "Save to Question Bank"}
+                      </Button>
+                      {bankMessage ? (
+                        <p className="text-xs text-slate-400" role="status">{bankMessage}</p>
+                      ) : null}
                     </div>
                   ) : recordingMode === "voice" ? (
                     <AudioBlobRecorder onSubmit={handleAudioSubmit} disabled={submitting} />

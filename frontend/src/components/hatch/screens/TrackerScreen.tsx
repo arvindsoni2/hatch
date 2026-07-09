@@ -515,6 +515,13 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
         {hasApplications && (
           <div className="hatch-page-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div aria-live="polite" style={{ maxWidth: 430, textAlign: "right", fontSize: 11.5, color: "var(--text-muted)" }}>{notice}</div>
+            <Link
+              href="/tracker/watched-companies"
+              className="hatch-interactive"
+              style={{ color: "var(--accent)", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}
+            >
+              Watched companies
+            </Link>
             <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
             <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
           </div>
@@ -545,6 +552,13 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
           </p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
             <Btn kind="primary" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
+            <Link
+              href="/tracker/watched-companies"
+              className="hatch-interactive"
+              style={{ color: "var(--accent)", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+            >
+              Watched companies
+            </Link>
             <Link
               href="/jobs"
               className="hatch-interactive"

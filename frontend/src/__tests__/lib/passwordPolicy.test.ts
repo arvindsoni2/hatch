@@ -10,6 +10,7 @@ describe("app-lock password policy", () => {
     "abc123",
     "letters-only-password",
     "123456789012",
+    "validpassword1",
     " valid-password-1",
     "valid-password-1 ",
   ])("rejects %j", (password) => {

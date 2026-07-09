@@ -7,8 +7,11 @@ import { HatchIcon } from './HatchIcon';
 import type { HatchJob } from './screens/TodayScreen';
 import {
   DocumentQualityAcknowledgementRequiredError,
+  downloadDocumentAsset,
   downloadDocument,
+  exportPackagePdf,
   type ApplicationPackage,
+  type GeneratedDocumentAsset,
 } from '@/lib/api';
 
 interface ApplicationReadyCardProps {
@@ -24,6 +27,8 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert, onRetr
   const hasPasteMap = Object.keys(pkg.paste_map ?? {}).length > 0;
   const hasCompletePackage = Boolean(pkg.cv_document_id && pkg.cl_document_id);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
+  const [pdfAssets, setPdfAssets] = useState<Partial<Record<'cv' | 'cover_letter', GeneratedDocumentAsset>>>({});
   const [acknowledgementDocumentId, setAcknowledgementDocumentId] = useState<string | null>(null);
 
   const handleDownload = async (documentId: string, acknowledgeQualityWarnings = false) => {
@@ -40,6 +45,57 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert, onRetr
       setDownloadNotice(error instanceof Error ? error.message : 'Could not download this document.');
     }
   };
+
+  const pdfFilename = (kind: 'cv' | 'cover_letter') => {
+    const title = job.title.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'application';
+    return `${title}-${kind === 'cv' ? 'cv' : 'cover-letter'}.pdf`;
+  };
+
+  const ensurePdfAsset = async (kind: 'cv' | 'cover_letter') => {
+    const existing = pdfAssets[kind];
+    if (existing) return existing;
+    const asset = await exportPackagePdf(job.id, kind);
+    setPdfAssets((current) => ({ ...current, [kind]: asset }));
+    return asset;
+  };
+
+  const handlePdfPreview = async (kind: 'cv' | 'cover_letter') => {
+    try {
+      setPdfNotice(null);
+      const asset = await ensurePdfAsset(kind);
+      window.open(`/api/documents/assets/${asset.id}`, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setPdfNotice(error instanceof Error ? error.message : 'Could not preview this PDF.');
+    }
+  };
+
+  const handlePdfDownload = async (kind: 'cv' | 'cover_letter') => {
+    try {
+      setPdfNotice(null);
+      const asset = await ensurePdfAsset(kind);
+      await downloadDocumentAsset(asset.id, pdfFilename(kind));
+    } catch (error) {
+      setPdfNotice(error instanceof Error ? error.message : 'Could not download this PDF.');
+    }
+  };
+
+  const renderDocumentActions = (
+    kind: 'cv' | 'cover_letter',
+    documentId: string,
+    label: string,
+  ) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      <Btn kind="soft" size="sm" icon="arrowR" onClick={() => void handleDownload(documentId)}>
+        Download {label} DOCX
+      </Btn>
+      <Btn kind="soft" size="sm" icon="arrowR" onClick={() => void handlePdfPreview(kind)}>
+        Preview {label} PDF
+      </Btn>
+      <Btn kind="soft" size="sm" icon="arrowR" onClick={() => void handlePdfDownload(kind)}>
+        Download {label} PDF
+      </Btn>
+    </div>
+  );
 
   return (
     <Card accent style={{ padding: 16 }}>
@@ -102,19 +158,14 @@ export function ApplicationReadyCard({ job, pkg, onMarkApplied, onRevert, onRetr
 
       {/* Document downloads */}
       {(pkg.cv_document_id || pkg.cl_document_id) && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          {pkg.cv_document_id && (
-            <Btn kind="soft" size="sm" icon="arrowR"
-              onClick={() => void handleDownload(pkg.cv_document_id!)}>
-              Download CV
-            </Btn>
-          )}
-          {pkg.cl_document_id && (
-            <Btn kind="soft" size="sm" icon="arrowR"
-              onClick={() => void handleDownload(pkg.cl_document_id!)}>
-              Download Cover Letter
-            </Btn>
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          {pkg.cv_document_id && renderDocumentActions('cv', pkg.cv_document_id, 'CV')}
+          {pkg.cl_document_id && renderDocumentActions('cover_letter', pkg.cl_document_id, 'Cover Letter')}
+        </div>
+      )}
+      {pdfNotice && (
+        <div role="status" style={{ fontSize: 11.5, color: 'var(--danger)', margin: '-4px 0 12px' }}>
+          {pdfNotice}
         </div>
       )}
       {downloadNotice && (

@@ -75,6 +75,7 @@ async def init_db() -> None:
     from .models import application as _app_models  # noqa: F401
     from .models import activity as _act_models  # noqa: F401
     from .models import document as _doc_models  # noqa: F401
+    from .models import document_asset as _doc_asset_models  # noqa: F401
     from .models import coach_session as _coach_models  # noqa: F401
     from .models import recruiter as _recruiter_models  # noqa: F401
     from .models import follow_up_email as _email_models  # noqa: F401
@@ -85,6 +86,8 @@ async def init_db() -> None:
     from .models import opportunity_score as _opportunity_models  # noqa: F401
     from .models import app_lock as _app_lock_models  # noqa: F401
     from .models import tailoring_review as _tailoring_review_models  # noqa: F401
+    from .models import company_watchlist as _company_watchlist_models  # noqa: F401
+    from .models import question_bank as _question_bank_models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

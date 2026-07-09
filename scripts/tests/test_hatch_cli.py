@@ -330,6 +330,31 @@ def test_secret_file_is_restrictive_and_never_accepts_newlines(
         hatch_cli.write_env({"OPENAI_API_KEY": "bad\nvalue"})
 
 
+def test_provider_env_canonicalizes_aliases_and_openrouter() -> None:
+    assert hatch_cli.provider_env("google_gemini") == "GOOGLE_API_KEY"
+    assert hatch_cli.provider_env("google") == "GOOGLE_API_KEY"
+    assert hatch_cli.provider_env("openrouter") == "OPENROUTER_API_KEY"
+
+
+def test_cloud_runtime_canonicalizes_provider_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_home(tmp_path, monkeypatch)
+    hatch_cli.ensure_home()
+    hatch_cli.write_json(
+        hatch_cli.INTENT_PATH,
+        {"ai_mode": "cloud", "provider": "google_gemini", "selected_model_ids": []},
+    )
+    hatch_cli.write_env({"GOOGLE_API_KEY": "test-value"})
+    monkeypatch.setattr(hatch_cli, "compose", lambda *_, **__: None)
+
+    hatch_cli.cmd_apply(type("Args", (), {"no_restart": True})())
+
+    runtime = hatch_cli.read_json(hatch_cli.RUNTIME_PATH, {})
+    assert runtime["provider"] == "google_genai"
+
+
 def test_triage_only_runtime_disables_quality_features(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -11,6 +11,7 @@ export const LLAMACPP_TRIAGE_MODEL  = "qwen3.5-0.8b-q8_0";
 export const LLM_PROVIDERS = [
   { id: "llamacpp",     label: "Local AI (free)",    sub: "llama.cpp bundled in this stack. No API key or usage cost", keyEnv: "", triageDefault: LLAMACPP_TRIAGE_MODEL, primaryDefault: LLAMACPP_PRIMARY_MODEL },
   { id: "google_genai", label: "Google Gemini",      sub: "Free tier available",                                                   keyEnv: "GOOGLE_API_KEY",    triageDefault: "gemini-2.5-flash-lite",     primaryDefault: "gemini-2.5-flash" },
+  { id: "openrouter",   label: "OpenRouter",         sub: "Many cloud models through one provider gateway",                       keyEnv: "OPENROUTER_API_KEY", triageDefault: "openai/gpt-4o-mini",        primaryDefault: "openai/gpt-4o" },
   { id: "anthropic",    label: "Anthropic Claude",   sub: "Strongest tailoring quality",                                           keyEnv: "ANTHROPIC_API_KEY", triageDefault: "claude-haiku-4-5-20251001", primaryDefault: "claude-sonnet-4-20250514" },
   { id: "openai",       label: "OpenAI",             sub: "GPT-4o family",                                                         keyEnv: "OPENAI_API_KEY",    triageDefault: "gpt-4o-mini",               primaryDefault: "gpt-4o" },
 ];

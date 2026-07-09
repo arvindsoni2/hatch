@@ -36,8 +36,14 @@ PROVIDERS = {
     "openai": "OPENAI_API_KEY",
     "google": "GOOGLE_API_KEY",
     "google_genai": "GOOGLE_API_KEY",
+    "google_gemini": "GOOGLE_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
     "groq": "GROQ_API_KEY",
     "azure_openai": "AZURE_OPENAI_API_KEY",
+}
+PROVIDER_ALIASES = {
+    "google": "google_genai",
+    "google_gemini": "google_genai",
 }
 BACKEND_PROFILE_ENABLED = {
     "core": [],
@@ -490,8 +496,8 @@ def cmd_apply(args: argparse.Namespace) -> None:
     if mode == "local":
         runtime = runtime_for_local(intent.get("selected_model_ids", []))
     elif mode == "cloud":
-        provider = intent.get("provider")
-        env_name = PROVIDERS.get(provider)
+        provider = canonical_provider(intent.get("provider"))
+        env_name = provider_env(provider)
         if not env_name or env_name not in read_env(SECRETS_PATH):
             fail(f"Cloud secret is missing. Run: hatch secrets set {provider}")
         runtime = base_runtime("cloud", provider=provider)
@@ -500,10 +506,12 @@ def cmd_apply(args: argparse.Namespace) -> None:
     else:
         runtime = base_runtime("not_configured")
     write_json(RUNTIME_PATH, runtime)
-    intent["restart_required"] = not args.restart
+    restart = bool(getattr(args, "restart", False))
+    intent["provider"] = canonical_provider(intent.get("provider")) if intent.get("provider") else None
+    intent["restart_required"] = not restart
     write_json(INTENT_PATH, intent)
     print(f"Applied AI mode: {runtime['ai_mode']}")
-    if args.restart:
+    if restart:
         compose("up", ["-d", "--build"])
     elif not args.no_restart:
         print("Restart required. Run: hatch restart")
@@ -547,10 +555,16 @@ def write_env(values: dict[str, str]) -> None:
 
 
 def provider_env(provider: str) -> str:
+    provider = canonical_provider(provider)
     try:
         return PROVIDERS[provider]
     except KeyError:
         fail(f"Unsupported provider: {provider}. Choose: {', '.join(sorted(PROVIDERS))}")
+
+
+def canonical_provider(provider: str | None) -> str:
+    value = (provider or "").strip().lower()
+    return PROVIDER_ALIASES.get(value, value)
 
 
 def cmd_secrets(args: argparse.Namespace) -> None:
@@ -559,20 +573,22 @@ def cmd_secrets(args: argparse.Namespace) -> None:
         for provider, env_name in sorted(PROVIDERS.items()):
             print(f"{provider}: {'configured' if values.get(env_name) else 'not configured'}")
     elif args.secret_action == "set":
-        env_name = provider_env(args.provider)
+        provider = canonical_provider(args.provider)
+        env_name = provider_env(provider)
         value = getpass.getpass(f"{env_name}: ").strip()
         if not value or "\n" in value or "\r" in value:
             fail("Secret must be non-empty and contain no newlines.")
         values[env_name] = value
         write_env(values)
-        print(f"{args.provider}: configured")
+        print(f"{provider}: configured")
     elif args.secret_action == "unset":
-        env_name = provider_env(args.provider)
-        if not args.yes and input(f"Remove {args.provider} secret? [y/N] ").lower() != "y":
+        provider = canonical_provider(args.provider)
+        env_name = provider_env(provider)
+        if not args.yes and input(f"Remove {provider} secret? [y/N] ").lower() != "y":
             fail("Cancelled.", 2)
         values.pop(env_name, None)
         write_env(values)
-        print(f"{args.provider}: removed")
+        print(f"{provider}: removed")
 
 
 def cmd_status(_: argparse.Namespace) -> None:

@@ -26,6 +26,7 @@ export interface HatchJob {
   jobUrl?: string;
   failureReason?: string;
   when?: string;
+  source?: 'watched_company' | string;
 }
 
 interface FunnelCounts {
@@ -50,6 +51,7 @@ interface UpcomingInterview {
 
 interface TodayScreenProps {
   jobs: HatchJob[];
+  watchedCompanyJobs?: HatchJob[];
   funnel: FunnelCounts;
   transit?: TransitCounts;
   profileName: string;
@@ -94,7 +96,7 @@ function FunnelArrow({ count }: { count: number }) {
   );
 }
 
-export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount = 2, upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep, onOpenCvStudio }: TodayScreenProps) {
+export function TodayScreen({ jobs, watchedCompanyJobs = [], funnel, transit, profileName, followUpCount = 2, upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep, onOpenCvStudio }: TodayScreenProps) {
   const ready = jobs.filter((j) => j.state === 'ready');
   const readyToApply = jobs.filter((j) => j.state === 'ready_to_apply');
   const isFirstUse =
@@ -198,6 +200,51 @@ export function TodayScreen({ jobs, funnel, transit, profileName, followUpCount 
             </Btn>
           )}
         </Card>
+
+        {watchedCompanyJobs.length > 0 && (
+          <Card accent style={{ padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>New roles from watched companies</h2>
+                <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-muted)' }}>Review roles Scout found from your explicit company list.</div>
+              </div>
+              <Link
+                href="/tracker/watched-companies"
+                className="hatch-interactive"
+                style={{ color: 'var(--accent)', fontSize: 12.5, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}
+              >
+                Open watched companies
+              </Link>
+            </div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {watchedCompanyJobs.slice(0, 5).map((job) => (
+                <button
+                  key={job.id}
+                  className="hatch-interactive"
+                  onClick={() => onReview?.([job.id])}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    border: '1px solid var(--border)',
+                    borderRadius: 10,
+                    background: 'var(--surface-2)',
+                    padding: '9px 10px',
+                    textAlign: 'left',
+                  }}
+                  type="button"
+                >
+                  <ScorePill score={job.score} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', color: 'var(--text)', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.title}</span>
+                    <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 11.5 }}>{job.company} · Watched company</span>
+                  </span>
+                  <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 700 }}>Review role</span>
+                </button>
+              ))}
+            </div>
+          </Card>
+        )}
 
         {/* Ready work */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

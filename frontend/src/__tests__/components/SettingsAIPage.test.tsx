@@ -67,6 +67,9 @@ function mockSetupFetch() {
     if (url.endsWith("/api/setup/cloud-provider") && init?.method === "POST") {
       return jsonResponse({ next_command: "hatch secrets set openai" });
     }
+    if (url.endsWith("/api/setup/provider/test") && init?.method === "POST") {
+      return jsonResponse({ ok: false, status: "missing_secret", error: "OPENROUTER_API_KEY is not configured." });
+    }
     if (url.endsWith("/api/setup/skip-ai") && init?.method === "POST") {
       return jsonResponse({ next_command: "hatch apply-ai-config" });
     }
@@ -94,6 +97,7 @@ describe("AI provider settings page", () => {
     expect(screen.getByLabelText("Settings section")).toHaveValue("/settings/ai");
 
     expect(screen.getByRole("heading", { name: "Current setup" })).toBeVisible();
+    expect(screen.getByText(/Basic \/ use Hatch now, set up AI later/i)).toBeVisible();
     expect(screen.getByText("Use Hatch now, set up AI later")).toBeVisible();
     expect(screen.getByText("Run AI locally")).toBeVisible();
     expect(screen.getByText("Use cloud AI provider")).toBeVisible();
@@ -121,5 +125,21 @@ describe("AI provider settings page", () => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith("hatch secrets set openai");
     });
     expect(screen.queryByPlaceholderText(/api key/i)).not.toBeInTheDocument();
+  });
+
+  it("shows OpenRouter with model slug input and host secret command", async () => {
+    render(<AiSettingsPage />);
+
+    expect(await screen.findByRole("heading", { name: "OpenRouter" })).toBeVisible();
+    expect(screen.getByDisplayValue("openai/gpt-4o-mini")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /Copy OpenRouter secret command/i }));
+
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("hatch secrets set openrouter");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Test OpenRouter/i }));
+    expect(await screen.findByText(/Provider test: missing_secret/i)).toBeVisible();
   });
 });

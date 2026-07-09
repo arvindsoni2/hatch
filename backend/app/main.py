@@ -43,6 +43,9 @@ from .routers.debug import router as debug_router
 from .routers.outcome_learning import router as outcome_learning_router
 from .routers.app_lock import router as app_lock_router
 from .routers.setup import router as setup_router
+from .routers.company_watchlist import router as company_watchlist_router
+from .routers.documents import router as documents_router
+from .routers.question_bank import router as question_bank_router
 from .scrapers.scheduler import create_scheduler
 from .services.agent_orchestrator import AgentOrchestrator
 from .services.llm_client import LLMClient
@@ -384,6 +387,9 @@ def create_app() -> FastAPI:
     app.include_router(outcome_learning_router)
     app.include_router(app_lock_router)
     app.include_router(setup_router)
+    app.include_router(company_watchlist_router)
+    app.include_router(documents_router)
+    app.include_router(question_bank_router)
 
     return app
 

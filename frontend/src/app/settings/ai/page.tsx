@@ -7,6 +7,7 @@ import {
   Cloud,
   Cpu,
   PlayCircle,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   TriangleAlert,
@@ -64,12 +65,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 const PROVIDERS = [
   { id: "google_genai", label: "Google Gemini" },
+  { id: "openrouter", label: "OpenRouter", defaultModel: "openai/gpt-4o-mini" },
   { id: "openai", label: "OpenAI" },
   { id: "anthropic", label: "Anthropic Claude" },
 ] as const;
 
 function formatMode(value?: string | null) {
-  if (!value || value === "not_configured") return "Not configured";
+  if (!value || value === "not_configured") return "Basic / use Hatch now, set up AI later";
   return value.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
@@ -93,6 +95,7 @@ export default function AiSettingsPage() {
   const [catalog, setCatalog] = useState<ModelItem[]>([]);
   const [recommendations, setRecommendations] = useState<RecommendationResponse | null>(null);
   const [selectedModels, setSelectedModels] = useState<Set<string>>(() => new Set());
+  const [openRouterModel, setOpenRouterModel] = useState("openai/gpt-4o-mini");
   const [message, setMessage] = useState<string | null>(null);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -128,6 +131,37 @@ export default function AiSettingsPage() {
         await load();
       } catch (error) {
         setMessage(friendlyError(error, "Could not save AI setup."));
+      }
+    });
+  };
+
+  const refreshHardware = () => {
+    startTransition(async () => {
+      try {
+        const result = await request<HardwareResponse & { started?: boolean }>("/api/setup/hardware", {
+          method: "POST",
+        });
+        setHardware(result);
+        setMessage(result.detected ? "Hardware probe status refreshed." : `Run ${result.next_command ?? "hatch probe"} from the host, then refresh.`);
+      } catch (error) {
+        setMessage(friendlyError(error, "Could not refresh hardware probe status."));
+      }
+    });
+  };
+
+  const testProvider = (providerId: string) => {
+    startTransition(async () => {
+      try {
+        const result = await request<{ ok: boolean; status: string; error?: string }>("/api/setup/provider/test", {
+          method: "POST",
+          body: JSON.stringify({
+            provider: providerId,
+            model: providerId === "openrouter" ? openRouterModel.trim() : undefined,
+          }),
+        });
+        setMessage(result.ok ? `Provider test: ${result.status}` : `Provider test: ${result.status}. ${result.error ?? ""}`.trim());
+      } catch (error) {
+        setMessage(friendlyError(error, "Could not test provider."));
       }
     });
   };
@@ -238,6 +272,10 @@ export default function AiSettingsPage() {
               <p>Hardware not detected yet. Run hatch probe.</p>
             )}
           </div>
+          <Button className="mt-4 w-full" disabled={isPending} onClick={refreshHardware} type="button" variant="outline">
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Refresh hardware probe
+          </Button>
         </article>
 
         <article className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -270,9 +308,10 @@ export default function AiSettingsPage() {
             <p className="text-sm text-[var(--text-muted)]">Choose a provider here, then add its secret from your terminal. Hatch never asks for API keys in the browser.</p>
           </div>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {PROVIDERS.map((provider) => {
             const command = `hatch secrets set ${provider.id}`;
+            const metadata = provider.id === "openrouter" ? { model: openRouterModel.trim() } : undefined;
             return (
               <article className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] p-4" key={provider.id}>
                 <div className="flex items-start justify-between gap-3">
@@ -283,11 +322,21 @@ export default function AiSettingsPage() {
                   <Sparkles className="h-4 w-4 text-[var(--accent)]" aria-hidden="true" />
                 </div>
                 <code className="mt-3 block overflow-x-auto rounded-[var(--radius-control)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--text)]">{command}</code>
+                {provider.id === "openrouter" ? (
+                  <label className="mt-3 block text-xs font-medium text-[var(--text-muted)]">
+                    Model slug
+                    <input
+                      className="mt-1 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)]"
+                      value={openRouterModel}
+                      onChange={(event) => setOpenRouterModel(event.target.value)}
+                    />
+                  </label>
+                ) : null}
                 <div className="mt-3 grid gap-2">
                   <Button
                     className="w-full"
                     disabled={isPending}
-                    onClick={() => saveMode("/api/setup/cloud-provider", { provider: provider.id })}
+                    onClick={() => saveMode("/api/setup/cloud-provider", { provider: provider.id, provider_metadata: metadata })}
                     type="button"
                     variant="outline"
                   >
@@ -303,6 +352,17 @@ export default function AiSettingsPage() {
                     <Clipboard className="h-4 w-4" aria-hidden="true" />
                     Copy command
                   </Button>
+                  {provider.id === "openrouter" ? (
+                    <Button
+                      className="w-full"
+                      disabled={isPending}
+                      onClick={() => testProvider(provider.id)}
+                      type="button"
+                      variant="secondary"
+                    >
+                      Test OpenRouter
+                    </Button>
+                  ) : null}
                   {copiedCommand === command ? <p className="text-xs font-medium text-[var(--success)]" role="status">Command copied.</p> : null}
                 </div>
               </article>

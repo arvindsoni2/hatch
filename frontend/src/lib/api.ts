@@ -27,6 +27,7 @@ export interface PasswordPolicy {
   max_length: number;
   require_letter: boolean;
   require_number: boolean;
+  require_symbol?: boolean;
   reject_edge_whitespace: boolean;
 }
 
@@ -169,10 +170,18 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => res.statusText);
-    throw new Error(`API error ${res.status}: ${detail}`);
+    const raw = await res.text().catch(() => res.statusText);
+    let detail = raw || res.statusText;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      if (typeof parsed.detail === "string") detail = parsed.detail;
+    } catch {
+      // Preserve plain-text API errors as-is.
+    }
+    throw new Error(detail);
   }
 
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -785,6 +794,18 @@ export interface GeneratedDocument {
   created_at: string;
 }
 
+export interface GeneratedDocumentAsset {
+  id: string;
+  application_id: string;
+  package_id: string;
+  source_document_id: string;
+  kind: "cv" | "cover_letter";
+  format: "pdf";
+  generation_status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
 export interface TailorResultBundle {
   application_id: string;
   cv_document_id: string | null;
@@ -977,6 +998,24 @@ export async function downloadDocument(documentId: string, options?: { acknowled
   const link = document.createElement("a");
   link.href = url;
   link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+export async function exportPackagePdf(
+  packageId: string,
+  kind: "cv" | "cover_letter" = "cv",
+): Promise<GeneratedDocumentAsset> {
+  const params = new URLSearchParams({ kind });
+  return apiFetch<GeneratedDocumentAsset>(`/api/documents/${packageId}/export/pdf?${params}`, { method: "POST" });
+}
+
+export async function downloadDocumentAsset(assetId: string, filename?: string): Promise<void> {
+  const url = `${API_BASE}/api/documents/assets/${assetId}`;
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename ?? "";
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -1848,6 +1887,131 @@ export async function matchStories(question: string, tags?: string[]): Promise<S
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, tags }),
+  });
+}
+
+// ──────────────────────── Question Bank ────────────────────────
+
+export type QuestionBankItemType =
+  | "interview_question"
+  | "star_story"
+  | "proof_point"
+  | "company_research_note"
+  | "role_specific_answer";
+
+export type QuestionBankConfidence = "draft" | "reviewed" | "final";
+
+export interface QuestionBankItem {
+  id: string;
+  type: QuestionBankItemType | string;
+  question: string | null;
+  title: string;
+  answer_draft: string;
+  situation: string | null;
+  task: string | null;
+  action: string | null;
+  result: string | null;
+  skills: string[];
+  tags: string[];
+  seniority: string | null;
+  role_family: string | null;
+  linked_applications: string[];
+  source: "manual" | "interview_prep" | "cv_import" | "ai_suggested" | string;
+  confidence: QuestionBankConfidence | string;
+  source_session_id: string | null;
+  source_question_id: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QuestionBankList {
+  items: QuestionBankItem[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface QuestionBankCreate {
+  type?: QuestionBankItemType;
+  question?: string | null;
+  title: string;
+  answer_draft: string;
+  situation?: string | null;
+  task?: string | null;
+  action?: string | null;
+  result?: string | null;
+  skills?: string[];
+  tags?: string[];
+  seniority?: string | null;
+  role_family?: string | null;
+  linked_applications?: string[];
+  source?: "manual" | "interview_prep" | "cv_import" | "ai_suggested";
+  confidence?: QuestionBankConfidence;
+}
+
+export type QuestionBankUpdate = Partial<QuestionBankCreate>;
+
+export async function listQuestionBank(params?: {
+  skip?: number;
+  limit?: number;
+  search?: string;
+  type?: string;
+  tag?: string;
+  skill?: string;
+  confidence?: string;
+  application_id?: string;
+}): Promise<QuestionBankList> {
+  const q = new URLSearchParams();
+  if (params?.skip) q.set("skip", String(params.skip));
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.search) q.set("search", params.search);
+  if (params?.type) q.set("type", params.type);
+  if (params?.tag) q.set("tag", params.tag);
+  if (params?.skill) q.set("skill", params.skill);
+  if (params?.confidence) q.set("confidence", params.confidence);
+  if (params?.application_id) q.set("application_id", params.application_id);
+  const qs = q.toString();
+  return apiFetch<QuestionBankList>(`/api/question-bank${qs ? "?" + qs : ""}`);
+}
+
+export async function createQuestionBankItem(data: QuestionBankCreate): Promise<QuestionBankItem> {
+  return apiFetch<QuestionBankItem>("/api/question-bank", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateQuestionBankItem(id: string, data: QuestionBankUpdate): Promise<QuestionBankItem> {
+  return apiFetch<QuestionBankItem>(`/api/question-bank/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteQuestionBankItem(id: string): Promise<void> {
+  return apiFetch<void>(`/api/question-bank/${id}`, { method: "DELETE" });
+}
+
+export async function saveQuestionBankFromInterviewAnswer(data: {
+  session_id: string;
+  question_id: string;
+  answer_draft: string;
+  title?: string | null;
+  situation?: string | null;
+  task?: string | null;
+  action?: string | null;
+  result?: string | null;
+  skills?: string[];
+  tags?: string[];
+  confidence?: QuestionBankConfidence;
+}): Promise<QuestionBankItem> {
+  return apiFetch<QuestionBankItem>("/api/question-bank/from-interview-answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
   });
 }
 

@@ -52,10 +52,26 @@ function readyToApplyToHatchJob(a: ApplicationListItem): HatchJob {
   };
 }
 
+function watchedCompanyToHatchJob(a: ApplicationListItem): HatchJob {
+  return {
+    id: a.id,
+    jobPostingId: a.job_id ?? undefined,
+    title: a.job_title ?? "Untitled Role",
+    company: a.job_company ?? "—",
+    loc: a.job_location ?? "—",
+    rate: a.job_rate_text ?? "—",
+    score: a.agent_score ?? 0,
+    state: "ready",
+    jobUrl: a.job_url ?? undefined,
+    source: "watched_company",
+  };
+}
+
 export default async function TodayPage() {
-  const [approvals, readyToApplyPage, pipeline, profile, overdueFollowUps, agentPerf, upcomingInterviews] = await Promise.all([
+  const [approvals, readyToApplyPage, discoveredPage, pipeline, profile, overdueFollowUps, agentPerf, upcomingInterviews] = await Promise.all([
     serverApiFetch<PendingApproval[]>("/api/agents/approvals/pending"),
     serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=ready_to_apply&skip=0&limit=20"),
+    serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=discovered&skip=0&limit=50"),
     serverApiFetch<PipelineStats>("/api/agents/dashboard/pipeline"),
     serverApiFetch<ProfileStatus>("/api/v2/profile/status"),
     serverApiFetch<FollowUp[]>("/api/interviews/follow-ups/overdue"),
@@ -88,6 +104,9 @@ export default async function TodayPage() {
     ...approvals.map(pendingToHatchJob),
     ...readyToApplyPage.items.map(readyToApplyToHatchJob),
   ];
+  const watchedCompanyJobs = discoveredPage.items
+    .filter((item) => item.job_source === "watched_company")
+    .map(watchedCompanyToHatchJob);
 
   // funnel.scorer = scored (jobs Scorer evaluated); arrow out = shortlisted (passed threshold)
   const funnel = {
@@ -107,6 +126,7 @@ export default async function TodayPage() {
   return (
     <TodayPageClient
       jobs={jobs}
+      watchedCompanyJobs={watchedCompanyJobs}
       funnel={funnel}
       transit={transit}
       profileName={profile?.candidate_name}

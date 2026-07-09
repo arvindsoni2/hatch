@@ -244,6 +244,26 @@ class TestLlamaCppProvider:
         assert inner.openai_api_base == "http://llm-primary:8080/v1"
 
 
+class TestOpenRouterProvider:
+    def test_build_model_openrouter_uses_openai_compatible_base_url(self, monkeypatch):
+        from langchain_openai import ChatOpenAI
+        from app.agents.tools.llm_factory import _build_model
+
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        cfg = _make_llm_cfg(
+            "openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            triage_base_url="",
+        )
+        cfg.api_key_env = "OPENROUTER_API_KEY"
+        model = _build_model("openai/gpt-4o-mini", cfg)
+
+        inner = _unwrap(model)
+        assert isinstance(inner, ChatOpenAI)
+        assert inner.openai_api_base == "https://openrouter.ai/api/v1"
+        assert inner.model_name == "openai/gpt-4o-mini"
+
+
 class TestModelAwareThinking:
     """LLM-2: qwen3 thinking is ON by default; gemma4 is OFF by default."""
 

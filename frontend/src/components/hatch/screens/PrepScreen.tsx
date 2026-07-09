@@ -1,5 +1,6 @@
 "use client";
 import { useState } from 'react';
+import Link from 'next/link';
 import { AgentBadge } from '../AgentBadge';
 import { Btn } from '../Btn';
 import { Card } from '../Card';
@@ -143,8 +144,19 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
     <div>
       {/* Page header */}
       <div style={{ padding: '8px 0 14px' }}>
-        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Interview Prep</h1>
-        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Research, likely questions, and practice for confirmed interviews</div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16 }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Interview Prep</h1>
+            <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Research, likely questions, and practice for confirmed interviews</div>
+          </div>
+          <Link
+            href="/prep/question-bank"
+            className="hatch-interactive"
+            style={{ color: 'var(--accent)', fontSize: 12.5, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}
+          >
+            Question Bank
+          </Link>
+        </div>
       </div>
 
       {/* Unified layout: session list + optional detail pane.
