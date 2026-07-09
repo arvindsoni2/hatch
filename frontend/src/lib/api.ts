@@ -27,6 +27,7 @@ export interface PasswordPolicy {
   max_length: number;
   require_letter: boolean;
   require_number: boolean;
+  require_symbol?: boolean;
   reject_edge_whitespace: boolean;
 }
 

@@ -56,6 +56,16 @@ test ! -e "$FIXTURE_DIR/master_resume.txt"
 test ! -e "$FIXTURE_DIR/master_resume.pdf"
 test ! -e "$FIXTURE_DIR/master_resume.docx"
 test -f "$FIXTURE_DIR/api_keys.env"
+grep -q "SECRET=value" "$FIXTURE_DIR/api_keys.env"
+
+printf 'SECRET=delete-me\n' > "$FIXTURE_DIR/api_keys.env"
+touch "$FIXTURE_DIR/jobpilot.db"
+
+HATCH_RESET_DATA_DIR="$FIXTURE_DIR" \
+HATCH_RESET_OFFLINE=1 \
+  bash "$PROJECT_DIR/scripts/reset-user-data.sh" --yes --delete-secrets
+
+test -f "$FIXTURE_DIR/api_keys.env"
 test ! -s "$FIXTURE_DIR/api_keys.env"
 
 printf 'candidate:\n  name: "Retained User"\n' > "$FIXTURE_DIR/profile.yaml"

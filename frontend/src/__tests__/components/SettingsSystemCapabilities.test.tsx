@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SystemSettingsPage from "@/app/settings/system/page";
 
@@ -58,6 +58,17 @@ function mockSystemFetch({ capabilitiesOk = true } = {}) {
     if (url.includes("/api/debug/llm-traces")) return jsonResponse([]);
     if (url.includes("/api/debug/runtime-status")) return jsonResponse({ services: [], checked_at: Date.now() });
     if (url.includes("/api/events?")) return jsonResponse({ items: [], total: 0 });
+    if (url.endsWith("/api/setup/reset/preview?mode=onboarding")) {
+      return jsonResponse({
+        mode: "onboarding",
+        can_apply: true,
+        deletes: ["job_postings", "applications", "master_cv.json"],
+        preserves: ["api_keys.env", "app_lock_config"],
+        counts: { database: { job_postings: 2, applications: 1 }, files: { "master_cv.json": 1 } },
+        requires_confirmation: true,
+      });
+    }
+    if (url.endsWith("/api/setup/reset/apply")) return jsonResponse({ applied: true, mode: "onboarding" });
     return jsonResponse({});
   });
 }
@@ -98,5 +109,27 @@ describe("Settings System backend capabilities", () => {
 
     expect(await screen.findByText("Capability status is temporarily unavailable.")).toBeVisible();
     expect(screen.getByRole("heading", { name: "System Logs" })).toBeVisible();
+  });
+
+  it("previews and applies onboarding reset without deleting host secrets", async () => {
+    render(<SystemSettingsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Preview onboarding reset" }));
+
+    expect(await screen.findByText("job_postings")).toBeVisible();
+    expect(screen.getAllByText("api_keys.env").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset onboarding data" }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/setup/reset/apply",
+        expect.objectContaining({
+          body: JSON.stringify({ mode: "onboarding", confirmation: "RESET" }),
+          method: "POST",
+        }),
+      );
+    });
+    expect(await screen.findByText("Onboarding reset complete.")).toBeVisible();
   });
 });

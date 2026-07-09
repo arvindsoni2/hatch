@@ -23,6 +23,7 @@ pytestmark = pytest.mark.app_lock
         "abc123",
         "letters-only-password",
         "123456789012",
+        "validpassword1",
         " valid-password-1",
         "valid-password-1 ",
         f"a1{'x' * 127}",
@@ -46,6 +47,7 @@ async def test_first_run_setup_unlocks_and_protected_api_works(client: AsyncClie
         "max_length": 128,
         "require_letter": True,
         "require_number": True,
+        "require_symbol": True,
         "reject_edge_whitespace": True,
     }
     assert (await client.get("/api/jobs")).status_code == 423

@@ -11,6 +11,7 @@ class PasswordPolicy:
     max_length: int = 128
     require_letter: bool = True
     require_number: bool = True
+    require_symbol: bool = True
     reject_edge_whitespace: bool = True
 
     def public(self) -> dict[str, int | bool]:
@@ -19,6 +20,7 @@ class PasswordPolicy:
             "max_length": self.max_length,
             "require_letter": self.require_letter,
             "require_number": self.require_number,
+            "require_symbol": self.require_symbol,
             "reject_edge_whitespace": self.reject_edge_whitespace,
         }
 
@@ -32,6 +34,8 @@ class PasswordPolicy:
             violations.append("Include at least one letter.")
         if self.require_number and not re.search(r"\d", password):
             violations.append("Include at least one number.")
+        if self.require_symbol and not re.search(r"[^A-Za-z0-9\s]", password):
+            violations.append("Include at least one symbol or punctuation mark.")
         if self.reject_edge_whitespace and password != password.strip():
             violations.append("Remove spaces from the beginning and end.")
         return violations

@@ -22,6 +22,7 @@ export function PasswordRequirementList({
     { met: checks.length, text: `${policy.min_length}-${policy.max_length} characters` },
     { met: checks.letter, text: "Includes a letter" },
     { met: checks.number, text: "Includes a number" },
+    { met: checks.symbol, text: "Includes a symbol" },
     { met: checks.edgeWhitespace, text: "No spaces at the beginning or end" },
     ...(showMatch ? [{ met: password.length > 0 && password === confirmPassword, text: "Passwords match" }] : []),
   ];

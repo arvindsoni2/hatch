@@ -5,8 +5,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..database import get_db
 from ..services.ai_setup import (
     AISetupIntent,
     config_dir,
@@ -17,8 +20,15 @@ from ..services.ai_setup import (
     recommend_models,
     save_intent,
 )
+from ..services.setup_reset import ResetMode, apply_reset, reset_preview
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
+
+
+class ResetApplyRequest(BaseModel):
+    mode: ResetMode
+    confirmation: str
+    preserve_profile: bool = False
 
 
 @router.get("/status")
@@ -119,6 +129,31 @@ async def setup_doctor() -> dict[str, Any]:
         "ai_configured": runtime.get("ai_mode") != "not_configured",
     }
     return {"healthy": checks["config_directory"], "checks": checks, "secrets": "redacted"}
+
+
+@router.get("/reset/preview")
+async def preview_reset(
+    mode: ResetMode = Query(...),
+    preserve_profile: bool = Query(False, alias="preserveProfile"),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    return await reset_preview(db, mode, preserve_profile=preserve_profile)
+
+
+@router.post("/reset/apply")
+async def apply_setup_reset(
+    payload: ResetApplyRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        return await apply_reset(
+            db,
+            payload.mode,
+            confirmation=payload.confirmation,
+            preserve_profile=payload.preserve_profile,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _next_command(runtime: dict[str, Any]) -> str | None:

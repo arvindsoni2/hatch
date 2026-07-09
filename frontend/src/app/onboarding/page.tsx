@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, LockKeyhole } from "lucide-react";
 import {
   fetchLocales, fetchLocaleLegalFields, fetchLocaleBoards,
-  testLLMConnection, saveProfile, triggerAgent,
-  type LocaleSummary, type LocaleLegalField, type LocaleBoard,
+  testLLMConnection, saveProfile, triggerAgent, getAppLockStatus,
+  type LocaleSummary, type LocaleLegalField, type LocaleBoard, type PasswordPolicy,
 } from "@/lib/api";
 import {
   createOnboardingDraft,
@@ -21,6 +21,7 @@ import {
 import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
 import { ScreenWelcome } from "@/components/onboarding/ScreenWelcome";
 import { ScreenSuccess } from "@/components/onboarding/ScreenSuccess";
+import { StepPasswordSetup } from "@/components/onboarding/StepPasswordSetup";
 import { StepAboutYou, type CandidateData } from "@/components/onboarding/StepAboutYou";
 import { StepMarket } from "@/components/onboarding/StepMarket";
 import { StepPay } from "@/components/onboarding/StepPay";
@@ -36,10 +37,17 @@ import type {
   SearchData, LocationData, CompensationData,
 } from "@/components/onboarding/StepJobSearch";
 
-const FORM_STEPS = 6;
 const WELCOME = 0;
-const REVIEW = 7;
-const SUCCESS = 8;
+const PASSWORD = 1;
+const ABOUT = 2;
+const MARKET = 3;
+const PAY = 4;
+const ELIGIBILITY = 5;
+const SKILLS = 6;
+const AI_PROVIDER = 7;
+const REVIEW = 8;
+const SUCCESS = 9;
+const PROFILE_FORM_STEPS = 6;
 
 const DEFAULT_LLM: LLMData = {
   provider: "llamacpp",
@@ -65,6 +73,8 @@ export default function OnboardingPage() {
   const [rolesSkipped, setRolesSkipped] = useState(false);
   const [skillsSkipped, setSkillsSkipped] = useState(false);
   const [aiSetupLater, setAiSetupLater] = useState(false);
+  const [passwordRequired, setPasswordRequired] = useState(false);
+  const [passwordPolicy, setPasswordPolicy] = useState<PasswordPolicy | undefined>();
 
   const [candidate, setCandidate] = useState<CandidateData>({
     name: "", title: "", years_experience: 0, summary: "",
@@ -119,7 +129,10 @@ export default function OnboardingPage() {
         }
         if (draft.enabledBoardIds) restoredBoardIds.current = draft.enabledBoardIds;
         if (typeof draft.step === "number" && draft.step > 0 && draft.step < SUCCESS) {
-          setStep(1);
+          const restoredStep = draft.step >= REVIEW
+            ? REVIEW
+            : Math.min(AI_PROVIDER, Math.max(ABOUT, draft.step + 1));
+          setStep(restoredStep);
         }
         setHasSaved(true);
       }
@@ -130,10 +143,11 @@ export default function OnboardingPage() {
   }, []);
 
   useEffect(() => {
-    if (step === SUCCESS) return;
+    if (step === PASSWORD || step === SUCCESS) return;
     try {
+      const persistedStep = step >= ABOUT && step <= AI_PROVIDER ? step - 1 : step;
       const draft = createOnboardingDraft({
-        step, candidate, search, locations, compensation, skills, domains, proofPoints,
+        step: persistedStep, candidate, search, locations, compensation, skills, domains, proofPoints,
         selectedLocale, llm, rolesSkipped, skillsSkipped, aiSetupLater,
         enabledBoardIds: [...enabledBoards], scrapeIntervalHours,
       });
@@ -160,6 +174,17 @@ export default function OnboardingPage() {
       .then(setLocales)
       .catch(() => {})
       .finally(() => setLoadingLocales(false));
+  }, []);
+
+  useEffect(() => {
+    getAppLockStatus()
+      .then((status) => {
+        setPasswordPolicy(status.password_policy);
+        setPasswordRequired(status.enabled && status.configured_source === "none");
+      })
+      .catch(() => {
+        setPasswordRequired(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -202,10 +227,15 @@ export default function OnboardingPage() {
   };
 
   const advance = () => {
+    if (step === WELCOME) {
+      setError("");
+      setStep(passwordRequired ? PASSWORD : ABOUT);
+      return;
+    }
     if (
-      step > WELCOME
-      && step <= FORM_STEPS
-      && getOnboardingStepErrors(step, validationState).length > 0
+      step >= ABOUT
+      && step <= AI_PROVIDER
+      && getOnboardingStepErrors(step - 1, validationState).length > 0
     ) {
       setTried(true);
       return;
@@ -218,7 +248,10 @@ export default function OnboardingPage() {
   const back = () => {
     setTried(false);
     setError("");
-    setStep((current) => Math.max(WELCOME, current - 1));
+    setStep((current) => {
+      if (current === ABOUT) return passwordRequired ? PASSWORD : WELCOME;
+      return Math.max(WELCOME, current - 1);
+    });
   };
 
   const handleTestConnection = async () => {
@@ -285,7 +318,7 @@ export default function OnboardingPage() {
   };
 
   const currentLocale = locales.find((locale) => locale.id === selectedLocale);
-  const formStep = step > WELCOME && step <= FORM_STEPS ? step : 0;
+  const formStep = step >= ABOUT && step <= AI_PROVIDER ? step - 1 : 0;
   const warnings = getOnboardingWarnings(validationState);
 
   return (
@@ -307,10 +340,13 @@ export default function OnboardingPage() {
               Hatch
             </span>
           </div>
-          {step > WELCOME && step <= FORM_STEPS && (
+          {step >= ABOUT && step <= AI_PROVIDER && (
             <span className="text-[12px] tabular-nums text-[var(--text-muted)]">
-              <strong className="text-[var(--text)]">{formStep}</strong> of {FORM_STEPS}
+              <strong className="text-[var(--text)]">{formStep}</strong> of {PROFILE_FORM_STEPS}
             </span>
+          )}
+          {step === PASSWORD && (
+            <span className="text-[12px] font-medium text-[var(--text-muted)]">Password</span>
           )}
           {step === REVIEW && (
             <span className="text-[12px] font-medium text-[var(--text-muted)]">Final review</span>
@@ -321,10 +357,16 @@ export default function OnboardingPage() {
 
         <div className="flex-1 overflow-y-auto">
           {step === WELCOME && <ScreenWelcome hasSaved={hasSaved} onStart={advance} />}
-          {step === 1 && (
+          {step === PASSWORD && (
+            <StepPasswordSetup
+              onComplete={() => setStep(ABOUT)}
+              policy={passwordPolicy}
+            />
+          )}
+          {step === ABOUT && (
             <StepAboutYou candidate={candidate} onChange={setCandidate} tried={tried} />
           )}
-          {step === 2 && (
+          {step === MARKET && (
             <StepMarket
               selectedLocale={selectedLocale}
               locales={locales}
@@ -337,7 +379,7 @@ export default function OnboardingPage() {
               onRolesSkippedChange={setRolesSkipped}
             />
           )}
-          {step === 3 && (
+          {step === PAY && (
             <StepPay
               locale={currentLocale}
               locations={locations}
@@ -347,7 +389,7 @@ export default function OnboardingPage() {
               tried={tried}
             />
           )}
-          {step === 4 && (
+          {step === ELIGIBILITY && (
             <StepEligibility
               locale={currentLocale}
               legalFields={legalFields}
@@ -355,7 +397,7 @@ export default function OnboardingPage() {
               onCompensationChange={setCompensation}
             />
           )}
-          {step === 5 && (
+          {step === SKILLS && (
             <StepSkills
               skills={skills}
               onSkillsChange={setSkills}
@@ -368,7 +410,7 @@ export default function OnboardingPage() {
               tried={tried}
             />
           )}
-          {step === 6 && (
+          {step === AI_PROVIDER && (
             <StepAIProvider
               llm={llm}
               onLlmChange={setLlm}
@@ -420,7 +462,7 @@ export default function OnboardingPage() {
           )}
         </div>
 
-        {step > WELCOME && step <= REVIEW && (
+        {step >= ABOUT && step <= REVIEW && (
           <footer
             className="flex flex-shrink-0 gap-2.5 border-t border-[var(--border)] px-5 py-3.5"
             style={{
@@ -437,20 +479,20 @@ export default function OnboardingPage() {
               <ChevronLeft className="mr-0.5 inline h-4 w-4" aria-hidden="true" />
               Back
             </button>
-            {step <= FORM_STEPS && (
+            {step <= AI_PROVIDER && (
               <button
                 type="button"
                 onClick={advance}
                 className="min-h-11 flex-1 rounded-[var(--radius-control)] px-4 text-[14px] font-semibold text-[var(--on-accent)] transition-opacity hover:opacity-90"
                 style={{ background: "var(--accent)" }}
               >
-                {step === FORM_STEPS ? "Review setup" : "Continue"}
+                {step === AI_PROVIDER ? "Review setup" : "Continue"}
               </button>
             )}
           </footer>
         )}
 
-        {step > WELCOME && step < SUCCESS && (
+        {step >= ABOUT && step < SUCCESS && (
           <div className="flex items-center justify-center gap-1.5 px-5 pb-3 text-center text-[11px] text-[var(--text-muted)]">
             <LockKeyhole size={12} aria-hidden="true" />
             Progress and non-sensitive preferences are saved in this browser.

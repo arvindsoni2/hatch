@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # reset-user-data.sh — wipe local user data and return Hatch to first-run state
-# Usage: ./scripts/reset-user-data.sh [--yes] [--keep-profile]
+# Usage: ./scripts/reset-user-data.sh [--yes] [--keep-profile] [--delete-secrets]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,15 +8,18 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATA_DIR="${HATCH_RESET_DATA_DIR:-$PROJECT_DIR/data}"
 ASSUME_YES=false
 RESET_PROFILE=true
+DELETE_SECRETS=false
 
 for arg in "$@"; do
   case "$arg" in
     --yes|-y) ASSUME_YES=true ;;
     --keep-profile) RESET_PROFILE=false ;;
+    --delete-secrets) DELETE_SECRETS=true ;;
     --help|-h)
-      echo "Usage: $0 [--yes] [--keep-profile]"
-      echo "  --yes           Skip the destructive confirmation prompt"
-      echo "  --keep-profile  Clear workflow data but retain identity, CV, and saved API keys"
+      echo "Usage: $0 [--yes] [--keep-profile] [--delete-secrets]"
+      echo "  --yes             Skip the destructive confirmation prompt"
+      echo "  --keep-profile    Clear workflow data but retain identity and CV files"
+      echo "  --delete-secrets  Also clear data/api_keys.env"
       exit 0
       ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
@@ -109,10 +112,15 @@ echo "    • Coach recordings"
 if $RESET_PROFILE; then
   echo "    • profile.yaml → reset to the blank first-run template"
   echo "    • master_cv.json, metadata, and master_resume.*"
+else
+  echo ""
+  echo -e "  ${YELLOW}Keeping profile and master CV/resume.${RESET}"
+fi
+if $DELETE_SECRETS; then
   echo "    • data/api_keys.env (keys must be re-entered)"
 else
   echo ""
-  echo -e "  ${YELLOW}Keeping profile, master CV/resume, and saved API keys.${RESET}"
+  echo -e "  ${YELLOW}Keeping host-owned secrets in data/api_keys.env.${RESET}"
 fi
 echo ""
 
@@ -264,6 +272,9 @@ if $RESET_PROFILE; then
     "/app/data/master_resume.docx" \
     "master_resume.docx"
 
+fi
+
+if $DELETE_SECRETS; then
   warn "Clearing api_keys.env — API keys will need to be re-entered in Settings or onboarding."
   if backend_running; then
     container_exec sh -c "echo '' > /app/data/api_keys.env 2>/dev/null; true" \
