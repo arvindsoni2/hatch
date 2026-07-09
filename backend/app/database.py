@@ -75,6 +75,7 @@ async def init_db() -> None:
     from .models import application as _app_models  # noqa: F401
     from .models import activity as _act_models  # noqa: F401
     from .models import document as _doc_models  # noqa: F401
+    from .models import document_asset as _doc_asset_models  # noqa: F401
     from .models import coach_session as _coach_models  # noqa: F401
     from .models import recruiter as _recruiter_models  # noqa: F401
     from .models import follow_up_email as _email_models  # noqa: F401

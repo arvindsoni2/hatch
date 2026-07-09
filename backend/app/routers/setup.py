@@ -24,6 +24,7 @@ from ..services.ai_setup import (
     save_intent,
 )
 from ..services.setup_reset import ResetMode, apply_reset, reset_preview
+from ..services.pdf_export import pdf_export_capability
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
 
@@ -139,6 +140,7 @@ async def setup_capabilities() -> dict[str, Any]:
     intent = load_intent()
     probe = load_probe_snapshot()
     selected_provider = canonical_provider(intent.get("provider") or runtime.get("provider"))
+    pdf_capability = pdf_export_capability()
 
     def secret_status(provider: str) -> str:
         env_name = provider_secret_env(provider)
@@ -228,6 +230,18 @@ async def setup_capabilities() -> dict[str, Any]:
             "costImpact": "free",
             "requiresSecret": False,
             "requiresProbe": False,
+        },
+        {
+            "id": "document_generation_pdf",
+            "label": "PDF export",
+            "description": "Preview or download generated documents as local PDF exports.",
+            "status": pdf_capability["status"],
+            "installProfile": "full",
+            "privacyImpact": "local_only",
+            "costImpact": "free",
+            "requiresSecret": False,
+            "requiresProbe": False,
+            "message": pdf_capability["message"],
         },
         {
             "id": "diagnostics",

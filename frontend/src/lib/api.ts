@@ -170,8 +170,15 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => res.statusText);
-    throw new Error(`API error ${res.status}: ${detail}`);
+    const raw = await res.text().catch(() => res.statusText);
+    let detail = raw || res.statusText;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      if (typeof parsed.detail === "string") detail = parsed.detail;
+    } catch {
+      // Preserve plain-text API errors as-is.
+    }
+    throw new Error(detail);
   }
 
   if (res.status === 204) return undefined as T;
@@ -787,6 +794,18 @@ export interface GeneratedDocument {
   created_at: string;
 }
 
+export interface GeneratedDocumentAsset {
+  id: string;
+  application_id: string;
+  package_id: string;
+  source_document_id: string;
+  kind: "cv" | "cover_letter";
+  format: "pdf";
+  generation_status: string;
+  error_message: string | null;
+  created_at: string;
+}
+
 export interface TailorResultBundle {
   application_id: string;
   cv_document_id: string | null;
@@ -979,6 +998,24 @@ export async function downloadDocument(documentId: string, options?: { acknowled
   const link = document.createElement("a");
   link.href = url;
   link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+export async function exportPackagePdf(
+  packageId: string,
+  kind: "cv" | "cover_letter" = "cv",
+): Promise<GeneratedDocumentAsset> {
+  const params = new URLSearchParams({ kind });
+  return apiFetch<GeneratedDocumentAsset>(`/api/documents/${packageId}/export/pdf?${params}`, { method: "POST" });
+}
+
+export async function downloadDocumentAsset(assetId: string, filename?: string): Promise<void> {
+  const url = `${API_BASE}/api/documents/assets/${assetId}`;
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename ?? "";
   document.body.appendChild(link);
   link.click();
   link.remove();

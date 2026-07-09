@@ -3,6 +3,7 @@ from .job import JobPosting, ScrapeLog  # noqa: F401
 from .application import Application, InterviewRound, FollowUp  # noqa: F401
 from .activity import ActivityLog  # noqa: F401
 from .document import GeneratedDocument  # noqa: F401
+from .document_asset import GeneratedDocumentAsset  # noqa: F401
 from .coach_session import CompanyResearch, InterviewSession, SessionQuestion, SessionRecording  # noqa: F401
 from .recruiter import RecruiterContact  # noqa: F401
 from .follow_up_email import FollowUpEmail  # noqa: F401
@@ -23,7 +24,7 @@ from .question_bank import QuestionBankItem  # noqa: F401
 
 __all__ = [
     "JobPosting", "ScrapeLog", "Application", "InterviewRound", "FollowUp",
-    "ActivityLog", "GeneratedDocument",
+    "ActivityLog", "GeneratedDocument", "GeneratedDocumentAsset",
     "CompanyResearch", "InterviewSession", "SessionQuestion", "SessionRecording",
     "RecruiterContact", "FollowUpEmail", "AgencyReputation",
     "AgentEvent", "AgentState", "JobScore",

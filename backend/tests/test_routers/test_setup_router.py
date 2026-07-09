@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import uuid
 
 import pytest
 from httpx import AsyncClient
@@ -9,6 +10,8 @@ from sqlalchemy import func, select
 from app.models.app_lock import AppLockConfig
 from app.models.application import Application
 from app.models.company_watchlist import CompanyWatchlistItem
+from app.models.document import GeneratedDocument
+from app.models.document_asset import GeneratedDocumentAsset
 from app.models.job import JobPosting
 from app.models.question_bank import QuestionBankItem
 from app.routers import setup
@@ -118,6 +121,25 @@ async def test_capabilities_endpoint_reports_openrouter_missing_secret(
 
 
 @pytest.mark.asyncio
+async def test_capabilities_endpoint_reports_pdf_export_unavailable(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(setup, "pdf_export_capability", lambda: {
+        "available": False,
+        "status": "unavailable",
+        "message": "PDF export is not installed in this setup.",
+    })
+
+    response = await client.get("/api/setup/capabilities")
+
+    assert response.status_code == 200
+    capabilities = {item["id"]: item for item in response.json()["capabilities"]}
+    assert capabilities["document_generation_pdf"]["status"] == "unavailable"
+    assert capabilities["document_generation_pdf"]["message"] == "PDF export is not installed in this setup."
+
+
+@pytest.mark.asyncio
 async def test_provider_test_reports_missing_openrouter_secret(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -212,14 +234,34 @@ async def test_reset_apply_clears_workspace_data_but_preserves_app_lock_and_secr
     (tmp_path / "master_resume.txt").write_text("resume")
     (tmp_path / "generated").mkdir()
     (tmp_path / "generated" / "cv.docx").write_text("docx")
+    (tmp_path / "generated" / "cv.pdf").write_text("pdf")
 
+    app_id = str(uuid.uuid4())
+    document_id = str(uuid.uuid4())
     job = JobPosting(
         title="Cloud Architect",
         company="Example",
         url="https://example.com/job",
         source="manual",
     )
-    app = Application(status="discovered", priority="normal")
+    app = Application(id=app_id, status="discovered", priority="normal")
+    document = GeneratedDocument(
+        id=document_id,
+        application_id=app_id,
+        document_type="cv",
+        version=1,
+        file_path=str(tmp_path / "generated" / "cv.docx"),
+        status="generated",
+    )
+    document_asset = GeneratedDocumentAsset(
+        application_id=app_id,
+        package_id=app_id,
+        source_document_id=document_id,
+        kind="cv",
+        format="pdf",
+        path_or_blob_ref=str(tmp_path / "generated" / "cv.pdf"),
+        generation_status="completed",
+    )
     watchlist_item = CompanyWatchlistItem(
         company_name="Example",
         careers_url="https://example.com/careers",
@@ -233,7 +275,7 @@ async def test_reset_apply_clears_workspace_data_but_preserves_app_lock_and_secr
         confidence="draft",
     )
     lock = AppLockConfig(id=1, password_hash="hash")
-    db_session.add_all([job, app, watchlist_item, question_bank_item, lock])
+    db_session.add_all([job, app, document, document_asset, watchlist_item, question_bank_item, lock])
     await db_session.commit()
 
     response = await client.post(
@@ -245,6 +287,7 @@ async def test_reset_apply_clears_workspace_data_but_preserves_app_lock_and_secr
     assert response.json()["applied"] is True
     assert await db_session.scalar(select(func.count()).select_from(JobPosting)) == 0
     assert await db_session.scalar(select(func.count()).select_from(Application)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(GeneratedDocumentAsset)) == 0
     assert await db_session.scalar(select(func.count()).select_from(CompanyWatchlistItem)) == 0
     assert await db_session.scalar(select(func.count()).select_from(QuestionBankItem)) == 0
     assert (await db_session.get(AppLockConfig, 1)).password_hash == "hash"
@@ -254,6 +297,7 @@ async def test_reset_apply_clears_workspace_data_but_preserves_app_lock_and_secr
     assert not (tmp_path / "master_cv.meta.json").exists()
     assert not (tmp_path / "master_resume.txt").exists()
     assert not (tmp_path / "generated" / "cv.docx").exists()
+    assert not (tmp_path / "generated" / "cv.pdf").exists()
 
 
 @pytest.mark.asyncio
