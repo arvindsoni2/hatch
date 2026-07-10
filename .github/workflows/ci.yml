@@ -59,3 +59,29 @@ jobs:
       - name: Audit npm dependencies
         # Non-blocking until the current tree is fully clean; remove || true to enforce
         run: cd frontend && npm audit --audit-level=high || true
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run mocked Windows installer tests
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -File scripts/tests/test_windows_installer.ps1
+      - name: Validate Windows PowerShell 5.1 compatibility
+        shell: powershell
+        run: |
+          $env:HATCH_INSTALL_TEST_MODE = "1"
+          . .\install.ps1
+          if ((Resolve-HatchInstallMode "ai-later") -ne "AiLater") { exit 1 }
+          if ((Resolve-HatchBackendProfile "local-embeddings") -ne "local-embeddings") { exit 1 }
+      - name: Validate bootstrapper launch path without installing
+        shell: pwsh
+        run: |
+          $env:HATCH_INSTALL_TEST_MODE = "1"
+          cmd /c install-hatch.cmd -CheckOnly -NonInteractive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate invalid argument exit code
+        shell: pwsh
+        run: |
+          pwsh -NoLogo -NoProfile -File .\install.ps1 -Mode invalid -NonInteractive -Json
+          if ($LASTEXITCODE -ne 8) { exit 1 }

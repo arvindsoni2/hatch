@@ -104,16 +104,44 @@ Hatch combines job discovery, document tailoring, and application tracking in on
 
 Hatch uses Docker Compose for the application stack. The installer starts the lightweight profile and lets you configure AI later.
 
+### Windows — recommended
+
+1. Confirm Docker Desktop can run Linux containers on your machine.
+2. Download `install-hatch.cmd` from this repository.
+3. Double-click it.
+4. Follow the readiness report.
+5. Open <http://localhost:3000>.
+
+The Windows installer supports Windows PowerShell 5.1 and PowerShell 7, so most users do not need to install PowerShell separately. It checks Docker Desktop, WSL 2 readiness, Docker Compose, Git, Python, ports, disk space, network access, and existing Hatch state before changing the machine.
+
+Run a non-mutating check from a terminal with:
+
+```powershell
+.\install-hatch.cmd -CheckOnly
+```
+
+For Docker/WSL recovery steps and diagnostic output, read the [Windows install guide](docs/WINDOWS_INSTALL.md).
+
 ### Linux and macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh | bash
 ```
 
-### Windows PowerShell
+### Windows — advanced terminal install
 
 ```powershell
 iwr https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.ps1 | iex
+```
+
+Local script examples:
+
+```powershell
+.\install-hatch.cmd -InstallDir "D:\Apps\Hatch"
+.\install-hatch.cmd -Mode cloud -BackendProfile core
+.\install-hatch.cmd -CheckOnly -Json
+.\install-hatch.cmd -Resume
+.\install.ps1 -Mode advanced -BackendProfile full
 ```
 
 Open <http://localhost:3000>, create the local app-lock password, and complete onboarding.
@@ -128,6 +156,16 @@ hatch models list
 hatch models install
 hatch apply-ai-config
 hatch capabilities status
+hatch capabilities enable browser
+hatch capabilities enable local-embeddings
+hatch capabilities enable full
+hatch capabilities disable
+```
+
+Linux/macOS advanced capability example:
+
+```bash
+./install.sh --mode advanced --backend-profile full
 ```
 
 For manual Docker setup, capability profiles, troubleshooting, reset commands, and development checks, read the [Hatch operations guide](docs/OPERATIONS.md).
