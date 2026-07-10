@@ -17,5 +17,12 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "readme-screenshots",
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1600, height: 1000 },
+      },
+    },
   ],
 });
