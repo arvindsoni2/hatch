@@ -3,7 +3,7 @@ import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 const ROOT = path.resolve(__dirname, "../..");
-const IMAGE_DIR = path.join(ROOT, "docs/images");
+const IMAGE_DIR = path.join(ROOT, "docs/visual-evidence/readme");
 
 const SCREENS = [
   "onboarding",

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hatch — Desktop (Direction A)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #08080b; }
+  * { -webkit-font-smoothing: antialiased; box-sizing: border-box; }
+  #root { height: 100%; }
+  .deskstage { position: fixed; inset: 0; overflow: hidden; }
+  @keyframes tRise { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  @keyframes ovRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  *::-webkit-scrollbar { width: 9px; height: 9px; }
+  *::-webkit-scrollbar-thumb { background: #2a2a33; border-radius: 999px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="hatch-ui.jsx"></script>
+<script type="text/babel" src="desktop-app.jsx"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#0b0b0f"/>
+    <rect x="18" y="28" width="20" height="44" rx="3" fill="#16161c" stroke="#26262f"/>
+    <rect x="44" y="28" width="38" height="44" rx="3" fill="none" stroke="#36c5a8" stroke-width="2"/>
+    <circle cx="52" cy="40" r="3" fill="#5b9bff"/><circle cx="60" cy="40" r="3" fill="#b794ff"/>
+    <circle cx="68" cy="40" r="3" fill="#3ddc97"/><circle cx="76" cy="40" r="3" fill="#f5b950"/>
+  </svg>
+</template>
+
+<script type="text/babel">
+const { useMemo } = React;
+
+function hexA(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+function applyAccent(hex) { HT.accent = hex; HT.accentHover = hex; HT.accentSoft = hexA(hex, 0.14); HT.accentSoftStrong = hexA(hex, 0.22); }
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "#36c5a8",
+  "voice": true
+}/*EDITMODE-END*/;
+
+function Root() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  useMemo(() => applyAccent(t.accent), [t.accent]);
+  return (
+    <>
+      <div className="deskstage"><DesktopApp t={t} /></div>
+      <TweaksPanel>
+        <TweakSection label="Voice & feel" />
+        <TweakToggle label="Agents speak in first person" value={t.voice} onChange={(v) => setTweak('voice', v)} />
+        <TweakSection label="Accent" />
+        <TweakColor label="Primary accent" value={t.accent}
+          options={['#36c5a8', '#5b9bff', '#7c83ff', '#ff8f6b']}
+          onChange={(v) => setTweak('accent', v)} />
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
+</script>
+</body>
+</html>

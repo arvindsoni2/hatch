@@ -5,7 +5,7 @@
 Hatch helps you find roles, score them against your profile, prepare grounded curriculum vitae (CV) and cover-letter packs, track applications, and prepare for interviews. It runs on your machine, keeps your data local by default, and never submits an application without you.
 
 <p align="center">
-  <img src="docs/images/today-ready.png" alt="Hatch Today screen showing roles ready for review" width="100%">
+  <img src="docs/visual-evidence/readme/today-ready.png" alt="Hatch Today screen showing roles ready for review" width="100%">
 </p>
 
 ## Why Hatch
@@ -39,7 +39,7 @@ This walkthrough follows the main Hatch workflow from first setup to interview p
 Onboarding captures your target market, role titles, compensation preferences, eligibility, skills, CV, artificial intelligence (AI) provider choice, and job-board preferences.
 
 <p align="center">
-  <img src="docs/images/onboarding.png" alt="Hatch onboarding market and profile setup screen" width="82%">
+  <img src="docs/visual-evidence/readme/onboarding.png" alt="Hatch onboarding market and profile setup screen" width="82%">
 </p>
 
 ### See what needs attention
@@ -47,7 +47,7 @@ Onboarding captures your target market, role titles, compensation preferences, e
 **Today** prioritizes the next useful action. It highlights roles ready for review, recent agent activity, follow-ups, and preparation work.
 
 <p align="center">
-  <img src="docs/images/today-ready.png" alt="Hatch Today screen with roles ready for review" width="100%">
+  <img src="docs/visual-evidence/readme/today-ready.png" alt="Hatch Today screen with roles ready for review" width="100%">
 </p>
 
 ### Review roles before generation
@@ -55,7 +55,7 @@ Onboarding captures your target market, role titles, compensation preferences, e
 **Pipeline** shows roles while Hatch discovers, scores, and prepares them. You review the match evidence before generating a CV pack.
 
 <p align="center">
-  <img src="docs/images/pipeline.png" alt="Hatch Pipeline screen with scored roles" width="100%">
+  <img src="docs/visual-evidence/readme/pipeline.png" alt="Hatch Pipeline screen with scored roles" width="100%">
 </p>
 
 ### Track the application journey
@@ -67,7 +67,7 @@ Onboarding captures your target market, role titles, compensation preferences, e
 Cards can be moved by drag-and-drop or with the keyboard-accessible **Move to...** menu. Hatch blocks invalid backward transitions and uses explicit close actions for rejected, withdrawn, and declined outcomes.
 
 <p align="center">
-  <img src="docs/images/applications.png" alt="Hatch Applications Kanban board" width="100%">
+  <img src="docs/visual-evidence/readme/applications.png" alt="Hatch Applications Kanban board" width="100%">
 </p>
 
 ### Prepare an evidence-led CV pack
@@ -75,7 +75,7 @@ Cards can be moved by drag-and-drop or with the keyboard-accessible **Move to...
 **CV Studio** compares the job description with your confirmed master CV, surfaces evidence, and generates a reviewable CV and cover letter. Hatch is designed not to invent experience.
 
 <p align="center">
-  <img src="docs/images/cv-studio.png" alt="Hatch CV Studio tailoring screen" width="100%">
+  <img src="docs/visual-evidence/readme/cv-studio.png" alt="Hatch CV Studio tailoring screen" width="100%">
 </p>
 
 ### Prepare for interviews
@@ -83,7 +83,7 @@ Cards can be moved by drag-and-drop or with the keyboard-accessible **Move to...
 **Interview Prep** supports application-linked and manual sessions, reusable answers in the Question Bank, role-specific questions, model answers, calendar export, and practice workflows.
 
 <p align="center">
-  <img src="docs/images/interview-prep.png" alt="Hatch Interview Prep screen" width="100%">
+  <img src="docs/visual-evidence/readme/interview-prep.png" alt="Hatch Interview Prep screen" width="100%">
 </p>
 
 ## Key capabilities
@@ -120,7 +120,7 @@ Run a non-mutating check from a terminal with:
 .\install-hatch.cmd -CheckOnly
 ```
 
-For Docker/WSL recovery steps and diagnostic output, read the [Windows install guide](docs/WINDOWS_INSTALL.md).
+For Docker/WSL recovery steps and diagnostic output, read the [Windows install guide](docs/getting-started/WINDOWS_INSTALL.md).
 
 ### Linux and macOS
 
@@ -168,7 +168,7 @@ Linux/macOS advanced capability example:
 ./install.sh --mode advanced --backend-profile full
 ```
 
-For manual Docker setup, capability profiles, troubleshooting, reset commands, and development checks, read the [Hatch operations guide](docs/OPERATIONS.md).
+For manual Docker setup, capability profiles, troubleshooting, reset commands, and development checks, read the [Hatch operations guide](docs/operations/OPERATIONS.md).
 
 ## AI options
 
@@ -212,6 +212,16 @@ To reset a forgotten database-backed app-lock password without deleting job data
 ```bash
 bash scripts/reset-app-lock.sh
 ```
+
+## Documentation
+
+See the [Hatch documentation index](docs/README.md) for current user, operations, architecture, development, and historical documentation.
+
+- Installation: [docs/getting-started/INSTALLATION.md](docs/getting-started/INSTALLATION.md)
+- Architecture: [docs/architecture/OVERVIEW.md](docs/architecture/OVERVIEW.md)
+- Operations: [docs/operations/OPERATIONS.md](docs/operations/OPERATIONS.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security: [SECURITY.md](SECURITY.md)
 
 ## Repository structure
 
@@ -274,5 +284,5 @@ Issues and focused pull requests are welcome. Changes should preserve the core H
 - Changes: [CHANGELOG.md](CHANGELOG.md)
 - Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Security reporting: [SECURITY.md](SECURITY.md)
-- Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
-- Operational details: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Release checklist: [docs/operations/RELEASE_CHECKLIST.md](docs/operations/RELEASE_CHECKLIST.md)
+- Operational details: [docs/operations/OPERATIONS.md](docs/operations/OPERATIONS.md)

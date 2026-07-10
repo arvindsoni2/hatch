@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hatch — Proactive Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; }
+  * { -webkit-font-smoothing: antialiased; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="hatch-ui.jsx"></script>
+<script type="text/babel" src="screens-a.jsx"></script>
+<script type="text/babel" src="screens-b.jsx"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#0b0b0f"/>
+    <circle cx="30" cy="50" r="6" fill="#5b9bff"/>
+    <circle cx="46" cy="50" r="6" fill="#b794ff"/>
+    <circle cx="62" cy="50" r="6" fill="#3ddc97"/>
+    <circle cx="78" cy="50" r="6" fill="#f5b950"/>
+    <rect x="36" y="49" width="8" height="2" fill="#5b9bff"/>
+    <rect x="52" y="49" width="8" height="2" fill="#b794ff"/>
+    <rect x="68" y="49" width="8" height="2" fill="#3ddc97"/>
+  </svg>
+</template>
+
+<script type="text/babel">
+const { useState } = React;
+
+// ── Phone wrapper — centres the iOS device inside a transparent artboard ──────
+function Phone({ children }) {
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <IOSDevice dark>{children}</IOSDevice>
+    </div>
+  );
+}
+const ABOARD = { background: 'transparent', boxShadow: 'none', borderRadius: 0 };
+
+// ── Thesis / rationale panel ──────────────────────────────────────────────────
+function Bullet({ color, head, children }) {
+  return (
+    <div style={{ display: 'flex', gap: 11, marginBottom: 14 }}>
+      <span style={{ width: 7, height: 7, borderRadius: 999, background: color, flexShrink: 0, marginTop: 6 }} />
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: HT.text, marginBottom: 2 }}>{head}</div>
+        <div style={{ fontSize: 12.5, lineHeight: 1.55, color: HT.dim }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Thesis() {
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: HT.bg, color: HT.text, fontFamily: HT.font, padding: 40, display: 'flex', flexDirection: 'column', letterSpacing: '-0.005em' }}>
+      <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: '0.14em', color: HT.accent }}>REDESIGN PROPOSAL · HATCH</div>
+      <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: '-0.03em', color: HT.text, marginTop: 10, lineHeight: 1.05 }}>
+        Make the pipeline<br/>feel like one motion.
+      </div>
+      <div style={{ fontSize: 13.5, color: HT.dim, marginTop: 12, maxWidth: 560, lineHeight: 1.55 }}>
+        Hatch already does the work autonomously — Scout finds, Scorer ranks, Tailor writes, Coach preps.
+        The interface just doesn't <em>show</em> that as one connected flow, and it scatters the two decisions
+        that need a human across three overlapping screens.
+      </div>
+
+      <div style={{ display: 'flex', gap: 36, marginTop: 30 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: HT.danger, marginBottom: 14, letterSpacing: '0.02em' }}>WHAT FEELS BROKEN TODAY</div>
+          <Bullet color={HT.danger} head="Discover is split three ways">Home, Inbox and Shortlist overlap. Your Shortlist screen reads “you're all caught up” with nothing to do.</Bullet>
+          <Bullet color={HT.danger} head="Autonomous engine, passive UI">It's a dashboard of metrics, not a guide. Nothing tells you what to do next.</Bullet>
+          <Bullet color={HT.danger} head="The hand-offs are invisible">Scout → Score → Tailor → Coach never reads as a single journey a role travels through.</Bullet>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: HT.success, marginBottom: 14, letterSpacing: '0.02em' }}>THE MOVE</div>
+          <Bullet color={HT.success} head="Collapse to Today + Stream">Home, Inbox and Shortlist become one proactive <strong style={{color:HT.text}}>Today</strong> cockpit and one continuous <strong style={{color:HT.text}}>Stream</strong>.</Bullet>
+          <Bullet color={HT.success} head="The agents speak first">Every surface leads with what the agents did and the one thing they need from you — with a tap to act.</Bullet>
+          <Bullet color={HT.success} head="One colour spectrum, reused">Four agent colours run through every card, so a role's place in the pipeline is always legible.</Bullet>
+        </div>
+      </div>
+
+      {/* legend */}
+      <div style={{ marginTop: 'auto', paddingTop: 22, borderTop: `1px solid ${HT.border}`, display: 'flex', alignItems: 'center', gap: 22 }}>
+        <div style={{ display: 'flex', gap: 18 }}>
+          {PIPE.map((k) => (
+            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AgentBadge agent={k} size={30} />
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: AGENTS[k].color }}>{AGENTS[k].name}</div>
+                <div style={{ fontSize: 10.5, color: HT.muted }}>{AGENTS[k].role}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginLeft: 'auto', width: 200 }}>
+          <StageTrack stage={2} pct={86} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Canvas ────────────────────────────────────────────────────────────────────
+function App() {
+  return (
+    <DesignCanvas>
+      <DCSection id="thesis" title="The thesis" subtitle="Why and what — read this first">
+        <DCArtboard id="rationale" label="Problem → approach" width={860} height={620} style={ABOARD}>
+          <Thesis />
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="dirA" title="Direction A · The Briefing" subtitle="Faithful evolution of today's dark Hatch system — calm, proactive, one-tap">
+        <DCArtboard id="a-today" label="① Today — agent cockpit" width={460} height={940} style={ABOARD}>
+          <Phone><ScreenA_Today /></Phone>
+        </DCArtboard>
+        <DCArtboard id="a-stream" label="② Stream — Inbox + Shortlist, unified" width={460} height={940} style={ABOARD}>
+          <Phone><ScreenA_Stream /></Phone>
+        </DCArtboard>
+        <DCArtboard id="a-review" label="③ Review — the decision gate" width={460} height={940} style={ABOARD}>
+          <Phone><ScreenA_Review /></Phone>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="dirB" title="Direction B · Mission Control" subtitle="A bolder reimagining — the pipeline as one living spine, agents that talk to you">
+        <DCArtboard id="b-spine" label="① Pipeline — living spine" width={460} height={940} style={ABOARD}>
+          <Phone><ScreenB_Spine /></Phone>
+        </DCArtboard>
+        <DCArtboard id="b-feed" label="② Briefing — agents reporting in" width={460} height={940} style={ABOARD}>
+          <Phone><ScreenB_Feed /></Phone>
+        </DCArtboard>
+        <DCArtboard id="b-swipe" label="③ Approve — swipe deck" width={460} height={940} style={ABOARD}>
+          <Phone><ScreenB_Swipe /></Phone>
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
