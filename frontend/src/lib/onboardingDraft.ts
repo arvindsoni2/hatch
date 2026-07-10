@@ -31,6 +31,13 @@ type SafeLlm = {
   currency: string;
 };
 
+type SafeExperienceChoice = {
+  experience: "essential" | "full_ai" | "custom";
+  aiMode: "ai-later" | "cloud" | "local" | "advanced";
+  backendProfile: "core" | "browser" | "local-embeddings" | "full";
+  acknowledgement: boolean;
+};
+
 export interface OnboardingDraft {
   version: 2;
   step: number;
@@ -39,6 +46,7 @@ export interface OnboardingDraft {
   skills: SafeSkills;
   domains: SafeDomains;
   llm: SafeLlm;
+  experienceChoice: SafeExperienceChoice;
   rolesSkipped: boolean;
   skillsSkipped: boolean;
   aiSetupLater: boolean;
@@ -46,7 +54,8 @@ export interface OnboardingDraft {
   scrapeIntervalHours: number;
 }
 
-interface DraftSource extends Omit<OnboardingDraft, "version"> {
+interface DraftSource extends Omit<OnboardingDraft, "version" | "experienceChoice"> {
+  experienceChoice?: SafeExperienceChoice;
   candidate?: unknown;
   locations?: unknown;
   compensation?: unknown;
@@ -58,6 +67,21 @@ const strings = (value: unknown): string[] =>
 
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? value as Record<string, unknown> : {};
+
+const experience = (value: unknown): SafeExperienceChoice["experience"] => {
+  if (value === "full_ai" || value === "custom") return value;
+  return "essential";
+};
+
+const aiMode = (value: unknown): SafeExperienceChoice["aiMode"] => {
+  if (value === "cloud" || value === "local" || value === "advanced") return value;
+  return "ai-later";
+};
+
+const backendProfile = (value: unknown): SafeExperienceChoice["backendProfile"] => {
+  if (value === "browser" || value === "local-embeddings" || value === "full") return value;
+  return "core";
+};
 
 export function createOnboardingDraft(source: DraftSource): OnboardingDraft {
   return {
@@ -78,6 +102,14 @@ export function createOnboardingDraft(source: DraftSource): OnboardingDraft {
       excluded: [...source.domains.excluded],
     },
     llm: { ...source.llm },
+    experienceChoice: source.experienceChoice
+      ? { ...source.experienceChoice }
+      : {
+        experience: "essential",
+        aiMode: "ai-later",
+        backendProfile: "core",
+        acknowledgement: true,
+      },
     rolesSkipped: source.rolesSkipped,
     skillsSkipped: source.skillsSkipped,
     aiSetupLater: source.aiSetupLater,
@@ -92,6 +124,7 @@ export function restoreOnboardingDraft(value: unknown): Partial<OnboardingDraft>
   const skills = record(source.skills);
   const domains = record(source.domains);
   const llm = record(source.llm);
+  const nextExperience = record(source.experienceChoice);
 
   return {
     version: 2,
@@ -126,6 +159,12 @@ export function restoreOnboardingDraft(value: unknown): Partial<OnboardingDraft>
       track_costs: typeof llm.track_costs === "boolean" ? llm.track_costs : false,
       monthly_budget: typeof llm.monthly_budget === "number" ? llm.monthly_budget : 0,
       currency: typeof llm.currency === "string" ? llm.currency : "USD",
+    },
+    experienceChoice: {
+      experience: experience(nextExperience.experience),
+      aiMode: aiMode(nextExperience.aiMode),
+      backendProfile: backendProfile(nextExperience.backendProfile),
+      acknowledgement: nextExperience.acknowledgement === true,
     },
     rolesSkipped: source.rolesSkipped === true,
     skillsSkipped: source.skillsSkipped === true,

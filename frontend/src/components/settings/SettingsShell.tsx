@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 const SETTINGS_ITEMS = [
   { label: "Profile", href: "/settings/profile", icon: UserRound },
   { label: "Job Preferences", href: "/settings/preferences", icon: SlidersHorizontal },
-  { label: "AI Provider", href: "/settings/ai", icon: Bot },
+  { label: "AI & Capabilities", href: "/settings/ai", icon: Bot },
   { label: "Master CV", href: "/settings/resume", icon: FileText },
   { label: "Security", href: "/settings/security", icon: LockKeyhole },
   { label: "Diagnostics", href: "/settings/system", icon: Stethoscope },

@@ -32,6 +32,10 @@ import {
 import {
   StepAIProvider, LLM_PROVIDERS, type LLMData,
 } from "@/components/onboarding/StepAIProvider";
+import {
+  StepExperienceChoice,
+  type ExperienceChoice,
+} from "@/components/onboarding/StepExperienceChoice";
 import { StepReview } from "@/components/onboarding/StepReview";
 import type {
   SearchData, LocationData, CompensationData,
@@ -44,10 +48,11 @@ const MARKET = 3;
 const PAY = 4;
 const ELIGIBILITY = 5;
 const SKILLS = 6;
-const AI_PROVIDER = 7;
-const REVIEW = 8;
-const SUCCESS = 9;
-const PROFILE_FORM_STEPS = 6;
+const EXPERIENCE = 7;
+const AI_PROVIDER = 8;
+const REVIEW = 9;
+const SUCCESS = 10;
+const PROFILE_FORM_STEPS = 7;
 
 const DEFAULT_LLM: LLMData = {
   provider: "llamacpp",
@@ -61,6 +66,13 @@ const DEFAULT_LLM: LLMData = {
   track_costs: false,
   monthly_budget: 0,
   currency: "USD",
+};
+
+const DEFAULT_EXPERIENCE: ExperienceChoice = {
+  experience: "essential",
+  aiMode: "ai-later",
+  backendProfile: "core",
+  acknowledgement: true,
 };
 
 export default function OnboardingPage() {
@@ -99,6 +111,7 @@ export default function OnboardingPage() {
   const [domains, setDomains] = useState<DomainsData>({ preferred: [], excluded: [] });
   const [proofPoints, setProofPoints] = useState<ProofPoint[]>([]);
   const [llm, setLlm] = useState<LLMData>(DEFAULT_LLM);
+  const [experienceChoice, setExperienceChoice] = useState<ExperienceChoice>(DEFAULT_EXPERIENCE);
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{
     ok: boolean; error?: string;
@@ -120,6 +133,9 @@ export default function OnboardingPage() {
         if (draft.selectedLocale) setSelectedLocale(draft.selectedLocale);
         if (draft.llm) {
           setLlm(draft.llm.provider === "ollama" ? DEFAULT_LLM : draft.llm);
+        }
+        if (draft.experienceChoice) {
+          setExperienceChoice(draft.experienceChoice);
         }
         setRolesSkipped(draft.rolesSkipped === true);
         setSkillsSkipped(draft.skillsSkipped === true);
@@ -148,14 +164,14 @@ export default function OnboardingPage() {
       const persistedStep = step >= ABOUT && step <= AI_PROVIDER ? step - 1 : step;
       const draft = createOnboardingDraft({
         step: persistedStep, candidate, search, locations, compensation, skills, domains, proofPoints,
-        selectedLocale, llm, rolesSkipped, skillsSkipped, aiSetupLater,
+        selectedLocale, llm, experienceChoice, rolesSkipped, skillsSkipped, aiSetupLater,
         enabledBoardIds: [...enabledBoards], scrapeIntervalHours,
       });
       localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(draft));
     } catch {}
   }, [
     step, candidate, search, locations, compensation, skills, domains, proofPoints,
-    selectedLocale, llm, rolesSkipped, skillsSkipped, aiSetupLater, enabledBoards,
+    selectedLocale, llm, experienceChoice, rolesSkipped, skillsSkipped, aiSetupLater, enabledBoards,
     scrapeIntervalHours,
   ]);
 
@@ -234,7 +250,7 @@ export default function OnboardingPage() {
     }
     if (
       step >= ABOUT
-      && step <= AI_PROVIDER
+      && step <= SKILLS
       && getOnboardingStepErrors(step - 1, validationState).length > 0
     ) {
       setTried(true);
@@ -304,6 +320,19 @@ export default function OnboardingPage() {
     setSaving(true);
     setError("");
     try {
+      const setupResponse = await fetch("/api/setup/experience", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          experience: experienceChoice.experience,
+          ai_mode: experienceChoice.aiMode,
+          backend_profile: experienceChoice.backendProfile,
+          acknowledgement: experienceChoice.acknowledgement,
+        }),
+      });
+      if (!setupResponse.ok) {
+        throw new Error(await setupResponse.text());
+      }
       await saveProfile(buildProfile());
       await triggerAgent("scout").catch(() => {});
       try {
@@ -408,6 +437,15 @@ export default function OnboardingPage() {
               skillsSkipped={skillsSkipped}
               onSkillsSkippedChange={setSkillsSkipped}
               tried={tried}
+            />
+          )}
+          {step === EXPERIENCE && (
+            <StepExperienceChoice
+              value={experienceChoice.experience}
+              onChange={(choice) => {
+                setExperienceChoice(choice);
+                setAiSetupLater(choice.aiMode === "ai-later");
+              }}
             />
           )}
           {step === AI_PROVIDER && (

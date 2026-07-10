@@ -18,6 +18,54 @@ from app.routers import setup
 
 
 @pytest.mark.asyncio
+async def test_setup_status_composes_experience_capabilities_and_hardware(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "backend_capabilities.json").write_text(
+        '{"schema_version":1,"profile":"core","enabled":[],"updated_by":"test"}'
+    )
+    (tmp_path / "hardware_probe_latest.json").write_text(
+        '{"sanitised":true,"captured_at":"2026-07-10T10:00:00Z","memory":{"total_gb":16},"storage":{"models_dir_free_gb":24},"platform":{"os_family":"windows","arch":"x86_64"}}'
+    )
+
+    await setup.set_experience({
+        "experience": "custom",
+        "ai_mode": "cloud",
+        "backend_profile": "browser",
+        "provider": "openrouter",
+        "provider_metadata": {"model": "openai/gpt-4o-mini"},
+    })
+    status = await setup.setup_status()
+
+    assert status["schema_version"] == 1
+    assert status["experience"] == "custom"
+    assert status["ai"]["mode"] == "cloud"
+    assert status["ai"]["provider"] == "openrouter"
+    assert status["ai"]["configured"] is False
+    assert status["capabilities"]["profile"] == "core"
+    assert status["capabilities"]["available_profiles"] == ["core", "browser", "local-embeddings", "full"]
+    assert status["hardware"]["status"] == "supported_with_limitations"
+    assert status["hardware"]["recommendation"]["recommended_ai_modes"] == ["cloud", "ai-later"]
+    assert status["operation"]["host_action_required"] is True
+    assert status["operation"]["command"] == "hatch capabilities enable browser"
+
+
+@pytest.mark.asyncio
+async def test_experience_endpoint_rejects_unsupported_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    with pytest.raises(setup.HTTPException) as error:
+        await setup.set_experience({"experience": "full_ai", "backend_profile": "perception"})
+
+    assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_cloud_endpoint_rejects_secret_fields() -> None:
     with pytest.raises(setup.HTTPException) as error:
         await setup.select_cloud_provider({"provider": "openai", "api_key": "secret"})

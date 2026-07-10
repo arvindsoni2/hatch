@@ -3,6 +3,34 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AiSettingsPage from "@/app/settings/ai/page";
 
 const status = {
+  schema_version: 1,
+  experience: "essential",
+  ai: {
+    mode: "not_configured",
+    configured: false,
+    healthy: false,
+    provider: null,
+    model: null,
+    action_required: "provider_or_local_model",
+  },
+  capabilities: {
+    profile: "core",
+    enabled: [],
+    available_profiles: ["core", "browser", "local-embeddings", "full"],
+    operation: null,
+  },
+  hardware: {
+    status: "supported_with_limitations",
+    last_checked_at: "2026-07-10T10:00:00Z",
+    recommendation: {
+      experience: "essential",
+      readiness: "supported_with_limitations",
+      reasons: [{ id: "memory.ok", severity: "info", message: "Cloud AI is recommended for this setup." }],
+      recommended_ai_modes: ["cloud", "ai-later"],
+      local_ai_recommended: false,
+    },
+  },
+  operation: null,
   runtime: {
     ai_mode: "not_configured",
     quality_mode: "not_configured",
@@ -76,11 +104,18 @@ function mockSetupFetch() {
     if (url.endsWith("/api/setup/local-model-selection") && init?.method === "POST") {
       return jsonResponse({ next_command: "hatch models install" });
     }
+    if (url.endsWith("/api/setup/experience") && init?.method === "POST") {
+      return jsonResponse({
+        intent: { experience: "full_ai", ai_mode: "not_configured", backend_profile: "full" },
+        host_action_required: true,
+        next_command: "hatch capabilities enable full",
+      });
+    }
     return jsonResponse({});
   });
 }
 
-describe("AI provider settings page", () => {
+describe("AI & Capabilities settings page", () => {
   beforeEach(() => {
     vi.mocked(global.fetch).mockReset();
     mockSetupFetch();
@@ -89,16 +124,19 @@ describe("AI provider settings page", () => {
     });
   });
 
-  it("uses the Settings shell and frames setup as three clear choices", async () => {
+  it("uses the Settings shell and frames setup as experience plus capability controls", async () => {
     render(<AiSettingsPage />);
 
-    expect(await screen.findByRole("heading", { name: "AI Provider" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "AI Provider" })).toHaveAttribute("aria-current", "page");
+    expect(await screen.findByRole("heading", { name: "AI & Capabilities" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "AI & Capabilities" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByLabelText("Settings section")).toHaveValue("/settings/ai");
 
     expect(screen.getByRole("heading", { name: "Current setup" })).toBeVisible();
     expect(screen.getByText("Use Hatch now, set up AI later.")).toBeVisible();
-    expect(screen.getByText("Use Hatch now, set up AI later")).toBeVisible();
+    expect(screen.getByText("Experience: Essential")).toBeVisible();
+    expect(screen.getByText("Backend profile: Core")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Upgrade to Full AI" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Switch to Essential" })).toBeVisible();
     expect(screen.getByText("Run AI locally")).toBeVisible();
     expect(screen.getByText("Use cloud AI provider")).toBeVisible();
     expect(screen.getAllByText(/Not tested yet/i).length).toBeGreaterThan(0);
@@ -134,6 +172,23 @@ describe("AI provider settings page", () => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith("hatch secrets set openai");
     });
     expect(screen.queryByPlaceholderText(/api key/i)).not.toBeInTheDocument();
+  });
+
+  it("saves Full AI as a host-action-required capability change", async () => {
+    render(<AiSettingsPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Upgrade to Full AI" }));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/api/setup/experience"),
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"backend_profile":"full"'),
+        }),
+      );
+    });
+    expect(await screen.findByText(/hatch capabilities enable full/i)).toBeVisible();
   });
 
   it("shows OpenRouter with model slug input and host secret command", async () => {

@@ -15,6 +15,14 @@ import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 
 export const revalidate = 30;
 
+type SetupStatus = {
+  ai?: {
+    configured?: boolean;
+    healthy?: boolean;
+    action_required?: string | null;
+  };
+};
+
 function pendingToHatchJob(a: PendingApproval): HatchJob {
   const hasDims = a.skill_match != null || a.experience_match != null || a.rate_match != null || a.location_match != null;
   return {
@@ -79,6 +87,13 @@ export default async function TodayPage() {
     serverApiFetch<InterviewRound[]>("/api/interviews/upcoming?days=14"),
   ]);
 
+  let setupStatus: SetupStatus | null = null;
+  try {
+    setupStatus = await serverApiFetch<SetupStatus>("/api/setup/status");
+  } catch {
+    setupStatus = null;
+  }
+
   // Build upcoming interview card data if a real interview is scheduled
   let upcomingInterview: { scheduledAt: string; title: string; company: string; daysUntil: number } | null = null;
   const next = upcomingInterviews[0] ?? null;
@@ -133,6 +148,8 @@ export default async function TodayPage() {
       followUpCount={overdueFollowUps.length}
       agentPerf={agentPerf}
       upcomingInterview={upcomingInterview}
+      aiSetupIncomplete={setupStatus?.ai ? !setupStatus.ai.healthy : false}
+      aiActionRequired={setupStatus?.ai?.action_required ?? null}
     />
   );
 }

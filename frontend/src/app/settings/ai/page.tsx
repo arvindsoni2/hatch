@@ -26,6 +26,23 @@ type ModelItem = {
 };
 
 type SetupStatus = {
+  schema_version?: number;
+  experience?: "essential" | "full_ai" | "custom" | string;
+  ai?: {
+    mode: "not_configured" | "cloud" | "local" | "custom" | string;
+    configured: boolean;
+    healthy: boolean;
+    provider?: string | null;
+    model?: string | null;
+    action_required?: string | null;
+  };
+  capabilities?: {
+    profile: "core" | "browser" | "local-embeddings" | "full" | string;
+    enabled: string[];
+    available_profiles: string[];
+    operation?: ProfileOperation | null;
+  };
+  operation?: ProfileOperation | null;
   runtime: {
     ai_mode: "not_configured" | "cloud" | "local" | "custom";
     quality_mode: string;
@@ -33,6 +50,13 @@ type SetupStatus = {
     warnings?: string[];
   };
   next_command?: string | null;
+};
+
+type ProfileOperation = {
+  id: string;
+  label?: string;
+  command: string;
+  host_action_required: boolean;
 };
 
 type HardwareResponse = {
@@ -75,8 +99,21 @@ function formatMode(value?: string | null) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function formatExperience(value?: string | null) {
+  if (value === "full_ai") return "Full AI";
+  if (value === "custom") return "Custom";
+  return "Essential";
+}
+
+function formatProfile(value?: string | null) {
+  if (value === "local-embeddings") return "Local embeddings";
+  if (value === "full") return "Full";
+  if (value === "browser") return "Browser";
+  return "Core";
+}
+
 function setupSummary(status: SetupStatus | null) {
-  const mode = status?.runtime.ai_mode;
+  const mode = status?.ai?.mode ?? status?.runtime.ai_mode;
   if (!status) {
     return {
       title: "Loading setup status...",
@@ -167,6 +204,26 @@ export default function AiSettingsPage() {
     });
   };
 
+  const saveExperience = (payload: {
+    experience: "essential" | "full_ai" | "custom";
+    ai_mode: "not_configured" | "cloud" | "local" | "custom";
+    backend_profile: "core" | "browser" | "local-embeddings" | "full";
+    acknowledgement: boolean;
+  }) => {
+    startTransition(async () => {
+      try {
+        const result = await request<{ next_command?: string }>("/api/setup/experience", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setMessage(`Saved. Next: ${result.next_command ?? "hatch apply-ai-config"}`);
+        await load();
+      } catch (error) {
+        setMessage(friendlyError(error, "Could not save Hatch experience."));
+      }
+    });
+  };
+
   const refreshHardware = () => {
     startTransition(async () => {
       try {
@@ -223,8 +280,8 @@ export default function AiSettingsPage() {
   return (
     <SettingsShell
       activeHref="/settings/ai"
-      title="AI Provider"
-      description="Choose whether Hatch runs without AI for now, uses local models, or connects to a cloud provider through host-owned secrets."
+      title="AI & Capabilities"
+      description="Choose the Hatch experience, backend capabilities, and AI provider without putting host-owned secrets in the browser."
     >
       <section className="rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -238,6 +295,43 @@ export default function AiSettingsPage() {
               <p className="mt-2 text-sm text-[var(--text-dim)]">
                 {currentSetup.description}
               </p>
+              {status ? (
+                <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                  <div className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2">
+                    <p className="text-[var(--text-muted)]">Experience: {formatExperience(status.experience)}</p>
+                  </div>
+                  <div className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2">
+                    <p className="text-[var(--text-muted)]">Backend profile: {formatProfile(status.capabilities?.profile)}</p>
+                  </div>
+                </div>
+              ) : null}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  disabled={isPending}
+                  onClick={() => saveExperience({
+                    experience: "full_ai",
+                    ai_mode: "not_configured",
+                    backend_profile: "full",
+                    acknowledgement: true,
+                  })}
+                  type="button"
+                >
+                  Upgrade to Full AI
+                </Button>
+                <Button
+                  disabled={isPending}
+                  onClick={() => saveExperience({
+                    experience: "essential",
+                    ai_mode: "not_configured",
+                    backend_profile: "core",
+                    acknowledgement: true,
+                  })}
+                  type="button"
+                  variant="outline"
+                >
+                  Switch to Essential
+                </Button>
+              </div>
               {status ? (
                 <details className="mt-3 text-sm text-[var(--text-muted)]">
                   <summary className="cursor-pointer font-semibold text-[var(--text-dim)]" role="button" tabIndex={0}>

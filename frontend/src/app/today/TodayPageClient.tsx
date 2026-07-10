@@ -5,6 +5,7 @@ import { TodayScreen } from "@/components/hatch/screens/TodayScreen";
 import { ReviewOverlay } from "@/components/hatch/ReviewOverlay";
 import { ApplicationReadyCard } from "@/components/hatch/ApplicationReadyCard";
 import { AgentActivityPanel } from "@/components/hatch/AgentActivityPanel";
+import { AiSetupReminder } from "@/components/hatch/AiSetupReminder";
 import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob, getApplicationPackage } from "@/lib/api";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 import type { ApplicationPackage, AgentPerformance } from "@/lib/api";
@@ -26,9 +27,22 @@ interface TodayPageClientProps {
   followUpCount?: number;
   agentPerf?: AgentPerformance | null;
   upcomingInterview?: UpcomingInterview | null;
+  aiSetupIncomplete?: boolean;
+  aiActionRequired?: string | null;
 }
 
-export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit, profileName, followUpCount, agentPerf, upcomingInterview }: TodayPageClientProps) {
+export function TodayPageClient({
+  jobs,
+  watchedCompanyJobs = [],
+  funnel,
+  transit,
+  profileName,
+  followUpCount,
+  agentPerf,
+  upcomingInterview,
+  aiSetupIncomplete = false,
+  aiActionRequired = null,
+}: TodayPageClientProps) {
   const router = useRouter();
   const [localJobs, setLocalJobs] = useState<HatchJob[]>([...watchedCompanyJobs, ...jobs]);
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
@@ -195,6 +209,7 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
       {/* Desktop 2-col: Today content left, Agent activity right */}
       <div className="flex gap-6 items-start">
         <div className="flex-1 min-w-0">
+          <AiSetupReminder incomplete={aiSetupIncomplete} actionRequired={aiActionRequired} />
           <TodayScreen
             jobs={jobsForScreen}
             watchedCompanyJobs={watchedForScreen}

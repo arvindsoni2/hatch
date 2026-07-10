@@ -13,14 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..services.ai_setup import (
     AISetupIntent,
+    ExperienceSetupIntent,
+    BACKEND_PROFILES,
+    build_hardware_recommendation,
     canonical_provider,
     config_dir,
+    load_backend_capabilities,
     load_catalog,
     load_intent,
     load_probe_snapshot,
     load_runtime,
     provider_secret_env,
     recommend_models,
+    save_experience_intent,
     save_intent,
 )
 from ..services.setup_reset import ResetMode, apply_reset, reset_preview
@@ -38,10 +43,47 @@ class ResetApplyRequest(BaseModel):
 @router.get("/status")
 async def setup_status() -> dict[str, Any]:
     runtime = load_runtime()
+    intent = load_intent()
+    backend = load_backend_capabilities()
+    probe = load_probe_snapshot()
+    experience = str(intent.get("experience") or _derive_experience(runtime, backend))
+    ai_mode = str(intent.get("ai_mode") or runtime.get("ai_mode") or "not_configured")
+    provider = canonical_provider(intent.get("provider") or runtime.get("provider"))
+    env_name = provider_secret_env(provider)
+    configured = False
+    healthy = False
+    if ai_mode == "local":
+        configured = bool(runtime.get("primary_model_id") or intent.get("selected_model_ids"))
+        healthy = configured
+    elif ai_mode == "cloud":
+        configured = bool(provider and env_name and os.getenv(env_name))
+        healthy = configured
+    action_required = None if healthy else "provider_or_local_model"
+    operation = _profile_operation(str(intent.get("backend_profile") or backend["profile"]), backend["profile"])
+    hardware = build_hardware_recommendation(probe, experience=experience)
     return {
-        "intent": load_intent(),
+        "schema_version": 1,
+        "onboarding_complete": True,
+        "experience": experience,
+        "ai": {
+            "mode": ai_mode,
+            "configured": configured,
+            "healthy": healthy,
+            "provider": provider or None,
+            "model": intent.get("provider_metadata", {}).get("model") or runtime.get("primary_model_id"),
+            "action_required": action_required,
+        },
+        "capabilities": {
+            "profile": backend["profile"],
+            "enabled": backend["enabled"],
+            "available_profiles": ["core", "browser", "local-embeddings", "full"],
+            "operation": operation,
+        },
+        "hardware": hardware,
+        "operation": operation,
+        "intent": intent,
         "runtime": runtime,
-        "restart_required": load_intent().get("restart_required", False),
+        "restart_required": intent.get("restart_required", False),
         "next_command": _next_command(runtime),
     }
 
@@ -100,6 +142,24 @@ async def set_ai_mode(payload: AISetupIntent) -> dict[str, Any]:
         return {"intent": save_intent(payload), "next_command": "hatch apply-ai-config"}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/experience")
+async def set_experience(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        intent = save_experience_intent(ExperienceSetupIntent(**payload))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    current_profile = load_backend_capabilities()["profile"]
+    operation = _profile_operation(str(intent.get("backend_profile") or "core"), current_profile)
+    return {
+        "intent": intent,
+        "host_action_required": operation is not None,
+        "operation": operation,
+        "next_command": operation["command"] if operation else "hatch apply-ai-config",
+    }
 
 
 @router.post("/local-model-selection")
@@ -306,7 +366,7 @@ async def test_provider_connection(payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/skip-ai")
 async def skip_ai() -> dict[str, Any]:
-    return await set_ai_mode(AISetupIntent(ai_mode="not_configured", restart_required=True))
+    return await set_ai_mode(AISetupIntent(ai_mode="not_configured", experience="essential", backend_profile="core", restart_required=True))
 
 
 @router.get("/doctor")
@@ -350,3 +410,27 @@ def _next_command(runtime: dict[str, Any]) -> str | None:
     if runtime.get("ai_mode") == "not_configured":
         return "hatch apply-ai-config"
     return None
+
+
+def _derive_experience(runtime: dict[str, Any], backend: dict[str, Any]) -> str:
+    if backend.get("profile") == "full":
+        return "full_ai"
+    if backend.get("profile") != "core":
+        return "custom"
+    return "essential"
+
+
+def _profile_operation(target_profile: str, current_profile: str) -> dict[str, Any] | None:
+    if target_profile not in BACKEND_PROFILES:
+        raise HTTPException(status_code=422, detail="unsupported backend profile")
+    if target_profile == current_profile:
+        return None
+    command = "hatch capabilities disable" if target_profile == "core" else f"hatch capabilities enable {target_profile}"
+    return {
+        "id": f"backend-profile-{target_profile}",
+        "state": "host_action_required",
+        "host_action_required": True,
+        "command": command,
+        "current_profile": current_profile,
+        "target_profile": target_profile,
+    }

@@ -15,6 +15,8 @@ CATALOG_PATH = Path(__file__).parents[1] / "config" / "model_catalog.json"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 MODEL_ROLES = {"triage", "combined_capable_primary"}
 AI_MODES = {"not_configured", "cloud", "local", "custom"}
+EXPERIENCES = {"essential", "full_ai", "custom"}
+BACKEND_PROFILES = {"core", "browser", "local-embeddings", "full"}
 PROVIDER_SECRET_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -30,11 +32,25 @@ PROVIDER_ALIASES = {
 class AISetupIntent(BaseModel):
     schema_version: int = 1
     ai_mode: str = "not_configured"
+    experience: str = "essential"
+    backend_profile: str = "core"
     selected_model_ids: list[str] = Field(default_factory=list)
     provider: str | None = None
     provider_metadata: dict[str, str] = Field(default_factory=dict)
     restart_required: bool = False
     hardware_probe_id: str | None = None
+
+
+class ExperienceSetupIntent(BaseModel):
+    schema_version: int = 1
+    experience: str = "essential"
+    ai_mode: str = "not_configured"
+    backend_profile: str = "core"
+    provider: str | None = None
+    provider_metadata: dict[str, str] = Field(default_factory=dict)
+    selected_model_ids: list[str] = Field(default_factory=list)
+    acknowledgement: bool = False
+    restart_required: bool = True
 
 
 def canonical_provider(provider: str | None) -> str:
@@ -150,6 +166,10 @@ def load_intent() -> dict[str, Any]:
 def save_intent(payload: AISetupIntent) -> dict[str, Any]:
     if payload.ai_mode not in AI_MODES:
         raise ValueError("unsupported AI mode")
+    if payload.experience not in EXPERIENCES:
+        raise ValueError("unsupported experience")
+    if payload.backend_profile not in BACKEND_PROFILES:
+        raise ValueError("unsupported backend profile")
     catalog_ids = {entry["id"] for entry in load_catalog()}
     unknown = set(payload.selected_model_ids) - catalog_ids
     if unknown:
@@ -157,6 +177,108 @@ def save_intent(payload: AISetupIntent) -> dict[str, Any]:
     data = payload.model_dump()
     atomic_write_json(config_dir() / "ai_setup_intent.json", data)
     return data
+
+
+def load_backend_capabilities() -> dict[str, Any]:
+    default = {
+        "schema_version": 1,
+        "profile": "core",
+        "enabled": [],
+        "updated_at": None,
+        "updated_by": "default",
+    }
+    value = _read_json(config_dir() / "backend_capabilities.json", default)
+    profile = str(value.get("profile") or "core")
+    if profile not in BACKEND_PROFILES:
+        return default
+    enabled_by_profile = {
+        "core": [],
+        "browser": ["browser"],
+        "local-embeddings": ["local-embeddings"],
+        "full": ["browser", "local-embeddings", "perception", "advanced-coach"],
+    }
+    return {
+        "schema_version": 1,
+        "profile": profile,
+        "enabled": enabled_by_profile[profile],
+        "updated_at": value.get("updated_at"),
+        "updated_by": value.get("updated_by", "unknown"),
+    }
+
+
+def save_experience_intent(payload: ExperienceSetupIntent) -> dict[str, Any]:
+    if payload.experience not in EXPERIENCES:
+        raise ValueError("unsupported experience")
+    if payload.ai_mode not in {"not_configured", "cloud", "local", "custom", "ai-later"}:
+        raise ValueError("unsupported AI mode")
+    if payload.backend_profile not in BACKEND_PROFILES:
+        raise ValueError("unsupported backend profile")
+    ai_mode = "not_configured" if payload.ai_mode == "ai-later" else payload.ai_mode
+    intent = AISetupIntent(
+        ai_mode=ai_mode,
+        experience=payload.experience,
+        backend_profile=payload.backend_profile,
+        provider=canonical_provider(payload.provider) if payload.provider else None,
+        provider_metadata=payload.provider_metadata,
+        selected_model_ids=payload.selected_model_ids,
+        restart_required=payload.restart_required,
+    )
+    return save_intent(intent)
+
+
+def build_hardware_recommendation(snapshot: dict[str, Any] | None, *, experience: str) -> dict[str, Any]:
+    if snapshot is None:
+        return {
+            "status": "unknown",
+            "last_checked_at": None,
+            "recommendation": {
+                "experience": experience,
+                "readiness": "unknown",
+                "reasons": [{
+                    "id": "probe.missing",
+                    "severity": "warning",
+                    "message": "Run hatch probe to check this computer.",
+                }],
+                "recommended_ai_modes": ["cloud", "ai-later"],
+                "local_ai_recommended": False,
+            },
+        }
+    memory = snapshot.get("memory", {})
+    storage = snapshot.get("storage", {})
+    total_ram = float(memory.get("total_gb", 0) or 0)
+    free_disk = float(storage.get("models_dir_free_gb", 0) or 0)
+    reasons: list[dict[str, str]] = []
+    local_ok = total_ram >= 24 and free_disk >= 20
+    readiness = "recommended" if local_ok else "supported_with_limitations"
+    if total_ram < 24:
+        reasons.append({
+            "id": "memory.below_recommended",
+            "severity": "warning",
+            "message": "Full AI can run, but local generation may be slow.",
+        })
+    if free_disk < 20:
+        reasons.append({
+            "id": "disk.below_recommended",
+            "severity": "warning",
+            "message": "Local models may need additional storage.",
+        })
+    if not reasons:
+        reasons.append({
+            "id": "hardware.ready",
+            "severity": "info",
+            "message": "This computer is suitable for the selected experience.",
+        })
+    return {
+        "status": readiness,
+        "last_checked_at": snapshot.get("captured_at") or snapshot.get("created_at"),
+        "recommendation": {
+            "experience": experience,
+            "readiness": readiness,
+            "reasons": reasons,
+            "recommended_ai_modes": ["local", "cloud", "ai-later"] if local_ok else ["cloud", "ai-later"],
+            "local_ai_recommended": local_ok,
+        },
+    }
 
 
 def load_runtime() -> dict[str, Any]:
