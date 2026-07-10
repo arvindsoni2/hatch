@@ -75,6 +75,38 @@ function formatMode(value?: string | null) {
   return value.replace(/_/g, " ").replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function setupSummary(status: SetupStatus | null) {
+  const mode = status?.runtime.ai_mode;
+  if (!status) {
+    return {
+      title: "Loading setup status...",
+      description: "Checking the local Hatch backend for the current AI setup.",
+    };
+  }
+  if (mode === "not_configured") {
+    return {
+      title: "Use Hatch now, set up AI later.",
+      description: "Manual tracking, profile editing, and settings are available. Tailoring and Coach unlock after AI setup.",
+    };
+  }
+  if (mode === "local") {
+    return {
+      title: "Local AI is configured.",
+      description: "Hatch will use models running on this machine, keeping prompts inside your local workspace.",
+    };
+  }
+  if (mode === "cloud") {
+    return {
+      title: "Cloud AI is configured.",
+      description: "Hatch will use your host-owned provider secrets for AI-assisted tailoring and coaching.",
+    };
+  }
+  return {
+    title: "Custom AI runtime is configured.",
+    description: "Hatch will use the configured runtime for AI-assisted workflows.",
+  };
+}
+
 function recommendedTier(recommendations: RecommendationResponse | null) {
   const recommendedIds = recommendations?.recommended.map((item) => item.model_id) ?? [];
   if (recommendedIds.some((id) => /medium|8b|4b|primary/i.test(id))) return "medium";
@@ -186,6 +218,7 @@ export default function AiSettingsPage() {
     if (recommendations?.compatible.some((item) => item.model_id === modelId)) return "Compatible";
     return "Advanced override";
   };
+  const currentSetup = setupSummary(status);
 
   return (
     <SettingsShell
@@ -200,13 +233,32 @@ export default function AiSettingsPage() {
             <div>
               <h2 className="font-semibold text-[var(--text)]">Current setup</h2>
               <p className="mt-1 text-sm text-[var(--text-muted)]">
-                {status ? `${formatMode(status.runtime.ai_mode)} · ${formatMode(status.runtime.quality_mode)}` : "Loading setup status..."}
+                {currentSetup.title}
               </p>
               <p className="mt-2 text-sm text-[var(--text-dim)]">
-                {status?.runtime.ai_mode === "not_configured"
-                  ? "Hatch is usable now. AI-assisted tailoring and coaching stay limited until setup is complete."
-                  : `Provider: ${status?.runtime.provider ?? "local/custom runtime"}`}
+                {currentSetup.description}
               </p>
+              {status ? (
+                <details className="mt-3 text-sm text-[var(--text-muted)]">
+                  <summary className="cursor-pointer font-semibold text-[var(--text-dim)]" role="button" tabIndex={0}>
+                    View technical setup details
+                  </summary>
+                  <dl className="mt-2 grid gap-2 rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <dt>Mode</dt>
+                      <dd className="font-semibold text-[var(--text)]">{formatMode(status.runtime.ai_mode)}</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <dt>Quality</dt>
+                      <dd className="font-semibold text-[var(--text)]">{formatMode(status.runtime.quality_mode)}</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <dt>Provider</dt>
+                      <dd className="font-semibold text-[var(--text)]">{status.runtime.provider ?? "local/custom runtime"}</dd>
+                    </div>
+                  </dl>
+                </details>
+              ) : null}
             </div>
           </div>
           <div className="rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text-dim)]">

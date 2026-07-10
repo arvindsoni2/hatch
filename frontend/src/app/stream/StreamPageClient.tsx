@@ -17,6 +17,8 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
   const [approvingIds, setApprovingIds] = useState<Set<string>>(() => new Set());
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+  const [bulkRunning, setBulkRunning] = useState(false);
   const pollRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
   const addApprovingId = useCallback((id: string) => {
@@ -93,20 +95,50 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
     pollRefs.current.clear();
   }, []);
 
-  async function handleApprove(jobId: string, jobPostingId?: string) {
-    addApprovingId(jobId);
+  const startApprovalForJob = useCallback(async (job: HatchJob, jobPostingId?: string): Promise<boolean> => {
+    addApprovingId(job.id);
     try {
-      const ref = await approveJob(jobPostingId ?? jobId);
+      const ref = await approveJob(jobPostingId ?? job.jobPostingId ?? job.id);
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
         Notification.requestPermission();
       }
-      const job = localJobs.find((j) => j.id === jobId);
       setLocalJobs((prev) =>
-        prev.map((j) => j.id === jobId ? { ...j, state: "tailoring" as const, failureReason: undefined } : j)
+        prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const, failureReason: undefined } : j)
       );
-      startPolling(ref.async_job_id, jobId, job?.title ?? "", job?.company ?? null);
+      startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
+      return true;
     } catch {
-      removeApprovingId(jobId);
+      removeApprovingId(job.id);
+      return false;
+    }
+  }, [addApprovingId, removeApprovingId, startPolling]);
+
+  async function handleApprove(jobId: string, jobPostingId?: string) {
+    const job = localJobs.find((item) => item.id === jobId);
+    if (!job) return;
+    await startApprovalForJob(job, jobPostingId);
+  }
+
+  async function handleBulkApprove(jobs: HatchJob[]) {
+    if (jobs.length === 0 || bulkRunning) return;
+    setBulkRunning(true);
+    setBulkNotice(`Starting 0 of ${jobs.length} CV packs...`);
+    let started = 0;
+    let failed = 0;
+    try {
+      for (const job of jobs) {
+        const ok = await startApprovalForJob(job);
+        if (ok) started += 1;
+        else failed += 1;
+        setBulkNotice(`Starting ${started + failed} of ${jobs.length} CV packs...`);
+      }
+      setBulkNotice(
+        failed === 0
+          ? `Bulk prep started for ${started} ${started === 1 ? "role" : "roles"}.`
+          : `Bulk prep started for ${started} ${started === 1 ? "role" : "roles"}; ${failed} failed to start.`
+      );
+    } finally {
+      setBulkRunning(false);
     }
   }
 
@@ -114,24 +146,14 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
     const job = reviewQueue[reviewIdx];
     if (!job) return;
     if (action === "approve") {
-      addApprovingId(job.id);
-      try {
-        const ref = await approveJob(job.jobPostingId ?? job.id);
-        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
-          Notification.requestPermission();
-        }
+      const ok = await startApprovalForJob(job);
+      if (ok) {
         if (reviewIdx < reviewQueue.length - 1) {
           setReviewIdx((i) => i + 1);
         } else {
           setReviewQueue([]);
         }
-        setLocalJobs((prev) =>
-          prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const } : j)
-        );
-        startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
         return;
-      } catch {
-        removeApprovingId(job.id);
       }
     } else {
       await rejectApplication(job.id).catch(() => {});
@@ -151,14 +173,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   }
 
   async function handleRetry(job: HatchJob) {
-    addApprovingId(job.id);
-    try {
-      const ref = await approveJob(job.jobPostingId ?? job.id);
-      setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const, failureReason: undefined } : j));
-      startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
-    } catch {
-      removeApprovingId(job.id);
-    }
+    await startApprovalForJob(job);
   }
 
   async function handleRevert(id: string) {
@@ -188,7 +203,10 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
           setReviewIdx(0);
         }}
         onApprove={handleApprove}
+        onBulkApprove={handleBulkApprove}
         approvingIds={[...approvingIds]}
+        bulkNotice={bulkNotice}
+        bulkRunning={bulkRunning}
       />
       {readyToApplyWithPkg.map(({ job, pkg }) => (
         <ApplicationReadyCard

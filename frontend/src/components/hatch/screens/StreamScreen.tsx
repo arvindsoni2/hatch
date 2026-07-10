@@ -36,10 +36,26 @@ interface StreamScreenProps {
   defaultFilter?: StreamFilter;
   onReview?: (ids: string[]) => void;
   onApprove?: (id: string, jobPostingId?: string) => void;
+  onBulkApprove?: (jobs: HatchJob[]) => void | Promise<void>;
   approvingIds?: string[];
+  bulkNotice?: string | null;
+  bulkRunning?: boolean;
 }
 
-export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove, approvingIds = [] }: StreamScreenProps) {
+function isBulkEligible(job: HatchJob) {
+  return job.state === 'ready' || job.state === 'tailoring_failed';
+}
+
+export function StreamScreen({
+  jobs,
+  defaultFilter = 'all',
+  onReview,
+  onApprove,
+  onBulkApprove,
+  approvingIds = [],
+  bulkNotice = null,
+  bulkRunning = false,
+}: StreamScreenProps) {
   const [filter, setFilter] = useState<StreamFilter>(() => {
     if (typeof window === 'undefined') return defaultFilter;
     const stage = new URLSearchParams(window.location.search).get('stage');
@@ -47,6 +63,8 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
       ? stage
       : defaultFilter;
   });
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedBulkIds, setSelectedBulkIds] = useState<Set<string>>(() => new Set());
   const isMobile = useIsMobile();
 
   const counts = {
@@ -64,6 +82,9 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
     if (filter === 'tailoring') return j.state === 'tailoring' || j.state === 'tailoring_failed';
     return j.state === filter;
   });
+  const selectedBulkJobs = filtered.filter((job) => selectedBulkIds.has(job.id) && isBulkEligible(job));
+  const bulkEligibleCount = filtered.filter(isBulkEligible).length;
+  const showBulkPrep = Boolean(onBulkApprove) && bulkEligibleCount > 1;
 
   const CHIPS: { key: StreamFilter; label: string }[] = [
     { key: 'all',      label: 'All'      },
@@ -83,6 +104,27 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
       url.searchParams.set('stage', next);
     }
     window.history.pushState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  function toggleBulkMode() {
+    setBulkMode((current) => !current);
+    setSelectedBulkIds(new Set());
+  }
+
+  function toggleBulkSelection(jobId: string) {
+    setSelectedBulkIds((current) => {
+      const next = new Set(current);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
+
+  function generateBulkPacks() {
+    if (selectedBulkJobs.length === 0) return;
+    void onBulkApprove?.(selectedBulkJobs);
+    setBulkMode(false);
+    setSelectedBulkIds(new Set());
   }
 
   const emptyState = (
@@ -110,32 +152,55 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
       </div>}
 
       {/* Filter chips */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14, overflowX: 'auto', paddingBottom: 2 }}>
-        {CHIPS.map(({ key, label }) => {
-          const active = key === filter;
-          return (
-            <button
-              key={key}
-              type="button"
-              className="hatch-interactive"
-              aria-pressed={active}
-              onClick={() => selectFilter(key)}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '7px 12px', borderRadius: 999, cursor: 'pointer',
-                fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap',
-                background: active ? 'var(--accent-soft)' : 'var(--surface)',
-                color: active ? 'var(--accent)' : 'var(--text-dim)',
-                border: `1px solid ${active ? 'transparent' : 'var(--border)'}`,
-              }}
-            >
-              {label}
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, opacity: 0.8 }}>
-                {counts[key]}
-              </span>
-            </button>
-          );
-        })}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>
+          {CHIPS.map(({ key, label }) => {
+            const active = key === filter;
+            return (
+              <button
+                key={key}
+                type="button"
+                className="hatch-interactive"
+                aria-pressed={active}
+                onClick={() => selectFilter(key)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 12px', borderRadius: 999, cursor: 'pointer',
+                  fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap',
+                  background: active ? 'var(--accent-soft)' : 'var(--surface)',
+                  color: active ? 'var(--accent)' : 'var(--text-dim)',
+                  border: `1px solid ${active ? 'transparent' : 'var(--border)'}`,
+                }}
+              >
+                {label}
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, opacity: 0.8 }}>
+                  {counts[key]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {(showBulkPrep || bulkNotice) && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+            {bulkNotice ? (
+              <span role="status" style={{ fontSize: 12, color: 'var(--text-muted)' }}>{bulkNotice}</span>
+            ) : null}
+            {showBulkPrep && (
+              bulkMode ? (
+                <>
+                  <Btn kind="success" size="sm" icon="check" disabled={selectedBulkJobs.length === 0 || bulkRunning} onClick={generateBulkPacks}>
+                    Generate {selectedBulkJobs.length} CV {selectedBulkJobs.length === 1 ? 'pack' : 'packs'}
+                  </Btn>
+                  <Btn kind="ghost" size="sm" onClick={toggleBulkMode} disabled={bulkRunning}>Cancel</Btn>
+                </>
+              ) : (
+                <Btn kind="soft" size="sm" icon="check" onClick={toggleBulkMode} disabled={bulkRunning}>
+                  Select CV packs
+                </Btn>
+              )
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Desktop table (md+) ── */}
@@ -146,7 +211,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'minmax(180px, 1.35fr) minmax(64px, 72px) minmax(160px, 210px) minmax(124px, 148px) minmax(104px, 110px)',
+                gridTemplateColumns: `${bulkMode ? '32px ' : ''}minmax(180px, 1.35fr) minmax(64px, 72px) minmax(160px, 210px) minmax(124px, 148px) minmax(104px, 110px)`,
                 gap: '0 12px',
                 padding: '0 14px 8px',
                 fontSize: 10.5,
@@ -155,6 +220,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                 color: 'var(--text-muted)',
               }}
             >
+              {bulkMode && <span aria-hidden="true" />}
               <span>ROLE</span>
               <span>MATCH</span>
               <span>PIPELINE STAGE</span>
@@ -175,7 +241,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                     key={job.id}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: 'minmax(180px, 1.35fr) minmax(64px, 72px) minmax(160px, 210px) minmax(124px, 148px) minmax(104px, 110px)',
+                      gridTemplateColumns: `${bulkMode ? '32px ' : ''}minmax(180px, 1.35fr) minmax(64px, 72px) minmax(160px, 210px) minmax(124px, 148px) minmax(104px, 110px)`,
                       gap: '0 12px',
                       alignItems: 'center',
                       padding: '12px 14px',
@@ -184,6 +250,18 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                       border: `1px solid ${ready ? 'var(--accent-soft)' : 'var(--border)'}`,
                     }}
                   >
+                    {bulkMode && (
+                      <label style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <input
+                          aria-label={`Select ${job.title}`}
+                          type="checkbox"
+                          checked={selectedBulkIds.has(job.id)}
+                          disabled={!isBulkEligible(job) || approving}
+                          onChange={() => toggleBulkSelection(job.id)}
+                          style={{ accentColor: 'var(--accent)' }}
+                        />
+                      </label>
+                    )}
                     {/* ROLE */}
                     <div style={{ minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -271,6 +349,16 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
             <Card key={job.id} accent={ready} style={{ padding: 14 }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
+                  {bulkMode && (
+                    <input
+                      aria-label={`Select ${job.title}`}
+                      type="checkbox"
+                      checked={selectedBulkIds.has(job.id)}
+                      disabled={!isBulkEligible(job) || approvingIds.includes(job.id)}
+                      onChange={() => toggleBulkSelection(job.id)}
+                      style={{ marginTop: 3, accentColor: 'var(--accent)' }}
+                    />
+                  )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>{job.title}</span>

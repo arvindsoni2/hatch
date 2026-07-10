@@ -240,6 +240,32 @@ describe('StreamScreen', () => {
     render(<StreamScreen jobs={[TAILORING_JOB]} />);
     expect(screen.getAllByText(TAILORING_JOB.title)).toHaveLength(1);
   });
+
+  it('lets users select multiple ready roles for CV pack generation', async () => {
+    const { StreamScreen } = await import('@/components/hatch/screens/StreamScreen');
+    const onBulkApprove = vi.fn();
+    render(
+      <StreamScreen
+        jobs={[
+          READY_JOB,
+          { ...READY_JOB, id: 'sa-2', title: 'Principal Architect' },
+          TAILORING_JOB,
+        ]}
+        defaultFilter="all"
+        onBulkApprove={onBulkApprove}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select CV packs' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Solutions Architect' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Principal Architect' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate 2 CV packs' }));
+
+    expect(onBulkApprove).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'sa' }),
+      expect.objectContaining({ id: 'sa-2' }),
+    ]);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

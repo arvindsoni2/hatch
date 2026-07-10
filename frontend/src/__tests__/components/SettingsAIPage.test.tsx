@@ -97,11 +97,20 @@ describe("AI provider settings page", () => {
     expect(screen.getByLabelText("Settings section")).toHaveValue("/settings/ai");
 
     expect(screen.getByRole("heading", { name: "Current setup" })).toBeVisible();
-    expect(screen.getByText(/Basic \/ use Hatch now, set up AI later/i)).toBeVisible();
+    expect(screen.getByText("Use Hatch now, set up AI later.")).toBeVisible();
     expect(screen.getByText("Use Hatch now, set up AI later")).toBeVisible();
     expect(screen.getByText("Run AI locally")).toBeVisible();
     expect(screen.getByText("Use cloud AI provider")).toBeVisible();
     expect(screen.getAllByText(/Not tested yet/i).length).toBeGreaterThan(0);
+  });
+
+  it("summarizes the current AI setup by user outcome before technical provider details", async () => {
+    render(<AiSettingsPage />);
+
+    expect(await screen.findByText("Use Hatch now, set up AI later.")).toBeVisible();
+    expect(screen.getByText("Manual tracking, profile editing, and settings are available. Tailoring and Coach unlock after AI setup.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "View technical setup details" })).toBeVisible();
+    expect(screen.queryByText(/^Provider:/i)).not.toBeInTheDocument();
   });
 
   it("shows plain hardware details and selected model count", async () => {
