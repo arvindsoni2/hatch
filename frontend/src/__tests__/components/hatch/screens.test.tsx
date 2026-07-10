@@ -353,7 +353,17 @@ describe('TrackerScreen', () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
     render(<TrackerScreen applications={TRACKER_APPS} />);
 
-    expect(screen.getByText('Scroll sideways to see later stages.')).toBeTruthy();
+    expect(screen.getByText('Use Jump to stage or scroll sideways to see later stages.')).toBeTruthy();
+  });
+
+  it('lets users jump directly to a later Applications stage', async () => {
+    const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
+    render(<TrackerScreen applications={TRACKER_APPS} />);
+
+    fireEvent.change(screen.getByLabelText('Jump to application stage'), { target: { value: 'interview' } });
+
+    expect(screen.getByText('Interview stage selected.')).toBeTruthy();
+    expect(screen.getByTestId('col-interview')).toHaveAttribute('data-stage', 'interview');
   });
 });
 

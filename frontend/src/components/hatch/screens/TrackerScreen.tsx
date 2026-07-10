@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -370,6 +370,7 @@ function KanbanColumn({ stage, applications, onMove }: KanbanColumnProps) {
     <section
       ref={setNodeRef}
       data-testid={`col-${stage.key}`}
+      data-stage={stage.key}
       aria-label={`${stage.label}, ${applications.length} applications`}
       style={{
         background: isOver ? "var(--surface-2)" : "var(--bg-elevated)",
@@ -417,6 +418,7 @@ function CardPreview({ application }: { application: ApplicationListItem }) {
 
 export function TrackerScreen({ applications, onStatusChange }: TrackerScreenProps) {
   const router = useRouter();
+  const boardRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState(applications);
   const [activeApplication, setActiveApplication] = useState<ApplicationListItem | null>(null);
   const [notice, setNotice] = useState("Move cards forward by dragging, or use each card's Move to menu.");
@@ -451,6 +453,13 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
   }, [items]);
 
   const hasApplications = items.length > 0;
+
+  function jumpToStage(stage: BoardStage) {
+    const target = boardRef.current?.querySelector<HTMLElement>(`[data-stage="${stage}"]`);
+    target?.scrollIntoView?.({ behavior: "smooth", block: "nearest", inline: "start" });
+    const label = STAGES.find((item) => item.key === stage)?.label ?? "Application";
+    setNotice(`${label} stage selected.`);
+  }
 
   function requestMove(application: ApplicationListItem, status: ApplicationStatus) {
     if (!moveOptions(application.status).includes(status)) {
@@ -679,18 +688,74 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
             </TrackerActionTile>
           </div>
           <div
-            aria-hidden="true"
             style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
               margin: "-2px 0 8px",
-              fontSize: 11.5,
-              color: "var(--text-muted)",
-              textAlign: "right",
+              flexWrap: "wrap",
             }}
           >
-            Scroll sideways to see later stages.
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                color: "var(--text-muted)",
+                fontSize: 11.5,
+              }}
+            >
+              <span>Jump to stage</span>
+              <select
+                aria-label="Jump to application stage"
+                defaultValue=""
+                onChange={(event) => {
+                  const stage = event.target.value as BoardStage;
+                  if (stage) jumpToStage(stage);
+                  event.target.value = "";
+                }}
+                style={{
+                  minHeight: 34,
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                  fontWeight: 650,
+                  padding: "0 8px",
+                }}
+              >
+                <option value="">Select stage...</option>
+                {STAGES.map((stage) => (
+                  <option key={stage.key} value={stage.key}>{stage.label}</option>
+                ))}
+              </select>
+            </label>
+            <div
+              style={{
+                fontSize: 11.5,
+                color: "var(--text-muted)",
+                textAlign: "right",
+              }}
+            >
+              Use Jump to stage or scroll sideways to see later stages.
+            </div>
           </div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setActiveApplication(null)}>
-            <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 18, alignItems: "flex-start", scrollSnapType: "x proximity" }}>
+            <div
+              ref={boardRef}
+              tabIndex={0}
+              aria-label="Applications board"
+              style={{
+                display: "flex",
+                gap: 12,
+                overflowX: "auto",
+                paddingBottom: 18,
+                alignItems: "flex-start",
+                scrollSnapType: "x proximity",
+              }}
+            >
               {STAGES.map((stage) => (
                 <KanbanColumn key={stage.key} stage={stage} applications={grouped[stage.key]} onMove={requestMove} />
               ))}
