@@ -16,10 +16,20 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   const [packages, setPackages] = useState<Record<string, ApplicationPackage>>({});
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
-  const [approving, setApproving] = useState(false);
-  const [approvingMessage, setApprovingMessage] = useState<string>("");
-  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approvingIds, setApprovingIds] = useState<Set<string>>(() => new Set());
   const pollRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+
+  const addApprovingId = useCallback((id: string) => {
+    setApprovingIds((prev) => new Set(prev).add(id));
+  }, []);
+
+  const removeApprovingId = useCallback((id: string) => {
+    setApprovingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
 
   // Hydrate packages for any ready_to_apply jobs that arrived via server props
   useEffect(() => {
@@ -46,9 +56,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
         if (asyncJob.status === "done" && asyncJob.result) {
           clearInterval(interval);
           pollRefs.current.delete(jobId);
-          setApproving(false);
-          setApprovingMessage("");
-          setApprovingId(null);
+          removeApprovingId(jobId);
           const pkg = asyncJob.result;
           setPackages((prev) => ({ ...prev, [jobId]: pkg }));
           setLocalJobs((prev) =>
@@ -66,9 +74,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
         } else if (asyncJob.status === "failed") {
           clearInterval(interval);
           pollRefs.current.delete(jobId);
-          setApproving(false);
-          setApprovingMessage("");
-          setApprovingId(null);
+          removeApprovingId(jobId);
           setLocalJobs((prev) => prev.map((j) => j.id === jobId ? {
             ...j,
             state: "tailoring_failed" as const,
@@ -80,7 +86,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
       }
     }, 5000);
     pollRefs.current.set(jobId, interval);
-  }, []);
+  }, [removeApprovingId]);
 
   useEffect(() => () => {
     pollRefs.current.forEach((interval) => clearInterval(interval));
@@ -88,7 +94,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   }, []);
 
   async function handleApprove(jobId: string, jobPostingId?: string) {
-    setApprovingId(jobId);
+    addApprovingId(jobId);
     try {
       const ref = await approveJob(jobPostingId ?? jobId);
       if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
@@ -100,7 +106,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
       );
       startPolling(ref.async_job_id, jobId, job?.title ?? "", job?.company ?? null);
     } catch {
-      setApprovingId(null);
+      removeApprovingId(jobId);
     }
   }
 
@@ -108,8 +114,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
     const job = reviewQueue[reviewIdx];
     if (!job) return;
     if (action === "approve") {
-      setApproving(true);
-      setApprovingMessage("Preparing your CV and cover letter… this may take a few minutes.");
+      addApprovingId(job.id);
       try {
         const ref = await approveJob(job.jobPostingId ?? job.id);
         if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
@@ -126,8 +131,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
         startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
         return;
       } catch {
-        setApproving(false);
-        setApprovingMessage("");
+        removeApprovingId(job.id);
       }
     } else {
       await rejectApplication(job.id).catch(() => {});
@@ -147,9 +151,14 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   }
 
   async function handleRetry(job: HatchJob) {
-    const ref = await approveJob(job.jobPostingId ?? job.id);
-    setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const, failureReason: undefined } : j));
-    startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
+    addApprovingId(job.id);
+    try {
+      const ref = await approveJob(job.jobPostingId ?? job.id);
+      setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const, failureReason: undefined } : j));
+      startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
+    } catch {
+      removeApprovingId(job.id);
+    }
   }
 
   async function handleRevert(id: string) {
@@ -163,6 +172,11 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
   const readyToApplyWithPkg = localJobs
     .filter((j) => j.state === "ready_to_apply" && packages[j.id])
     .map((j) => ({ job: j, pkg: packages[j.id] }));
+  const currentReviewJob = reviewQueue[reviewIdx];
+  const currentReviewApproving = currentReviewJob ? approvingIds.has(currentReviewJob.id) : false;
+  const approvingMessage = currentReviewApproving
+    ? "Preparing your CV and cover letter… this may take a few minutes."
+    : "";
 
   return (
     <>
@@ -174,7 +188,7 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
           setReviewIdx(0);
         }}
         onApprove={handleApprove}
-        approvingId={approvingId}
+        approvingIds={[...approvingIds]}
       />
       {readyToApplyWithPkg.map(({ job, pkg }) => (
         <ApplicationReadyCard
@@ -191,8 +205,8 @@ export function StreamPageClient({ jobs: initialJobs }: StreamPageClientProps) {
           queue={reviewQueue}
           idx={reviewIdx}
           onAction={handleAction}
-          onClose={() => { if (!approving) setReviewQueue([]); }}
-          isLoading={approving}
+          onClose={() => { if (!currentReviewApproving) setReviewQueue([]); }}
+          isLoading={currentReviewApproving}
           loadingMessage={approvingMessage}
         />
       )}

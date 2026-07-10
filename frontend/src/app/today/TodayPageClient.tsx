@@ -34,21 +34,32 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
   const [reviewQueue, setReviewQueue] = useState<HatchJob[]>([]);
   const [reviewIdx, setReviewIdx] = useState(0);
   const [packages, setPackages] = useState<Record<string, ApplicationPackage>>({});
-  const [approving, setApproving] = useState(false);
-  const [approvingMessage, setApprovingMessage] = useState<string>("");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [approvingIds, setApprovingIds] = useState<Set<string>>(() => new Set());
+  const pollRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+
+  const addApprovingId = useCallback((id: string) => {
+    setApprovingIds((prev) => new Set(prev).add(id));
+  }, []);
+
+  const removeApprovingId = useCallback((id: string) => {
+    setApprovingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
 
   const startPolling = useCallback((asyncJobId: string, jobId: string, jobTitle: string, company: string | null) => {
-    if (pollRef.current) clearInterval(pollRef.current);
+    const existing = pollRefs.current.get(jobId);
+    if (existing) clearInterval(existing);
 
-    pollRef.current = setInterval(async () => {
+    const interval = setInterval(async () => {
       try {
         const asyncJob = await getAsyncJob<ApplicationPackage>(asyncJobId);
         if (asyncJob.status === "done" && asyncJob.result) {
-          clearInterval(pollRef.current!);
-          pollRef.current = null;
-          setApproving(false);
-          setApprovingMessage("");
+          clearInterval(interval);
+          pollRefs.current.delete(jobId);
+          removeApprovingId(jobId);
           const pkg = asyncJob.result;
           setPackages((prev) => ({ ...prev, [jobId]: pkg }));
           setLocalJobs((prev) =>
@@ -65,10 +76,9 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
             });
           }
         } else if (asyncJob.status === "failed") {
-          clearInterval(pollRef.current!);
-          pollRef.current = null;
-          setApproving(false);
-          setApprovingMessage("");
+          clearInterval(interval);
+          pollRefs.current.delete(jobId);
+          removeApprovingId(jobId);
           // Revert to ready so the user can retry
           setLocalJobs((prev) => prev.map((j) => j.id === jobId ? { ...j, state: "ready" as const } : j));
         }
@@ -76,6 +86,12 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
         // network hiccup — keep polling
       }
     }, 5000);
+    pollRefs.current.set(jobId, interval);
+  }, [removeApprovingId]);
+
+  useEffect(() => () => {
+    pollRefs.current.forEach((interval) => clearInterval(interval));
+    pollRefs.current.clear();
   }, []);
 
   // Hydrate packages for any ready_to_apply jobs that arrived via server props
@@ -97,8 +113,7 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
     const job = reviewQueue[reviewIdx];
     if (!job) return;
     if (action === "approve") {
-      setApproving(true);
-      setApprovingMessage("Preparing your CV and cover letter… this may take a few minutes.");
+      addApprovingId(job.id);
       try {
         const ref = await approveJob(job.jobPostingId ?? job.id);
         // Request notification permission if not already granted
@@ -118,8 +133,7 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
         startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
         return; // don't call advance queue again below
       } catch {
-        setApproving(false);
-        setApprovingMessage("");
+        removeApprovingId(job.id);
       }
     } else {
       await rejectApplication(job.id).catch(() => {});
@@ -139,9 +153,14 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
   }
 
   async function handleRetry(job: HatchJob) {
-    const ref = await approveJob(job.jobPostingId ?? job.id);
-    setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const } : j));
-    startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
+    addApprovingId(job.id);
+    try {
+      const ref = await approveJob(job.jobPostingId ?? job.id);
+      setLocalJobs((prev) => prev.map((j) => j.id === job.id ? { ...j, state: "tailoring" as const } : j));
+      startPolling(ref.async_job_id, job.id, job.title, job.company ?? null);
+    } catch {
+      removeApprovingId(job.id);
+    }
   }
 
   async function handleRevert(id: string) {
@@ -165,6 +184,11 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
   const avgMatch = localJobs.length > 0
     ? Math.round(localJobs.reduce((sum, j) => sum + j.score, 0) / localJobs.length * 100)
     : undefined;
+  const currentReviewJob = reviewQueue[reviewIdx];
+  const currentReviewApproving = currentReviewJob ? approvingIds.has(currentReviewJob.id) : false;
+  const approvingMessage = currentReviewApproving
+    ? "Preparing your CV and cover letter… this may take a few minutes."
+    : "";
 
   return (
     <>
@@ -224,8 +248,8 @@ export function TodayPageClient({ jobs, watchedCompanyJobs = [], funnel, transit
           queue={reviewQueue}
           idx={reviewIdx}
           onAction={handleAction}
-          onClose={() => { if (!approving) setReviewQueue([]); }}
-          isLoading={approving}
+          onClose={() => { if (!currentReviewApproving) setReviewQueue([]); }}
+          isLoading={currentReviewApproving}
           loadingMessage={approvingMessage}
         />
       )}

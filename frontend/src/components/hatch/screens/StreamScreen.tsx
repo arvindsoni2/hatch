@@ -36,10 +36,10 @@ interface StreamScreenProps {
   defaultFilter?: StreamFilter;
   onReview?: (ids: string[]) => void;
   onApprove?: (id: string, jobPostingId?: string) => void;
-  approvingId?: string | null;
+  approvingIds?: string[];
 }
 
-export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove, approvingId }: StreamScreenProps) {
+export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove, approvingIds = [] }: StreamScreenProps) {
   const [filter, setFilter] = useState<StreamFilter>(() => {
     if (typeof window === 'undefined') return defaultFilter;
     const stage = new URLSearchParams(window.location.search).get('stage');
@@ -168,6 +168,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                 const ready = job.state === 'ready';
                 const reviewable = job.state === 'ready' || job.state === 'parked';
                 const retryable = job.state === 'tailoring_failed';
+                const approving = approvingIds.includes(job.id);
                 const m = STATUS_META[job.state] ?? STATUS_META.tailoring;
                 return (
                   <div
@@ -236,10 +237,10 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                           kind="success"
                           size="sm"
                           icon="check"
-                          disabled={approvingId === job.id}
+                          disabled={approving}
                           onClick={(e) => { e.stopPropagation(); onApprove?.(job.id, job.jobPostingId); }}
                         >
-                          {approvingId === job.id ? 'Preparing…' : retryable ? 'Retry CV pack' : 'Generate CV pack'}
+                          {approving ? 'Preparing…' : retryable ? 'Retry CV pack' : 'Generate CV pack'}
                         </Btn>
                       ) : reviewable ? (
                         <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>
@@ -305,7 +306,7 @@ export function StreamScreen({ jobs, defaultFilter = 'all', onReview, onApprove,
                   {m.dot && <Dot color={m.color} size={6} pulse={m.pulse} />}{m.label}
                 </span>
                 {ready || retryable
-                  ? <Btn kind="success" size="sm" icon="check" disabled={approvingId === job.id} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingId === job.id ? 'Preparing…' : retryable ? 'Retry CV pack' : 'Generate CV pack'}</Btn>
+                  ? <Btn kind="success" size="sm" icon="check" disabled={approvingIds.includes(job.id)} onClick={() => onApprove?.(job.id, job.jobPostingId)}>{approvingIds.includes(job.id) ? 'Preparing…' : retryable ? 'Retry CV pack' : 'Generate CV pack'}</Btn>
                   : reviewable
                     ? <Btn kind="soft" size="sm" iconR="chevronR" onClick={() => onReview?.([job.id])}>Review</Btn>
                     : <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 600 }}>
