@@ -1,48 +1,108 @@
 # Hatch
 
-Hatch is a self-hosted job search and application assistant. It finds roles, scores them against your profile, prepares tailored CV and cover-letter packages, tracks applications, and creates interview-preparation sessions.
+**A self-hosted, human-in-the-loop workspace for job search, applications, and interview preparation.**
 
-Hatch never submits an application for you. You review the documents, submit on the employer's site, and then confirm the application in Hatch.
+Hatch helps you find roles, score them against your profile, prepare grounded curriculum vitae (CV) and cover-letter packs, track applications, and prepare for interviews. It runs on your machine, keeps your data local by default, and never submits an application without you.
 
-## Product Flow
+<p align="center">
+  <img src="docs/images/today-ready.png" alt="Hatch Today screen showing roles ready for review" width="100%">
+</p>
 
-1. **Scout** collects jobs from enabled boards.
-2. **Scorer** ranks jobs against your profile and preferences.
-3. **Tailor** prepares an ATS-oriented CV and cover letter without inventing experience.
-4. You review the package, submit externally, and mark the application as applied.
-5. **Coach** creates an interview-preparation session for applied roles.
+## Why Hatch
 
-The main screens are:
+Job hunting turns into repeated admin: search boards, compare roles, adapt your CV, track each application, and prepare for interviews. Hatch automates the repeatable work while keeping every external action under your control.
 
-- **Today:** the recommended next action, ready work, and supporting agent progress.
-- **Pipeline:** scored roles moving through the agent pipeline.
-- **Applications:** the application Kanban board.
-- **Interview Prep:** manual and application-linked Coach sessions.
+- **Scout** discovers roles from enabled sources
+- **Scorer** ranks roles against your profile and preferences
+- **Tailor** prepares evidence-grounded CV and cover-letter packs
+- **You review and apply** on the employer site
+- **Coach** creates structured interview preparation
 
-## Applications
+```mermaid
+flowchart LR
+    A[Scout finds roles] --> B[Scorer ranks matches]
+    B --> C{Worth pursuing?}
+    C -->|Yes| D[Tailor prepares CV pack]
+    C -->|Not yet| E[Park for later]
+    D --> F[Human review]
+    F --> G[Apply externally]
+    G --> H[Track application]
+    H --> I[Coach prepares interview]
+```
 
-Applications follows the real application journey from left to right:
+## Product walkthrough
 
-`Discovered -> Preparing -> Ready to apply -> Applied -> Interview -> Offered -> Accepted`
+This walkthrough follows the main Hatch workflow from first setup to interview preparation.
 
-- Drag a card only to its next valid stage.
-- Use the card's **Move to...** menu as a keyboard-accessible alternative.
-- Backward dragging is blocked.
-- Rejected, withdrawn, and declined roles use explicit close actions.
-- Preparing is system-managed while Hatch creates or reviews documents.
-- Moving a role to Applied records the date, creates a follow-up, and queues Coach prep.
-- Use **Add application** to track a role submitted outside Hatch, such as a company-site application. Paste the role, company, URL, applied date, notes, and job description, then optionally queue Coach prep in the same flow.
+### Start with your profile
 
-## Interview Prep
+Onboarding captures your target market, role titles, compensation preferences, eligibility, skills, CV, artificial intelligence (AI) provider choice, and job-board preferences.
 
-Coach prep can be created from an applied Applications card or directly from **Interview Prep → New session** for external interviews.
+<p align="center">
+  <img src="docs/images/onboarding.png" alt="Hatch onboarding market and profile setup screen" width="82%">
+</p>
 
-- Ready sessions show likely questions, model answers, calendar export, and practice launch.
-- New manual applications can queue Coach immediately after they are added to Tracker.
-- Long-running generation is surfaced as needing attention instead of looking active forever.
-- Failed or stale sessions can be retried from Prep, reusing the saved role, company, configuration, and job description where available.
+### See what needs attention
 
-## Quick Start
+**Today** prioritizes the next useful action. It highlights roles ready for review, recent agent activity, follow-ups, and preparation work.
+
+<p align="center">
+  <img src="docs/images/today-ready.png" alt="Hatch Today screen with roles ready for review" width="100%">
+</p>
+
+### Review roles before generation
+
+**Pipeline** shows roles while Hatch discovers, scores, and prepares them. You review the match evidence before generating a CV pack.
+
+<p align="center">
+  <img src="docs/images/pipeline.png" alt="Hatch Pipeline screen with scored roles" width="100%">
+</p>
+
+### Track the application journey
+
+**Applications** tracks roles through the real application lifecycle:
+
+`Saved -> Discovered -> Preparing -> Ready to apply -> Applied -> Interview -> Offered -> Accepted`
+
+Cards can be moved by drag-and-drop or with the keyboard-accessible **Move to...** menu. Hatch blocks invalid backward transitions and uses explicit close actions for rejected, withdrawn, and declined outcomes.
+
+<p align="center">
+  <img src="docs/images/applications.png" alt="Hatch Applications Kanban board" width="100%">
+</p>
+
+### Prepare an evidence-led CV pack
+
+**CV Studio** compares the job description with your confirmed master CV, surfaces evidence, and generates a reviewable CV and cover letter. Hatch is designed not to invent experience.
+
+<p align="center">
+  <img src="docs/images/cv-studio.png" alt="Hatch CV Studio tailoring screen" width="100%">
+</p>
+
+### Prepare for interviews
+
+**Interview Prep** supports application-linked and manual sessions, reusable answers in the Question Bank, role-specific questions, model answers, calendar export, and practice workflows.
+
+<p align="center">
+  <img src="docs/images/interview-prep.png" alt="Hatch Interview Prep screen" width="100%">
+</p>
+
+## Key capabilities
+
+Hatch combines job discovery, document tailoring, and application tracking in one local workspace:
+
+| Area | What Hatch includes |
+|---|---|
+| Discovery | Scheduled job discovery, deduplication, company watchlists, and public job URL import |
+| Matching | Profile-based scoring, shortlist thresholds, evidence, and rationale |
+| CV Studio | Master-CV management, ATS-safe DOCX templates, tailoring review, quality gates, and document history |
+| Applications | Kanban lifecycle, manual entries, follow-ups, outcomes, and interview hand-off |
+| Interview Prep | Company research, likely questions, Question Bank, model answers, voice practice, and optional advanced coaching |
+| AI choice | Start without AI, use bundled local `llama.cpp` services, or configure a supported cloud provider |
+| Privacy | Self-hosted data, local app lock, protected product APIs, and host-managed provider secrets |
+
+## Install Hatch
+
+Hatch uses Docker Compose for the application stack. The installer starts the lightweight profile and lets you configure AI later.
 
 ### Linux and macOS
 
@@ -50,36 +110,15 @@ Coach prep can be created from an applied Applications card or directly from **I
 curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh | bash
 ```
 
-The default install directory is `~/.local/share/hatch`. Override it with `HATCH_DIR`.
-
 ### Windows PowerShell
 
 ```powershell
 iwr https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.ps1 | iex
 ```
 
-The default install directory is `%LOCALAPPDATA%\Hatch`. Pass `-InstallDir` when running the script locally to change it.
+Open <http://localhost:3000>, create the local app-lock password, and complete onboarding.
 
-Both installers:
-
-- verify Docker Compose and Git;
-- clone or update `arvindsoni2/hatch`;
-- create the per-user state directory at `${HATCH_HOME:-~/.hatch}`;
-- start without downloading a local model;
-- create `data/profile.yaml` and `.env` when missing;
-- build and start the beginner-safe Docker Compose stack.
-
-The default mode is “configure AI later.” To choose a mode explicitly:
-
-```bash
-./install.sh --mode ai-later
-./install.sh --mode cloud
-./install.sh --mode local
-./install.sh --mode advanced
-./install.sh --mode advanced --backend-profile full
-```
-
-After installation, use the host-side command wrapper:
+Common host commands:
 
 ```bash
 hatch status
@@ -89,51 +128,28 @@ hatch models list
 hatch models install
 hatch apply-ai-config
 hatch capabilities status
-hatch capabilities enable browser
-hatch capabilities enable local-embeddings
-hatch capabilities enable full
-hatch capabilities disable
 ```
 
-Open:
+For manual Docker setup, capability profiles, troubleshooting, reset commands, and development checks, read the [Hatch operations guide](docs/OPERATIONS.md).
 
-- Dashboard: <http://localhost:3000>
-- API documentation after unlocking Hatch: <http://localhost:8000/docs>
+## AI options
 
-On first run, Hatch asks you to create a local app-lock password. This protects
-the workspace; it is not a SaaS account and has no email recovery.
+Hatch can start with AI configuration deferred. Profile editing, manual application tracking, settings, and job entry remain available until you configure a provider.
 
-### Manual Docker Install
+### Local AI
 
-```bash
-git clone https://github.com/arvindsoni2/hatch.git
-cd hatch
-cp .env.example .env
-cp data/profile.yaml.example data/profile.yaml
-bash scripts/fetch_models.sh
-docker compose up -d --build
-```
+The local developer stack supports two `llama.cpp` services:
 
-Complete onboarding at <http://localhost:3000> or edit `data/profile.yaml` before running the agents.
-
-## Local AI
-
-Local AI is opt-in for beginner installs. Run `hatch probe`, review
-`hatch models list`, and then run `hatch models install`. Every download
-requires confirmation and SHA-256 verification. Managed model files live under
-`${HATCH_HOME}/models`.
-
-The existing developer stack continues to run two local llama.cpp services:
-
-| Service | Model | Port | Purpose |
+| Service | Default model | Port | Main purpose |
 |---|---|---:|---|
-| `llm-primary` | `Qwen3.5-4B Q4_K_M` | 8080 | CV, cover letter, detailed scoring, Coach |
-| `llm-triage` | `Qwen3.5-0.8B Q8_0` | 8081 | Fast initial filtering |
+| `llm-primary` | Qwen3.5-4B Q4_K_M | 8080 | Detailed scoring, CV packs, and Coach |
+| `llm-triage` | Qwen3.5-0.8B Q8_0 | 8081 | Fast relevance filtering |
 
-The model ports bind to localhost only. Model files live in `data/models/` and are not committed.
+Managed downloads require confirmation and SHA-256 verification. Model services bind to localhost.
 
-Cloud providers are optional. Easy installs store keys in
-`${HATCH_HOME}/config/secrets.env`, and only the host CLI may change that file:
+### Cloud AI
+
+Cloud providers are optional. Easy-install secrets stay outside the browser and repository:
 
 ```bash
 hatch secrets set openai
@@ -141,272 +157,84 @@ hatch secrets status
 hatch secrets unset openai
 ```
 
-The browser never accepts or returns provider keys. Existing developer installs
-may continue to use `.env` or `data/api_keys.env`.
+## Privacy and safety
 
-### AI not configured
+Hatch is designed around a strict trust boundary:
 
-Hatch starts without an AI provider. Profile editing, the application tracker,
-manual job entry, and settings remain available. Tailoring, cover-letter
-generation, and Coach actions show an actionable setup message until you
-configure cloud or local AI.
+- Hatch never submits applications automatically
+- Generated documents require human review
+- App lock protects the workspace and product APIs
+- Sessions use an HttpOnly cookie and expire server-side
+- Personal files, databases, generated documents, recordings, and models under `data/` are gitignored
+- Cloud AI is used only after you configure a provider
+- DOCX remains the source of truth for generated CVs
 
-### Easy-install maintenance
-
-`hatch update --dry-run` reports a managed update without changing files.
-Updates refuse dirty or unmanaged checkouts and back up configuration and data
-before migrations. `hatch uninstall` removes easy-install services and the
-command shim but preserves `${HATCH_HOME}`. Data removal requires an explicit
-`--purge-*` flag and confirmation.
-
-## Configuration
-
-User configuration lives in `data/profile.yaml`:
-
-- identity and master CV path;
-- target roles and locations;
-- compensation and legal preferences;
-- skills, domains, certifications, and proof points;
-- scoring weights and shortlist threshold;
-- LLM provider and models;
-- scrape interval, tailoring batch size, and follow-up timing.
-
-Supported locale packs currently include the UK, India, Ireland, and UAE. Locale definitions live in `locales/`.
-
-Secrets belong in `.env` or `data/api_keys.env`. Personal data, databases, generated documents, recordings, and models under `data/` are gitignored.
-
-### Safety and privacy
-
-App lock is enabled by default. With `HATCH_APP_PASSWORD` unset, the first-run
-screen stores a bcrypt password hash in SQLite. Setting `HATCH_APP_PASSWORD`
-makes the environment the authoritative password source. Administrators may set
-`HATCH_APP_LOCK_ENABLED=false` for an explicit test/demo installation; there is
-no in-app disable switch.
-
-Sessions use an HttpOnly browser-session cookie and expire server-side after 12
-hours by default. API docs and product APIs are protected. To recover from a
-forgotten database-backed password:
+To reset a forgotten database-backed app-lock password without deleting job data:
 
 ```bash
 bash scripts/reset-app-lock.sh
-# For automation after you have reviewed the action:
-bash scripts/reset-app-lock.sh --yes
 ```
 
-This removes only app-lock configuration and sessions. Profile, jobs,
-applications, generated documents, and other user data are preserved.
+## Repository structure
 
-### Resume templates and tailoring review
+The repository is split by application surface and operational responsibility:
 
-Resume Studio supports 10 ATS-safe DOCX templates with page-target, density,
-section-order, accent-colour, and safe-font controls. Hatch recommends
-templates using deterministic role and profile signals. Set global defaults in
-Profile Settings and override them for an individual generation.
-
-The HTML preview is approximate. DOCX remains the source of truth, and PDF
-export remains intentionally unavailable. CV and cover-letter documents share
-the selected design treatment.
-
-Each generated CV/cover-letter pack now stores a review containing match
-summary, ATS coverage, grounded evidence, unsupported requirements, and
-warnings. The CV Quality Gate also parses generated DOCX output to check
-readability, core sections, keyword coverage, and unsupported claims.
-High-risk first-party UI exports require acknowledgement. Regeneration creates
-new document versions and keeps earlier files in history.
-
-### Smart Job Import
-
-Open **Applications → Import from URL** to extract a public job page, review
-the normalized fields, and save it as a bookmark, application, or Tailor input.
-Direct JSON-LD and conservative HTML extraction run first. Firecrawl is an
-optional fallback, is disabled by default, and receives only the public job URL
-or page content. Hatch never sends profile, master CV, or proof-point data to
-Firecrawl.
-
-### Profile summary
-
-Settings and Tailor show a read-only summary of the evidence Hatch will use.
-Identity and contact details prefer explicit `profile.yaml` values; education
-and certifications prefer the master CV. Differences are warnings rather than
-generation blockers.
-
-## Docker Services
-
-| Service | Local address | Notes |
-|---|---|---|
-| Frontend | `127.0.0.1:3000` | Next.js UI |
-| Backend | `127.0.0.1:8000` | FastAPI and agent workers; lightweight core image by default |
-| Primary LLM | `127.0.0.1:8080` | llama.cpp server |
-| Triage LLM | `127.0.0.1:8081` | llama.cpp server |
-
-Persistent user data is bind-mounted from `./data`. The existing database filename remains `data/jobpilot.db` for upgrade compatibility.
-
-Useful commands:
-
-```bash
-docker compose ps
-docker compose logs -f
-docker compose restart backend frontend
-docker compose down
-docker compose up -d --build
+```text
+backend/        FastAPI services, agents, persistence, and document workflows
+frontend/       Next.js application, Vitest tests, and Playwright tests
+data/           Local profile, database, documents, and model state
+locales/        Market-specific configuration
+scripts/        Installation, maintenance, model, and recovery scripts
+docs/           Product, architecture, feature, and operations documentation
 ```
 
-The default backend image is lightweight. Browser automation, local
-sentence-transformer embeddings, and perception/voice dependencies are opt-in
-backend capabilities. The normal easy-install path is the host CLI:
+## Current boundaries
 
-```bash
-hatch capabilities status
-hatch capabilities enable browser
-hatch capabilities enable local-embeddings
-hatch capabilities enable full
-hatch capabilities disable
-```
+These constraints are intentional for the current release:
 
-AI mode and backend capability profile are separate. AI mode decides
-cloud/local intelligence setup. Backend capability profile decides which
-optional backend packages are installed.
-
-Install-time profile selection is also available:
-
-```bash
-./install.sh --mode cloud --backend-profile core
-./install.sh --mode advanced --backend-profile full
-```
-
-```powershell
-.\install.ps1 -Mode cloud -BackendProfile core
-.\install.ps1 -Mode advanced -BackendProfile full
-```
-
-Developers can still use the manual Compose overrides directly:
-
-```bash
-# JS-rendered job-board scraping via Playwright
-docker compose -f docker-compose.yml -f docker-compose.browser.yml up -d --build backend
-
-# Local sentence-transformer semantic scoring
-docker compose -f docker-compose.yml -f docker-compose.local-embeddings.yml up -d --build backend
-
-# Full backend capability image
-docker compose -f docker-compose.yml -f docker-compose.full.yml up -d --build backend
-```
-
-`docker-compose.local-ai.yml` has a separate meaning: it adds the bundled
-llama.cpp model services after local model selection. It does not switch the
-Python backend to the local-embeddings image.
-
-On Linux, `install.sh` can optionally install
-`infrastructure/systemd/hatch.service` as a user service for startup on login.
-
-Optional Docker Compose overrides are documented in
-`infrastructure/docker/docker-compose.override.yml.example`. Copy that file to
-`docker-compose.override.yml` before customising it so Compose discovers it
-automatically.
+- Hatch does not auto-apply or automate recruiter messaging
+- Job-board reliability depends on public access, site changes, rate limits, and enabled capabilities
+- Browser CV preview is approximate because DOCX is the document source of truth
+- Local model quality and speed depend on the machine and model selected
+- PDF export stays capability-gated and unavailable unless a safe converter is configured
 
 ## Development
 
-Run the frontend and backend directly:
+Start with the operations guide, then use the project checks that match your change:
 
 ```bash
-make dev
-```
-
-Quality checks:
-
-```bash
+make help
 make test
 make lint
 docker compose config --quiet
 ```
 
-Common Make targets:
+Frontend checks:
 
 ```bash
-make models          # download local GGUF models
-make docker-up       # build and start the stack
-make docker-logs     # follow container logs
-make migrate         # run database migrations
-make scrape          # trigger Scout manually
-make reset-user      # return Hatch to first-run state after confirmation
-make test-reset-user # verify reset behavior in a temporary directory
-make reset-app-lock   # clear only the app-lock password and sessions
-make audit-scripts    # safely validate operational scripts and reset tests
+cd frontend
+npm ci
+npm run type-check
+npm test
+npm run test:e2e
 ```
 
-## Architecture
-
-```text
-Next.js frontend
-       |
-FastAPI API and async agent workers
-       |
-SQLite data + profile.yaml + generated documents
-       |
-llama.cpp local models or an optional cloud LLM provider
-```
-
-The backend uses an event-driven Scout, Scorer, Tailor, and Coach pipeline. Long-running Tailor and Coach work is represented by asynchronous jobs so the UI can show completion and failure states.
-
-## Troubleshooting
-
-### The dashboard does not open
+Backend checks:
 
 ```bash
-docker compose ps
-docker compose logs backend frontend
-curl -f http://localhost:8000/api/health
+cd backend
+python -m pytest
 ```
 
-### A local model is unhealthy
+## Contributing
 
-Confirm both files exist:
+Issues and focused pull requests are welcome. Changes should preserve the core Hatch boundary: the system may assist, prepare, and recommend, but you approve every external action.
 
-```bash
-ls -lh data/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf data/models/Qwen_Qwen3.5-0.8B-Q8_0.gguf
-bash scripts/fetch_models.sh
-docker compose restart llm-primary llm-triage
-```
+## Release Notes And Governance
 
-### Tailoring or Coach is slow
-
-Local CPU generation can take several minutes, particularly for full CV packages. Check the System Event Log and LLM Call Traces in Settings, then inspect:
-
-```bash
-docker compose logs -f backend llm-primary
-```
-
-### Reset local data
-
-```bash
-make reset-user
-```
-
-This is destructive and returns Hatch to first-run state. It removes the
-application database and checkpoints, generated documents, Coach recordings,
-temporary uploads, profile, master CV/resume artifacts, and saved API keys.
-Downloaded models and `data/profile.yaml.example` are retained; a blank
-`profile.yaml` is recreated from that template. Open
-<http://localhost:3000/onboarding> afterwards and clear localhost site data if
-the browser offers to resume an old onboarding session.
-
-To clear jobs and workflow history while deliberately retaining the existing
-profile, CV, and saved API keys:
-
-```bash
-bash scripts/reset-user-data.sh --keep-profile
-```
-
-## Safety and Privacy
-
-- Application submission always remains a human action.
-- Tailoring may rephrase verified experience and align terminology, but must not fabricate claims.
-- Local AI keeps prompts on the machine. Cloud providers receive prompts when explicitly configured.
-- Raw webcam video used by optional interview practice is processed in the browser and is not uploaded.
-- Optional Coach presence analysis sends only numeric camera-attention and head-stability summaries. It can be disabled and its saved consent revoked in Profile Settings.
-
-## Outcome Learning
-
-Hatch can calculate a separate **opportunity score** from your own resolved application history. The existing fit score remains unchanged. Opportunity adjustments are deterministic, capped, calculated locally without an LLM or embeddings, and exclude protected personal characteristics, company identity, recruiter details, notes, and document contents.
-
-Learning activates after the configured minimum number of resolved applications. Applications without a response become eligible negatives only after the configured no-response window. Withdrawn and declined applications are excluded. Profile Settings can disable individual signals, recompute scores, or reset the learning window without deleting application history.
+- License: [MIT](LICENSE)
+- Changes: [CHANGELOG.md](CHANGELOG.md)
+- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security reporting: [SECURITY.md](SECURITY.md)
+- Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+- Operational details: [docs/OPERATIONS.md](docs/OPERATIONS.md)
