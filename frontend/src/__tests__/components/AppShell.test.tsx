@@ -2,18 +2,20 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const navigation = vi.hoisted(() => ({ pathname: "/today" }));
+const router = vi.hoisted(() => ({ replace: vi.fn() }));
+const query = vi.hoisted(() => ({
+  data: { enabled: true, configured_source: "database", is_unlocked: true },
+  isLoading: false,
+  isError: false,
+}));
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
-  useRouter: () => ({ replace: vi.fn() }),
+  useRouter: () => router,
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({
-    data: { enabled: true, is_unlocked: true },
-    isLoading: false,
-    isError: false,
-  }),
+  useQuery: () => query,
 }));
 
 vi.mock("@/components/hatch/HatchNavShell", () => ({
@@ -33,6 +35,10 @@ vi.mock("@/components/CommandPalette", () => ({ CommandPalette: () => null }));
 describe("authenticated application shell", () => {
   beforeEach(() => {
     navigation.pathname = "/today";
+    router.replace.mockReset();
+    query.data = { enabled: true, configured_source: "database", is_unlocked: true };
+    query.isLoading = false;
+    query.isError = false;
   });
 
   it("owns one main landmark and leaves one H1 to route content", async () => {
@@ -67,5 +73,34 @@ describe("authenticated application shell", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Welcome to Hatch");
     expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Skip to main content" })).not.toBeInTheDocument();
+  });
+
+  it("does not redirect first-run onboarding to unlock", async () => {
+    navigation.pathname = "/onboarding";
+    query.data = { enabled: true, configured_source: "none", is_unlocked: false };
+    const { AppLockGate } = await import("@/components/AppLockGate");
+    render(
+      <AppLockGate>
+        <h1>Protect your Hatch workspace</h1>
+      </AppLockGate>,
+    );
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Protect your Hatch workspace");
+    expect(router.replace).not.toHaveBeenCalledWith(expect.stringContaining("/unlock"));
+    expect(screen.queryByText(/Checking app lock/i)).not.toBeInTheDocument();
+  });
+
+  it("redirects configured locked onboarding to unlock", async () => {
+    navigation.pathname = "/onboarding";
+    query.data = { enabled: true, configured_source: "database", is_unlocked: false };
+    const { AppLockGate } = await import("@/components/AppLockGate");
+    render(
+      <AppLockGate>
+        <h1>Protect your Hatch workspace</h1>
+      </AppLockGate>,
+    );
+
+    expect(router.replace).toHaveBeenCalledWith("/unlock?next=%2Fonboarding");
+    expect(screen.getByText(/Checking app lock/i)).toBeInTheDocument();
   });
 });

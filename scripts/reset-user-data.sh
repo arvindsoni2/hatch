@@ -58,6 +58,10 @@ container_exec() {
   docker exec hatch-backend "$@"
 }
 
+container_exec_root() {
+  docker exec -u root hatch-backend "$@"
+}
+
 verify_database_schema() {
   local attempts=30
   local required_tables="alembic_version,applications,async_jobs,job_postings"
@@ -152,7 +156,7 @@ delete_file() {
   fi
 
   if backend_running; then
-    container_exec rm -f "$container_path" 2>/dev/null \
+    container_exec_root rm -f "$container_path" 2>/dev/null \
       && ok "Deleted $label" \
       || warn "Could not delete $label inside container (may not exist)"
   elif [ -w "$host_path" ]; then
@@ -177,7 +181,7 @@ delete_dir_contents() {
   fi
 
   if backend_running; then
-    container_exec sh -c "find '$container_path' -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; true" \
+    container_exec_root sh -c "find '$container_path' -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null; true" \
       && ok "Cleared $label" \
       || warn "Could not clear $label inside container"
   elif [ -w "$host_path" ]; then
@@ -231,7 +235,7 @@ if $RESET_PROFILE; then
 
   if [ -f "$DATA_DIR/profile.yaml.example" ]; then
     if backend_running; then
-      container_exec sh -c "cp /app/data/profile.yaml.example /app/data/profile.yaml" \
+      container_exec_root sh -c "cp /app/data/profile.yaml.example /app/data/profile.yaml && chown appuser:appuser /app/data/profile.yaml" \
         && ok "Reset profile.yaml from example template"
     elif [ -w "$DATA_DIR" ]; then
       cp "$DATA_DIR/profile.yaml.example" "$DATA_DIR/profile.yaml" \
@@ -277,7 +281,7 @@ fi
 if $DELETE_SECRETS; then
   warn "Clearing api_keys.env — API keys will need to be re-entered in Settings or onboarding."
   if backend_running; then
-    container_exec sh -c "echo '' > /app/data/api_keys.env 2>/dev/null; true" \
+    container_exec_root sh -c "echo '' > /app/data/api_keys.env 2>/dev/null; chown appuser:appuser /app/data/api_keys.env 2>/dev/null || true" \
       && ok "Cleared api_keys.env"
   elif [ -w "$DATA_DIR/api_keys.env" ]; then
     : > "$DATA_DIR/api_keys.env" && ok "Cleared api_keys.env"

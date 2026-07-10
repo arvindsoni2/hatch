@@ -144,7 +144,7 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
     <div>
       {/* Page header */}
       <div style={{ padding: '8px 0 14px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: '-0.03em', color: 'var(--text)' }}>Interview Prep</h1>
             <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>Research, likely questions, and practice for confirmed interviews</div>
@@ -152,9 +152,43 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
           <Link
             href="/prep/question-bank"
             className="hatch-interactive"
-            style={{ color: 'var(--accent)', fontSize: 12.5, fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}
+            aria-label="Open Question Bank"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '30px minmax(0, 1fr) auto',
+              alignItems: 'center',
+              gap: 10,
+              width: 'min(100%, 430px)',
+              maxWidth: 430,
+              padding: 12,
+              borderRadius: 12,
+              border: '1px solid var(--border)',
+              background: 'var(--surface)',
+              color: 'inherit',
+              textDecoration: 'none',
+            }}
           >
-            Question Bank
+            <span
+              aria-hidden="true"
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 9,
+                display: 'grid',
+                placeItems: 'center',
+                color: 'var(--accent)',
+                background: 'var(--accent-soft)',
+              }}
+            >
+              <HatchIcon name="fileText" size={15} />
+            </span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 13, fontWeight: 750, color: 'var(--text)' }}>Question Bank</span>
+              <span style={{ display: 'block', marginTop: 3, fontSize: 11.8, lineHeight: 1.45, color: 'var(--text-muted)' }}>
+                Save, tag, and reuse strong interview answers across sessions.
+              </span>
+            </span>
+            <HatchIcon name="chevronR" size={15} color="var(--text-muted)" />
           </Link>
         </div>
       </div>
@@ -163,7 +197,7 @@ export function PrepScreen({ sessions, openSessionId, onNewSession, onSelectSess
           On mobile the detail replaces the list (when openSession is set).
           On desktop both panels are visible side-by-side via CSS. */}
       <div style={{ display: 'flex', gap: 24, minHeight: '60vh', alignItems: 'flex-start' }}>
-        {/* Session list — hidden on mobile when a session is open; always visible on md+ */}
+        {/* Session list - hidden on mobile when a session is open; always visible on md+ */}
         <div
           className={openSession ? 'hidden md:flex md:flex-col md:gap-2 md:w-80 md:flex-shrink-0' : 'flex flex-col gap-2 w-full flex-shrink-0'}
         >

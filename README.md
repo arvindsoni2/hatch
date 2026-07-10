@@ -230,20 +230,6 @@ Identity and contact details prefer explicit `profile.yaml` values; education
 and certifications prefer the master CV. Differences are warnings rather than
 generation blockers.
 
-### Release 3 upgrade
-
-Existing data is preserved. This release adds app-lock and tailoring-review
-tables plus the `tailoring.default_template_id` setting. It does not introduce
-multi-user accounts. The container entrypoint applies the database migrations
-automatically on restart.
-
-### Release 4 interface
-
-Release 4 gives Hatch one consistent responsive shell and plain-language
-navigation: Today, Pipeline, Applications, and Interview Prep. Desktop uses the
-sidebar; mobile uses the bottom navigation. Settings share the same colour,
-spacing, focus, touch-target, and responsive form principles.
-
 ## Docker Services
 
 | Service | Local address | Notes |

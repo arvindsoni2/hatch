@@ -326,10 +326,21 @@ describe('TrackerScreen', () => {
     render(<TrackerScreen applications={[]} />);
 
     expect(screen.getByRole('heading', { name: 'No applications tracked yet' })).toBeTruthy();
-    expect(screen.getByText('Save a job or create your first application pack.')).toBeTruthy();
+    expect(screen.getByText('Save a job, paste a job URL, or add an application you already submitted.')).toBeTruthy();
+    expect(screen.getByText('Watched companies lets Scout monitor target employers for roles worth adding here.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Browse Jobs' })).toHaveAttribute('href', '/jobs');
     fireEvent.click(screen.getByRole('button', { name: 'Add manually' }));
     expect(screen.getByRole('dialog', { name: 'Add Application' })).toBeTruthy();
+  });
+
+  it('explains Applications action shortcuts when the board has active cards', async () => {
+    const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
+    render(<TrackerScreen applications={TRACKER_APPS} />);
+
+    expect(screen.getByText('Track target employers and scan for new roles from the Applications area.')).toBeTruthy();
+    expect(screen.getByText('Paste a job post link so Hatch can create the application record for you.')).toBeTruthy();
+    expect(screen.getByText('Use this when you applied outside Hatch or only have notes to track.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open watchlist' })).toHaveAttribute('href', '/tracker/watched-companies');
   });
 
   it('explains horizontal lane scrolling when the Applications board has active cards', async () => {
@@ -375,6 +386,14 @@ describe('PrepScreen', () => {
     const { PrepScreen } = await import('@/components/hatch/screens/PrepScreen');
     render(<PrepScreen sessions={PREP_SESSIONS} openSessionId="la" />);
     expect(screen.getByText(/Walk me through/i)).toBeTruthy();
+  });
+
+  it('presents Question Bank as an explained Interview Prep tool', async () => {
+    const { PrepScreen } = await import('@/components/hatch/screens/PrepScreen');
+    render(<PrepScreen sessions={PREP_SESSIONS} openSessionId="la" />);
+
+    expect(screen.getByRole('link', { name: 'Open Question Bank' })).toHaveAttribute('href', '/prep/question-bank');
+    expect(screen.getByText('Save, tag, and reuse strong interview answers across sessions.')).toBeTruthy();
   });
 
   it('expands a STAR answer when question is clicked', async () => {

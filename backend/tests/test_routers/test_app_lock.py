@@ -60,6 +60,23 @@ async def test_first_run_setup_unlocks_and_protected_api_works(client: AsyncClie
 
 
 @pytest.mark.asyncio
+async def test_locale_metadata_is_available_while_product_data_stays_locked(
+    client: AsyncClient,
+) -> None:
+    assert (await client.get("/api/jobs")).status_code == 423
+
+    locales = await client.get("/api/v2/locales")
+    assert locales.status_code == 200
+    assert any(locale["id"] == "uk" for locale in locales.json())
+
+    legal_fields = await client.get("/api/v2/locales/uk/legal-fields")
+    assert legal_fields.status_code == 200
+
+    boards = await client.get("/api/v2/locales/uk/boards?enabled_only=false")
+    assert boards.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_wrong_password_counts_failures_and_applies_delay(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -289,11 +289,22 @@ class AppLockMiddleware(BaseHTTPMiddleware):
         "/api/app-lock/unlock",
     }
 
+    @staticmethod
+    def _is_public_locale_metadata(request: StarletteRequest) -> bool:
+        path = request.url.path
+        return request.method == "GET" and (
+            path == "/api/v2/locales" or path.startswith("/api/v2/locales/")
+        )
+
     async def dispatch(self, request: StarletteRequest, call_next):
         if not settings.HATCH_APP_LOCK_ENABLED or request.method == "OPTIONS":
             return await call_next(request)
         path = request.url.path
-        if path in self._PUBLIC_PATHS or path.startswith("/static/"):
+        if (
+            path in self._PUBLIC_PATHS
+            or self._is_public_locale_metadata(request)
+            or path.startswith("/static/")
+        ):
             return await call_next(request)
         should_protect = path.startswith("/api/") or path in {"/docs", "/redoc", "/openapi.json"}
         if not should_protect:

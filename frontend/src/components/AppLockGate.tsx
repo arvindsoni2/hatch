@@ -36,19 +36,27 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   }, [isLoading]);
 
   useEffect(() => {
-    if (!isUnlockRoute && data?.enabled && !data.is_unlocked) {
+    const allowLockedOnboarding = isOnboardingRoute && data?.configured_source === "none";
+    if (!isUnlockRoute && !allowLockedOnboarding && data?.enabled && !data.is_unlocked) {
       const next = encodeURIComponent(pathname || "/today");
       router.replace(`/unlock?next=${next}`);
     }
     if (isUnlockRoute && data && (!data.enabled || data.is_unlocked)) {
       router.replace("/today");
     }
-  }, [data, isUnlockRoute, pathname, router]);
+  }, [data, isOnboardingRoute, isUnlockRoute, pathname, router]);
 
   if (isUnlockRoute) {
     return <main className="min-h-screen">{children}</main>;
   }
   if (isLoading || (data?.enabled && !data.is_unlocked)) {
+    if (isOnboardingRoute && data?.configured_source === "none") {
+      return (
+        <main className="min-h-[100dvh]" id="main-content" tabIndex={-1}>
+          {children}
+        </main>
+      );
+    }
     return (
       <div className="grid min-h-screen place-items-center" style={{ background: "var(--bg)" }}>
         <div className="max-w-sm px-6 text-center text-sm text-[var(--text-muted)]" role="status">
@@ -59,6 +67,13 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
+  if (isOnboardingRoute) {
+    return (
+      <main className="min-h-[100dvh]" id="main-content" tabIndex={-1}>
+        {children}
+      </main>
+    );
+  }
   if (isError) {
     return (
       <div className="grid min-h-screen place-items-center p-6" style={{ background: "var(--bg)" }}>
@@ -66,13 +81,6 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
           Hatch could not verify the lock state. Check the backend is running, then reload this page.
         </p>
       </div>
-    );
-  }
-  if (isOnboardingRoute) {
-    return (
-      <main className="min-h-[100dvh]" id="main-content" tabIndex={-1}>
-        {children}
-      </main>
     );
   }
 

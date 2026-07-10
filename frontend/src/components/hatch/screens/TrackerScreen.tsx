@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -184,6 +184,57 @@ const EMPTY_MANUAL_FORM: ManualApplicationForm = {
   prepareWithCoach: true,
 };
 
+function TrackerActionTile({
+  title,
+  description,
+  icon,
+  children,
+}: {
+  title: string;
+  description: string;
+  icon: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "28px minmax(0, 1fr)",
+        gap: 10,
+        minWidth: 0,
+        padding: 12,
+        borderRadius: 12,
+        border: "1px solid var(--border)",
+        background: "var(--surface)",
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 9,
+          display: "grid",
+          placeItems: "center",
+          color: "var(--accent)",
+          background: "var(--accent-soft)",
+        }}
+      >
+        <HatchIcon name={icon} size={15} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 750, color: "var(--text)" }}>{title}</div>
+          {children}
+        </div>
+        <p style={{ margin: "6px 0 0", fontSize: 11.8, lineHeight: 1.45, color: "var(--text-muted)" }}>
+          {description}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function applicationToListItem(application: Application): ApplicationListItem {
   const jobUrl = application.job?.url && !application.job.url.startsWith("manual://")
     ? application.job.url
@@ -254,7 +305,7 @@ function JobCard({ application, onMove }: JobCardProps) {
             )}
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.4 }}>
-            {application.job_company ?? "—"} · {application.job_location ?? "—"}
+            {application.job_company ?? "-"} · {application.job_location ?? "-"}
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
@@ -382,7 +433,7 @@ function CardPreview({ application }: { application: ApplicationListItem }) {
   return (
     <div style={{ width: 238, background: "var(--surface)", border: "1px solid var(--accent)", borderRadius: 11, padding: 11, boxShadow: "0 12px 32px rgba(0,0,0,0.28)" }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{application.job_title ?? "Untitled Role"}</div>
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{application.job_company ?? "—"}</div>
+      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{application.job_company ?? "-"}</div>
     </div>
   );
 }
@@ -512,20 +563,9 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text)" }}>Applications</h1>
           <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>Move applications forward as their real-world status changes</div>
         </div>
-        {hasApplications && (
-          <div className="hatch-page-actions" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div aria-live="polite" style={{ maxWidth: 430, textAlign: "right", fontSize: 11.5, color: "var(--text-muted)" }}>{notice}</div>
-            <Link
-              href="/tracker/watched-companies"
-              className="hatch-interactive"
-              style={{ color: "var(--accent)", fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}
-            >
-              Watched companies
-            </Link>
-            <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
-            <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
-          </div>
-        )}
+        {hasApplications && notice ? (
+          <div aria-live="polite" style={{ maxWidth: 430, textAlign: "right", fontSize: 11.5, color: "var(--text-muted)" }}>{notice}</div>
+        ) : null}
       </div>
 
       {!hasApplications ? (
@@ -548,10 +588,11 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
         >
           <h2 style={{ margin: 0, fontSize: 20, color: "var(--text)" }}>No applications tracked yet</h2>
           <p style={{ margin: 0, maxWidth: 420, color: "var(--text-muted)", fontSize: 13.5, lineHeight: 1.55 }}>
-            Save a job or create your first application pack.
+            Save a job, paste a job URL, or add an application you already submitted.
           </p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
             <Btn kind="primary" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
+            <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
             <Link
               href="/tracker/watched-companies"
               className="hatch-interactive"
@@ -567,9 +608,50 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
               Browse Jobs
             </Link>
           </div>
+          <p style={{ margin: 0, maxWidth: 460, color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
+            Watched companies lets Scout monitor target employers for roles worth adding here.
+          </p>
         </div>
       ) : (
         <>
+          <div
+            className="hatch-page-actions"
+            aria-label="Application setup actions"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 250px), 1fr))",
+              gap: 10,
+              margin: "0 0 14px",
+            }}
+          >
+            <TrackerActionTile
+              title="Watched companies"
+              description="Track target employers and scan for new roles from the Applications area."
+              icon="building"
+            >
+              <Link
+                href="/tracker/watched-companies"
+                className="hatch-interactive"
+                style={{ color: "var(--accent)", fontSize: 12.5, fontWeight: 750, textDecoration: "none", whiteSpace: "nowrap" }}
+              >
+                Open watchlist
+              </Link>
+            </TrackerActionTile>
+            <TrackerActionTile
+              title="Import from URL"
+              description="Paste a job post link so Hatch can create the application record for you."
+              icon="externalLink"
+            >
+              <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import</Btn>
+            </TrackerActionTile>
+            <TrackerActionTile
+              title="Add manually"
+              description="Use this when you applied outside Hatch or only have notes to track."
+              icon="briefcase"
+            >
+              <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add</Btn>
+            </TrackerActionTile>
+          </div>
           <div
             aria-hidden="true"
             style={{
