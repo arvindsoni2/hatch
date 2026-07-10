@@ -158,6 +158,57 @@
   transform: scale(0.98);
 }
 
+.tracker-action-hint {
+  position: relative;
+}
+
+.tracker-action-hint__bubble {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  z-index: 40;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 32px));
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg-elevated);
+  box-shadow: 0 14px 40px rgb(0 0 0 / 0.28);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translate(-50%, 4px);
+  transition:
+    opacity var(--transition),
+    transform var(--transition),
+    visibility var(--transition);
+  visibility: hidden;
+}
+
+.tracker-action-hint__bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 8px;
+  height: 8px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  transform: translate(-50%, -4px) rotate(45deg);
+}
+
+.tracker-action-hint:hover .tracker-action-hint__bubble,
+.tracker-action-hint:focus-within .tracker-action-hint__bubble {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
 @media (max-width: 639px) {
   .hatch-page-header,
   .hatch-page-actions {

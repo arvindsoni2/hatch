@@ -281,6 +281,10 @@ const TRACKER_APPS = [
 ];
 
 describe('TrackerScreen', () => {
+  function expectActionHint(helper: string) {
+    expect(document.querySelector(`[data-tooltip="${helper}"]`)).toBeTruthy();
+  }
+
   it('renders the full left-to-right application journey', async () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
     render(<TrackerScreen applications={TRACKER_APPS} />);
@@ -326,8 +330,10 @@ describe('TrackerScreen', () => {
     render(<TrackerScreen applications={[]} />);
 
     expect(screen.getByRole('heading', { name: 'No applications tracked yet' })).toBeTruthy();
-    expect(screen.getByText('Save a job, paste a job URL, or add an application you already submitted.')).toBeTruthy();
-    expect(screen.getByText('Watched companies lets Scout monitor target employers for roles worth adding here.')).toBeTruthy();
+    expect(screen.getByText('Start by adding the first role you want to track.')).toBeTruthy();
+    expectActionHint('Use this when you applied outside Hatch or only have notes to track.');
+    expectActionHint('Paste a job post link so Hatch can create the application record for you.');
+    expectActionHint('Track target employers and scan for new roles from Applications.');
     expect(screen.getByRole('link', { name: 'Browse Jobs' })).toHaveAttribute('href', '/jobs');
     fireEvent.click(screen.getByRole('button', { name: 'Add manually' }));
     expect(screen.getByRole('dialog', { name: 'Add Application' })).toBeTruthy();
@@ -337,10 +343,10 @@ describe('TrackerScreen', () => {
     const { TrackerScreen } = await import('@/components/hatch/screens/TrackerScreen');
     render(<TrackerScreen applications={TRACKER_APPS} />);
 
-    expect(screen.getByText('Track target employers and scan for new roles from the Applications area.')).toBeTruthy();
-    expect(screen.getByText('Paste a job post link so Hatch can create the application record for you.')).toBeTruthy();
-    expect(screen.getByText('Use this when you applied outside Hatch or only have notes to track.')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Open watchlist' })).toHaveAttribute('href', '/tracker/watched-companies');
+    expectActionHint('Track target employers and scan for new roles from Applications.');
+    expectActionHint('Paste a job post link so Hatch can create the application record for you.');
+    expectActionHint('Use this when you applied outside Hatch or only have notes to track.');
+    expect(screen.getByRole('link', { name: 'Watched companies' })).toHaveAttribute('href', '/tracker/watched-companies');
   });
 
   it('explains horizontal lane scrolling when the Applications board has active cards', async () => {

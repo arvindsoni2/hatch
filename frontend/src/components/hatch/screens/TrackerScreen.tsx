@@ -185,53 +185,30 @@ const EMPTY_MANUAL_FORM: ManualApplicationForm = {
 };
 
 function TrackerActionTile({
-  title,
-  description,
-  icon,
+  label,
+  helper,
   children,
 }: {
-  title: string;
-  description: string;
-  icon: string;
+  label: string;
+  helper: string;
   children: ReactNode;
 }) {
   return (
-    <div
+    <span
+      className="tracker-action-hint"
+      data-tooltip={helper}
       style={{
-        display: "grid",
-        gridTemplateColumns: "28px minmax(0, 1fr)",
-        gap: 10,
+        position: "relative",
+        display: "inline-flex",
         minWidth: 0,
-        padding: 12,
-        borderRadius: 12,
-        border: "1px solid var(--border)",
-        background: "var(--surface)",
       }}
     >
-      <div
-        aria-hidden="true"
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 9,
-          display: "grid",
-          placeItems: "center",
-          color: "var(--accent)",
-          background: "var(--accent-soft)",
-        }}
-      >
-        <HatchIcon name={icon} size={15} />
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontSize: 13, fontWeight: 750, color: "var(--text)" }}>{title}</div>
-          {children}
-        </div>
-        <p style={{ margin: "6px 0 0", fontSize: 11.8, lineHeight: 1.45, color: "var(--text-muted)" }}>
-          {description}
-        </p>
-      </div>
-    </div>
+      {children}
+      <span aria-hidden="true" className="tracker-action-hint__bubble">
+        {helper}
+      </span>
+      <span className="sr-only">{label}: {helper}</span>
+    </span>
   );
 }
 
@@ -588,29 +565,64 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
         >
           <h2 style={{ margin: 0, fontSize: 20, color: "var(--text)" }}>No applications tracked yet</h2>
           <p style={{ margin: 0, maxWidth: 420, color: "var(--text-muted)", fontSize: 13.5, lineHeight: 1.55 }}>
-            Save a job, paste a job URL, or add an application you already submitted.
+            Start by adding the first role you want to track.
           </p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-            <Btn kind="primary" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
-            <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
-            <Link
-              href="/tracker/watched-companies"
-              className="hatch-interactive"
-              style={{ color: "var(--accent)", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+            <TrackerActionTile
+              label="Add manually"
+              helper="Use this when you applied outside Hatch or only have notes to track."
             >
-              Watched companies
-            </Link>
-            <Link
-              href="/jobs"
-              className="hatch-interactive"
-              style={{ color: "var(--accent)", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+              <Btn kind="primary" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
+            </TrackerActionTile>
+            <TrackerActionTile
+              label="Import from URL"
+              helper="Paste a job post link so Hatch can create the application record for you."
             >
-              Browse Jobs
-            </Link>
+              <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
+            </TrackerActionTile>
+            <TrackerActionTile
+              label="Watched companies"
+              helper="Track target employers and scan for new roles from Applications."
+            >
+              <Link
+                href="/tracker/watched-companies"
+                className="hatch-interactive"
+                style={{
+                  minHeight: 40,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  color: "var(--accent)",
+                  fontSize: 13,
+                  fontWeight: 750,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Watched companies
+              </Link>
+            </TrackerActionTile>
+            <TrackerActionTile
+              label="Browse Jobs"
+              helper="Open discovered roles and save the ones worth tracking."
+            >
+              <Link
+                href="/jobs"
+                className="hatch-interactive"
+                style={{
+                  minHeight: 40,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  color: "var(--accent)",
+                  fontSize: 13,
+                  fontWeight: 750,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Browse Jobs
+              </Link>
+            </TrackerActionTile>
           </div>
-          <p style={{ margin: 0, maxWidth: 460, color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
-            Watched companies lets Scout monitor target employers for roles worth adding here.
-          </p>
         </div>
       ) : (
         <>
@@ -618,38 +630,52 @@ export function TrackerScreen({ applications, onStatusChange }: TrackerScreenPro
             className="hatch-page-actions"
             aria-label="Application setup actions"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 250px), 1fr))",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              flexWrap: "wrap",
               gap: 10,
-              margin: "0 0 14px",
+              margin: "0 0 12px",
             }}
           >
             <TrackerActionTile
-              title="Watched companies"
-              description="Track target employers and scan for new roles from the Applications area."
-              icon="building"
+              label="Watched companies"
+              helper="Track target employers and scan for new roles from Applications."
             >
               <Link
                 href="/tracker/watched-companies"
                 className="hatch-interactive"
-                style={{ color: "var(--accent)", fontSize: 12.5, fontWeight: 750, textDecoration: "none", whiteSpace: "nowrap" }}
+                style={{
+                  minHeight: 40,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-control)",
+                  background: "var(--surface)",
+                  color: "var(--accent)",
+                  fontSize: 12.5,
+                  fontWeight: 750,
+                  padding: "0 12px",
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
               >
-                Open watchlist
+                <HatchIcon name="building" size={14} />
+                Watched companies
               </Link>
             </TrackerActionTile>
             <TrackerActionTile
-              title="Import from URL"
-              description="Paste a job post link so Hatch can create the application record for you."
-              icon="externalLink"
+              label="Import from URL"
+              helper="Paste a job post link so Hatch can create the application record for you."
             >
-              <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import</Btn>
+              <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowImport(true)}>Import from URL</Btn>
             </TrackerActionTile>
             <TrackerActionTile
-              title="Add manually"
-              description="Use this when you applied outside Hatch or only have notes to track."
-              icon="briefcase"
+              label="Add manually"
+              helper="Use this when you applied outside Hatch or only have notes to track."
             >
-              <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add</Btn>
+              <Btn kind="soft" size="sm" icon="plus" onClick={() => setShowManualForm(true)}>Add manually</Btn>
             </TrackerActionTile>
           </div>
           <div
