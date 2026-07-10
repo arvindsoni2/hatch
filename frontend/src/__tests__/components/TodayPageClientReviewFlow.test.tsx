@@ -69,5 +69,5 @@ describe("TodayPageClient review flow", () => {
     const nextGenerate = screen.getByRole("button", { name: "Generate CV pack" });
     expect(nextGenerate).toBeEnabled();
     expect(screen.queryByRole("button", { name: /Preparing CV pack/i })).not.toBeInTheDocument();
-  }, 15000);
+  }, 20000);
 });

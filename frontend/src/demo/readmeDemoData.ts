@@ -90,7 +90,7 @@ function app(
     id,
     job_id: `job-${id}`,
     status,
-    priority: 0,
+    priority: "normal",
     applied_date: status === "applied" ? "2026-07-08T12:00:00Z" : null,
     recruiter_name: null,
     agency_name: null,

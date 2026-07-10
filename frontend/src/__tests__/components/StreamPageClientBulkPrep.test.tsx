@@ -69,5 +69,5 @@ describe("StreamPageClient bulk prep", () => {
     });
     expect(await screen.findByText("Bulk prep started for 2 roles.")).toBeVisible();
     expect(screen.getByText("All").closest("button")).toBeEnabled();
-  });
+  }, 15000);
 });

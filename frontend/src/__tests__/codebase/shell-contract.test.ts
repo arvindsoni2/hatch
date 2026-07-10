@@ -46,7 +46,8 @@ describe('layout.tsx shell contract', () => {
   });
 
   it('owns one main landmark and exposes skip/onboarding main targets', () => {
-    expect(gate.match(/<main\b/g)).toHaveLength(3);
+    expect(gate.match(/<main\b/g)).toHaveLength(4);
+    expect(gate).toContain('isUnlockRoute');
     expect(gate).toContain('href="#main-content"');
     expect(gate).toContain('id="main-content"');
     expect(gate).toContain('isOnboardingRoute');
