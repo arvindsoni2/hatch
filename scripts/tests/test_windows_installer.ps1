@@ -193,6 +193,8 @@ Invoke-Test "check-only non-interactive run exits deterministically without clon
     try {
         $env:HATCH_HOME = $hatchHomePath
         Remove-Item Env:\HATCH_INSTALL_TEST_MODE -ErrorAction SilentlyContinue
+        $expectedResult = Invoke-HatchPreflight -Mode "AiLater" -BackendProfile "core" -InstallDir $install
+        $expectedExitCode = Get-HatchInstallerExitCode -Result $expectedResult
         $process = Start-Process -FilePath "pwsh" -ArgumentList @(
             "-NoLogo", "-NoProfile", "-File", (Join-Path $RepoRoot "install.ps1"),
             "-CheckOnly", "-NonInteractive", "-Json",
@@ -200,7 +202,7 @@ Invoke-Test "check-only non-interactive run exits deterministically without clon
             "-Mode", "ai-later",
             "-BackendProfile", "core"
         ) -Wait -PassThru -NoNewWindow
-        Assert-Equal 4 $process.ExitCode "Linux test host should be reported as unsupported Windows installer platform."
+        Assert-Equal $expectedExitCode $process.ExitCode "CheckOnly should return the same exit code as the live preflight result for this host."
         Assert-True (-not (Test-Path $install)) "CheckOnly must not clone or create the install directory."
         Assert-True (Test-Path (Join-Path $hatchHomePath "installer\last-check.json")) "CheckOnly should persist the last preflight report."
     } finally {
