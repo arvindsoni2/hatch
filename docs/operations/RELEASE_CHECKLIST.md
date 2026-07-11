@@ -89,7 +89,7 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] Current `main` CI state inspected.
 - [x] Current `main` CodeQL state inspected.
 - [x] Release blocker identified: `windows-installer` test contract was failing on `main` due host-specific expectations.
-- [ ] Release-preparation PR checks all green.
+- [x] Release-preparation PR checks all green.
 - [ ] Exact merged `main` commit has successful required CI and CodeQL runs.
 
 ## 11. Tag verification
@@ -158,4 +158,5 @@ This is the canonical release checklist and evidence record for public Hatch rel
 | Installer static checks | `bash -n install.sh`; `pwsh -File scripts/tests/test_windows_installer.ps1` | Pass | Shell syntax clean; Windows installer suite passed after cross-platform exit-code fix | Codex | 2026-07-11 |
 | Candidate runtime smoke test | `docker compose up -d --build backend frontend`; health, HTTP, and logs checks | Partial | Candidate branch runtime rebuilt cleanly; backend health and frontend HTTP verified, but browser-driven first-run/onboarding steps still pending | Codex | 2026-07-11 |
 | Release-preparation PR | `git push`; `gh pr create` | Pass | Branch pushed and PR `#32` opened: <https://github.com/arvindsoni2/hatch/pull/32> | Codex | 2026-07-11 |
-| Tag and release publication | Maintainer-gated remote operations | Pending | Blocked until branch checks pass and maintainer approves publication | Codex | 2026-07-11 |
+| Release-preparation PR checks | `gh pr checks 32`; `gh pr view 32 --json ...` | Pass | PR `#32` checks green at `4cec423f34d212b5741dbff3a18eee8fc8ad1b45`; merge state `CLEAN` | Codex | 2026-07-11 |
+| Tag and release publication | Maintainer-gated remote operations | Pending | Blocked until merge, final `main` verification, and maintainer approval for publication | Codex | 2026-07-11 |
