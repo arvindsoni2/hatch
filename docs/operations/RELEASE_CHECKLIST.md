@@ -26,7 +26,7 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] Existing GitHub releases inspected.
 - [x] Open pull requests inspected.
 - [x] Ignored files and tracked file patterns reviewed for release risks.
-- [ ] Release-preparation branch pushed and PR opened.
+- [x] Release-preparation branch pushed and PR opened: <https://github.com/arvindsoni2/hatch/pull/32>.
 - [ ] Final release commit confirmed clean after merge.
 
 ## 4. Documentation and link validation
@@ -34,8 +34,8 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] README release-checklist link resolves to this file.
 - [x] README installer commands still reference `main/install.sh` and `main/install.ps1`.
 - [x] Release notes file for `v0.1.0` created under `docs/releases/`.
-- [ ] Documentation validators pass on the release-preparation branch.
-- [ ] Modified documentation links rechecked after final edits.
+- [x] Documentation validators pass on the release-preparation branch.
+- [x] Modified documentation links rechecked after final edits.
 - [ ] GitHub rendered README and release-note links checked after publication.
 
 ## 5. Security and privacy checks
@@ -48,7 +48,6 @@ This is the canonical release checklist and evidence record for public Hatch rel
 
 ## 6. Backend verification
 
-- [ ] Backend test suite passed on the release-preparation branch.
 - [x] Backend test suite passed on the release-preparation branch.
 - [ ] Backend lint/type checks passed if required by repository-native commands.
 - [x] Backend health verified in a fresh runtime during smoke testing.
@@ -158,4 +157,5 @@ This is the canonical release checklist and evidence record for public Hatch rel
 | Compose validation | `docker compose config --quiet` and `docker compose -f docker-compose.easy.yml config --quiet` | Pass | Both documented Compose entry points validated successfully | Codex | 2026-07-11 |
 | Installer static checks | `bash -n install.sh`; `pwsh -File scripts/tests/test_windows_installer.ps1` | Pass | Shell syntax clean; Windows installer suite passed after cross-platform exit-code fix | Codex | 2026-07-11 |
 | Candidate runtime smoke test | `docker compose up -d --build backend frontend`; health, HTTP, and logs checks | Partial | Candidate branch runtime rebuilt cleanly; backend health and frontend HTTP verified, but browser-driven first-run/onboarding steps still pending | Codex | 2026-07-11 |
+| Release-preparation PR | `git push`; `gh pr create` | Pass | Branch pushed and PR `#32` opened: <https://github.com/arvindsoni2/hatch/pull/32> | Codex | 2026-07-11 |
 | Tag and release publication | Maintainer-gated remote operations | Pending | Blocked until branch checks pass and maintainer approves publication | Codex | 2026-07-11 |
