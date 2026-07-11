@@ -95,5 +95,8 @@ jobs:
       - name: Validate invalid argument exit code
         shell: pwsh
         run: |
-          pwsh -NoLogo -NoProfile -File .\install.ps1 -Mode invalid -NonInteractive -Json
-          if ($LASTEXITCODE -ne 8) { exit 1 }
+          $process = Start-Process -FilePath "pwsh" -ArgumentList @(
+            "-NoLogo", "-NoProfile", "-File", ".\install.ps1",
+            "-Mode", "invalid", "-NonInteractive", "-Json"
+          ) -Wait -PassThru -NoNewWindow
+          if ($process.ExitCode -ne 8) { exit 1 }
