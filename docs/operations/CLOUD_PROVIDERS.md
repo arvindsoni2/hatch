@@ -2,6 +2,8 @@
 
 Current cloud-provider documentation covers the providers exposed through the current setup flow.
 
+> Last verified against `main`: 2026-07-10
+
 ## Current Providers
 
 | Provider | Secret name | Notes |

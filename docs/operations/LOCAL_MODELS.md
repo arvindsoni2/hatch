@@ -2,6 +2,8 @@
 
 Local AI in Hatch uses two optional `llama.cpp` services and a host-side model catalogue.
 
+> Last verified against `main`: 2026-07-10
+
 ## Hardware Probe
 
 Run:

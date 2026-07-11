@@ -2,6 +2,8 @@
 
 Hatch is a self-hosted workspace that runs through Docker Compose. The recommended path is the guided installer, which starts the lightweight application stack and lets you configure AI later.
 
+> Last verified against `main`: 2026-07-10
+
 ## Prerequisites
 
 - Docker with `docker compose`

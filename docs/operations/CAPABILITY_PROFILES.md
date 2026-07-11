@@ -2,6 +2,8 @@
 
 Capability profiles control optional backend dependencies. They are separate from the chosen AI runtime.
 
+> Last verified against `main`: 2026-07-10
+
 ## Current Profiles
 
 | Capability | core | browser | local-embeddings | full |

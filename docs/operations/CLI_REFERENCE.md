@@ -2,6 +2,8 @@
 
 The host `hatch` command manages easy-install lifecycle, AI setup, optional capabilities, and local maintenance.
 
+> Last verified against `main`: 2026-07-10
+
 ## Core Commands
 
 ### `hatch start`

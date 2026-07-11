@@ -1206,7 +1206,7 @@ You are working in the Hatch repo.
 
 Goal: reduce backend Docker image size and build time by making the default backend image lightweight.
 
-Read docs/Hatch_Backend_Container_Optimisation_Spec.md fully before editing.
+Read docs/implementation-specs/active/Hatch_Backend_Container_Optimisation_Spec.md fully before editing.
 
 Current problem:
 - hatch-backend:latest is around 7.49GB.

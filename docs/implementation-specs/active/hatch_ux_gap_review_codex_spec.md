@@ -1203,7 +1203,7 @@ This plan favours reviewable contracts over one large visual rewrite. Implement 
 
 ### 9.1 PR status ledger
 
-Update this table in the same commit that completes each PR. Record the branch, final commit, validation results, and any deferred work in the PR handoff. Because `docs/*` is ignored in this repository, use `git add -f docs/hatch_ux_gap_review_codex_spec.md` when this file changes.
+Update this table in the same commit that completes each PR. Record the branch, final commit, validation results, and any deferred work in the PR handoff.
 
 | PR | Scope | Depends on | Status | Branch / commit | Handoff notes |
 |---|---|---|---|---|---|
@@ -1692,7 +1692,7 @@ Split this PR by subsystem if needed: PR 9A covers Prep and Coach; PR 9B covers 
 
 - Branch: `ux/19-ux-spec-closure`
 - Scope: close the UX remediation spec with final verification evidence and bounded follow-ups so the project can move to the next specification discussion.
-- Added `docs/design/HATCH_UX_FINAL_VERIFICATION.md` with completed work, validation evidence, remaining lock-blocked verification tasks, and the adapter-retirement decision.
+- Added `docs/archive/superseded/design/HATCH_UX_FINAL_VERIFICATION.md` with completed work, validation evidence, remaining lock-blocked verification tasks, and the adapter-retirement decision.
 - Confirmed `HatchIcon` and `Btn` still have active runtime imports and should not be removed in PR 10C.
 - Confirmed the running backend still has no `HATCH_AUTH_TOKEN` and protected API calls return `423 Hatch is locked`; server-rendered route screenshots and skipped route-matrix checks remain environment-gated rather than implementation-gated.
 - Remaining after PR 10C: no broad UX implementation work. Follow-up verification can run when an unlocked app-lock session or test-only server-side auth path is available.
@@ -1868,7 +1868,7 @@ Use the following prompt with Codex:
 ```text
 You are working in the Hatch repository.
 
-Implement the UX remediation spec in docs/hatch_ux_gap_review_codex_spec.md.
+Implement the UX remediation spec in docs/implementation-specs/active/hatch_ux_gap_review_codex_spec.md.
 
 Implement only the first eligible PR in the section 9 status ledger. A PR is eligible when all its dependencies are marked Merged. If one PR is already In progress, resume it instead of starting another.
 

@@ -233,7 +233,7 @@ frontend/       Next.js application, Vitest tests, and Playwright tests
 data/           Local profile, database, documents, and model state
 locales/        Market-specific configuration
 scripts/        Installation, maintenance, model, and recovery scripts
-docs/           Product, architecture, feature, and operations documentation
+docs/           User, architecture, operations, development, reference, and historical documentation
 ```
 
 ## Current boundaries

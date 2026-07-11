@@ -2,6 +2,8 @@
 
 Use the symptom that best matches what you see, then start with the diagnostic command before changing config.
 
+> Last verified against `main`: 2026-07-10
+
 ## Frontend Unavailable
 
 - Symptom: `http://localhost:3000` does not load

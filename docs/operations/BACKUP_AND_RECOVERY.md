@@ -2,6 +2,8 @@
 
 Back up local data before risky updates, manual cleanup, or machine migration.
 
+> Last verified against `main`: 2026-07-10
+
 ## What To Back Up
 
 - `data/`
