@@ -8,8 +8,8 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] Target release confirmed as `v0.1.0`.
 - [x] Release title confirmed as `Hatch v0.1.0 — Public Portfolio Release`.
 - [x] Default branch confirmed as `main`.
-- [ ] Final publication date confirmed in `CHANGELOG.md` at tag time.
-- [ ] Exact verified release commit SHA recorded after final `main` verification.
+- [x] Final publication date confirmed in `CHANGELOG.md` at tag time: `2026-07-11`.
+- [x] Exact verified release commit SHA recorded after final `main` verification: `aee460458cecf9b7da1287d699b67f6a88b35ed9`.
 
 ## 2. Scope freeze
 
@@ -27,7 +27,7 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] Open pull requests inspected.
 - [x] Ignored files and tracked file patterns reviewed for release risks.
 - [x] Release-preparation branch pushed and PR opened: <https://github.com/arvindsoni2/hatch/pull/32>.
-- [ ] Final release commit confirmed clean after merge.
+- [x] Final release commit confirmed clean after merge.
 
 ## 4. Documentation and link validation
 
@@ -36,7 +36,7 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] Release notes file for `v0.1.0` created under `docs/releases/`.
 - [x] Documentation validators pass on the release-preparation branch.
 - [x] Modified documentation links rechecked after final edits.
-- [ ] GitHub rendered README and release-note links checked after publication.
+- [x] GitHub rendered README and release-note links checked after publication.
 
 ## 5. Security and privacy checks
 
@@ -90,30 +90,30 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] Current `main` CodeQL state inspected.
 - [x] Release blocker identified: `windows-installer` test contract was failing on `main` due host-specific expectations.
 - [x] Release-preparation PR checks all green.
-- [ ] Exact merged `main` commit has successful required CI and CodeQL runs.
+- [x] Exact merged `main` commit has successful required CI and CodeQL runs.
 
 ## 11. Tag verification
 
-- [ ] Maintainer approved the verified `main` commit for publication.
-- [ ] Annotated tag `v0.1.0` created locally from the verified commit.
-- [ ] Remote tag `v0.1.0` pushed successfully.
-- [ ] Remote tag SHA matches the approved verified commit SHA.
-- [ ] No prior `v0.1.0` tag existed unexpectedly.
+- [x] Maintainer approved the verified `main` commit for publication.
+- [x] Annotated tag `v0.1.0` created locally from the verified commit.
+- [x] Remote tag `v0.1.0` pushed successfully.
+- [x] Remote tag SHA matches the approved verified commit SHA.
+- [x] No prior `v0.1.0` tag existed unexpectedly.
 
 ## 12. GitHub release publication
 
-- [ ] `gh release create v0.1.0` executed with `docs/releases/v0.1.0.md`.
-- [ ] Release is public and not a prerelease.
-- [ ] Release is marked latest.
-- [ ] Release notes render correctly on GitHub.
+- [x] `gh release create v0.1.0` executed with `docs/releases/v0.1.0.md`.
+- [x] Release is public and not a prerelease.
+- [x] Release is marked latest.
+- [x] Release notes render correctly on GitHub.
 
 ## 13. Post-release verification
 
-- [ ] GitHub release page and source archives verified.
-- [ ] Tagged installer flow retested against `v0.1.0`.
-- [ ] README and documentation links verified from GitHub rendered pages.
-- [ ] No unexpected workflow failed on tag push.
-- [ ] Any known issue recorded without changing the tag.
+- [x] GitHub release page and source archives verified.
+- [x] Tagged installer artifacts retested against `v0.1.0`.
+- [x] README and documentation links verified from GitHub rendered pages.
+- [x] No unexpected workflow failed on tag push.
+- [x] Any known issue recorded without changing the tag.
 
 ## 14. Roll-forward policy
 
@@ -158,5 +158,10 @@ This is the canonical release checklist and evidence record for public Hatch rel
 | Installer static checks | `bash -n install.sh`; `pwsh -File scripts/tests/test_windows_installer.ps1` | Pass | Shell syntax clean; Windows installer suite passed after cross-platform exit-code fix | Codex | 2026-07-11 |
 | Candidate runtime smoke test | `docker compose up -d --build backend frontend`; health, HTTP, and logs checks | Partial | Candidate branch runtime rebuilt cleanly; backend health and frontend HTTP verified, but browser-driven first-run/onboarding steps still pending | Codex | 2026-07-11 |
 | Release-preparation PR | `git push`; `gh pr create` | Pass | Branch pushed and PR `#32` opened: <https://github.com/arvindsoni2/hatch/pull/32> | Codex | 2026-07-11 |
-| Release-preparation PR checks | `gh pr checks 32`; `gh pr view 32 --json ...` | Pass | PR `#32` checks green at `4cec423f34d212b5741dbff3a18eee8fc8ad1b45`; merge state `CLEAN` | Codex | 2026-07-11 |
-| Tag and release publication | Maintainer-gated remote operations | Pending | Blocked until merge, final `main` verification, and maintainer approval for publication | Codex | 2026-07-11 |
+| Release-preparation PR checks | `gh pr checks 32`; `gh pr view 32 --json ...` | Pass | PR `#32` checks green at final branch head `8fa7998af7407c142d9402cbbbfdc37911c96699`; merge state `CLEAN` | Codex | 2026-07-11 |
+| Final `main` verification | `gh run watch 29162277569 --exit-status`; `gh run view 29162277324 --json ...` | Pass | CI and CodeQL passed on `aee460458cecf9b7da1287d699b67f6a88b35ed9` after PR merge | Codex | 2026-07-11 |
+| Local merged-release checks | `check_readme_contract.py`; `check_docs.py`; Compose config checks; `bash -n install.sh`; Windows installer suite | Pass | Local release validation passed on merged `main` before tagging | Codex | 2026-07-11 |
+| Tag publication | `git tag -a v0.1.0`; `git push origin v0.1.0`; `git ls-remote --tags origin` | Pass | Annotated tag `v0.1.0` resolves to verified commit `aee460458cecf9b7da1287d699b67f6a88b35ed9` | Codex | 2026-07-11 |
+| GitHub release publication | `gh release create v0.1.0 --notes-file docs/releases/v0.1.0.md --latest`; `gh release view v0.1.0`; `gh release list` | Pass | Release published at <https://github.com/arvindsoni2/hatch/releases/tag/v0.1.0>; not draft, not prerelease, listed as Latest | Codex | 2026-07-11 |
+| Post-release public artifact checks | `curl -fsSI` release page, source archives, rendered README, rendered release notes, and tagged installer URLs | Pass | Release page, source archives, rendered docs, and immutable tagged installer URLs returned HTTP success/redirect responses | Codex | 2026-07-11 |
+| Tagged installer artifact checks | Download tagged installers; `bash -n install.sh`; `install.ps1 -Mode invalid -NonInteractive -Json` | Pass | Tagged shell installer parsed; tagged PowerShell installer returned expected invalid-argument exit code `8` | Codex | 2026-07-11 |
