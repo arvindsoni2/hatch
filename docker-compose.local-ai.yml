@@ -3,7 +3,7 @@ services:
     profiles: ["local-primary"]
     image: ghcr.io/ggml-org/llama.cpp:server
     command: >
-      --model /models/${HATCH_PRIMARY_MODEL_FILE:-Qwen_Qwen3.5-4B-Q4_K_M.gguf}
+      --model /models/${HATCH_PRIMARY_MODEL_FILE:?Select and apply a primary local model first}
       --ctx-size 16384 --parallel 1 --reasoning off --host 0.0.0.0 --port 8080
     volumes:
       - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z
@@ -16,7 +16,7 @@ services:
     profiles: ["local-triage"]
     image: ghcr.io/ggml-org/llama.cpp:server
     command: >
-      --model /models/${HATCH_TRIAGE_MODEL_FILE:-Qwen_Qwen3.5-0.8B-Q8_0.gguf}
+      --model /models/${HATCH_TRIAGE_MODEL_FILE:?Select and apply a triage local model first}
       --ctx-size 4096 --parallel 2 --reasoning off --host 0.0.0.0 --port 8081
     volumes:
       - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z

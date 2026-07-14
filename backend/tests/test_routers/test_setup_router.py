@@ -19,6 +19,7 @@ from app.routers import setup
 
 @pytest.mark.asyncio
 async def test_setup_status_composes_experience_capabilities_and_hardware(
+    db_session,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -37,13 +38,14 @@ async def test_setup_status_composes_experience_capabilities_and_hardware(
         "provider": "openrouter",
         "provider_metadata": {"model": "openai/gpt-4o-mini"},
     })
-    status = await setup.setup_status()
+    status = await setup.setup_status(db_session)
 
-    assert status["schema_version"] == 1
+    assert status["schema_version"] == 2
     assert status["experience"] == "custom"
     assert status["ai"]["mode"] == "cloud"
     assert status["ai"]["provider"] == "openrouter"
-    assert status["ai"]["configured"] is False
+    assert status["ai"]["configured"] is True
+    assert status["ai"]["healthy"] is False
     assert status["capabilities"]["profile"] == "core"
     assert status["capabilities"]["available_profiles"] == ["core", "browser", "local-embeddings", "full"]
     assert status["hardware"]["status"] == "supported_with_limitations"
@@ -95,11 +97,15 @@ async def test_cloud_endpoint_accepts_openrouter_model_without_secret(
 
     response = await setup.select_cloud_provider({
         "provider": "openrouter",
-        "provider_metadata": {"model": "openai/gpt-4o-mini"},
+        "provider_metadata": {"model": "anthropic/claude-haiku-4.5"},
     })
 
     assert response["intent"]["provider"] == "openrouter"
-    assert response["intent"]["provider_metadata"] == {"model": "openai/gpt-4o-mini"}
+    assert response["intent"]["provider_metadata"] == {
+        "model": "anthropic/claude-haiku-4.5",
+        "primary_model": "anthropic/claude-haiku-4.5",
+        "triage_model": "anthropic/claude-haiku-4.5",
+    }
     assert response["next_command"] == "hatch secrets set openrouter"
 
 
@@ -114,6 +120,42 @@ async def test_cloud_endpoint_rejects_unknown_provider(
         await setup.select_cloud_provider({"provider": "made_up"})
 
     assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_intent_patch_uses_cloud_models_without_local_ids(
+    client: AsyncClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    response = await client.patch("/api/setup/intent", json={
+        "ai_mode": "cloud",
+        "cloud_provider": "openai",
+        "cloud_primary_model": "provider-primary",
+        "cloud_triage_model": "provider-triage",
+    })
+
+    assert response.status_code == 200
+    intent = response.json()["intent"]
+    assert intent["local_primary_model"] is None
+    assert intent["local_triage_model"] is None
+    assert "API_KEY" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_skip_ai_writes_explicit_none(
+    client: AsyncClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    response = await client.post("/api/setup/skip-ai")
+
+    assert response.status_code == 200
+    assert response.json()["intent"]["ai_mode"] == "none"
 
 
 @pytest.mark.asyncio
@@ -197,7 +239,7 @@ async def test_provider_test_reports_missing_openrouter_secret(
 
     response = await setup.test_provider_connection({
         "provider": "openrouter",
-        "model": "openai/gpt-4o-mini",
+        "model": "anthropic/claude-haiku-4.5",
     })
 
     assert response == {

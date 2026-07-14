@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 CATALOG_PATH = Path(__file__).parents[1] / "config" / "model_catalog.json"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 MODEL_ROLES = {"triage", "combined_capable_primary"}
-AI_MODES = {"not_configured", "cloud", "local", "custom"}
+AI_MODES = {"not_configured", "none", "cloud", "local", "custom"}
 EXPERIENCES = {"essential", "full_ai", "custom"}
 BACKEND_PROFILES = {"core", "browser", "local-embeddings", "full"}
 PROVIDER_SECRET_ENV = {
@@ -166,7 +166,24 @@ def recommend_models(
 
 
 def load_intent() -> dict[str, Any]:
-    return _read_json(config_dir() / "ai_setup_intent.json", AISetupIntent().model_dump())
+    from .setup_intent import load_setup_intent
+
+    intent = load_setup_intent()
+    data = intent.model_dump(mode="json")
+    data.update({
+        "provider": intent.cloud_provider,
+        "provider_metadata": {
+            "model": intent.cloud_primary_model,
+            "primary_model": intent.cloud_primary_model,
+            "triage_model": intent.cloud_triage_model,
+        } if intent.cloud_provider else {},
+        "selected_model_ids": [
+            model_id
+            for model_id in (intent.local_triage_model, intent.local_primary_model)
+            if model_id
+        ],
+    })
+    return data
 
 
 def save_intent(payload: AISetupIntent) -> dict[str, Any]:
@@ -180,9 +197,26 @@ def save_intent(payload: AISetupIntent) -> dict[str, Any]:
     unknown = set(payload.selected_model_ids) - catalog_ids
     if unknown:
         raise ValueError(f"unknown model ids: {', '.join(sorted(unknown))}")
-    data = payload.model_dump()
-    atomic_write_json(config_dir() / "ai_setup_intent.json", data)
-    return data
+    from ..schemas.setup import IntentPatch
+    from .setup_intent import patch_setup_intent
+
+    primary = next((value for value in payload.selected_model_ids if "primary" in value), None)
+    triage = next((value for value in payload.selected_model_ids if "triage" in value), None)
+    metadata = payload.provider_metadata
+    patch = IntentPatch(
+        ai_mode=payload.ai_mode,
+        experience=payload.experience,
+        backend_profile=payload.backend_profile,
+        local_primary_model=primary,
+        local_triage_model=triage,
+        cloud_provider=canonical_provider(payload.provider) or None,
+        cloud_primary_model=metadata.get("primary_model") or metadata.get("model"),
+        cloud_triage_model=metadata.get("triage_model") or metadata.get("model"),
+        restart_required=payload.restart_required,
+        hardware_probe_id=payload.hardware_probe_id,
+    )
+    patch_setup_intent(patch)
+    return load_intent()
 
 
 def load_backend_capabilities() -> dict[str, Any]:

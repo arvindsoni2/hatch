@@ -4,7 +4,7 @@ import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Loader2, LockKeyhole } from "lucide-react";
-import { APP_LOCK_QUERY_KEY } from "@/components/AppLockGate";
+import { APP_LOCK_QUERY_KEY } from "@/lib/api";
 import { PasswordField } from "@/components/security/PasswordField";
 import { PasswordRequirementList } from "@/components/security/PasswordRequirementList";
 import { Button } from "@/components/ui/button";

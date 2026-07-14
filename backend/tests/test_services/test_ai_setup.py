@@ -64,7 +64,12 @@ def test_intent_write_is_non_secret_and_atomic(tmp_path: Path, monkeypatch: pyte
     saved = ai_setup.save_intent(payload)
 
     assert saved["provider"] == "openai"
-    assert json.loads((tmp_path / "ai_setup_intent.json").read_text()) == saved
+    stored = json.loads((tmp_path / "ai_setup_intent.json").read_text())
+    assert stored["schema_version"] == 2
+    assert stored["cloud_provider"] == "openai"
+    assert stored["cloud_primary_model"] == "example"
+    assert stored["cloud_triage_model"] == "example"
+    assert "provider_metadata" not in stored
     assert (tmp_path / "ai_setup_intent.json").stat().st_mode & 0o777 == 0o600
 
 

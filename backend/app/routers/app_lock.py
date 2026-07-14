@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..database import get_db
 from ..services.app_lock_service import AppLockError, AppLockService
+from ..services.onboarding_service import OnboardingService
 
 router = APIRouter(prefix="/api/app-lock", tags=["app-lock"])
 
@@ -40,6 +42,13 @@ def _raise(exc: AppLockError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
+def _onboarding_payload(state) -> dict[str, str | None]:
+    return {
+        "status": state.status,
+        "last_completed_step": state.last_completed_step,
+    }
+
+
 @router.get("/status")
 async def status(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
     service = AppLockService(db)
@@ -48,7 +57,9 @@ async def status(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
         settings.HATCH_AUTH_TOKEN
         and request.headers.get("authorization") == f"Bearer {settings.HATCH_AUTH_TOKEN}"
     )
-    return await service.status(token, include_private=bearer_ok)
+    lock_status = await service.status(token, include_private=bearer_ok)
+    onboarding = await OnboardingService(db).status()
+    return {**lock_status, "onboarding": _onboarding_payload(onboarding)}
 
 
 @router.post("/setup")
@@ -56,9 +67,22 @@ async def setup(body: PasswordRequest, request: Request, response: Response, db:
     try:
         token = await AppLockService(db).setup(body.password)
     except AppLockError as exc:
+        if exc.status_code == 409 and exc.detail == "App lock is already configured.":
+            lock_status = await AppLockService(db).status(_token(request))
+            onboarding = await OnboardingService(db).status()
+            raise HTTPException(
+                status_code=409,
+                detail=jsonable_encoder({
+                    "code": "app_lock_already_configured",
+                    "message": exc.detail,
+                    "app_lock": lock_status,
+                    "onboarding": _onboarding_payload(onboarding),
+                }),
+            ) from exc
         _raise(exc)
+    onboarding = await OnboardingService(db).mark_password_configured()
     _set_cookie(response, request, token)
-    return {"unlocked": True}
+    return {"unlocked": True, "onboarding": _onboarding_payload(onboarding)}
 
 
 @router.post("/unlock")

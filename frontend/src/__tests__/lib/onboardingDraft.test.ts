@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createOnboardingDraft,
+  LEGACY_ONBOARDING_STORAGE_KEY,
+  migrateLegacyOnboardingDraft,
+  ONBOARDING_STORAGE_KEY,
   restoreOnboardingDraft,
 } from "@/lib/onboardingDraft";
 
@@ -47,7 +50,7 @@ const state = {
     provider: "llamacpp",
     triage_model: "qwen3.5-0.8b-q8_0",
     primary_model: "qwen3.5-4b-q4_k_m",
-    api_key_env: "",
+    api_key_env: "OPENAI_API_KEY",
     base_url: "http://llm-primary:8080/v1",
     triage_base_url: "http://llm-triage:8081/v1",
     temperature: 0.3,
@@ -81,10 +84,13 @@ describe("onboarding draft privacy", () => {
     expect(serialized).not.toContain("700");
     expect(serialized).not.toContain("visa_holder");
     expect(serialized).not.toContain("Saved a named client");
+    expect(serialized).not.toContain("api_key_env");
+    expect(serialized).not.toContain("OPENAI_API_KEY");
     expect(draft).not.toHaveProperty("candidate");
     expect(draft).not.toHaveProperty("locations");
     expect(draft).not.toHaveProperty("compensation");
     expect(draft).not.toHaveProperty("proofPoints");
+    expect(draft).not.toHaveProperty("llm");
   });
 
   it("sanitises legacy drafts instead of restoring sensitive fields", () => {
@@ -102,5 +108,19 @@ describe("onboarding draft privacy", () => {
     expect(restored).not.toHaveProperty("locations");
     expect(restored).not.toHaveProperty("compensation");
     expect(restored).not.toHaveProperty("proofPoints");
+    expect(restored).not.toHaveProperty("llm");
+  });
+
+  it("moves legacy non-sensitive fields to session storage once", () => {
+    localStorage.setItem(LEGACY_ONBOARDING_STORAGE_KEY, JSON.stringify(state));
+
+    const migrated = migrateLegacyOnboardingDraft();
+
+    expect(migrated?.search).toEqual(state.search);
+    expect(localStorage.getItem(LEGACY_ONBOARDING_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeTruthy();
+    expect(sessionStorage.getItem(ONBOARDING_STORAGE_KEY)).not.toContain("Alex Smith");
+    expect(sessionStorage.getItem(ONBOARDING_STORAGE_KEY)).not.toContain("api_key_env");
   });
 });

@@ -68,7 +68,7 @@ hatch status
 hatch doctor
 hatch probe
 hatch models list
-hatch models install
+hatch models install --primary <catalog-id> --triage <catalog-id>
 hatch models remove
 hatch apply-ai-config
 hatch secrets status
@@ -106,6 +106,8 @@ Open these local endpoints:
 ## AI and capability profiles
 
 AI mode and backend capability profile are separate choices. AI mode decides whether Hatch uses no AI, cloud AI, or local model services. Backend capability profile decides which optional Python packages are installed in the backend image.
+
+The UI labels the `core` profile **Standard Hatch**. Cloud routes use only the selected provider-hosted primary and triage models. Local routes use only checksum-verified host models. Changing a selection records intent first; the setup banner and Settings page continue to show pending host commands until applied.
 
 Capability profiles:
 
@@ -265,11 +267,12 @@ curl -f http://localhost:8000/api/health
 
 ### Local model is unhealthy
 
-Confirm the model files exist, then restart the local model services:
+Confirm the selected models and verification evidence, then apply or restart the local model services:
 
 ```bash
-ls -lh data/models/Qwen_Qwen3.5-4B-Q4_K_M.gguf data/models/Qwen_Qwen3.5-0.8B-Q8_0.gguf
-bash scripts/fetch_models.sh
+hatch models list
+hatch apply-ai-config --restart
+hatch status
 docker compose restart llm-primary llm-triage
 ```
 

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "validation_ttl_hours": 24,
+  "providers": [
+    {
+      "id": "anthropic",
+      "label": "Anthropic",
+      "secret_env": "ANTHROPIC_API_KEY",
+      "primary_model": "claude-sonnet-5",
+      "triage_model": "claude-haiku-4-5",
+      "models": ["claude-sonnet-5", "claude-haiku-4-5"],
+      "privacy": "Prompts are sent to Anthropic.",
+      "cost": "External API charges apply."
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "secret_env": "OPENAI_API_KEY",
+      "primary_model": "gpt-5.6",
+      "triage_model": "gpt-5.6",
+      "models": ["gpt-5.6"],
+      "privacy": "Prompts are sent to OpenAI.",
+      "cost": "External API charges apply."
+    },
+    {
+      "id": "google_genai",
+      "label": "Google Gemini",
+      "secret_env": "GOOGLE_API_KEY",
+      "primary_model": "gemini-2.5-flash",
+      "triage_model": "gemini-2.5-flash",
+      "models": ["gemini-2.5-flash"],
+      "privacy": "Prompts are sent to the Gemini Developer API.",
+      "cost": "External API charges may apply."
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "secret_env": "OPENROUTER_API_KEY",
+      "primary_model": "anthropic/claude-sonnet-5",
+      "triage_model": "anthropic/claude-haiku-4.5",
+      "models": ["anthropic/claude-sonnet-5", "anthropic/claude-haiku-4.5"],
+      "privacy": "Prompts are sent through OpenRouter to the selected upstream provider.",
+      "cost": "OpenRouter and upstream provider charges apply."
+    }
+  ]
+}

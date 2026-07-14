@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,8 +27,10 @@ PROBE_DIR = HATCH_HOME / "probe"
 LOGS_DIR = HATCH_HOME / "logs"
 BACKUPS_DIR = HATCH_HOME / "backups"
 CATALOG_PATH = ROOT / "backend" / "app" / "config" / "model_catalog.json"
+DISCOVERY_POLICY_PATH = ROOT / "backend" / "app" / "config" / "model_discovery_policy.json"
 RUNTIME_PATH = CONFIG_DIR / "ai_runtime.json"
 INTENT_PATH = CONFIG_DIR / "ai_setup_intent.json"
+MODEL_VERIFICATION_PATH = CONFIG_DIR / "model_verification.json"
 SECRETS_PATH = CONFIG_DIR / "secrets.env"
 INSTALL_PATH = CONFIG_DIR / "install.json"
 BACKEND_CAPABILITIES_PATH = CONFIG_DIR / "backend_capabilities.json"
@@ -143,11 +146,61 @@ def write_json(path: Path, payload: Any) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+def _fallback_catalog() -> list[dict[str, Any]]:
+    models = read_json(CATALOG_PATH, [])
+    for model in models:
+        model["download_url"] = model["download_url_template"].format(
+            source_revision=model["source_revision"]
+        )
+    return models
+
+
+def _discovered_catalog() -> list[dict[str, Any]]:
+    raw = read_json(CONFIG_DIR / "model_discovery_cache.json", {})
+    try:
+        created = datetime.fromisoformat(str(raw["created_at"]).replace("Z", "+00:00"))
+        ttl = float(read_json(DISCOVERY_POLICY_PATH, {})["cache_ttl_hours"])
+        age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
+        if age_seconds < 0 or age_seconds > ttl * 3600:
+            return []
+    except (KeyError, TypeError, ValueError):
+        return []
+    models: list[dict[str, Any]] = []
+    for value in raw.get("models", []):
+        if not isinstance(value, dict):
+            continue
+        sha = str(value.get("sha256") or "")
+        revision = str(value.get("revision") or "")
+        filename = str(value.get("filename") or "")
+        url = str(value.get("download_url") or "")
+        model_id = str(value.get("catalog_id") or "")
+        if not (
+            len(sha) == 64 and all(character in "0123456789abcdef" for character in sha)
+            and len(revision) == 40 and all(character in "0123456789abcdef" for character in revision)
+            and filename == Path(filename).name and filename.lower().endswith(".gguf")
+            and url.startswith("https://huggingface.co/") and f"/resolve/{revision}/" in url
+            and model_id
+        ):
+            continue
+        models.append({
+            **value,
+            "id": model_id,
+            "display_name": value.get("display_name") or filename,
+            "source_revision": revision,
+            "download_size_gb": float(value.get("download_size_gb") or 0),
+            "size_bytes": int(value.get("size_bytes") or 0),
+            "role": "discovered",
+        })
+    return models
+
+
 def catalog() -> list[dict[str, Any]]:
-    value = read_json(CATALOG_PATH, [])
-    if not value:
+    fallback = _fallback_catalog()
+    if not fallback:
         fail(f"Model catalogue is unavailable: {CATALOG_PATH}")
-    return value
+    merged = {model["id"]: model for model in fallback}
+    merged.update({model["id"]: model for model in _discovered_catalog()})
+    return list(merged.values())
 
 
 def fail(message: str, code: int = 1) -> None:
@@ -350,12 +403,14 @@ def cmd_models_list(_: argparse.Namespace) -> None:
     if not snapshot:
         snapshot = read_json(CONFIG_DIR / "hardware_probe_latest.json", {})
     support = snapshot.get("model_support", {})
-    for model in catalog():
+    models = catalog()
+    available = {model["id"]: model for model in models}
+    for model in models:
         bucket = next(
             (name for name, ids in support.items() if model["id"] in ids),
             "not_probed",
         ).replace("_model_ids", "")
-        status = "ready" if (MODELS_DIR / model["filename"]).is_file() else "not downloaded"
+        status = "verified" if verified_model(model["id"], available) else "not installed"
         print(f"{model['id']}: {bucket}; {status}; {model['download_size_gb']} GB")
 
 
@@ -363,27 +418,67 @@ def download_model(model: dict[str, Any]) -> None:
     ensure_home()
     destination = MODELS_DIR / model["filename"]
     if destination.exists() and sha256(destination) == model["sha256"]:
+        record_model_verification(model, destination)
         print(f"{model['display_name']} is already ready.")
         return
-    url = model["download_url_template"].format(source_revision=model["source_revision"])
+    url = model["download_url"]
     partial = destination.with_suffix(destination.suffix + ".part")
     print(f"Downloading {model['display_name']} ({model['download_size_gb']} GB)…")
     try:
         urllib.request.urlretrieve(url, partial)
         if sha256(partial) != model["sha256"]:
             fail(f"Checksum verification failed for {model['filename']}")
+        expected_size = int(model.get("size_bytes") or 0)
+        if expected_size and partial.stat().st_size != expected_size:
+            fail(f"Size verification failed for {model['filename']}")
         os.replace(partial, destination)
+        record_model_verification(model, destination)
     finally:
         partial.unlink(missing_ok=True)
 
 
+def record_model_verification(model: dict[str, Any], path: Path) -> None:
+    manifest = read_json(MODEL_VERIFICATION_PATH, {})
+    manifest[model["id"]] = {
+        "path": str(path.resolve()),
+        "filename": path.name,
+        "revision": model["source_revision"],
+        "sha256": model["sha256"],
+        "size_bytes": path.stat().st_size,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+    }
+    write_json(MODEL_VERIFICATION_PATH, manifest)
+
+
+def verified_model(model_id: str, available: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    model = available.get(model_id)
+    evidence = read_json(MODEL_VERIFICATION_PATH, {}).get(model_id, {})
+    if not model or not isinstance(evidence, dict):
+        return None
+    path = MODELS_DIR / model["filename"]
+    if not path.is_file() or evidence.get("path") != str(path.resolve()):
+        return None
+    if (
+        evidence.get("sha256") != model["sha256"]
+        or evidence.get("revision") != model["source_revision"]
+        or evidence.get("size_bytes") != path.stat().st_size
+    ):
+        return None
+    return model
+
+
 def cmd_models_install(args: argparse.Namespace) -> None:
     available = {model["id"]: model for model in catalog()}
-    ids = args.model_ids or []
-    if not ids:
+    primary_id = args.primary
+    triage_id = args.triage
+    if not primary_id or not triage_id:
         cmd_models_list(args)
-        entered = input("Model IDs to install (comma-separated): ").strip()
-        ids = [value.strip() for value in entered.split(",") if value.strip()]
+        fail(
+            "Choose both routes explicitly: hatch models install "
+            "--primary <model-id> --triage <model-id>",
+            2,
+        )
+    ids = list(dict.fromkeys((primary_id, triage_id)))
     unknown = set(ids) - set(available)
     if unknown:
         fail(f"Unknown model IDs: {', '.join(sorted(unknown))}")
@@ -392,10 +487,21 @@ def cmd_models_install(args: argparse.Namespace) -> None:
         fail("Cancelled.", 2)
     for model_id in ids:
         download_model(available[model_id])
-    write_json(INTENT_PATH, {
-        "schema_version": 1, "ai_mode": "local", "selected_model_ids": ids,
-        "provider": None, "provider_metadata": {}, "restart_required": True,
+    intent = read_json(INTENT_PATH, {})
+    intent.update({
+        "schema_version": 2,
+        "ai_mode": "local",
+        "local_primary_model": primary_id,
+        "local_triage_model": triage_id,
+        "cloud_provider": None,
+        "cloud_primary_model": None,
+        "cloud_triage_model": None,
+        "restart_required": True,
     })
+    intent.pop("selected_model_ids", None)
+    intent.pop("provider", None)
+    intent.pop("provider_metadata", None)
+    write_json(INTENT_PATH, intent)
     print("Models are ready. Run: hatch apply-ai-config")
 
 
@@ -409,38 +515,43 @@ def cmd_models_remove(args: argparse.Namespace) -> None:
     active = args.model_id in {
         runtime.get("primary_model_id"),
         runtime.get("triage_model_id"),
+        intent.get("local_primary_model"),
+        intent.get("local_triage_model"),
         *intent.get("selected_model_ids", []),
     }
     if active and not (args.clear_ai or args.degrade or args.replace_with):
         fail("Model is active. Use --replace-with, --degrade, or --clear-ai.")
     if active:
-        selected = [
-            value for value in intent.get("selected_model_ids", [])
-            if value != args.model_id
-        ]
+        primary = intent.get("local_primary_model")
+        triage = intent.get("local_triage_model")
         if args.replace_with:
             replacement = available.get(args.replace_with)
             if replacement is None:
                 fail(f"Unknown replacement model ID: {args.replace_with}")
-            if not (MODELS_DIR / replacement["filename"]).is_file():
-                fail("Replacement model is not ready.")
-            selected.append(args.replace_with)
+            if verified_model(args.replace_with, available) is None:
+                fail("Replacement model is not checksum-verified.")
+            if primary == args.model_id:
+                primary = args.replace_with
+            if triage == args.model_id:
+                triage = args.replace_with
         if args.clear_ai:
-            next_intent = {
-                "schema_version": 1, "ai_mode": "not_configured",
-                "selected_model_ids": [], "provider": None,
-                "provider_metadata": {}, "restart_required": True,
-            }
+            next_intent = {**intent, "schema_version": 2, "ai_mode": "none",
+                           "local_primary_model": None, "local_triage_model": None,
+                           "restart_required": True}
             next_runtime = base_runtime("not_configured")
         else:
-            if not selected:
+            if not args.replace_with:
+                primary = None if primary == args.model_id else primary
+                triage = None if triage == args.model_id else triage
+            if not primary and not triage:
                 fail("No valid fallback remains; use --clear-ai.")
-            next_intent = {
-                **intent, "ai_mode": "local",
-                "selected_model_ids": list(dict.fromkeys(selected)),
-                "restart_required": True,
-            }
-            next_runtime = runtime_for_local(next_intent["selected_model_ids"])
+            next_intent = {**intent, "schema_version": 2, "ai_mode": "local",
+                           "local_primary_model": primary, "local_triage_model": triage,
+                           "restart_required": True}
+            next_runtime = runtime_for_local(primary, triage)
+        next_intent.pop("selected_model_ids", None)
+        next_intent.pop("provider", None)
+        next_intent.pop("provider_metadata", None)
         # Persist the safe replacement/fallback before deleting the file.
         write_json(INTENT_PATH, next_intent)
         write_json(RUNTIME_PATH, next_runtime)
@@ -448,20 +559,32 @@ def cmd_models_remove(args: argparse.Namespace) -> None:
     if not args.yes and input(f"Remove {path.name}? [y/N] ").lower() != "y":
         fail("Cancelled.", 2)
     path.unlink(missing_ok=True)
+    manifest = read_json(MODEL_VERIFICATION_PATH, {})
+    manifest.pop(args.model_id, None)
+    write_json(MODEL_VERIFICATION_PATH, manifest)
     print(f"Removed {model['display_name']}")
 
 
-def runtime_for_local(ids: list[str]) -> dict[str, Any]:
+def runtime_for_local(primary_id: str | list[str], triage_id: str | None = None) -> dict[str, Any]:
     available = {model["id"]: model for model in catalog()}
-    ready = [
-        model_id for model_id in ids
-        if model_id in available and (MODELS_DIR / available[model_id]["filename"]).is_file()
-    ]
-    primaries = [value for value in ready if available[value]["role"] == "combined_capable_primary"]
-    triages = [value for value in ready if available[value]["role"] == "triage"]
-    primary = next((value for value in primaries if "8b-" in value), None)
-    primary = primary or next((value for value in primaries if "4b-" in value), None)
-    triage = triages[0] if triages else None
+    if isinstance(primary_id, list):
+        ids = primary_id
+        primary = next(
+            (value for value in ids if available.get(value, {}).get("role") == "combined_capable_primary"),
+            None,
+        )
+        triage = next(
+            (value for value in ids if available.get(value, {}).get("role") == "triage"),
+            None,
+        )
+    else:
+        primary, triage = primary_id, triage_id
+    primary_ready = verified_model(primary, available) if primary else None
+    triage_ready = verified_model(triage, available) if triage else None
+    if primary and primary_ready is None:
+        fail(f"Primary model is not checksum-verified: {primary}")
+    if triage and triage_ready is None:
+        fail(f"Triage model is not checksum-verified: {triage}")
     if primary:
         combined = triage is None
         quality = "balanced_local" if "8b-" in primary else "compact_local"
@@ -498,20 +621,31 @@ def cmd_apply(args: argparse.Namespace) -> None:
     intent = read_json(INTENT_PATH, {"ai_mode": "not_configured"})
     mode = intent.get("ai_mode", "not_configured")
     if mode == "local":
-        runtime = runtime_for_local(intent.get("selected_model_ids", []))
+        runtime = runtime_for_local(
+            intent.get("local_primary_model"), intent.get("local_triage_model")
+        )
     elif mode == "cloud":
-        provider = canonical_provider(intent.get("provider"))
+        provider = canonical_provider(intent.get("cloud_provider", intent.get("provider")))
         env_name = provider_env(provider)
         if not env_name or env_name not in read_env(SECRETS_PATH):
             fail(f"Cloud secret is missing. Run: hatch secrets set {provider}")
-        runtime = base_runtime("cloud", provider=provider)
+        primary = intent.get("cloud_primary_model")
+        triage = intent.get("cloud_triage_model")
+        if not primary or not triage:
+            fail("Cloud primary and triage models must both be selected.")
+        runtime = base_runtime("cloud", provider=provider, primary=primary, triage=triage)
     elif mode == "custom":
         runtime = base_runtime("custom")
     else:
-        runtime = base_runtime("not_configured")
+        runtime = base_runtime("none" if mode == "none" else "not_configured")
     write_json(RUNTIME_PATH, runtime)
     restart = bool(getattr(args, "restart", False))
-    intent["provider"] = canonical_provider(intent.get("provider")) if intent.get("provider") else None
+    intent["schema_version"] = 2
+    if mode == "cloud":
+        intent["cloud_provider"] = provider
+    intent.pop("provider", None)
+    intent.pop("provider_metadata", None)
+    intent.pop("selected_model_ids", None)
     intent["restart_required"] = not restart
     write_json(INTENT_PATH, intent)
     print(f"Applied AI mode: {runtime['ai_mode']}")
@@ -521,12 +655,17 @@ def cmd_apply(args: argparse.Namespace) -> None:
         print("Restart required. Run: hatch restart")
 
 
-def base_runtime(mode: str, provider: str | None = None) -> dict[str, Any]:
+def base_runtime(
+    mode: str,
+    provider: str | None = None,
+    primary: str | None = None,
+    triage: str | None = None,
+) -> dict[str, Any]:
     enabled = mode in {"cloud", "custom"}
     return {
         "schema_version": 1, "ai_mode": mode, "quality_mode": mode,
         "primary_model_id": None, "triage_model_id": None,
-        "effective_routing": {"primary": None, "triage": None},
+        "effective_routing": {"primary": primary, "triage": triage},
         "provider": provider,
         "feature_gates": {
             "cv_tailoring": enabled, "cover_letter_generation": enabled,
@@ -569,6 +708,26 @@ def provider_env(provider: str) -> str:
 def canonical_provider(provider: str | None) -> str:
     value = (provider or "").strip().lower()
     return PROVIDER_ALIASES.get(value, value)
+
+
+def cmd_provider_test(args: argparse.Namespace) -> None:
+    provider = canonical_provider(args.provider)
+    provider_env(provider)
+    request = urllib.request.Request(
+        "http://127.0.0.1:8000/api/setup/provider/test",
+        data=json.dumps({"provider": provider}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        fail(f"Provider test could not reach the local Hatch backend: {exc}")
+    status = str(result.get("status") or "unknown")
+    if not result.get("ok"):
+        fail(f"Provider test: {status}. {result.get('error') or ''}".strip())
+    print(f"Provider test: {status}")
 
 
 def cmd_secrets(args: argparse.Namespace) -> None:
@@ -775,7 +934,8 @@ def parser() -> argparse.ArgumentParser:
     models_sub = models.add_subparsers(dest="models_action", required=True)
     models_sub.add_parser("list")
     install = models_sub.add_parser("install")
-    install.add_argument("model_ids", nargs="*")
+    install.add_argument("--primary")
+    install.add_argument("--triage")
     install.add_argument("--yes", action="store_true")
     remove = models_sub.add_parser("remove")
     remove.add_argument("model_id")
@@ -792,6 +952,10 @@ def parser() -> argparse.ArgumentParser:
     unset_secret = secrets_sub.add_parser("unset")
     unset_secret.add_argument("provider")
     unset_secret.add_argument("--yes", action="store_true")
+    provider = sub.add_parser("provider")
+    provider_sub = provider.add_subparsers(dest="provider_action", required=True)
+    provider_test = provider_sub.add_parser("test")
+    provider_test.add_argument("provider", choices=sorted(PROVIDERS))
     update = sub.add_parser("update")
     update.add_argument("--dry-run", action="store_true")
     update.add_argument("--no-restart", action="store_true")
@@ -847,6 +1011,8 @@ def main() -> None:
         cmd_apply(args)
     elif args.command == "secrets":
         cmd_secrets(args)
+    elif args.command == "provider":
+        cmd_provider_test(args)
     elif args.command == "update":
         cmd_update(args)
     elif args.command == "capabilities":

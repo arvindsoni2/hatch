@@ -17,20 +17,6 @@ type SafeDomains = {
   excluded: string[];
 };
 
-type SafeLlm = {
-  provider: string;
-  triage_model: string;
-  primary_model: string;
-  api_key_env: string;
-  base_url: string | null;
-  triage_base_url: string;
-  temperature: number;
-  max_retries: number;
-  track_costs: boolean;
-  monthly_budget: number;
-  currency: string;
-};
-
 type SafeExperienceChoice = {
   experience: "essential" | "full_ai" | "custom";
   aiMode: "ai-later" | "cloud" | "local" | "advanced";
@@ -45,7 +31,6 @@ export interface OnboardingDraft {
   search: SafeSearch;
   skills: SafeSkills;
   domains: SafeDomains;
-  llm: SafeLlm;
   experienceChoice: SafeExperienceChoice;
   rolesSkipped: boolean;
   skillsSkipped: boolean;
@@ -101,7 +86,6 @@ export function createOnboardingDraft(source: DraftSource): OnboardingDraft {
       preferred: [...source.domains.preferred],
       excluded: [...source.domains.excluded],
     },
-    llm: { ...source.llm },
     experienceChoice: source.experienceChoice
       ? { ...source.experienceChoice }
       : {
@@ -123,7 +107,6 @@ export function restoreOnboardingDraft(value: unknown): Partial<OnboardingDraft>
   const search = record(source.search);
   const skills = record(source.skills);
   const domains = record(source.domains);
-  const llm = record(source.llm);
   const nextExperience = record(source.experienceChoice);
 
   return {
@@ -143,23 +126,6 @@ export function restoreOnboardingDraft(value: unknown): Partial<OnboardingDraft>
       preferred: strings(domains.preferred),
       excluded: strings(domains.excluded),
     },
-    llm: {
-      provider: typeof llm.provider === "string" ? llm.provider : "llamacpp",
-      triage_model: typeof llm.triage_model === "string" ? llm.triage_model : "qwen3.5-0.8b-q8_0",
-      primary_model: typeof llm.primary_model === "string" ? llm.primary_model : "qwen3.5-4b-q4_k_m",
-      api_key_env: typeof llm.api_key_env === "string" ? llm.api_key_env : "",
-      base_url: typeof llm.base_url === "string" || llm.base_url === null
-        ? llm.base_url as string | null
-        : "http://llm-primary:8080/v1",
-      triage_base_url: typeof llm.triage_base_url === "string"
-        ? llm.triage_base_url
-        : "http://llm-triage:8081/v1",
-      temperature: typeof llm.temperature === "number" ? llm.temperature : 0.3,
-      max_retries: typeof llm.max_retries === "number" ? llm.max_retries : 3,
-      track_costs: typeof llm.track_costs === "boolean" ? llm.track_costs : false,
-      monthly_budget: typeof llm.monthly_budget === "number" ? llm.monthly_budget : 0,
-      currency: typeof llm.currency === "string" ? llm.currency : "USD",
-    },
     experienceChoice: {
       experience: experience(nextExperience.experience),
       aiMode: aiMode(nextExperience.aiMode),
@@ -174,4 +140,25 @@ export function restoreOnboardingDraft(value: unknown): Partial<OnboardingDraft>
       ? source.scrapeIntervalHours
       : 4,
   };
+}
+
+
+export function migrateLegacyOnboardingDraft(): Partial<OnboardingDraft> | null {
+  let restored: Partial<OnboardingDraft> | null = null;
+  try {
+    const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY)
+      ?? localStorage.getItem(LEGACY_ONBOARDING_STORAGE_KEY);
+    if (raw) {
+      restored = restoreOnboardingDraft(JSON.parse(raw));
+      sessionStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(restored));
+    }
+  } catch {
+    restored = null;
+  } finally {
+    try {
+      localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
+    } catch {}
+  }
+  return restored;
 }

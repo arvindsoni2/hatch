@@ -7,14 +7,17 @@ describe("StepPasswordSetup", () => {
     const onComplete = vi.fn();
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
-      json: async () => ({ unlocked: true }),
+      json: async () => ({
+        unlocked: true,
+        onboarding: { status: "finalization_pending", last_completed_step: "protect-workspace" },
+      }),
     } as Response);
 
     render(<StepPasswordSetup onComplete={onComplete} />);
 
     const password = screen.getByLabelText("Password");
     const confirm = screen.getByLabelText("Confirm password");
-    const submit = screen.getByRole("button", { name: "Set password and continue" });
+    const submit = screen.getByRole("button", { name: "Set password and finish" });
 
     fireEvent.change(password, { target: { value: "validpassword1" } });
     fireEvent.change(confirm, { target: { value: "validpassword1" } });
@@ -32,8 +35,12 @@ describe("StepPasswordSetup", () => {
           method: "POST",
         }),
       );
-      expect(onComplete).toHaveBeenCalledTimes(1);
+      expect(onComplete).toHaveBeenCalledWith({
+        unlocked: true,
+        onboarding: { status: "finalization_pending", last_completed_step: "protect-workspace" },
+      });
     });
     expect(localStorage.getItem("hatch_onboarding_v2")).toBeNull();
+    expect(sessionStorage.getItem("hatch_onboarding_password")).toBeNull();
   });
 });

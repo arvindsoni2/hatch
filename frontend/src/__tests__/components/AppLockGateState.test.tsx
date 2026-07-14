@@ -1,15 +1,22 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const navigation = vi.hoisted(() => ({ pathname: "/today" }));
+const router = vi.hoisted(() => ({ replace: vi.fn() }));
 const queryState = vi.hoisted(() => ({
-  data: undefined as { enabled: boolean; is_unlocked: boolean } | undefined,
+  data: undefined as {
+    enabled: boolean;
+    configured_source?: "env" | "database" | "none";
+    is_unlocked: boolean;
+    onboarding?: { status: string; last_completed_step: string | null };
+  } | undefined,
   isLoading: true,
   isError: false,
 }));
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/today",
-  useRouter: () => ({ replace: vi.fn() }),
+  usePathname: () => navigation.pathname,
+  useRouter: () => router,
 }));
 vi.mock("@tanstack/react-query", () => ({ useQuery: () => queryState }));
 vi.mock("@/components/hatch/HatchNavShell", () => ({ HatchNavShell: () => null }));
@@ -23,6 +30,8 @@ vi.mock("@/components/CommandPalette", () => ({ CommandPalette: () => null }));
 describe("AppLockGate verification states", () => {
   afterEach(() => {
     vi.useRealTimers();
+    navigation.pathname = "/today";
+    router.replace.mockReset();
     queryState.data = undefined;
     queryState.isLoading = true;
     queryState.isError = false;
@@ -47,5 +56,24 @@ describe("AppLockGate verification states", () => {
 
     expect(screen.queryByText("Private content")).not.toBeInTheDocument();
     expect(screen.getByText(/Check the backend is running/)).toBeVisible();
+  });
+
+  it("does not expose locked onboarding after authoritative completion", async () => {
+    navigation.pathname = "/onboarding";
+    queryState.data = {
+      enabled: true,
+      configured_source: "none",
+      is_unlocked: false,
+      onboarding: { status: "complete", last_completed_step: "protect-workspace" },
+    };
+    queryState.isLoading = false;
+    const { AppLockGate } = await import("@/components/AppLockGate");
+
+    render(<AppLockGate><h1>Onboarding</h1></AppLockGate>);
+
+    await waitFor(() => {
+      expect(router.replace).toHaveBeenCalledWith("/unlock?next=%2Fonboarding");
+    });
+    expect(screen.queryByRole("heading", { name: "Onboarding" })).not.toBeInTheDocument();
   });
 });

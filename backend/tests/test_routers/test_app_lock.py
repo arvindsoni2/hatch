@@ -54,9 +54,39 @@ async def test_first_run_setup_unlocks_and_protected_api_works(client: AsyncClie
 
     setup = await client.post("/api/app-lock/setup", json={"password": "safe-password-1"})
     assert setup.status_code == 200
-    assert setup.json() == {"unlocked": True}
+    assert setup.json() == {
+        "unlocked": True,
+        "onboarding": {
+            "status": "finalization_pending",
+            "last_completed_step": "protect-workspace",
+        },
+    }
     assert settings.HATCH_APP_SESSION_COOKIE in setup.cookies
     assert (await client.get("/api/jobs")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_status_includes_authoritative_onboarding_state(client: AsyncClient) -> None:
+    status = await client.get("/api/app-lock/status")
+
+    assert status.status_code == 200
+    assert status.json()["onboarding"] == {
+        "status": "not_started",
+        "last_completed_step": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_duplicate_setup_returns_reconcilable_onboarding_state(client: AsyncClient) -> None:
+    await client.post("/api/app-lock/setup", json={"password": "safe-password-1"})
+
+    duplicate = await client.post(
+        "/api/app-lock/setup", json={"password": "another-password-2"}
+    )
+
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "app_lock_already_configured"
+    assert duplicate.json()["detail"]["onboarding"]["status"] == "finalization_pending"
 
 
 @pytest.mark.asyncio

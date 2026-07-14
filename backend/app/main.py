@@ -296,6 +296,36 @@ class AppLockMiddleware(BaseHTTPMiddleware):
             path == "/api/v2/locales" or path.startswith("/api/v2/locales/")
         )
 
+    @staticmethod
+    def _is_bootstrap_setup_request(request: StarletteRequest) -> bool:
+        """Allow only non-secret setup intent and diagnostic operations."""
+        path = request.url.path
+        if request.method == "GET":
+            return path in {
+                "/api/setup/status",
+                "/api/setup/hardware",
+                "/api/setup/models/catalog",
+                "/api/setup/models/recommendations",
+                "/api/setup/models/discovery",
+                "/api/setup/capabilities",
+                "/api/setup/doctor",
+                "/api/setup/providers",
+            }
+        if request.method == "POST":
+            return path in {
+                "/api/setup/hardware",
+                "/api/setup/ai-mode",
+                "/api/setup/experience",
+                "/api/setup/local-model-selection",
+                "/api/setup/cloud-provider",
+                "/api/setup/provider/test",
+                "/api/setup/skip-ai",
+                "/api/setup/onboarding/progress",
+            }
+        if request.method == "PATCH":
+            return path == "/api/setup/intent"
+        return False
+
     async def dispatch(self, request: StarletteRequest, call_next):
         if not settings.HATCH_APP_LOCK_ENABLED or request.method == "OPTIONS":
             return await call_next(request)
@@ -303,6 +333,7 @@ class AppLockMiddleware(BaseHTTPMiddleware):
         if (
             path in self._PUBLIC_PATHS
             or self._is_public_locale_metadata(request)
+            or self._is_bootstrap_setup_request(request)
             or path.startswith("/static/")
         ):
             return await call_next(request)

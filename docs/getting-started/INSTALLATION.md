@@ -35,6 +35,8 @@ The managed install:
 - starts the lightweight backend profile
 - does not download local models unless you explicitly choose local AI
 - keeps provider secrets outside the browser
+- keeps AI engine choice separate from the Standard Hatch or advanced capability profile
+- requires explicit primary and triage model selection after a successful hardware probe
 - runs the hardware probe for every managed Linux mode
 
 Automation example:

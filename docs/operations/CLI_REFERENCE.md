@@ -62,9 +62,9 @@ The host `hatch` command manages easy-install lifecycle, AI setup, optional capa
 - Containers restarted: no
 - Destructive: no
 
-### `hatch models install [model_ids...] [--yes]`
+### `hatch models install --primary <catalog-id> --triage <catalog-id> [--yes]`
 
-- Purpose: download and verify supported GGUF models
+- Purpose: explicitly assign, download, and verify primary and triage GGUF routes
 - Files changed: `${HATCH_HOME}/models/*`, `${HATCH_HOME}/config/ai_setup_intent.json`
 - Containers restarted: no
 - Destructive: no
@@ -120,6 +120,12 @@ The host `hatch` command manages easy-install lifecycle, AI setup, optional capa
 ### `hatch secrets unset <provider> [--yes]`
 
 - Purpose: remove a stored provider secret
+
+### `hatch provider test <provider>`
+
+- Purpose: ask the local backend to make one explicit provider connection test
+- Secrets: read by the backend from host configuration and never sent through CLI arguments or the browser
+- Cost: may make a small billable request; status polling does not call providers
 - Files changed: `${HATCH_HOME}/config/secrets.env`
 - Destructive: yes
 
@@ -150,7 +156,7 @@ The host `hatch` command manages easy-install lifecycle, AI setup, optional capa
 hatch status
 hatch probe
 hatch models list
-hatch models install qwen3-small qwen3-medium --yes
+hatch models install --primary <primary-catalog-id> --triage <triage-catalog-id> --yes
 hatch apply-ai-config
 hatch capabilities enable full
 ```

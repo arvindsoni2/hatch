@@ -46,15 +46,41 @@ async function mockSettingsProfile(page: Page) {
 }
 
 async function mockAISetup(page: Page) {
+  let intent = { schema_version: 2, ai_mode: "none", backend_profile: "core", experience: "essential" };
   await page.route("**/api/setup/status", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({
+      schema_version: 2,
+      overall_status: "ready",
+      onboarding: { status: "complete", last_completed_step: "protect-workspace" },
+      intent,
+      ai: { mode: intent.ai_mode, status: "ready", healthy: true },
+      capabilities: { profile: "core", selected_profile: intent.backend_profile, enabled: [], operation: null },
+      next_actions: [],
       runtime: { ai_mode: "not_configured", quality_mode: "not_configured", provider: null, warnings: [] },
       restart_required: false,
       next_command: "hatch apply-ai-config",
     }),
   }));
+  await page.route("**/api/setup/providers", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ providers: [{
+      id: "anthropic",
+      label: "Anthropic",
+      primary_model: "claude-sonnet-5",
+      triage_model: "claude-haiku-4-5",
+      models: ["claude-sonnet-5", "claude-haiku-4-5"],
+      privacy: "Prompts are sent to Anthropic.",
+      cost: "External API charges apply.",
+      configured: false,
+    }] }),
+  }));
+  await page.route("**/api/setup/intent", async (route) => {
+    intent = { ...intent, ...route.request().postDataJSON() };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ intent }) });
+  });
   await page.route("**/api/setup/hardware", (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -90,6 +116,17 @@ async function mockAISetup(page: Page) {
       not_recommended: [],
     }),
   }));
+  await page.route("**/api/setup/models/discovery", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      source: "live",
+      models: [],
+      compatible: [],
+      recommended_primary: null,
+      recommended_triage: null,
+    }),
+  }));
 }
 
 test("settings profile has active navigation and a sticky dirty save bar", async ({ page }) => {
@@ -122,15 +159,20 @@ test("job preferences validates target-role entry and focuses the tag input", as
   await expect(targetRoles.getByRole("textbox", { name: "Add target role" })).toBeFocused();
 });
 
-test("AI provider page explains setup choices and host CLI commands", async ({ page }) => {
+test("AI and capabilities keeps cloud and local routing separate", async ({ page }) => {
   await mockAISetup(page);
   await page.goto("/settings/ai");
 
-  await expect(page.getByRole("heading", { name: "AI Provider", exact: true })).toBeVisible({ timeout: 45_000 });
-  await expect(page.getByRole("link", { name: "AI Provider" })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByText("Use Hatch now, set up AI later")).toBeVisible();
-  await expect(page.getByText("Run AI locally")).toBeVisible();
-  await expect(page.getByText("Use cloud AI provider")).toBeVisible();
-  await expect(page.getByText("Detected RAM: 32 GB")).toBeVisible();
-  await expect(page.getByText("hatch secrets set openai")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI & Capabilities", exact: true })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByRole("link", { name: "AI & Capabilities" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("radio", { name: "Standard Hatch" })).toBeChecked();
+
+  await page.getByRole("radio", { name: "Cloud" }).click();
+  await expect(page.getByLabel("Primary cloud model")).toBeVisible();
+  await expect(page.getByText("Hugging Face recommendations")).toHaveCount(0);
+  await expect(page.getByText(/hatch secrets set anthropic/)).toBeVisible();
+
+  await page.getByRole("radio", { name: "Local" }).click();
+  await expect(page.getByText("Hugging Face recommendations")).toBeVisible();
+  await expect(page.getByLabel("Primary cloud model")).toHaveCount(0);
 });

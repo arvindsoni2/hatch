@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, LockKeyhole, Terminal } from "lucide-react";
-import { APP_LOCK_QUERY_KEY } from "@/components/AppLockGate";
+import { APP_LOCK_QUERY_KEY } from "@/lib/api";
 import { PasswordField } from "@/components/security/PasswordField";
 import { PasswordRequirementList } from "@/components/security/PasswordRequirementList";
 import { Button } from "@/components/ui/button";
