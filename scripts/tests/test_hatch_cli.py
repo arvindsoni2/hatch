@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
+import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -23,6 +26,12 @@ def configure_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hatch_cli, "BACKUPS_DIR", tmp_path / "backups")
     monkeypatch.setattr(hatch_cli, "RUNTIME_PATH", tmp_path / "config" / "ai_runtime.json")
     monkeypatch.setattr(hatch_cli, "INTENT_PATH", tmp_path / "config" / "ai_setup_intent.json")
+    monkeypatch.setattr(
+        hatch_cli,
+        "MODEL_VERIFICATION_PATH",
+        tmp_path / "config" / "model_verification.json",
+        raising=False,
+    )
     monkeypatch.setattr(hatch_cli, "SECRETS_PATH", tmp_path / "config" / "secrets.env")
     monkeypatch.setattr(hatch_cli, "INSTALL_PATH", tmp_path / "config" / "install.json")
     monkeypatch.setattr(
@@ -390,7 +399,13 @@ def test_cloud_runtime_canonicalizes_provider_alias(
     hatch_cli.ensure_home()
     hatch_cli.write_json(
         hatch_cli.INTENT_PATH,
-        {"ai_mode": "cloud", "provider": "google_gemini", "selected_model_ids": []},
+        {
+            "schema_version": 2,
+            "ai_mode": "cloud",
+            "cloud_provider": "google_gemini",
+            "cloud_primary_model": "gemini-primary",
+            "cloud_triage_model": "gemini-triage",
+        },
     )
     hatch_cli.write_env({"GOOGLE_API_KEY": "test-value"})
     monkeypatch.setattr(hatch_cli, "compose", lambda *_, **__: None)
@@ -408,12 +423,149 @@ def test_triage_only_runtime_disables_quality_features(
     configure_home(tmp_path, monkeypatch)
     hatch_cli.ensure_home()
     model = next(item for item in hatch_cli.catalog() if item["role"] == "triage")
-    (hatch_cli.MODELS_DIR / model["filename"]).write_bytes(b"present")
+    path = hatch_cli.MODELS_DIR / model["filename"]
+    path.write_bytes(b"present")
+    hatch_cli.write_json(hatch_cli.MODEL_VERIFICATION_PATH, {
+        model["id"]: {
+            "path": str(path.resolve()),
+            "sha256": model["sha256"],
+            "revision": model["source_revision"],
+            "size_bytes": path.stat().st_size,
+        }
+    })
 
     runtime = hatch_cli.runtime_for_local([model["id"]])
 
     assert runtime["quality_mode"] == "triage_only"
     assert not any(runtime["feature_gates"].values())
+
+
+def test_models_install_without_explicit_routes_lists_and_exits_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(hatch_cli, "cmd_models_list", lambda _: print("candidate"))
+
+    with pytest.raises(SystemExit) as exc:
+        hatch_cli.cmd_models_install(
+            type("Args", (), {"primary": None, "triage": None, "yes": True})()
+        )
+
+    assert exc.value.code == 2
+    output = capsys.readouterr()
+    assert "candidate" in output.out
+    assert "--primary" in output.err
+    assert "--triage" in output.err
+
+
+def test_catalog_uses_only_current_validated_discovery_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_home(tmp_path, monkeypatch)
+    hatch_cli.ensure_home()
+    valid = {
+        "catalog_id": "hf:publisher/model:file.gguf:abc",
+        "filename": "file.gguf",
+        "revision": "a" * 40,
+        "sha256": "b" * 64,
+        "size_bytes": 12,
+        "download_size_gb": 0.1,
+        "download_url": f"https://huggingface.co/publisher/model/resolve/{'a' * 40}/file.gguf",
+    }
+    cache_path = hatch_cli.CONFIG_DIR / "model_discovery_cache.json"
+    hatch_cli.write_json(cache_path, {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "models": [valid, {**valid, "catalog_id": "invalid", "sha256": "not-a-sha"}],
+    })
+
+    ids = {model["id"] for model in hatch_cli.catalog()}
+    assert valid["catalog_id"] in ids
+    assert "invalid" not in ids
+
+    payload = hatch_cli.read_json(cache_path, {})
+    payload["created_at"] = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    hatch_cli.write_json(cache_path, payload)
+    assert valid["catalog_id"] not in {model["id"] for model in hatch_cli.catalog()}
+
+
+def test_models_install_preserves_intent_and_writes_verification_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_home(tmp_path, monkeypatch)
+    content = b"verified-model"
+    digest = hashlib.sha256(content).hexdigest()
+    models = [
+        {
+            "id": "primary-id",
+            "display_name": "Primary",
+            "filename": "primary.gguf",
+            "sha256": digest,
+            "size_bytes": len(content),
+            "download_size_gb": 0.01,
+            "download_url": "https://example.test/primary.gguf",
+            "source_revision": "a" * 40,
+        },
+        {
+            "id": "triage-id",
+            "display_name": "Triage",
+            "filename": "triage.gguf",
+            "sha256": digest,
+            "size_bytes": len(content),
+            "download_size_gb": 0.01,
+            "download_url": "https://example.test/triage.gguf",
+            "source_revision": "b" * 40,
+        },
+    ]
+    monkeypatch.setattr(hatch_cli, "catalog", lambda: models)
+    monkeypatch.setattr(
+        hatch_cli.urllib.request,
+        "urlretrieve",
+        lambda _url, destination: Path(destination).write_bytes(content),
+    )
+    hatch_cli.ensure_home()
+    hatch_cli.write_json(
+        hatch_cli.INTENT_PATH,
+        {"schema_version": 2, "backend_profile": "full", "experience": "custom"},
+    )
+
+    hatch_cli.cmd_models_install(
+        type("Args", (), {"primary": "primary-id", "triage": "triage-id", "yes": True})()
+    )
+
+    intent = hatch_cli.read_json(hatch_cli.INTENT_PATH, {})
+    assert intent["schema_version"] == 2
+    assert intent["backend_profile"] == "full"
+    assert intent["experience"] == "custom"
+    assert intent["local_primary_model"] == "primary-id"
+    assert intent["local_triage_model"] == "triage-id"
+    manifest = hatch_cli.read_json(hatch_cli.MODEL_VERIFICATION_PATH, {})
+    assert set(manifest) == {"primary-id", "triage-id"}
+    assert manifest["primary-id"]["sha256"] == digest
+
+
+def test_fetch_models_without_ids_does_not_download() -> None:
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts" / "fetch_models.sh")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "hatch models" in result.stderr
+
+
+def test_easy_local_compose_has_no_fixed_qwen_fallback() -> None:
+    text = (ROOT / "docker-compose.local-ai.yml").read_text(encoding="utf-8")
+
+    assert ":-Qwen" not in text
+    assert "HATCH_PRIMARY_MODEL_FILE:?" in text
+    assert "HATCH_TRIAGE_MODEL_FILE:?" in text
 
 
 def test_uninstall_without_purge_preserves_home(

@@ -5,14 +5,36 @@
 set -euo pipefail
 
 IMAGE="${1:-ghcr.io/ggml-org/llama.cpp:server}"
-MODELS_DIR="$(dirname "$0")/../data/models"
-TRIAGE_MODEL="Qwen_Qwen3.5-0.8B-Q8_0.gguf"
+HATCH_HOME="${HATCH_HOME:-$HOME/.hatch}"
+CONFIG_DIR="$HATCH_HOME/config"
+MODELS_DIR="$HATCH_HOME/models"
+MODEL_PATH="$(python3 - "$CONFIG_DIR/ai_setup_intent.json" "$CONFIG_DIR/model_verification.json" "$MODELS_DIR" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
 
-if [[ ! -f "$MODELS_DIR/$TRIAGE_MODEL" ]]; then
-  echo "[verify_runtime] $TRIAGE_MODEL not found in $MODELS_DIR."
-  echo "  Run scripts/fetch_models.sh first, or drop the file manually."
-  exit 1
-fi
+intent_path, manifest_path, models_dir = map(pathlib.Path, sys.argv[1:])
+try:
+    intent = json.loads(intent_path.read_text())
+    manifest = json.loads(manifest_path.read_text())
+    model_id = intent.get("local_triage_model") or intent.get("local_primary_model")
+    evidence = manifest[model_id]
+    path = pathlib.Path(evidence["path"]).resolve()
+    root = models_dir.resolve()
+    path.relative_to(root)
+    if not path.is_file() or path.stat().st_size != evidence["size_bytes"]:
+        raise ValueError("model file does not match verification evidence")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != evidence["sha256"]:
+        raise ValueError("model checksum does not match verification evidence")
+except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    print(f"[verify_runtime] No verified selected model: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+print(path)
+PY
+)"
+TRIAGE_MODEL="$(basename "$MODEL_PATH")"
 
 echo "[verify_runtime] Pulling image: $IMAGE"
 docker pull "$IMAGE"
