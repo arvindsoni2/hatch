@@ -95,14 +95,14 @@ async def test_cloud_endpoint_accepts_openrouter_model_without_secret(
 
     response = await setup.select_cloud_provider({
         "provider": "openrouter",
-        "provider_metadata": {"model": "openai/gpt-4o-mini"},
+        "provider_metadata": {"model": "anthropic/claude-haiku-4.5"},
     })
 
     assert response["intent"]["provider"] == "openrouter"
     assert response["intent"]["provider_metadata"] == {
-        "model": "openai/gpt-4o-mini",
-        "primary_model": "openai/gpt-4o-mini",
-        "triage_model": "openai/gpt-4o-mini",
+        "model": "anthropic/claude-haiku-4.5",
+        "primary_model": "anthropic/claude-haiku-4.5",
+        "triage_model": "anthropic/claude-haiku-4.5",
     }
     assert response["next_command"] == "hatch secrets set openrouter"
 
@@ -237,7 +237,7 @@ async def test_provider_test_reports_missing_openrouter_secret(
 
     response = await setup.test_provider_connection({
         "provider": "openrouter",
-        "model": "openai/gpt-4o-mini",
+        "model": "anthropic/claude-haiku-4.5",
     })
 
     assert response == {

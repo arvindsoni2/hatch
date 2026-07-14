@@ -64,24 +64,20 @@ class TestProfileRouter:
         assert response.status_code in (200, 422)
 
     @pytest.mark.asyncio
-    async def test_test_connection_does_not_mutate_os_environ(self, client) -> None:
-        """test-connection must not write to os.environ."""
+    async def test_test_connection_rejects_browser_owned_secret(self, client) -> None:
+        """Legacy profile route must preserve the host-owned secret boundary."""
         import os
-        from unittest.mock import AsyncMock
 
         sentinel = os.environ.get("ANTHROPIC_API_KEY", "ORIGINAL_SENTINEL")
 
-        mock_llm = MagicMock()
-        mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="OK"))
+        resp = await client.post(
+            "/api/v2/profile/test-connection",
+            json={"provider": "anthropic", "api_key": "sk-test-key-12345"},
+        )
 
-        with patch("app.routers.profile.init_chat_model", return_value=mock_llm):
-            resp = await client.post(
-                "/api/v2/profile/test-connection",
-                json={"provider": "anthropic", "api_key": "sk-test-key-12345"},
-            )
-
-        assert resp.status_code == 200
-        assert resp.json()["ok"] is True
+        assert resp.status_code == 422
+        assert "host CLI" in resp.json()["detail"]
+        assert "sk-test-key-12345" not in resp.text
         assert os.environ.get("ANTHROPIC_API_KEY", "ORIGINAL_SENTINEL") == sentinel
 
     @pytest.mark.asyncio

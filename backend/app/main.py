@@ -309,6 +309,7 @@ class AppLockMiddleware(BaseHTTPMiddleware):
                 "/api/setup/models/discovery",
                 "/api/setup/capabilities",
                 "/api/setup/doctor",
+                "/api/setup/providers",
             }
         if request.method == "POST":
             return path in {

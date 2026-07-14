@@ -9,7 +9,6 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from langchain.chat_models import init_chat_model
 from pydantic import ValidationError
 
 from ..agents.tools.profile_loader import invalidate_cache
@@ -23,6 +22,8 @@ from ..services.profile_service import (
     save_profile_raw,
     validate_profile_data,
 )
+from ..services.ai_setup import canonical_provider
+from ..services.provider_catalog import test_provider_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/profile", tags=["profile"])
@@ -146,42 +147,17 @@ async def profile_summary() -> dict[str, Any]:
 
 @router.post("/test-connection")
 async def test_llm_connection(data: dict[str, Any]) -> dict[str, Any]:
-    """Test that the LLM API key / provider in the submitted profile config is valid.
-
-    Builds the LLM client with the submitted api_key directly — never mutates
-    os.environ, eliminating the global-state race condition in async context.
-    Returns {ok: bool, error?: str}.
-    """
-    provider: str = data.get("provider", "anthropic")
-    api_key: str = data.get("api_key", "")
+    """Compatibility adapter for host-owned provider connection tests."""
+    if data.get("api_key"):
+        raise HTTPException(
+            status_code=422,
+            detail="API keys must be configured with the host CLI; browser secrets are not accepted.",
+        )
+    provider = canonical_provider(str(data.get("provider", "anthropic")))
     if provider == "llamacpp":
         return await _test_llamacpp_services()
-
-    model_map = {
-        "anthropic": "claude-haiku-4-5-20251001",
-        "openai": "gpt-4o-mini",
-        "google_genai": "gemini-2.5-flash-lite",
-        "azure_openai": "gpt-4o-mini",
-        "ollama": "qwen3:4b",
-    }
-    if provider not in model_map:
-        return {"ok": False, "error": f"Unsupported LLM provider: {provider}"}
-    model_name = model_map[provider]
-
-    try:
-        kwargs: dict[str, Any] = {"temperature": 0.0, "max_retries": 1}
-        if api_key and provider != "ollama":
-            kwargs["api_key"] = api_key
-        if provider == "ollama":
-            from ..agents.tools.profile_loader import load_profile as _lp
-            from ..config import settings as _settings
-            try:
-                kwargs["base_url"] = _lp().llm.base_url or _settings.OLLAMA_BASE_URL
-            except Exception:
-                kwargs["base_url"] = _settings.OLLAMA_BASE_URL
-        llm = init_chat_model(model=model_name, model_provider=provider, **kwargs)
-        await llm.ainvoke("Reply with the single word OK.")
-        return {"ok": True}
-    except Exception as exc:
-        logger.debug("LLM connection test failed: %s", exc)
-        return {"ok": False, "error": str(exc)}
+    return await test_provider_connection(
+        provider,
+        data.get("primary_model") or data.get("model"),
+        data.get("triage_model") or data.get("model"),
+    )

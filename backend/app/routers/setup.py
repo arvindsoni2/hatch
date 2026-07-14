@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +36,11 @@ from ..services.onboarding_service import (
 from ..schemas.setup import IntentPatch
 from ..services.setup_intent import patch_setup_intent
 from ..services.model_discovery import discover_models
+from ..services.provider_catalog import (
+    provider_catalog,
+    test_provider_connection as run_provider_connection_test,
+    validate_provider_selection,
+)
 from ..services.pdf_export import pdf_export_capability
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -186,6 +190,18 @@ async def models_catalog() -> dict[str, Any]:
     return {"models": load_catalog()}
 
 
+@router.get("/providers")
+async def setup_providers() -> dict[str, Any]:
+    catalog = provider_catalog()
+    return {
+        **catalog,
+        "providers": [
+            {**provider, "configured": bool(os.getenv(provider["secret_env"]))}
+            for provider in catalog["providers"]
+        ],
+    }
+
+
 @router.get("/models/recommendations")
 async def model_recommendations() -> dict[str, Any]:
     snapshot = load_probe_snapshot()
@@ -260,15 +276,24 @@ async def select_cloud_provider(payload: dict[str, Any]) -> dict[str, Any]:
     metadata = payload.get("provider_metadata", {})
     if not isinstance(metadata, dict):
         raise HTTPException(status_code=422, detail="provider_metadata must be an object")
-    intent = AISetupIntent(
+    primary_requested = payload.get("primary_model") or metadata.get("primary_model") or metadata.get("model")
+    triage_requested = payload.get("triage_model") or metadata.get("triage_model") or metadata.get("model")
+    try:
+        primary, triage = validate_provider_selection(
+            provider,
+            str(primary_requested) if primary_requested else None,
+            str(triage_requested) if triage_requested else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    patch_setup_intent(IntentPatch(
         ai_mode="cloud",
-        provider=provider,
-        provider_metadata={str(k): str(v) for k, v in metadata.items()},
+        cloud_provider=provider,
+        cloud_primary_model=primary,
+        cloud_triage_model=triage,
         restart_required=True,
-    )
-    response = await set_ai_mode(intent)
-    response["next_command"] = f"hatch secrets set {provider}"
-    return response
+    ))
+    return {"intent": load_intent(), "next_command": f"hatch secrets set {provider}"}
 
 
 @router.get("/capabilities")
@@ -398,47 +423,10 @@ async def setup_capabilities() -> dict[str, Any]:
 @router.post("/provider/test")
 async def test_provider_connection(payload: dict[str, Any]) -> dict[str, Any]:
     provider = canonical_provider(str(payload.get("provider", "")))
-    env_name = provider_secret_env(provider)
-    if not env_name:
-        raise HTTPException(status_code=422, detail=f"unsupported provider: {provider}")
-    secret = os.getenv(env_name, "")
-    if not secret:
-        return {
-            "ok": False,
-            "status": "missing_secret",
-            "error": f"{env_name} is not configured.",
-            "next_command": f"hatch secrets set {provider}",
-        }
-    if provider != "openrouter":
-        return {"ok": False, "status": "configured_not_tested", "error": "Provider test is not available yet."}
-
-    model = str(payload.get("model") or payload.get("provider_metadata", {}).get("model") or "openai/gpt-4o-mini")
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {secret}",
-                    "Content-Type": "application/json",
-                    "X-OpenRouter-Title": "Hatch Setup Test",
-                },
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": "Reply with OK."}],
-                    "max_tokens": 4,
-                },
-            )
-            response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        status = "invalid_secret" if exc.response.status_code in {401, 403} else "provider_unavailable"
-        if exc.response.status_code == 404:
-            status = "model_not_found"
-        if exc.response.status_code == 429:
-            status = "rate_limited"
-        return {"ok": False, "status": status, "error": str(exc)}
-    except httpx.HTTPError as exc:
-        return {"ok": False, "status": "provider_unavailable", "error": str(exc)}
-    return {"ok": True, "status": "ready", "provider": provider, "model": model}
+    metadata = payload.get("provider_metadata") or {}
+    primary = payload.get("primary_model") or payload.get("model") or metadata.get("primary_model") or metadata.get("model")
+    triage = payload.get("triage_model") or metadata.get("triage_model") or primary
+    return await run_provider_connection_test(provider, primary, triage)
 
 
 @router.post("/skip-ai")
