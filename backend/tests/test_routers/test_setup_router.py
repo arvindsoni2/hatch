@@ -99,7 +99,11 @@ async def test_cloud_endpoint_accepts_openrouter_model_without_secret(
     })
 
     assert response["intent"]["provider"] == "openrouter"
-    assert response["intent"]["provider_metadata"] == {"model": "openai/gpt-4o-mini"}
+    assert response["intent"]["provider_metadata"] == {
+        "model": "openai/gpt-4o-mini",
+        "primary_model": "openai/gpt-4o-mini",
+        "triage_model": "openai/gpt-4o-mini",
+    }
     assert response["next_command"] == "hatch secrets set openrouter"
 
 
@@ -114,6 +118,42 @@ async def test_cloud_endpoint_rejects_unknown_provider(
         await setup.select_cloud_provider({"provider": "made_up"})
 
     assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_intent_patch_uses_cloud_models_without_local_ids(
+    client: AsyncClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    response = await client.patch("/api/setup/intent", json={
+        "ai_mode": "cloud",
+        "cloud_provider": "openai",
+        "cloud_primary_model": "provider-primary",
+        "cloud_triage_model": "provider-triage",
+    })
+
+    assert response.status_code == 200
+    intent = response.json()["intent"]
+    assert intent["local_primary_model"] is None
+    assert intent["local_triage_model"] is None
+    assert "API_KEY" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_skip_ai_writes_explicit_none(
+    client: AsyncClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+
+    response = await client.post("/api/setup/skip-ai")
+
+    assert response.status_code == 200
+    assert response.json()["intent"]["ai_mode"] == "none"
 
 
 @pytest.mark.asyncio

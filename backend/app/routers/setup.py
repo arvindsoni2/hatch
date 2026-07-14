@@ -34,6 +34,8 @@ from ..services.onboarding_service import (
     OnboardingFinalizationError,
     OnboardingService,
 )
+from ..schemas.setup import IntentPatch
+from ..services.setup_intent import patch_setup_intent
 from ..services.pdf_export import pdf_export_capability
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -59,6 +61,12 @@ def _onboarding_payload(state) -> dict[str, str | None]:
         "status": state.status,
         "last_completed_step": state.last_completed_step,
     }
+
+
+@router.patch("/intent")
+async def patch_intent(body: IntentPatch) -> dict[str, Any]:
+    intent = patch_setup_intent(body)
+    return {"intent": intent.model_dump(mode="json")}
 
 
 @router.post("/onboarding/progress")
@@ -425,7 +433,8 @@ async def test_provider_connection(payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/skip-ai")
 async def skip_ai() -> dict[str, Any]:
-    return await set_ai_mode(AISetupIntent(ai_mode="not_configured", experience="essential", backend_profile="core", restart_required=True))
+    intent = patch_setup_intent(IntentPatch(ai_mode="none", restart_required=True))
+    return {"intent": intent.model_dump(mode="json"), "next_command": None}
 
 
 @router.get("/doctor")
