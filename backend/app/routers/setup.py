@@ -41,6 +41,7 @@ from ..services.provider_catalog import (
     test_provider_connection as run_provider_connection_test,
     validate_provider_selection,
 )
+from ..services.setup_status import build_setup_status
 from ..services.pdf_export import pdf_export_capability
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -113,51 +114,8 @@ async def finalize_onboarding(
 
 
 @router.get("/status")
-async def setup_status() -> dict[str, Any]:
-    runtime = load_runtime()
-    intent = load_intent()
-    backend = load_backend_capabilities()
-    probe = load_probe_snapshot()
-    experience = str(intent.get("experience") or _derive_experience(runtime, backend))
-    ai_mode = str(intent.get("ai_mode") or runtime.get("ai_mode") or "not_configured")
-    provider = canonical_provider(intent.get("provider") or runtime.get("provider"))
-    env_name = provider_secret_env(provider)
-    configured = False
-    healthy = False
-    if ai_mode == "local":
-        configured = bool(runtime.get("primary_model_id") or intent.get("selected_model_ids"))
-        healthy = configured
-    elif ai_mode == "cloud":
-        configured = bool(provider and env_name and os.getenv(env_name))
-        healthy = configured
-    action_required = None if healthy else "provider_or_local_model"
-    operation = _profile_operation(str(intent.get("backend_profile") or backend["profile"]), backend["profile"])
-    hardware = build_hardware_recommendation(probe, experience=experience)
-    return {
-        "schema_version": 1,
-        "onboarding_complete": True,
-        "experience": experience,
-        "ai": {
-            "mode": ai_mode,
-            "configured": configured,
-            "healthy": healthy,
-            "provider": provider or None,
-            "model": intent.get("provider_metadata", {}).get("model") or runtime.get("primary_model_id"),
-            "action_required": action_required,
-        },
-        "capabilities": {
-            "profile": backend["profile"],
-            "enabled": backend["enabled"],
-            "available_profiles": ["core", "browser", "local-embeddings", "full"],
-            "operation": operation,
-        },
-        "hardware": hardware,
-        "operation": operation,
-        "intent": intent,
-        "runtime": runtime,
-        "restart_required": intent.get("restart_required", False),
-        "next_command": _next_command(runtime),
-    }
+async def setup_status(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    return await build_setup_status(db)
 
 
 @router.get("/hardware")

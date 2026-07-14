@@ -19,6 +19,7 @@ from app.routers import setup
 
 @pytest.mark.asyncio
 async def test_setup_status_composes_experience_capabilities_and_hardware(
+    db_session,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -37,13 +38,14 @@ async def test_setup_status_composes_experience_capabilities_and_hardware(
         "provider": "openrouter",
         "provider_metadata": {"model": "openai/gpt-4o-mini"},
     })
-    status = await setup.setup_status()
+    status = await setup.setup_status(db_session)
 
-    assert status["schema_version"] == 1
+    assert status["schema_version"] == 2
     assert status["experience"] == "custom"
     assert status["ai"]["mode"] == "cloud"
     assert status["ai"]["provider"] == "openrouter"
-    assert status["ai"]["configured"] is False
+    assert status["ai"]["configured"] is True
+    assert status["ai"]["healthy"] is False
     assert status["capabilities"]["profile"] == "core"
     assert status["capabilities"]["available_profiles"] == ["core", "browser", "local-embeddings", "full"]
     assert status["hardware"]["status"] == "supported_with_limitations"
