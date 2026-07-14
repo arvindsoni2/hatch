@@ -52,3 +52,25 @@ async def test_explicit_openai_test_uses_responses_api_and_redacts_secret(
     assert "sk-sensitive-value" not in (tmp_path / "provider_validation.json").read_text()
     assert provider_validation_status("openai", "gpt-5.6", "gpt-5.6")["status"] == "ready"
 
+
+@pytest.mark.asyncio
+async def test_google_test_keeps_api_key_out_of_request_url(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-sensitive-value")
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"candidates": []})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    result = await run_provider_test(
+        "google_genai", "gemini-2.5-flash", "gemini-2.5-flash", client=client
+    )
+
+    assert result["ok"] is True
+    assert "google-sensitive-value" not in str(requests[0].url)
+    assert requests[0].headers["x-goog-api-key"] == "google-sensitive-value"

@@ -125,8 +125,8 @@ def _request(provider_id: str, model: str, secret: str) -> tuple[str, dict[str, 
         )
     if provider_id == "google_genai":
         return (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={secret}",
-            {"content-type": "application/json"},
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            {"content-type": "application/json", "x-goog-api-key": secret},
             {"contents": [{"parts": [{"text": "Reply OK."}]}], "generationConfig": {"maxOutputTokens": 8}},
         )
     return (
@@ -197,4 +197,3 @@ async def test_provider_connection(
         "triage_model": triage,
         "validated_at": validated_at,
     }
-
