@@ -36,6 +36,7 @@ from ..services.onboarding_service import (
 )
 from ..schemas.setup import IntentPatch
 from ..services.setup_intent import patch_setup_intent
+from ..services.model_discovery import discover_models
 from ..services.pdf_export import pdf_export_capability
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -201,6 +202,15 @@ async def model_recommendations() -> dict[str, Any]:
         free_disk_gb=float(storage.get("models_dir_free_gb", 0)),
         models_dir=models_dir,
     )
+
+
+@router.get("/models/discovery")
+async def model_discovery(force: bool = Query(False)) -> dict[str, Any]:
+    snapshot = load_probe_snapshot()
+    if snapshot is None:
+        raise HTTPException(status_code=409, detail="Run `hatch probe` first.")
+    result = await discover_models(snapshot, force=force)
+    return result.model_dump(mode="json")
 
 
 @router.post("/ai-mode")

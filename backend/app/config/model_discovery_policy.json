@@ -1,0 +1,11 @@
+{
+  "approved_publishers": ["bartowski", "unsloth"],
+  "approved_families": ["qwen2.5", "qwen3", "qwen3.5", "llama-3.2", "gemma-3"],
+  "approved_licenses": ["apache-2.0", "mit", "qwen-research"],
+  "formats": ["gguf"],
+  "tasks": ["text-generation"],
+  "quantizations": ["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"],
+  "cache_ttl_hours": 24,
+  "max_repositories": 12,
+  "max_files_per_repository": 4
+}

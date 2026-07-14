@@ -306,6 +306,7 @@ class AppLockMiddleware(BaseHTTPMiddleware):
                 "/api/setup/hardware",
                 "/api/setup/models/catalog",
                 "/api/setup/models/recommendations",
+                "/api/setup/models/discovery",
                 "/api/setup/capabilities",
                 "/api/setup/doctor",
             }

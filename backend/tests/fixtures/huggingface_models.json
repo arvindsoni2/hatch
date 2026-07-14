@@ -1,0 +1,30 @@
+{
+  "listing": [
+    {"id": "bartowski/Qwen2.5-3B-Instruct-GGUF", "pipeline_tag": "text-generation", "tags": ["gguf", "text-generation"]},
+    {"id": "unsloth/Qwen2.5-0.5B-Instruct-GGUF", "pipeline_tag": "text-generation", "tags": ["gguf", "text-generation"]},
+    {"id": "unknown/Qwen2.5-7B-Instruct-GGUF", "pipeline_tag": "text-generation", "tags": ["gguf"]},
+    {"id": "bartowski/Qwen2.5-Reranker-GGUF", "pipeline_tag": "text-ranking", "tags": ["gguf"]}
+  ],
+  "details": {
+    "bartowski/Qwen2.5-3B-Instruct-GGUF": {
+      "id": "bartowski/Qwen2.5-3B-Instruct-GGUF",
+      "sha": "1111111111111111111111111111111111111111",
+      "pipeline_tag": "text-generation",
+      "tags": ["gguf", "text-generation", "license:apache-2.0"],
+      "cardData": {"license": "apache-2.0"},
+      "siblings": [
+        {"rfilename": "Qwen2.5-3B-Instruct-Q4_K_M.gguf", "size": 2200000000, "lfs": {"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 2200000000, "pointerSize": 135}}
+      ]
+    },
+    "unsloth/Qwen2.5-0.5B-Instruct-GGUF": {
+      "id": "unsloth/Qwen2.5-0.5B-Instruct-GGUF",
+      "sha": "2222222222222222222222222222222222222222",
+      "pipeline_tag": "text-generation",
+      "tags": ["gguf", "text-generation", "license:apache-2.0"],
+      "cardData": {"license": "apache-2.0"},
+      "siblings": [
+        {"rfilename": "Qwen2.5-0.5B-Instruct-Q8_0.gguf", "size": 700000000, "lfs": {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "size": 700000000, "pointerSize": 134}}
+      ]
+    }
+  }
+}
