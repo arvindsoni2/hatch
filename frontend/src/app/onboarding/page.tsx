@@ -150,9 +150,6 @@ export default function OnboardingPage() {
         if (draft.skills) setSkills(draft.skills);
         if (draft.domains) setDomains(draft.domains);
         if (draft.selectedLocale) setSelectedLocale(draft.selectedLocale);
-        if (draft.llm) {
-          setLlm(draft.llm.provider === "ollama" ? DEFAULT_LLM : draft.llm);
-        }
         if (draft.experienceChoice) {
           setExperienceChoice(draft.experienceChoice);
         }
@@ -181,14 +178,14 @@ export default function OnboardingPage() {
     try {
       const draft = createOnboardingDraft({
         step, candidate, search, locations, compensation, skills, domains, proofPoints,
-        selectedLocale, llm, experienceChoice, rolesSkipped, skillsSkipped, aiSetupLater,
+        selectedLocale, experienceChoice, rolesSkipped, skillsSkipped, aiSetupLater,
         enabledBoardIds: [...enabledBoards], scrapeIntervalHours,
       });
       sessionStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(draft));
     } catch {}
   }, [
     step, candidate, search, locations, compensation, skills, domains, proofPoints,
-    selectedLocale, llm, experienceChoice, rolesSkipped, skillsSkipped, aiSetupLater, enabledBoards,
+    selectedLocale, experienceChoice, rolesSkipped, skillsSkipped, aiSetupLater, enabledBoards,
     scrapeIntervalHours,
   ]);
 
