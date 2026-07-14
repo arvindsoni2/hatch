@@ -26,6 +26,12 @@ The combined implementation must preserve the browser/host security boundary, re
 - Verify local model checksums during installation. Reuse a verification manifest during status polling and rehash only when relevant file metadata changes.
 - Keep `custom` as a compatibility-only AI mode. Preserve and round-trip it without offering it during normal onboarding.
 - Allow onboarding to complete while AI or optional capabilities remain pending.
+- Separate AI engine, model routing, and optional application capabilities in both the API and UI.
+- Present the internal `core` backend profile as **Standard Hatch** in user-facing onboarding and Settings copy.
+- Use curated live Hugging Face discovery after a valid hardware probe, with an offline pinned fallback catalog and explicit user selection.
+- Remove fixed-model assumptions from easy-install, onboarding, shared CLI, and local-AI Compose paths. Preserve the pinned legacy developer Compose defaults as clearly labelled developer examples.
+
+These owner-approved decisions refine the source specification where it previously assumed that the existing static model catalog was the only recommendation source. They do not weaken its explicit-selection, checksum, host-action, or browser-security requirements.
 
 ## Architecture
 
@@ -36,7 +42,7 @@ The existing setup router remains the public control plane. A focused setup-stat
 - database-backed onboarding state;
 - persisted non-secret setup intent;
 - the canonical hardware probe;
-- local model catalog, verification evidence, and service health;
+- curated live and offline-fallback local model catalogs, verification evidence, and service health;
 - cloud provider catalog, secret-presence status, and cached validation evidence;
 - selected and active backend capability profiles;
 - current structured setup/runtime errors.
@@ -52,8 +58,10 @@ Persisted setup intent contains semantic equivalents of:
 - `ai_mode`: `not_configured`, `none`, `local`, `cloud`, or `custom`;
 - selected backend profile;
 - selected primary and optional triage local-model catalog IDs;
-- selected cloud provider and model IDs;
+- selected cloud provider plus primary and triage model IDs;
 - nullable `setup_deferred_at`.
+
+Cloud intent stores provider-owned primary and triage model identifiers. Local intent stores validated GGUF catalog identifiers. These fields are mutually inactive by mode but are preserved across read-modify-write operations so switching modes does not silently discard a user's previous selections.
 
 Readiness, errors, active state, and pending actions are derived evidence and are not persisted as authoritative intent.
 
@@ -92,14 +100,19 @@ The explicit start-new-onboarding flow clears only the specified draft/progress 
 
 ## PR3: AI and Capability Onboarding
 
-### Independent dimensions
+### Three separate concerns
 
-The UI and persistence model treat these as independent choices:
+The UI and persistence model separate:
 
-1. Generative AI: None, Local, or Cloud.
-2. Backend capability profile: Core, Browser, Local Embeddings, or Full capabilities.
+1. **AI engine:** None, Local, or Cloud.
+2. **Model routing:** hardware-compatible GGUF primary/triage models for Local, provider-hosted primary/triage models for Cloud, and no models for None.
+3. **Optional Hatch capabilities:** Standard Hatch, Browser, Local Embeddings, or Full capabilities.
 
 `not_configured` means no explicit choice. `none` means the user explicitly selected no generative AI. Legacy `ai-later` normalizes to `none`; legacy `advanced` is an input alias for `none` plus an explicitly selected capability profile. Selecting Full never changes the AI mode.
+
+`core` remains the persisted and Compose-facing profile identifier, but the UI calls it **Standard Hatch**. Standard Hatch is the smallest application backend needed for every mode; it is not a local model. Cloud mode uses only provider-hosted primary and triage models and never starts or downloads a local generative model. The local llama.cpp Compose overlay is enabled only for Local mode with explicit validated model selections.
+
+Capability choices remain technically independent because browser automation and local embeddings are application features rather than generative-model providers. The onboarding UI uses progressive disclosure: Standard Hatch is the normal default, while Browser, Local Embeddings, and Full appear under an advanced capabilities section for users who want them.
 
 ### Intent writes
 
@@ -111,13 +124,25 @@ Idempotency is based on the normalized resulting intent. Repeating the same requ
 
 The backend classifies the host-generated probe as available, missing, stale, invalid, or error. A probe older than 30 days is stale. The browser displays backend recommendations and never encodes RAM or model thresholds.
 
-The local-model catalog supplies display metadata, roles, compatibility, sizes, memory guidance, checksums, installed state, selected state, and service readiness. The backend preselects recommendations but the user may choose another compatible catalog entry.
+After a valid probe, the backend queries Hugging Face for curated GGUF text-generation candidates. A bundled policy registry defines approved publishers, model families, licenses, chat-generation architectures, and llama.cpp-supported quantizations. Discovery rejects arbitrary repositories, unpinned revisions, missing integrity metadata, reranker-only models, and known-incompatible formats.
+
+The backend ranks candidates using detected OS and architecture, total RAM, free model storage, parameter count, quantization, expected context requirements, download size, already-downloaded files, and declared primary/triage suitability. GPU information may be displayed when present but is not required for deterministic eligibility. Discovery does not automatically select or download a model.
+
+The normalized catalog supplies display metadata, source and revision, roles, compatibility, sizes, memory guidance, checksums, installed state, selected state, and service readiness. Valid live results are cached for 24 hours with their source metadata. An unexpired cache may satisfy discovery without another Hub call. The bundled pinned catalog is used when Hugging Face is unavailable, rate-limited, returns no approved compatible result, or only an expired cache exists. Fallback entries are recommendations, not silent defaults.
+
+The backend may preselect the highest-ranked compatible primary and triage recommendations for form convenience, but the user must explicitly confirm or change both selections before any download command is produced. A separate triage model is optional when the selected primary is validated as combined-capable.
 
 Model installation verifies the expected checksum and writes a non-secret verification manifest containing the catalog ID, filename, size, modification metadata, checksum, and verification time. Status requests trust this evidence only while the file metadata still matches; otherwise verification becomes pending until a controlled recheck recalculates the checksum.
+
+`hatch models install <catalog-id...>` accepts only entries from the validated live-discovery cache or bundled fallback catalog. The legacy `scripts/fetch_models.sh` becomes a compatibility wrapper around this command; invocation without explicit catalog IDs lists/discovers candidates and does not download an assumed pair. The easy-install local Compose overlay requires an explicit selected primary filename and optional triage filename instead of silently falling back to Qwen files.
+
+The legacy developer `docker-compose.yml` retains its pinned Qwen pair for reproducible development and smoke testing. It is labelled as a developer default and is not used as onboarding or easy-install recommendation evidence. Model-family-specific runtime compatibility handling, such as Qwen thinking controls, remains in place because it governs selected model behavior rather than selection policy.
 
 ### Cloud providers
 
 The backend owns the normal onboarding provider catalog for Anthropic, OpenAI, Google GenAI, and OpenRouter, including supported model choices and host-secret commands. The frontend renders this catalog instead of hard-coding providers or models.
+
+Cloud selection persists separate provider-hosted primary and triage model IDs. Applying Cloud mode leaves local runtime model IDs empty and excludes the local llama.cpp Compose overlay. Provider connection tests and inference use the selected cloud model IDs from the backend catalog.
 
 The browser never accepts a provider secret. It displays `hatch secrets set <provider>` from the backend. An explicit connection-test request uses the host-owned secret and returns redacted structured status. Successful evidence is cached for 24 hours and keyed to provider, model, configuration, and a non-returned secret fingerprint. Status polling only reads that evidence. Configuration changes, secret changes, expiry, or observed runtime failures invalidate readiness.
 
@@ -160,10 +185,11 @@ Pre-password access is restricted to the minimum bootstrap operations defined by
 
 ### Onboarding
 
-The AI & Capabilities stage contains two internal sections:
+The AI & Capabilities stage contains three progressively disclosed sections:
 
 1. Choose generative AI: None, Local, or Cloud.
-2. Choose capabilities: Core, Browser, Local Embeddings, or Full capabilities.
+2. Choose model routing: curated local primary/triage recommendations for Local or provider-hosted primary/triage models for Cloud. None has no model section.
+3. Choose capabilities: Standard Hatch by default, with Browser, Local Embeddings, and Full capabilities under advanced options.
 
 Conditional panels show hardware, recommendations, model/provider choices, privacy and resource implications, selected versus active status, and ordered host actions. Option cards are keyboard accessible; selection and status never rely on color alone.
 
@@ -197,11 +223,11 @@ Polling runs every five seconds while pending and visible, backs off to fifteen 
 
 ### Backend and migration tests
 
-Cover onboarding migration/state transitions, password-finalization idempotency and recovery, bootstrap authorization, reset preservation, canonical AI normalization, independent capability intent, atomic field preservation, probe states, model evidence, cloud secret redaction and cached validation, selected/active capability status, action ordering, readiness precedence, and structured errors.
+Cover onboarding migration/state transitions, password-finalization idempotency and recovery, bootstrap authorization, reset preservation, canonical AI normalization, independent capability intent, atomic field preservation, probe states, curated Hugging Face filtering/ranking/cache/fallback behavior, rejection of untrusted or incompatible results, explicit model selection, model evidence, cloud primary/triage routing, cloud secret redaction and cached validation, selected/active capability status, action ordering, readiness precedence, structured errors, and a guard that beginner/easy-install runtime paths contain no fixed model download or Compose fallback.
 
 ### Frontend tests
 
-Cover password-last sequencing, shared query reconciliation, recovery after finalization failure, all normal AI and capability choices, hidden `custom`, explicit None, probe/model/provider panels, selected versus active state, polling/backoff, finish-later behavior, accessibility, and Settings continuity.
+Cover password-last sequencing, shared query reconciliation, recovery after finalization failure, all normal AI and capability choices, Standard Hatch labelling, hidden `custom`, explicit None, probe/live-discovery/fallback/provider panels, separate local and cloud primary/triage choices, selected versus active state, polling/backoff, finish-later behavior, accessibility, and Settings continuity.
 
 ### End-to-end tests
 
@@ -213,4 +239,4 @@ Run backend tests, frontend unit/component tests, installer and host-CLI tests, 
 
 ## Delivery Boundaries
 
-This work does not add browser-controlled host execution, browser secret entry, automatic model downloads, a new model-serving architecture, or unrelated onboarding redesign. It adapts the existing setup APIs and UI patterns only as required to make the combined PR2 and PR3 contract correct and maintainable.
+This work does not add browser-controlled host execution, browser secret entry, automatic model downloads, unrestricted Hugging Face search, a new model-serving architecture, or unrelated onboarding redesign. It adapts the existing setup APIs and UI patterns only as required to make the combined PR2 and PR3 contract correct and maintainable.
