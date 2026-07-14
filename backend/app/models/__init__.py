@@ -18,6 +18,7 @@ from .application_score_snapshot import ApplicationScoreSnapshot  # noqa: F401
 from .application_outcome import ApplicationOutcome  # noqa: F401
 from .opportunity_score import OpportunityScore  # noqa: F401
 from .app_lock import AppLockConfig, AppLockSession  # noqa: F401
+from .onboarding import OnboardingState  # noqa: F401
 from .tailoring_review import TailoringReview  # noqa: F401
 from .company_watchlist import CompanyWatchlistItem, WatchlistScanRun, DiscoveredRoleFingerprint  # noqa: F401
 from .question_bank import QuestionBankItem  # noqa: F401
@@ -30,7 +31,7 @@ __all__ = [
     "AgentEvent", "AgentState", "JobScore",
     "Story", "StoryUsage", "CostTracking",
     "AsyncJob", "ApplicationScoreSnapshot", "ApplicationOutcome", "OpportunityScore",
-    "AppLockConfig", "AppLockSession",
+    "AppLockConfig", "AppLockSession", "OnboardingState",
     "TailoringReview",
     "CompanyWatchlistItem", "WatchlistScanRun", "DiscoveredRoleFingerprint",
     "QuestionBankItem",
