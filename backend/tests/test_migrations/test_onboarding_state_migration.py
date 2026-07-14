@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -37,7 +38,7 @@ def _upgrade(tmp_path: Path, profile: dict | None) -> sqlite3.Connection:
     )
     sync_engine.dispose()
     subprocess.run(
-        ["uv", "run", "alembic", "stamp", "n1o2p3q4r5s6"],
+        [sys.executable, "-m", "alembic", "stamp", "n1o2p3q4r5s6"],
         cwd=BACKEND_DIR,
         env=env,
         check=True,
@@ -45,7 +46,7 @@ def _upgrade(tmp_path: Path, profile: dict | None) -> sqlite3.Connection:
         text=True,
     )
     subprocess.run(
-        ["uv", "run", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=BACKEND_DIR,
         env=env,
         check=True,
