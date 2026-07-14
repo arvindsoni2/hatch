@@ -52,6 +52,20 @@ load_modules() {
   source "$ROOT/scripts/installer/state.sh"
 }
 
+write_resume_fixture() {
+  local path=$1 last_safe=$2 mode=$3 profile=$4
+  python - "$path" "$last_safe" "$mode" "$profile" <<'PY'
+import json, pathlib, sys
+phase_ids = "preflight_complete docker_ready repository_ready host_directories_ready install_config_written wrapper_installed probe_complete compose_started health_verified complete".split()
+last_index = phase_ids.index(sys.argv[2])
+phases = [
+    {"id": phase_id, "status": "complete" if index <= last_index else "pending", "started_at": None, "finished_at": "2026-07-14T08:00:00Z" if index <= last_index else None}
+    for index, phase_id in enumerate(phase_ids)
+]
+pathlib.Path(sys.argv[1]).write_text(json.dumps({"schema_version": 1, "last_safe_phase": sys.argv[2], "mode": sys.argv[3], "backend_profile": sys.argv[4], "phases": phases}))
+PY
+}
+
 test_parse_complete_noninteractive_contract() {
   load_modules
   reset_installer_options
@@ -96,6 +110,17 @@ test_noninteractive_requires_mode_and_profile() {
   assert_eq 2 "$status" "missing mode/profile is usage failure"
 }
 
+test_noninteractive_install_requires_yes() {
+  load_modules
+  reset_installer_options
+  parse_installer_args --non-interactive --no-install-docker --mode ai-later --backend-profile core
+  set +e
+  validate_installer_args >/dev/null 2>&1
+  local status=$?
+  set -e
+  assert_eq 2 "$status" "unattended mutation requires explicit yes"
+}
+
 test_noninteractive_resume_loads_selection_from_state() {
   load_modules
   reset_installer_options
@@ -104,9 +129,7 @@ test_noninteractive_resume_loads_selection_from_state() {
   HATCH_HOME=$TEST_TMP/home
   mkdir -p "$HATCH_HOME/config"
   STATE_PATH="$HATCH_HOME/config/install-state.json"
-  cat >"$STATE_PATH" <<'JSON'
-{"schema_version":1,"last_safe_phase":"wrapper_installed","mode":"cloud","backend_profile":"full","phases":[]}
-JSON
+  write_resume_fixture "$STATE_PATH" wrapper_installed cloud full
   load_resume_state
   assert_eq cloud "$MODE" "resume restores mode"
   assert_eq full "$BACKEND_PROFILE" "resume restores profile"
@@ -291,6 +314,144 @@ test_docker_repository_and_conflict_contract() {
   assert_contains "$(docker_security_disclosure)" "firewall" "firewall warning"
 }
 
+test_elevated_docker_preserves_explicit_home_contract() {
+  load_modules
+  reset_installer_options
+  local log=$TEST_TMP/sudo-args
+  HATCH_HOME=$TEST_TMP/custom-hatch-home
+  HOME=$TEST_TMP/custom-user-home
+  DOCKER_USE_SUDO=true
+  # shellcheck disable=SC2329 # docker_exec invokes this test double indirectly.
+  sudo() { printf '%s\n' "$*" >"$log"; }
+
+  docker_exec compose version
+
+  assert_eq "env HATCH_HOME=$HATCH_HOME HOME=$HOME docker compose version" "$(<"$log")" \
+    "elevated Docker receives the installer home paths"
+}
+
+test_resume_restores_phases_and_rejects_inconsistent_state() {
+  load_modules
+  reset_installer_options
+  HATCH_HOME=$TEST_TMP/home
+  mkdir -p "$HATCH_HOME/config"
+  STATE_PATH="$HATCH_HOME/config/install-state.json"
+  write_resume_fixture "$STATE_PATH" wrapper_installed cloud core
+
+  load_resume_state
+
+  assert_contains "$PHASES_JSON" '"id":"wrapper_installed"' "resume restores phase data"
+  assert_eq true "$(phase_was_completed wrapper_installed && printf true || printf false)" "completed phase is recognized"
+
+  python - "$STATE_PATH" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+value = json.loads(path.read_text())
+value["last_safe_phase"] = "probe_complete"
+path.write_text(json.dumps(value))
+PY
+  set +e
+  load_resume_state >/dev/null 2>&1
+  local status=$?
+  set -e
+  assert_eq 23 "$status" "last safe phase must agree with completed phases"
+}
+
+test_python_310_configuration_contract() {
+  assert_contains "$(<"$ROOT/install.sh")" "datetime.timezone.utc" "installer configuration supports Python 3.10"
+}
+
+test_atomic_write_failure_propagates() {
+  load_modules
+  reset_installer_options
+  local destination=$TEST_TMP/missing/config.json
+  set +e
+  atomic_write_text "$destination" '{}' >/dev/null 2>&1
+  local status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "atomic write unexpectedly succeeded"
+  assert_file_absent "$destination" "failed atomic write must not create destination"
+}
+
+test_resume_payload_generation_failure_propagates() {
+  load_modules
+  reset_installer_options
+  STATE_PATH=$TEST_TMP/install-state.json
+  PHASES_JSON='[]'
+  # shellcheck disable=SC2329 # persist_resume_state invokes this test double indirectly.
+  python3() { return 42; }
+  set +e
+  persist_resume_state >/dev/null 2>&1
+  local status=$?
+  set -e
+  unset -f python3
+  assert_eq 42 "$status" "resume payload generation failure propagates"
+  assert_file_absent "$STATE_PATH" "failed resume payload must not be written"
+}
+
+test_docker_group_failure_propagates_without_success_flag() {
+  load_modules
+  reset_installer_options
+  ALLOW_DOCKER_GROUP=true
+  # shellcheck disable=SC2329 # configure_docker_access invokes this test double indirectly.
+  docker() { return 1; }
+  # shellcheck disable=SC2329 # configure_docker_access invokes this test double indirectly.
+  run_privileged() {
+    [ "$1" = docker ] && return 0
+    [ "$1" = usermod ] && return 7
+    return 0
+  }
+  set +e
+  configure_docker_access >/dev/null 2>&1
+  local status=$?
+  set -e
+  unset -f docker run_privileged
+  assert_eq 7 "$status" "usermod failure propagates"
+  assert_eq false "$DOCKER_GROUP_CHANGED" "failed group change is not reported as complete"
+}
+
+test_resume_artifacts_validate_content_not_just_presence() {
+  load_modules
+  reset_installer_options
+  INSTALL_DIR=$TEST_TMP/install
+  HATCH_HOME=$TEST_TMP/home
+  MODE=cloud
+  BACKEND_PROFILE=core
+  mkdir -p "$INSTALL_DIR/scripts" "$HATCH_HOME/config" "$HATCH_HOME/bin"
+  printf '{"schema_version":1,"managed":true,"source_dir":"%s","installed_mode":"cloud","backend_capability_profile":"core"}\n' "$INSTALL_DIR" \
+    >"$HATCH_HOME/config/install.json"
+  printf '{"schema_version":1,"profile":"core","enabled":[]}\n' >"$HATCH_HOME/config/backend_capabilities.json"
+  printf '#!/usr/bin/env bash\nexec python3 "%s/scripts/hatch_cli.py" "$@"\n' "$INSTALL_DIR" >"$HATCH_HOME/bin/hatch"
+  chmod 700 "$HATCH_HOME/bin/hatch"
+
+  validate_install_config_artifacts "$INSTALL_DIR" "$HATCH_HOME" "$MODE" "$BACKEND_PROFILE"
+  validate_wrapper_artifact "$INSTALL_DIR" "$HATCH_HOME"
+
+  printf '{"schema_version":1,"managed":true,"source_dir":"/stale","installed_mode":"cloud","backend_capability_profile":"core"}\n' \
+    >"$HATCH_HOME/config/install.json"
+  set +e
+  validate_install_config_artifacts "$INSTALL_DIR" "$HATCH_HOME" "$MODE" "$BACKEND_PROFILE" >/dev/null 2>&1
+  local status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "stale installer config was accepted"
+
+  printf '#!/usr/bin/env bash\nexec python3 "/stale/scripts/hatch_cli.py" "$@"\n' >"$HATCH_HOME/bin/hatch"
+  set +e
+  validate_wrapper_artifact "$INSTALL_DIR" "$HATCH_HOME" >/dev/null 2>&1
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "stale wrapper target was accepted"
+}
+
+test_log_redaction_contract() {
+  load_modules
+  local redacted
+  redacted=$(printf 'API_KEY=secret-token password=hunter2 Authorization: Bearer abc123\n' | redact_installer_log)
+  [[ "$redacted" != *secret-token* ]] || fail "API key was not redacted"
+  [[ "$redacted" != *hunter2* ]] || fail "password was not redacted"
+  [[ "$redacted" != *abc123* ]] || fail "bearer token was not redacted"
+}
+
 test_phase_order_requires_wrapper_before_probe() {
   load_modules
   local phases
@@ -321,6 +482,8 @@ PY
   printf 'candidate:\n  name: ""\n' >"$install/data/profile.yaml.example"
   printf 'AUTO_APPROVE=false\n' >"$install/.env.example"
   touch "$install/docker-compose.easy.yml" "$install/docker-compose.full.yml"
+  mkdir -p "$install/infrastructure/systemd"
+  printf '[Service]\nWorkingDirectory=/stale\n' >"$install/infrastructure/systemd/hatch.service"
   printf 'ID=ubuntu\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\n' >"$os_release"
   cat >"$fakebin/git" <<'SH'
 #!/usr/bin/env bash
@@ -337,6 +500,11 @@ case "$*" in
   "compose"*"ps"*) printf 'backend running\nfrontend running\n'; exit 0 ;;
   *) exit 0 ;;
 esac
+SH
+  cat >"$fakebin/systemctl" <<'SH'
+#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >>"$HATCH_FAKE_LOG"
+exit 0
 SH
 cat >"$fakebin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -379,11 +547,14 @@ assert ids.index("wrapper_installed") < ids.index("probe_complete") < ids.index(
 PY
   assert_contains "$(<"$log")" "hatch probe" "probe runs"
   [[ "$(<"$log")" != *"models install"* ]] || fail "non-interactive Local downloaded models"
+  [[ "$(<"$log")" != *"systemctl --user"* ]] || fail "non-interactive install prompted for or enabled systemd"
+  assert_file_absent "$home/.hatch/config/install-state.json" "successful install retires resume state"
 }
 
 run_test "parse complete non-interactive contract" test_parse_complete_noninteractive_contract
 run_test "check-only resume conflict is read-only" test_check_only_resume_is_usage_failure_and_read_only
 run_test "non-interactive requires mode and profile" test_noninteractive_requires_mode_and_profile
+run_test "non-interactive install requires yes" test_noninteractive_install_requires_yes
 run_test "non-interactive resume restores selection" test_noninteractive_resume_loads_selection_from_state
 run_test "root invocation is rejected before writes" test_root_invocation_is_rejected_before_writes
 run_test "check-only needs no mode and creates nothing" test_check_only_needs_no_mode_and_creates_nothing
@@ -394,6 +565,14 @@ run_test "architecture mapping" test_architecture_mapping
 run_test "Docker state classification" test_docker_state_classification
 run_test "JSON result schema" test_result_json_schema
 run_test "Docker repository and conflict contract" test_docker_repository_and_conflict_contract
+run_test "elevated Docker preserves explicit home" test_elevated_docker_preserves_explicit_home_contract
+run_test "resume restores and validates phase data" test_resume_restores_phases_and_rejects_inconsistent_state
+run_test "Python 3.10 configuration contract" test_python_310_configuration_contract
+run_test "atomic write failures propagate" test_atomic_write_failure_propagates
+run_test "resume payload failures propagate" test_resume_payload_generation_failure_propagates
+run_test "Docker group failures propagate" test_docker_group_failure_propagates_without_success_flag
+run_test "resume artifacts validate content" test_resume_artifacts_validate_content_not_just_presence
+run_test "installer logs redact secrets" test_log_redaction_contract
 run_test "phase order puts wrapper before probe" test_phase_order_requires_wrapper_before_probe
 run_test "non-interactive Local remains pending without download" test_noninteractive_local_integration_is_pending_without_download
 

@@ -74,6 +74,7 @@ run_consolidated_preflight() {
       add_check prerequisite.python prerequisite pass "Python $python_version is supported" "" '{}'
     else
       add_check prerequisite.python prerequisite fail "Python $python_version is too old" "Install Python 3.10 or newer." '{}'
+      PREFLIGHT_PREREQUISITE_FAILURES=$((PREFLIGHT_PREREQUISITE_FAILURES + 1))
     fi
   else
     add_check prerequisite.python prerequisite fail "Python 3 is unavailable or unusable" "Install Python 3.10 or newer." '{}'

@@ -42,9 +42,31 @@ say() { printf '[hatch] %s\n' "$*" >&2; }
 warn() { printf '[hatch] WARNING: %s\n' "$*" >&2; }
 
 finish_failure() {
+  if [ -n "${ACTIVE_PHASE:-}" ] && [ -n "${STATE_PATH:-}" ] && json_python_available; then
+    mark_phase "$ACTIVE_PHASE" failed || true
+  fi
   set_failure "$1" "$2" "$3" "$4" "${5:-false}"
   emit_final_result
   exit "$1"
+}
+
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
+installer_exit_trap() {
+  local status=$?
+  local final_status=$status
+  trap - EXIT
+  if [ "$status" -ne 0 ] && [ "${RESULT_EMITTED:-false}" = false ]; then
+    if [ -n "${ACTIVE_PHASE:-}" ] && [ -n "${STATE_PATH:-}" ] && json_python_available; then
+      mark_phase "$ACTIVE_PHASE" failed || true
+    fi
+    if [ -z "${ERROR_CODE:-}" ]; then
+      set_failure "$EXIT_UNEXPECTED" installer installer.unexpected_failure \
+        "Installer stopped unexpectedly. Review the sanitized log and resume state." true
+      final_status=$EXIT_UNEXPECTED
+    fi
+    emit_final_result || true
+  fi
+  exit "$final_status"
 }
 
 prompt_line() {
@@ -111,21 +133,21 @@ write_install_config() {
 import json, sys
 print(json.dumps({"schema_version": 1, "managed": True, "source_dir": sys.argv[1], "installed_mode": sys.argv[2], "backend_capability_profile": sys.argv[3]}, indent=2))
 PY
-  )
+  ) || return "$?"
   capabilities_payload=$(python3 - "$BACKEND_PROFILE" "$(backend_enabled_json "$BACKEND_PROFILE")" <<'PY'
 import datetime, json, sys
-print(json.dumps({"schema_version": 1, "profile": sys.argv[1], "enabled": json.loads(sys.argv[2]), "updated_at": datetime.datetime.now(datetime.UTC).isoformat(), "updated_by": "install"}, indent=2))
+print(json.dumps({"schema_version": 1, "profile": sys.argv[1], "enabled": json.loads(sys.argv[2]), "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "updated_by": "install"}, indent=2))
 PY
-  )
-  atomic_write_text "$HATCH_HOME/config/install.json" "$install_payload"
-  atomic_write_text "$HATCH_HOME/config/backend_capabilities.json" "$capabilities_payload"
+  ) || return "$?"
+  atomic_write_text "$HATCH_HOME/config/install.json" "$install_payload" || return "$?"
+  atomic_write_text "$HATCH_HOME/config/backend_capabilities.json" "$capabilities_payload" || return "$?"
   if [ "$MODE" = local ]; then
     intent_payload=$(python3 - "$BACKEND_PROFILE" <<'PY'
 import json, sys
 print(json.dumps({"schema_version": 1, "ai_mode": "local", "experience": "essential", "backend_profile": sys.argv[1], "selected_model_ids": [], "provider": None, "provider_metadata": {}, "restart_required": True}, indent=2))
 PY
-    )
-    atomic_write_text "$HATCH_HOME/config/ai_setup_intent.json" "$intent_payload"
+    ) || return "$?"
+    atomic_write_text "$HATCH_HOME/config/ai_setup_intent.json" "$intent_payload" || return "$?"
   fi
 }
 
@@ -137,8 +159,8 @@ set -euo pipefail
 exec python3 "$INSTALL_DIR/scripts/hatch_cli.py" "\$@"
 EOF
   )
-  atomic_write_text "$HATCH_HOME/bin/hatch" "$wrapper"
-  chmod 700 "$HATCH_HOME/bin/hatch"
+  atomic_write_text "$HATCH_HOME/bin/hatch" "$wrapper" || return "$?"
+  chmod 700 "$HATCH_HOME/bin/hatch" || return "$?"
 }
 
 prepare_checkout() {
@@ -153,14 +175,66 @@ prepare_checkout() {
 }
 
 prepare_host_directories() {
-  mkdir -p "$HATCH_HOME"/{bin,config,models,probe,logs,backups}
-  chmod 700 "$HATCH_HOME" "$HATCH_HOME"/{bin,config,models,probe,logs,backups}
+  mkdir -p "$HATCH_HOME"/{bin,config,models,probe,logs,backups} || return "$?"
+  chmod 700 "$HATCH_HOME" "$HATCH_HOME"/{bin,config,models,probe,logs,backups} || return "$?"
   if [ ! -f "$INSTALL_DIR/data/profile.yaml" ]; then
-    cp "$INSTALL_DIR/data/profile.yaml.example" "$INSTALL_DIR/data/profile.yaml"
+    cp "$INSTALL_DIR/data/profile.yaml.example" "$INSTALL_DIR/data/profile.yaml" || return "$?"
   fi
   if [ ! -f "$INSTALL_DIR/.env" ]; then
-    cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env"
+    cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env" || return "$?"
   fi
+}
+
+resume_artifact_valid() {
+  case "$1" in
+    repository_ready)
+      [ -d "$INSTALL_DIR/.git" ] && [ -z "$(git -C "$INSTALL_DIR" status --porcelain 2>/dev/null)" ]
+      ;;
+    host_directories_ready)
+      [ -d "$HATCH_HOME/bin" ] && [ -d "$HATCH_HOME/config" ] && [ -d "$HATCH_HOME/probe" ] \
+        && [ -f "$INSTALL_DIR/data/profile.yaml" ] && [ -f "$INSTALL_DIR/.env" ]
+      ;;
+    install_config_written)
+      validate_install_config_artifacts "$INSTALL_DIR" "$HATCH_HOME" "$MODE" "$BACKEND_PROFILE"
+      ;;
+    wrapper_installed) validate_wrapper_artifact "$INSTALL_DIR" "$HATCH_HOME" ;;
+    probe_complete)
+      python3 - "$HATCH_HOME/probe/hardware_probe_latest.json" <<'PY' >/dev/null 2>&1
+import json, pathlib, sys
+value = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert value.get("sanitised") is True
+PY
+      ;;
+    compose_started)
+      compose_files
+      local services
+      services=$(docker_exec compose "${COMPOSE_FILES[@]}" ps --status running --services 2>/dev/null) || return 1
+      grep -qx backend <<<"$services" && grep -qx frontend <<<"$services"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+resume_skip_phase() {
+  local phase=$1
+  [ "$RESUME" = true ] && phase_was_completed "$phase" || return 1
+  resume_artifact_valid "$phase" || finish_failure "$EXIT_RESUME" resume resume.inconsistent_artifact \
+    "Resume state says $phase completed, but its artifacts are missing or invalid."
+  say "Resume validated completed phase: $phase"
+  return 0
+}
+
+configure_systemd_user_service() {
+  local service_file="$INSTALL_DIR/infrastructure/systemd/hatch.service"
+  [ "$NON_INTERACTIVE" = false ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  [ -f "$service_file" ] || return 0
+  prompt_yes 'Install systemd user service (auto-start on login)?' || return 0
+  mkdir -p "$HOME/.config/systemd/user" || return "$?"
+  sed "s|WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|g" "$service_file" \
+    >"$HOME/.config/systemd/user/hatch.service" || return "$?"
+  systemctl --user daemon-reload || return "$?"
+  systemctl --user enable hatch.service || return "$?"
 }
 
 health_check() {
@@ -190,6 +264,8 @@ if [ "$validate_status" -ne 0 ]; then
   emit_final_result
   exit "$validate_status"
 fi
+
+trap installer_exit_trap EXIT
 
 if [ "$SHOW_HELP" = true ]; then
   installer_usage
@@ -226,7 +302,7 @@ fi
 
 init_mutating_state
 exec 3>&2
-exec 2> >(tee -a "$LOG_PATH" >&3)
+exec 2> >(redact_installer_log | tee -a "$LOG_PATH" >&3)
 [ "$VERBOSE_LOG" = true ] && set -x
 say "Installer operation: $OPERATION; mode: $MODE; backend profile: $BACKEND_PROFILE"
 
@@ -282,41 +358,53 @@ configure_docker_access || finish_failure "$EXIT_DOCKER_PERMISSION" docker docke
 docker_exec compose version >/dev/null || finish_failure "$EXIT_COMPOSE" docker docker.compose_missing "Docker Compose is unavailable."
 mark_phase docker_ready complete
 
-mark_phase repository_ready running
-prepare_checkout || {
-  status=$?
-  if [ "$status" -eq "$EXIT_CHECKOUT" ]; then
-    finish_failure "$EXIT_CHECKOUT" checkout checkout.dirty "Managed checkout has uncommitted changes."
-  else
-    finish_failure "$EXIT_CHECKOUT_OPERATION" checkout checkout.update_failed "Repository clone or update failed." true
-  fi
-}
+if ! resume_skip_phase repository_ready; then
+  mark_phase repository_ready running
+  prepare_checkout || {
+    status=$?
+    if [ "$status" -eq "$EXIT_CHECKOUT" ]; then
+      finish_failure "$EXIT_CHECKOUT" checkout checkout.dirty "Managed checkout has uncommitted changes."
+    else
+      finish_failure "$EXIT_CHECKOUT_OPERATION" checkout checkout.update_failed "Repository clone or update failed." true
+    fi
+  }
+  mark_phase repository_ready complete
+fi
 cd "$INSTALL_DIR"
-mark_phase repository_ready complete
 
-mark_phase host_directories_ready running
-prepare_host_directories || finish_failure "$EXIT_CONFIGURATION" configuration configuration.host_directories "Could not prepare Hatch files."
-mark_phase host_directories_ready complete
+if ! resume_skip_phase host_directories_ready; then
+  mark_phase host_directories_ready running
+  prepare_host_directories || finish_failure "$EXIT_CONFIGURATION" configuration configuration.host_directories "Could not prepare Hatch files."
+  mark_phase host_directories_ready complete
+fi
 
-mark_phase install_config_written running
-write_install_config || finish_failure "$EXIT_CONFIGURATION" configuration configuration.write_failed "Could not write installer configuration."
-mark_phase install_config_written complete
+if ! resume_skip_phase install_config_written; then
+  mark_phase install_config_written running
+  write_install_config || finish_failure "$EXIT_CONFIGURATION" configuration configuration.write_failed "Could not write installer configuration."
+  mark_phase install_config_written complete
+fi
 
-mark_phase wrapper_installed running
-install_wrapper || finish_failure "$EXIT_CONFIGURATION" configuration wrapper.install_failed "Could not install the Hatch wrapper."
-mark_phase wrapper_installed complete
+if ! resume_skip_phase wrapper_installed; then
+  mark_phase wrapper_installed running
+  install_wrapper || finish_failure "$EXIT_CONFIGURATION" configuration wrapper.install_failed "Could not install the Hatch wrapper."
+  mark_phase wrapper_installed complete
+fi
 
-mark_phase probe_complete running
-"$HATCH_HOME/bin/hatch" probe >&2 || finish_failure "$EXIT_CONFIGURATION" probe probe.failed "Hardware probe failed." true
-mark_phase probe_complete complete
+if ! resume_skip_phase probe_complete; then
+  mark_phase probe_complete running
+  "$HATCH_HOME/bin/hatch" probe >&2 || finish_failure "$EXIT_CONFIGURATION" probe probe.failed "Hardware probe failed." true
+  mark_phase probe_complete complete
+fi
 
 compose_files
-mark_phase compose_started running
-docker_exec compose "${COMPOSE_FILES[@]}" config --quiet >&2 \
-  || finish_failure "$EXIT_COMPOSE_START" compose compose.invalid "Selected Compose profile is invalid."
-docker_exec compose "${COMPOSE_FILES[@]}" up -d --build >&2 \
-  || finish_failure "$EXIT_COMPOSE_START" compose compose.start_failed "Hatch containers failed to start." true
-mark_phase compose_started complete
+if ! resume_skip_phase compose_started; then
+  mark_phase compose_started running
+  docker_exec compose "${COMPOSE_FILES[@]}" config --quiet >&2 \
+    || finish_failure "$EXIT_COMPOSE_START" compose compose.invalid "Selected Compose profile is invalid."
+  docker_exec compose "${COMPOSE_FILES[@]}" up -d --build >&2 \
+    || finish_failure "$EXIT_COMPOSE_START" compose compose.start_failed "Hatch containers failed to start." true
+  mark_phase compose_started complete
+fi
 
 if [ "$MODE" = local ]; then
   RESULT_STATUS=warning
@@ -334,8 +422,11 @@ health_check || {
   finish_failure "$EXIT_HEALTH" health health.verification_failed "Backend or frontend health verification failed." true
 }
 mark_phase health_verified complete
+configure_systemd_user_service \
+  || finish_failure "$EXIT_CONFIGURATION" configuration systemd.user_service_failed "Could not configure the systemd user service."
 mark_phase complete running
 mark_phase complete complete
+clear_resume_state || finish_failure "$EXIT_CONFIGURATION" configuration resume.cleanup_failed "Could not retire completed installer state."
 
 if [ "$DOCKER_GROUP_CHANGED" = true ]; then
   warn 'Docker-group membership grants root-level privileges. Sign out and back in, then run: docker info'

@@ -39,6 +39,8 @@ reset_installer_options() {
   ERROR_CODE=""
   ERROR_MESSAGE=""
   ERROR_RETRYABLE=false
+  RESULT_EMITTED=false
+  ACTIVE_PHASE=""
   LOG_PATH=""
   STATE_PATH=""
   LAST_SAFE_PHASE=""
@@ -130,10 +132,17 @@ validate_installer_args() {
     ""|core|browser|local-embeddings|full) ;;
     *) printf '[hatch] Unsupported backend profile: %s\n' "$BACKEND_PROFILE" >&2; return "$EXIT_USAGE" ;;
   esac
-  if [ "$NON_INTERACTIVE" = true ] && [ "$RESUME" != true ]; then
+  if [ "$NON_INTERACTIVE" = true ] && [ "$CHECK_ONLY" != true ] && [ "$RESUME" != true ]; then
     [ -n "$MODE" ] || { printf '[hatch] --mode is required with --non-interactive.\n' >&2; return "$EXIT_USAGE"; }
     [ -n "$BACKEND_PROFILE" ] || { printf '[hatch] --backend-profile is required with --non-interactive.\n' >&2; return "$EXIT_USAGE"; }
+    [ "$ASSUME_YES" = true ] || { printf '[hatch] --yes is required with --non-interactive installation.\n' >&2; return "$EXIT_USAGE"; }
   fi
+}
+
+redact_installer_log() {
+  sed -E \
+    -e 's/((API_KEY|TOKEN|PASSWORD|SECRET)[A-Za-z0-9_]*=)[^[:space:]]+/\1[REDACTED]/Ig' \
+    -e 's/(Authorization:[[:space:]]*Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/Ig'
 }
 
 json_python_available() {
@@ -259,6 +268,8 @@ PY
 }
 
 emit_final_result() {
+  [ "$RESULT_EMITTED" = false ] || return 0
+  RESULT_EMITTED=true
   if [ "$JSON_MODE" = true ]; then
     emit_result_json
   fi

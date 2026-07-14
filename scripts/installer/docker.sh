@@ -53,22 +53,22 @@ install_docker_engine() {
   case "$PLATFORM_OS_ID" in
     ubuntu|debian)
       local repo
-      repo=$(docker_repository_url "$PLATFORM_OS_ID")
-      retry_package_command apt-get update
-      retry_package_command apt-get install -y ca-certificates curl
-      run_privileged install -m 0755 -d /etc/apt/keyrings
-      curl -fsSL "$repo/gpg" | run_privileged tee /etc/apt/keyrings/docker.asc >/dev/null
-      run_privileged chmod a+r /etc/apt/keyrings/docker.asc
+      repo=$(docker_repository_url "$PLATFORM_OS_ID") || return "$?"
+      retry_package_command apt-get update || return "$?"
+      retry_package_command apt-get install -y ca-certificates curl || return "$?"
+      run_privileged install -m 0755 -d /etc/apt/keyrings || return "$?"
+      curl -fsSL "$repo/gpg" | run_privileged tee /etc/apt/keyrings/docker.asc >/dev/null || return "$?"
+      run_privileged chmod a+r /etc/apt/keyrings/docker.asc || return "$?"
       printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' \
         "$repo" "$PLATFORM_VERSION_CODENAME" "$(dpkg --print-architecture)" \
-        | run_privileged tee /etc/apt/sources.list.d/docker.sources >/dev/null
-      retry_package_command apt-get update
-      retry_package_command apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        | run_privileged tee /etc/apt/sources.list.d/docker.sources >/dev/null || return "$?"
+      retry_package_command apt-get update || return "$?"
+      retry_package_command apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || return "$?"
       ;;
     fedora)
-      retry_package_command dnf -y install dnf-plugins-core
-      run_privileged dnf config-manager addrepo --from-repofile "$(docker_repository_url fedora)"
-      retry_package_command dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      retry_package_command dnf -y install dnf-plugins-core || return "$?"
+      run_privileged dnf config-manager addrepo --from-repofile "$(docker_repository_url fedora)" || return "$?"
+      retry_package_command dnf -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || return "$?"
       ;;
     *) return "$EXIT_UNSUPPORTED" ;;
   esac
@@ -95,7 +95,7 @@ configure_docker_access() {
   DOCKER_USE_SUDO=true
   if [ "$ALLOW_DOCKER_GROUP" = true ]; then
     printf '%s\n' "$(docker_security_disclosure)" >&2
-    run_privileged usermod -aG docker "$(id -un)"
+    run_privileged usermod -aG docker "$(id -un)" || return "$?"
     DOCKER_GROUP_CHANGED=true
   else
     RESULT_STATUS=warning
@@ -105,7 +105,7 @@ configure_docker_access() {
 
 docker_exec() {
   if [ "$DOCKER_USE_SUDO" = true ]; then
-    run_privileged docker "$@"
+    run_privileged env "HATCH_HOME=$HATCH_HOME" "HOME=$HOME" docker "$@"
   else
     docker "$@"
   fi
