@@ -37,9 +37,9 @@ describe("StepReview", () => {
     expect(screen.getByText(/CTO, VP Engineering/)).toBeInTheDocument();
   });
 
-  it("renders Start Hatch button and calls onFinish when clicked", () => {
+  it("continues to workspace protection and calls onFinish when clicked", () => {
     render(<StepReview {...props} />);
-    const button = screen.getByRole("button", { name: /start hatch/i });
+    const button = screen.getByRole("button", { name: /continue to protect workspace/i });
     expect(button).toBeInTheDocument();
     fireEvent.click(button);
     expect(props.onFinish).toHaveBeenCalled();

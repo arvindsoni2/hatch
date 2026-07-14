@@ -145,8 +145,8 @@ export function restoreOnboardingDraft(value: unknown): Partial<OnboardingDraft>
     },
     llm: {
       provider: typeof llm.provider === "string" ? llm.provider : "llamacpp",
-      triage_model: typeof llm.triage_model === "string" ? llm.triage_model : "qwen3.5-0.8b-q8_0",
-      primary_model: typeof llm.primary_model === "string" ? llm.primary_model : "qwen3.5-4b-q4_k_m",
+      triage_model: typeof llm.triage_model === "string" ? llm.triage_model : "",
+      primary_model: typeof llm.primary_model === "string" ? llm.primary_model : "",
       api_key_env: typeof llm.api_key_env === "string" ? llm.api_key_env : "",
       base_url: typeof llm.base_url === "string" || llm.base_url === null
         ? llm.base_url as string | null

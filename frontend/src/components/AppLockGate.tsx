@@ -11,6 +11,7 @@ import { OnboardingGate } from "@/components/OnboardingGate";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { CommandPalette } from "@/components/CommandPalette";
+import { SetupStatusBanner } from "@/components/setup/SetupStatusBanner";
 
 export function AppLockGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -101,6 +102,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
       <div className="flex" style={{ minHeight: "100vh" }}>
         <HatchNavShell />
         <div className="flex flex-col flex-1 min-w-0">
+          <SetupStatusBanner />
           <HatchMobileBar />
           <HatchTopBarSlot />
           <main

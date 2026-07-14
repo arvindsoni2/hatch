@@ -5,8 +5,12 @@ import { Button } from "@/components/ui/button";
 import type { CandidateData } from "./StepAboutYou";
 import type { SearchData, CompensationData, LocationData } from "./StepJobSearch";
 import type { DomainsData, SkillsData } from "./StepSkills";
-import type { LLMData } from "./StepAIProvider";
 import type { LocaleSummary } from "@/lib/api";
+
+type LLMData = {
+  provider: string;
+  primary_model: string;
+};
 
 interface StepReviewProps {
   candidate: CandidateData;
