@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 import app.agents.tools.profile_loader as loader_module
+from app.schemas.profile import Profile
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +19,40 @@ def reset_loader_cache():
 
 
 class TestProfileLoader:
+
+    def test_cloud_runtime_overrides_profile_llm_routes(self):
+        profile = Profile()
+        runtime = {
+            "ai_mode": "cloud",
+            "provider": "anthropic",
+            "effective_routing": {"primary": "claude-sonnet-5", "triage": "claude-haiku-4-5"},
+        }
+
+        with patch("app.agents.tools.profile_loader.load_runtime", return_value=runtime):
+            result = loader_module._apply_runtime_routing(profile)
+
+        assert result.llm.provider == "anthropic"
+        assert result.llm.primary_model == "claude-sonnet-5"
+        assert result.llm.triage_model == "claude-haiku-4-5"
+        assert result.llm.api_key_env == "ANTHROPIC_API_KEY"
+        assert result.llm.base_url is None
+
+    def test_local_runtime_never_inherits_cloud_provider(self):
+        profile = Profile.model_validate({"llm": {"provider": "openai", "api_key_env": "OPENAI_API_KEY"}})
+        runtime = {
+            "ai_mode": "local",
+            "provider": None,
+            "effective_routing": {"primary": "local-primary", "triage": "local-triage"},
+        }
+
+        with patch("app.agents.tools.profile_loader.load_runtime", return_value=runtime):
+            result = loader_module._apply_runtime_routing(profile)
+
+        assert result.llm.provider == "llamacpp"
+        assert result.llm.primary_model == "local-primary"
+        assert result.llm.triage_model == "local-triage"
+        assert result.llm.api_key_env == ""
+        assert result.llm.base_url == "http://llm-primary:8080/v1"
 
     def test_load_returns_valid_profile(self):
         """load_profile() returns a Profile validated from profile_service."""

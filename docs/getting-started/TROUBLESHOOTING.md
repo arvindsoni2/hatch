@@ -80,6 +80,8 @@ ls -l data/master_cv.json data/master_cv.meta.json
 ```bash
 hatch probe
 hatch models list
+hatch models install --primary <catalog-id> --triage <catalog-id>
+hatch apply-ai-config --restart
 docker compose ps
 docker compose logs --tail 50 llm-primary llm-triage
 ```
@@ -96,7 +98,13 @@ docker compose logs --tail 50 llm-primary llm-triage
 hatch secrets status
 ```
 
-- Recovery: set or replace the secret with `hatch secrets set <provider>`
+- Recovery: set or replace the secret with `hatch secrets set <provider>`, then run `hatch provider test <provider>`. The explicit test may incur a small provider charge; ordinary status refreshes do not.
+
+### Hugging Face discovery is unavailable or rate-limited
+
+- Symptom: Local setup shows cached or fallback recommendations
+- Behaviour: no model is automatically selected or downloaded
+- Recovery: keep using the validated cache/fallback, or select Check again later; after choosing both routes, run the exact `hatch models install --primary ... --triage ...` command shown
 
 ## Scraper Failure Or No Jobs Discovered
 

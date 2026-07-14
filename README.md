@@ -168,8 +168,9 @@ hatch status
 hatch doctor
 hatch probe
 hatch models list
-hatch models install
+hatch models install --primary <catalog-id> --triage <catalog-id>
 hatch apply-ai-config
+hatch provider test <provider>
 hatch capabilities status
 hatch capabilities enable browser
 hatch capabilities enable local-embeddings
@@ -189,20 +190,30 @@ Linux/macOS advanced capability example:
 
 For manual Docker setup, capability profiles, troubleshooting, reset commands, and development checks, read the [Hatch operations guide](docs/operations/OPERATIONS.md).
 
-## AI options
+## AI and capability choices
 
-Hatch can start with AI configuration deferred. Profile editing, manual application tracking, settings, and job entry remain available until you configure a provider.
+AI routing and Hatch capabilities are separate choices. Choose **None**, **Local**, or **Cloud** for AI. Choose **Standard Hatch** (the default), Core + browser, Core + local embeddings, or Full capabilities independently. Hatch can start with AI configuration deferred; profile editing, manual application tracking, settings, and job entry remain available.
 
 ### Local AI
 
-The local developer stack supports two `llama.cpp` services:
+After `hatch probe`, the setup screen requests a curated live catalogue from Hugging Face, filters it by publisher, family, licence, immutable revision, checksum metadata, RAM, and free disk, and falls back to a pinned catalogue if the service is unavailable. Nothing downloads until you explicitly assign both routes and confirm:
+
+```bash
+hatch models list
+hatch models install --primary <catalog-id> --triage <catalog-id>
+hatch apply-ai-config --restart
+```
+
+Downloads use `.part` files, SHA-256 verification, and a local verification manifest. Network or rate-limit failures leave setup pending and do not replace an existing verified model.
+
+The root `docker-compose.yml` is the developer-stack exception and intentionally keeps a pinned test pair:
 
 | Service | Default model | Port | Main purpose |
 |---|---|---:|---|
 | `llm-primary` | Qwen3.5-4B Q4_K_M | 8080 | Detailed scoring, CV packs, and Coach |
 | `llm-triage` | Qwen3.5-0.8B Q8_0 | 8081 | Fast relevance filtering |
 
-Managed downloads require confirmation and SHA-256 verification. Model services bind to localhost.
+Easy-install Compose has no model filename defaults. Model services start only after Local is selected, both routes are verified, and the host configuration is applied. Services bind to localhost.
 
 ### Cloud AI
 
@@ -210,9 +221,12 @@ Cloud providers are optional. Easy-install secrets stay outside the browser and 
 
 ```bash
 hatch secrets set openai
+hatch provider test openai
 hatch secrets status
 hatch secrets unset openai
 ```
+
+Cloud mode routes both primary and triage work to the selected provider-hosted models and does not start or download local model services. Provider testing is explicit and may make a small billable request; background status polling never calls a provider.
 
 ## Privacy and safety
 

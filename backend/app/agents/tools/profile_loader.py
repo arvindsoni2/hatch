@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from ...schemas.profile import Profile
+from ...services.ai_setup import load_runtime
 from ...services.profile_service import load_profile as _load, get_profile_path
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,52 @@ logger = logging.getLogger(__name__)
 _cache: Profile | None = None
 _cache_mtime: float = 0.0
 _CACHE_TTL_SECONDS: float = 60.0  # re-check mtime at most once per minute
+
+_CLOUD_SECRET_ENVS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google_genai": "GOOGLE_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+
+
+def _apply_runtime_routing(profile: Profile) -> Profile:
+    """Overlay applied setup routing onto the persisted user profile."""
+    runtime = load_runtime()
+    mode = runtime.get("ai_mode")
+    routing = runtime.get("effective_routing") or {}
+    primary = routing.get("primary")
+    triage = routing.get("triage")
+    if not primary or not triage:
+        return profile
+    if mode == "local":
+        llm = profile.llm.model_copy(update={
+            "provider": "llamacpp",
+            "primary_model": primary,
+            "triage_model": triage,
+            "api_key_env": "",
+            "base_url": "http://llm-primary:8080/v1",
+            "triage_base_url": "http://llm-triage:8081/v1",
+            "track_costs": False,
+        })
+        return profile.model_copy(update={"llm": llm})
+    if mode == "cloud":
+        provider = str(runtime.get("provider") or "")
+        secret_env = _CLOUD_SECRET_ENVS.get(provider)
+        if not secret_env:
+            logger.error("Ignoring unsupported applied cloud provider '%s'.", provider)
+            return profile
+        llm = profile.llm.model_copy(update={
+            "provider": provider,
+            "primary_model": primary,
+            "triage_model": triage,
+            "api_key_env": secret_env,
+            "base_url": "https://openrouter.ai/api/v1" if provider == "openrouter" else None,
+            "triage_base_url": "",
+            "track_costs": True,
+        })
+        return profile.model_copy(update={"llm": llm})
+    return profile
 
 
 def _apply_locale_defaults(profile: Profile) -> Profile:
@@ -69,7 +116,7 @@ def load_profile() -> Profile:
 
     if _cache is None or mtime != _cache_mtime:
         raw = _load()
-        _cache = _apply_locale_defaults(raw)
+        _cache = _apply_runtime_routing(_apply_locale_defaults(raw))
         _cache_mtime = mtime
 
     return _cache

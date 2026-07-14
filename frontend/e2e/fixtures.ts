@@ -41,7 +41,21 @@ const appLockStatus = {
     require_number: true,
     reject_edge_whitespace: true,
   },
+  onboarding: { status: "complete", last_completed_step: "protect-workspace" },
 };
+
+export async function mockIncompleteOnboarding(page: Page) {
+  await page.route("**/api/app-lock/status", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...appLockStatus,
+        onboarding: { status: "not_started", last_completed_step: null },
+      }),
+    });
+  });
+}
 
 export async function bypassOnboarding(page: Page) {
   // App lock — tells AppLockGate to render protected routes in test runs
@@ -83,6 +97,27 @@ export async function bypassOnboarding(page: Page) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify([]),
+    });
+  });
+
+  // The shell setup banner polls this endpoint. Keep protected-route tests in
+  // a stable ready state unless a test installs a more specific setup mock.
+  await page.route("**/api/setup/status", (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema_version: 2,
+        overall_status: "ready",
+        onboarding: { status: "complete", last_completed_step: "protect-workspace" },
+        intent: { schema_version: 2, ai_mode: "none", backend_profile: "core", experience: "essential" },
+        ai: { mode: "none", status: "ready", healthy: true },
+        capabilities: { profile: "core", selected_profile: "core", enabled: [], operation: null },
+        next_actions: [],
+        runtime: { ai_mode: "not_configured", quality_mode: "not_configured", provider: null, warnings: [] },
+        restart_required: false,
+        next_command: "hatch apply-ai-config",
+      }),
     });
   });
 }
@@ -225,10 +260,21 @@ export async function mockProtectedRouteApis(page: Page) {
     }
     if (path === "/api/setup/status") {
       return json({
+        schema_version: 2,
+        overall_status: "ready",
+        onboarding: { status: "complete", last_completed_step: "protect-workspace" },
+        intent: { schema_version: 2, ai_mode: "none", backend_profile: "core", experience: "essential" },
+        ai: { mode: "none", status: "ready", healthy: true },
+        capabilities: { profile: "core", selected_profile: "core", enabled: [], operation: null },
+        next_actions: [],
         runtime: { ai_mode: "local", quality_mode: "local", provider: "llamacpp", warnings: [] },
         restart_required: false,
         next_command: "hatch apply-ai-config",
       });
+    }
+    if (path === "/api/setup/providers") return json({ providers: [] });
+    if (path === "/api/setup/models/discovery") {
+      return json({ source: "fallback", models: [], compatible: [], recommended_primary: null, recommended_triage: null });
     }
     if (path === "/api/setup/hardware") {
       return json({

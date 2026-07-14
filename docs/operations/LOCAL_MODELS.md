@@ -1,6 +1,6 @@
 # Local Models
 
-Local AI in Hatch uses two optional `llama.cpp` services and a host-side model catalogue.
+Local AI in Hatch uses two optional `llama.cpp` services and a host-side curated model catalogue. Local services are never selected for Cloud mode.
 
 > Last verified against `main`: 2026-07-10
 
@@ -23,7 +23,8 @@ The probe records host RAM, free disk, port availability, OS/arch, and supported
 
 ```bash
 hatch models list
-hatch models install
+hatch models install --primary <catalog-id> --triage <catalog-id>
+hatch apply-ai-config --restart
 hatch apply-ai-config
 ```
 
@@ -42,10 +43,14 @@ Local services bind to:
 
 ## Expectations
 
-Model suitability depends on the host machine. Hatch recommends compatible models, but the user chooses the download set.
+Model suitability depends on the host machine. After `hatch probe`, Hatch performs curated live Hugging Face discovery, validates immutable revision and LFS checksum metadata, and ranks models against RAM and model-storage space. If live discovery is unavailable or rate-limited, a recent validated cache or pinned fallback catalogue is shown. The user always chooses both routes; discovery never starts a download.
 
 ## Switching And Failure Handling
 
-- Re-run `hatch models install` to add supported models
+- Re-run `hatch models install --primary <catalog-id> --triage <catalog-id>` to install a selected pair
 - Re-run `hatch apply-ai-config` after changing selected models
+
+Downloads are written to `.part`, verified with SHA-256 and exact size when available, atomically renamed, and recorded in `${HATCH_HOME}/config/model_verification.json`. A failed download leaves any existing verified file in place. `scripts/fetch_models.sh` is only a compatibility wrapper and refuses to choose defaults.
+
+`docker-compose.local-ai.yml` requires explicit filenames supplied by the host CLI. The root `docker-compose.yml` retains a fixed model pair only for developer-stack reproducibility.
 - If local runtime is unavailable, Hatch falls back to a guided setup or failure state rather than pretending the operation succeeded

@@ -19,6 +19,10 @@ async function mockStatus(page: Page, configuredSource: "none" | "database") {
         is_configured: configuredSource !== "none",
         is_unlocked: false,
         password_policy: policy,
+        onboarding: {
+          status: configuredSource === "none" ? "not_started" : "in_progress",
+          last_completed_step: null,
+        },
       }),
     }),
   );

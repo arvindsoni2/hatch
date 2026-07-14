@@ -274,7 +274,7 @@ export default function OnboardingPage() {
     if (
       step >= ABOUT
       && step <= SKILLS
-      && getOnboardingStepErrors(step - 1, validationState).length > 0
+      && getOnboardingStepErrors(step, validationState).length > 0
     ) {
       setTried(true);
       return;
@@ -430,7 +430,7 @@ export default function OnboardingPage() {
   };
 
   const currentLocale = locales.find((locale) => locale.id === selectedLocale);
-  const formStep = step >= ABOUT && step <= EXPERIENCE ? step - 1 : 0;
+  const formStep = step >= ABOUT && step <= EXPERIENCE ? step : 0;
   const warnings = getOnboardingWarnings(validationState);
 
   return (

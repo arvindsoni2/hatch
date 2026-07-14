@@ -355,6 +355,37 @@ def test_provider_env_canonicalizes_aliases_and_openrouter() -> None:
     assert hatch_cli.provider_env("openrouter") == "OPENROUTER_API_KEY"
 
 
+def test_provider_test_uses_backend_without_reading_or_sending_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Result:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"ok": true, "status": "ready"}'
+
+    def fake_urlopen(request: object, timeout: int):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Result()
+
+    monkeypatch.setattr(hatch_cli.urllib.request, "urlopen", fake_urlopen)
+    hatch_cli.cmd_provider_test(type("Args", (), {"provider": "anthropic"})())
+
+    request = captured["request"]
+    payload = json.loads(request.data)
+    assert payload == {"provider": "anthropic"}
+    assert "secret" not in request.data.decode().lower()
+    assert "ready" in capsys.readouterr().out
+
+
 def test_probe_writes_only_canonical_snapshot_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

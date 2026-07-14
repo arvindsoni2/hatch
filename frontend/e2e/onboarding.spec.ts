@@ -1,4 +1,8 @@
-import { test, expect } from "./fixtures";
+import { test, expect, mockIncompleteOnboarding } from "./fixtures";
+
+test.beforeEach(async ({ page }) => {
+  await mockIncompleteOnboarding(page);
+});
 
 test("onboarding welcome screen renders with Get started button", async ({ page }) => {
   await page.goto("/onboarding");
@@ -54,10 +58,10 @@ test("onboarding browser draft excludes identity details", async ({ page }) => {
   await page.getByRole("textbox", { name: "Professional summary" }).fill("Identifying career summary");
 
   await expect.poll(async () => page.evaluate(() => (
-    localStorage.getItem("hatch_onboarding_v2")
+    sessionStorage.getItem("hatch_onboarding_v2")
   ))).not.toBeNull();
 
-  const stored = await page.evaluate(() => localStorage.getItem("hatch_onboarding_v2") ?? "");
+  const stored = await page.evaluate(() => sessionStorage.getItem("hatch_onboarding_v2") ?? "");
   expect(stored).not.toContain("Avery Morgan");
   expect(stored).not.toContain("Transformation Director");
   expect(stored).not.toContain("Identifying career summary");

@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -709,6 +710,26 @@ def canonical_provider(provider: str | None) -> str:
     return PROVIDER_ALIASES.get(value, value)
 
 
+def cmd_provider_test(args: argparse.Namespace) -> None:
+    provider = canonical_provider(args.provider)
+    provider_env(provider)
+    request = urllib.request.Request(
+        "http://127.0.0.1:8000/api/setup/provider/test",
+        data=json.dumps({"provider": provider}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        fail(f"Provider test could not reach the local Hatch backend: {exc}")
+    status = str(result.get("status") or "unknown")
+    if not result.get("ok"):
+        fail(f"Provider test: {status}. {result.get('error') or ''}".strip())
+    print(f"Provider test: {status}")
+
+
 def cmd_secrets(args: argparse.Namespace) -> None:
     values = read_env(SECRETS_PATH)
     if args.secret_action == "status":
@@ -931,6 +952,10 @@ def parser() -> argparse.ArgumentParser:
     unset_secret = secrets_sub.add_parser("unset")
     unset_secret.add_argument("provider")
     unset_secret.add_argument("--yes", action="store_true")
+    provider = sub.add_parser("provider")
+    provider_sub = provider.add_subparsers(dest="provider_action", required=True)
+    provider_test = provider_sub.add_parser("test")
+    provider_test.add_argument("provider", choices=sorted(PROVIDERS))
     update = sub.add_parser("update")
     update.add_argument("--dry-run", action="store_true")
     update.add_argument("--no-restart", action="store_true")
@@ -986,6 +1011,8 @@ def main() -> None:
         cmd_apply(args)
     elif args.command == "secrets":
         cmd_secrets(args)
+    elif args.command == "provider":
+        cmd_provider_test(args)
     elif args.command == "update":
         cmd_update(args)
     elif args.command == "capabilities":
