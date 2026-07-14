@@ -14,7 +14,7 @@ from .. import models as _models  # noqa: F401 - register all ORM tables
 
 ResetMode = Literal["onboarding", "demo", "factory"]
 
-PRESERVED_TABLES = {"app_lock_config", "app_lock_sessions"}
+PRESERVED_TABLES = {"app_lock_config", "app_lock_sessions", "onboarding_state"}
 RESET_FILE_NAMES = (
     "langgraph_checkpoints.db",
     "langgraph_checkpoints.db-shm",
@@ -76,6 +76,7 @@ async def reset_preview(db: AsyncSession, mode: ResetMode, *, preserve_profile: 
     preserves = [
         "app_lock_config",
         "app_lock_sessions",
+        "onboarding_state",
         "api_keys.env",
         "hardware probe cache",
         "installed runtime and model files",
@@ -113,6 +114,11 @@ async def apply_reset(
         if table.name in PRESERVED_TABLES:
             continue
         await db.execute(delete(table))
+
+    if mode == "onboarding":
+        from .onboarding_service import OnboardingService
+
+        await OnboardingService(db).reset_progress()
 
     _clear_files(preserve_profile=preserve_profile)
     return {"applied": True, "mode": mode, "preview": preview}

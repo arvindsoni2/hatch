@@ -318,6 +318,7 @@ class AppLockMiddleware(BaseHTTPMiddleware):
                 "/api/setup/cloud-provider",
                 "/api/setup/provider/test",
                 "/api/setup/skip-ai",
+                "/api/setup/onboarding/progress",
             }
         if request.method == "PATCH":
             return path == "/api/setup/intent"

@@ -6,7 +6,9 @@ so caching is centralised.
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +80,53 @@ def save_profile_raw(data: dict[str, Any]) -> Profile:
     profile = Profile.model_validate(data)
     save_profile(profile)
     return profile
+
+
+def canonical_profile_bytes(data: dict[str, Any]) -> bytes:
+    """Validate and serialize a profile deterministically for hashing."""
+    profile = Profile.model_validate(data)
+    rendered = yaml.safe_dump(
+        profile.model_dump(mode="json", exclude_none=True),
+        sort_keys=True,
+        allow_unicode=True,
+    )
+    return rendered.encode("utf-8")
+
+
+def profile_payload_hash(data: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_profile_bytes(data)).hexdigest()
+
+
+def current_profile_hash() -> str | None:
+    if not profile_exists():
+        return None
+    try:
+        return profile_payload_hash(load_profile_raw())
+    except (OSError, ValidationError, ValueError, TypeError):
+        return None
+
+
+def atomic_save_profile_raw(data: dict[str, Any]) -> tuple[Profile, str]:
+    """Validate and atomically replace profile.yaml, returning its hash."""
+    profile = Profile.model_validate(data)
+    payload = canonical_profile_bytes(profile.model_dump(exclude_none=True))
+    path = get_profile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".profile.", suffix=".yaml", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    from ..agents.tools.profile_loader import invalidate_cache
+
+    invalidate_cache()
+    return profile, hashlib.sha256(payload).hexdigest()
 
 
 def validate_profile_data(data: dict[str, Any]) -> list[str]:

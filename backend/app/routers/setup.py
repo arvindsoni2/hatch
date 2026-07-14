@@ -4,10 +4,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -29,6 +30,10 @@ from ..services.ai_setup import (
     save_intent,
 )
 from ..services.setup_reset import ResetMode, apply_reset, reset_preview
+from ..services.onboarding_service import (
+    OnboardingFinalizationError,
+    OnboardingService,
+)
 from ..services.pdf_export import pdf_export_capability
 
 router = APIRouter(prefix="/api/setup", tags=["setup"])
@@ -38,6 +43,60 @@ class ResetApplyRequest(BaseModel):
     mode: ResetMode
     confirmation: str
     preserve_profile: bool = False
+
+
+class OnboardingProgressRequest(BaseModel):
+    step_id: str
+
+
+class OnboardingFinalizeRequest(BaseModel):
+    finalization_id: UUID
+    profile: dict[str, Any]
+
+
+def _onboarding_payload(state) -> dict[str, str | None]:
+    return {
+        "status": state.status,
+        "last_completed_step": state.last_completed_step,
+    }
+
+
+@router.post("/onboarding/progress")
+async def onboarding_progress(
+    body: OnboardingProgressRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        state = await OnboardingService(db).mark_in_progress(body.step_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"onboarding": _onboarding_payload(state)}
+
+
+@router.post("/onboarding/finalize")
+async def finalize_onboarding(
+    body: OnboardingFinalizeRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        state = await OnboardingService(db).finalize(
+            str(body.finalization_id), body.profile
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "profile_invalid",
+                "message": "The onboarding profile contains invalid fields.",
+                "fields": [".".join(str(part) for part in error["loc"]) for error in exc.errors()],
+            },
+        ) from exc
+    except OnboardingFinalizationError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    return {"onboarding": _onboarding_payload(state)}
 
 
 @router.get("/status")
