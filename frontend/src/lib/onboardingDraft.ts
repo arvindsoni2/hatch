@@ -175,3 +175,24 @@ export function restoreOnboardingDraft(value: unknown): Partial<OnboardingDraft>
       : 4,
   };
 }
+
+
+export function migrateLegacyOnboardingDraft(): Partial<OnboardingDraft> | null {
+  let restored: Partial<OnboardingDraft> | null = null;
+  try {
+    const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY)
+      ?? localStorage.getItem(LEGACY_ONBOARDING_STORAGE_KEY);
+    if (raw) {
+      restored = restoreOnboardingDraft(JSON.parse(raw));
+      sessionStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(restored));
+    }
+  } catch {
+    restored = null;
+  } finally {
+    try {
+      localStorage.removeItem(ONBOARDING_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
+    } catch {}
+  }
+  return restored;
+}

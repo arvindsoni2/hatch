@@ -13,22 +13,22 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: mockReplace }),
 }));
 
-const mockFetchProfileStatus = vi.fn();
+const mockGetAppLockStatus = vi.fn();
 
 vi.mock('@/lib/api', () => ({
-  fetchProfileStatus: () => mockFetchProfileStatus(),
+  getAppLockStatus: () => mockGetAppLockStatus(),
 }));
 
 describe('OnboardingGate', () => {
   beforeEach(() => {
     mockReplace.mockReset();
-    mockFetchProfileStatus.mockReset();
+    mockGetAppLockStatus.mockReset();
     mockUsePathname.mockReset();
     mockUsePathname.mockReturnValue('/today');
   });
 
-  it('redirects to /onboarding when onboarding_required is true', async () => {
-    mockFetchProfileStatus.mockResolvedValue({ candidate_name: '', onboarding_required: true });
+  it('redirects to /onboarding when authoritative onboarding is incomplete', async () => {
+    mockGetAppLockStatus.mockResolvedValue({ onboarding: { status: 'in_progress' } });
 
     const { OnboardingGate } = await import('@/components/OnboardingGate');
     await act(async () => { render(<OnboardingGate />); });
@@ -36,8 +36,8 @@ describe('OnboardingGate', () => {
     expect(mockReplace).toHaveBeenCalledWith('/onboarding');
   });
 
-  it('does not redirect when onboarding_required is false', async () => {
-    mockFetchProfileStatus.mockResolvedValue({ candidate_name: 'Arvind', onboarding_required: false });
+  it('does not redirect when authoritative onboarding is complete', async () => {
+    mockGetAppLockStatus.mockResolvedValue({ onboarding: { status: 'complete' } });
 
     const { OnboardingGate } = await import('@/components/OnboardingGate');
     await act(async () => { render(<OnboardingGate />); });
@@ -47,7 +47,7 @@ describe('OnboardingGate', () => {
 
   it('does not redirect when already on /onboarding (no infinite loop)', async () => {
     mockUsePathname.mockReturnValue('/onboarding');
-    mockFetchProfileStatus.mockResolvedValue({ candidate_name: '', onboarding_required: true });
+    mockGetAppLockStatus.mockResolvedValue({ onboarding: { status: 'in_progress' } });
 
     const { OnboardingGate } = await import('@/components/OnboardingGate');
     await act(async () => { render(<OnboardingGate />); });
@@ -56,7 +56,7 @@ describe('OnboardingGate', () => {
   });
 
   it('renders null — no visible output', async () => {
-    mockFetchProfileStatus.mockResolvedValue({ candidate_name: 'Arvind', onboarding_required: false });
+    mockGetAppLockStatus.mockResolvedValue({ onboarding: { status: 'complete' } });
 
     const { OnboardingGate } = await import('@/components/OnboardingGate');
     let container!: HTMLElement;

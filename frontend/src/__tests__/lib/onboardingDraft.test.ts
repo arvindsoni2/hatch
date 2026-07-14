@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createOnboardingDraft,
+  LEGACY_ONBOARDING_STORAGE_KEY,
+  migrateLegacyOnboardingDraft,
+  ONBOARDING_STORAGE_KEY,
   restoreOnboardingDraft,
 } from "@/lib/onboardingDraft";
 
@@ -102,5 +105,17 @@ describe("onboarding draft privacy", () => {
     expect(restored).not.toHaveProperty("locations");
     expect(restored).not.toHaveProperty("compensation");
     expect(restored).not.toHaveProperty("proofPoints");
+  });
+
+  it("moves legacy non-sensitive fields to session storage once", () => {
+    localStorage.setItem(LEGACY_ONBOARDING_STORAGE_KEY, JSON.stringify(state));
+
+    const migrated = migrateLegacyOnboardingDraft();
+
+    expect(migrated?.search).toEqual(state.search);
+    expect(localStorage.getItem(LEGACY_ONBOARDING_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeTruthy();
+    expect(sessionStorage.getItem(ONBOARDING_STORAGE_KEY)).not.toContain("Alex Smith");
   });
 });

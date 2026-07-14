@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { getAppLockStatus } from "@/lib/api";
+import { APP_LOCK_QUERY_KEY, getAppLockStatus } from "@/lib/api";
 import { HatchNavShell } from "@/components/hatch/HatchNavShell";
 import { HatchTopBarSlot } from "@/components/hatch/HatchTopBarSlot";
 import { HatchMobileBar } from "@/components/hatch/HatchMobileBar";
@@ -11,8 +11,6 @@ import { OnboardingGate } from "@/components/OnboardingGate";
 import { OfflineIndicator } from "@/components/OfflineIndicator";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { CommandPalette } from "@/components/CommandPalette";
-
-export const APP_LOCK_QUERY_KEY = ["app-lock-status"] as const;
 
 export function AppLockGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -36,7 +34,9 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   }, [isLoading]);
 
   useEffect(() => {
-    const allowLockedOnboarding = isOnboardingRoute && data?.configured_source === "none";
+    const allowLockedOnboarding = isOnboardingRoute
+      && data?.configured_source === "none"
+      && data?.onboarding?.status !== "complete";
     if (!isUnlockRoute && !allowLockedOnboarding && data?.enabled && !data.is_unlocked) {
       const next = encodeURIComponent(pathname || "/today");
       router.replace(`/unlock?next=${next}`);
@@ -50,7 +50,11 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     return <main className="min-h-screen">{children}</main>;
   }
   if (isLoading || (data?.enabled && !data.is_unlocked)) {
-    if (isOnboardingRoute && data?.configured_source === "none") {
+    if (
+      isOnboardingRoute
+      && data?.configured_source === "none"
+      && data?.onboarding?.status !== "complete"
+    ) {
       return (
         <main className="min-h-[100dvh]" id="main-content" tabIndex={-1}>
           {children}

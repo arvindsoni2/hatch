@@ -20,6 +20,14 @@ export interface AppLockStatus {
   failed_attempt_count?: number;
   retry_after_seconds?: number;
   password_policy?: PasswordPolicy;
+  onboarding: OnboardingState;
+}
+
+export type OnboardingStatus = "not_started" | "in_progress" | "finalization_pending" | "complete";
+
+export interface OnboardingState {
+  status: OnboardingStatus;
+  last_completed_step: string | null;
 }
 
 export interface PasswordPolicy {
@@ -30,6 +38,8 @@ export interface PasswordPolicy {
   require_symbol?: boolean;
   reject_edge_whitespace: boolean;
 }
+
+export const APP_LOCK_QUERY_KEY = ["app-lock-status"] as const;
 
 export interface ProfileSummary {
   identity: { name: string; title: string; email?: string; phone?: string };
@@ -189,9 +199,21 @@ export const getAppLockStatus = () =>
   apiFetch<AppLockStatus>("/api/app-lock/status");
 
 export const setupAppLock = (password: string) =>
-  apiFetch<{ unlocked: boolean }>("/api/app-lock/setup", {
+  apiFetch<{ unlocked: boolean; onboarding: OnboardingState }>("/api/app-lock/setup", {
     method: "POST",
     body: JSON.stringify({ password }),
+  });
+
+export const updateOnboardingProgress = (stepId: string) =>
+  apiFetch<{ onboarding: OnboardingState }>("/api/setup/onboarding/progress", {
+    method: "POST",
+    body: JSON.stringify({ step_id: stepId }),
+  });
+
+export const finalizeOnboarding = (finalizationId: string, profile: Record<string, unknown>) =>
+  apiFetch<{ onboarding: OnboardingState }>("/api/setup/onboarding/finalize", {
+    method: "POST",
+    body: JSON.stringify({ finalization_id: finalizationId, profile }),
   });
 
 export const unlockApp = (password: string) =>

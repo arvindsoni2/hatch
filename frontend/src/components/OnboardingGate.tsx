@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { fetchProfileStatus } from "@/lib/api";
+import { getAppLockStatus } from "@/lib/api";
 
 export function OnboardingGate() {
   const pathname = usePathname();
@@ -10,8 +10,12 @@ export function OnboardingGate() {
   useEffect(() => {
     if (pathname.startsWith("/onboarding")) return;
     let cancelled = false;
-    fetchProfileStatus()
-      .then((s) => { if (!cancelled && s.onboarding_required) router.replace("/onboarding"); })
+    getAppLockStatus()
+      .then((status) => {
+        if (!cancelled && status.onboarding.status !== "complete") {
+          router.replace("/onboarding");
+        }
+      })
       .catch(() => {/* offline / backend down: stay put */});
     return () => { cancelled = true; };
   }, [pathname, router]);

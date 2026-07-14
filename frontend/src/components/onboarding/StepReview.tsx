@@ -58,7 +58,7 @@ export function StepReview({
         Review your setup
       </h1>
       <p className="mb-5 text-[14px] leading-relaxed text-[var(--text-dim)]">
-        Check what Hatch will save. You can go back to change anything before starting.
+        Check what Hatch will save. Next, protect the workspace and finalize this profile.
       </p>
 
       {warnings.length > 0 && (
@@ -113,8 +113,8 @@ export function StepReview({
         className="mt-5 w-full gap-2"
       >
         {saving
-          ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving profile...</>
-          : <><Rocket className="h-4 w-4" /> Save and start Hatch</>}
+          ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving setup choices...</>
+          : <><Rocket className="h-4 w-4" /> Continue to protect workspace</>}
       </Button>
     </section>
   );

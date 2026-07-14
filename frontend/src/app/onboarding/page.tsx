@@ -2,18 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, LockKeyhole } from "lucide-react";
 import {
   fetchLocales, fetchLocaleLegalFields, fetchLocaleBoards,
-  testLLMConnection, saveProfile, triggerAgent, getAppLockStatus,
+  APP_LOCK_QUERY_KEY, testLLMConnection, triggerAgent, getAppLockStatus, finalizeOnboarding,
   type LocaleSummary, type LocaleLegalField, type LocaleBoard, type PasswordPolicy,
 } from "@/lib/api";
 import {
   createOnboardingDraft,
-  LEGACY_ONBOARDING_STORAGE_KEY,
+  migrateLegacyOnboardingDraft,
   ONBOARDING_STORAGE_KEY,
   restoreOnboardingDraft,
 } from "@/lib/onboardingDraft";
+import { Button } from "@/components/ui/button";
 import {
   getOnboardingStepErrors,
   getOnboardingWarnings,
@@ -42,17 +44,18 @@ import type {
 } from "@/components/onboarding/StepJobSearch";
 
 const WELCOME = 0;
-const PASSWORD = 1;
-const ABOUT = 2;
-const MARKET = 3;
-const PAY = 4;
-const ELIGIBILITY = 5;
-const SKILLS = 6;
-const EXPERIENCE = 7;
-const AI_PROVIDER = 8;
-const REVIEW = 9;
+const ABOUT = 1;
+const MARKET = 2;
+const PAY = 3;
+const ELIGIBILITY = 4;
+const SKILLS = 5;
+const EXPERIENCE = 6;
+const AI_PROVIDER = 7;
+const REVIEW = 8;
+const PROTECT_WORKSPACE = 9;
 const SUCCESS = 10;
 const PROFILE_FORM_STEPS = 7;
+const FINALIZATION_ID_KEY = "hatch_onboarding_finalization_id";
 
 const DEFAULT_LLM: LLMData = {
   provider: "llamacpp",
@@ -77,6 +80,7 @@ const DEFAULT_EXPERIENCE: ExperienceChoice = {
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState(WELCOME);
   const [hasSaved, setHasSaved] = useState(false);
   const [tried, setTried] = useState(false);
@@ -86,6 +90,7 @@ export default function OnboardingPage() {
   const [skillsSkipped, setSkillsSkipped] = useState(false);
   const [aiSetupLater, setAiSetupLater] = useState(false);
   const [passwordRequired, setPasswordRequired] = useState(false);
+  const [passwordConfigured, setPasswordConfigured] = useState(false);
   const [passwordPolicy, setPasswordPolicy] = useState<PasswordPolicy | undefined>();
 
   const [candidate, setCandidate] = useState<CandidateData>({
@@ -120,13 +125,15 @@ export default function OnboardingPage() {
   const [enabledBoards, setEnabledBoards] = useState<Set<string>>(new Set());
   const [scrapeIntervalHours, setScrapeIntervalHours] = useState(4);
   const restoredBoardIds = useRef<string[] | null>(null);
+  const finalizationIdRef = useRef("");
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(ONBOARDING_STORAGE_KEY)
-        ?? localStorage.getItem(LEGACY_ONBOARDING_STORAGE_KEY);
-      if (raw) {
-        const draft = restoreOnboardingDraft(JSON.parse(raw));
+      const raw = sessionStorage.getItem(ONBOARDING_STORAGE_KEY);
+      const draft = raw
+        ? restoreOnboardingDraft(JSON.parse(raw))
+        : migrateLegacyOnboardingDraft();
+      if (draft) {
         if (draft.search) setSearch(draft.search);
         if (draft.skills) setSkills(draft.skills);
         if (draft.domains) setDomains(draft.domains);
@@ -147,27 +154,25 @@ export default function OnboardingPage() {
         if (typeof draft.step === "number" && draft.step > 0 && draft.step < SUCCESS) {
           const restoredStep = draft.step >= REVIEW
             ? REVIEW
-            : Math.min(AI_PROVIDER, Math.max(ABOUT, draft.step + 1));
+            : Math.min(AI_PROVIDER, Math.max(ABOUT, draft.step));
           setStep(restoredStep);
         }
         setHasSaved(true);
       }
-      localStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
     } catch {
-      localStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
+      sessionStorage.removeItem(ONBOARDING_STORAGE_KEY);
     }
   }, []);
 
   useEffect(() => {
-    if (step === PASSWORD || step === SUCCESS) return;
+    if (step === PROTECT_WORKSPACE || step === SUCCESS) return;
     try {
-      const persistedStep = step >= ABOUT && step <= AI_PROVIDER ? step - 1 : step;
       const draft = createOnboardingDraft({
-        step: persistedStep, candidate, search, locations, compensation, skills, domains, proofPoints,
+        step, candidate, search, locations, compensation, skills, domains, proofPoints,
         selectedLocale, llm, experienceChoice, rolesSkipped, skillsSkipped, aiSetupLater,
         enabledBoardIds: [...enabledBoards], scrapeIntervalHours,
       });
-      localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(draft));
+      sessionStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(draft));
     } catch {}
   }, [
     step, candidate, search, locations, compensation, skills, domains, proofPoints,
@@ -197,6 +202,12 @@ export default function OnboardingPage() {
       .then((status) => {
         setPasswordPolicy(status.password_policy);
         setPasswordRequired(status.enabled && status.configured_source === "none");
+        setPasswordConfigured(status.onboarding.status === "finalization_pending");
+        if (status.onboarding.status === "finalization_pending") {
+          setStep(PROTECT_WORKSPACE);
+        } else if (status.onboarding.status === "complete") {
+          setStep(SUCCESS);
+        }
       })
       .catch(() => {
         setPasswordRequired(false);
@@ -245,7 +256,7 @@ export default function OnboardingPage() {
   const advance = () => {
     if (step === WELCOME) {
       setError("");
-      setStep(passwordRequired ? PASSWORD : ABOUT);
+      setStep(ABOUT);
       return;
     }
     if (
@@ -265,7 +276,7 @@ export default function OnboardingPage() {
     setTried(false);
     setError("");
     setStep((current) => {
-      if (current === ABOUT) return passwordRequired ? PASSWORD : WELCOME;
+      if (current === ABOUT) return WELCOME;
       return Math.max(WELCOME, current - 1);
     });
   };
@@ -315,7 +326,42 @@ export default function OnboardingPage() {
     },
   });
 
-  const handleFinish = async () => {
+  const getFinalizationId = () => {
+    if (finalizationIdRef.current) return finalizationIdRef.current;
+    const existing = sessionStorage.getItem(FINALIZATION_ID_KEY);
+    const generated = existing
+      || (typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `00000000-0000-4000-8000-${Date.now().toString(16).padStart(12, "0").slice(-12)}`);
+    finalizationIdRef.current = generated;
+    sessionStorage.setItem(FINALIZATION_ID_KEY, generated);
+    return generated;
+  };
+
+  const handleFinalize = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const result = await finalizeOnboarding(getFinalizationId(), buildProfile());
+      if (result.onboarding.status !== "complete") {
+        throw new Error("The backend did not confirm onboarding completion.");
+      }
+      await queryClient.invalidateQueries({ queryKey: APP_LOCK_QUERY_KEY });
+      await triggerAgent("scout").catch(() => {});
+      sessionStorage.removeItem(ONBOARDING_STORAGE_KEY);
+      sessionStorage.removeItem(FINALIZATION_ID_KEY);
+      setStep(SUCCESS);
+    } catch (caught: unknown) {
+      setPasswordConfigured(true);
+      setStep(PROTECT_WORKSPACE);
+      setError(caught instanceof Error ? caught.message : "Profile finalization failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReviewComplete = async () => {
     if (saving) return;
     setSaving(true);
     setError("");
@@ -333,15 +379,15 @@ export default function OnboardingPage() {
       if (!setupResponse.ok) {
         throw new Error(await setupResponse.text());
       }
-      await saveProfile(buildProfile());
-      await triggerAgent("scout").catch(() => {});
-      try {
-        localStorage.removeItem(ONBOARDING_STORAGE_KEY);
-        localStorage.removeItem(LEGACY_ONBOARDING_STORAGE_KEY);
-      } catch {}
-      setStep(SUCCESS);
+      if (passwordRequired && !passwordConfigured) {
+        setStep(PROTECT_WORKSPACE);
+        setSaving(false);
+        return;
+      }
+      setSaving(false);
+      await handleFinalize();
     } catch (caught: unknown) {
-      setError(caught instanceof Error ? caught.message : "Profile could not be saved.");
+      setError(caught instanceof Error ? caught.message : "Setup choices could not be saved.");
       setSaving(false);
     }
   };
@@ -374,8 +420,8 @@ export default function OnboardingPage() {
               <strong className="text-[var(--text)]">{formStep}</strong> of {PROFILE_FORM_STEPS}
             </span>
           )}
-          {step === PASSWORD && (
-            <span className="text-[12px] font-medium text-[var(--text-muted)]">Password</span>
+          {step === PROTECT_WORKSPACE && (
+            <span className="text-[12px] font-medium text-[var(--text-muted)]">Protect workspace</span>
           )}
           {step === REVIEW && (
             <span className="text-[12px] font-medium text-[var(--text-muted)]">Final review</span>
@@ -386,11 +432,30 @@ export default function OnboardingPage() {
 
         <div className="flex-1 overflow-y-auto">
           {step === WELCOME && <ScreenWelcome hasSaved={hasSaved} onStart={advance} />}
-          {step === PASSWORD && (
+          {step === PROTECT_WORKSPACE && !passwordConfigured && (
             <StepPasswordSetup
-              onComplete={() => setStep(ABOUT)}
+              onComplete={async () => {
+                setPasswordConfigured(true);
+                await queryClient.invalidateQueries({ queryKey: APP_LOCK_QUERY_KEY });
+                await handleFinalize();
+              }}
               policy={passwordPolicy}
             />
+          )}
+          {step === PROTECT_WORKSPACE && passwordConfigured && (
+            <section className="px-5 py-8" aria-labelledby="finalization-recovery-title">
+              <LockKeyhole className="h-8 w-8 text-[var(--accent)]" aria-hidden="true" />
+              <h1 id="finalization-recovery-title" className="mt-4 text-2xl font-semibold text-[var(--text)]">
+                Finish saving your setup
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
+                Your workspace password is already configured. Retry the final profile save without entering it again.
+              </p>
+              {error ? <p className="mt-4 text-sm text-[var(--danger)]" role="alert">{error}</p> : null}
+              <Button className="mt-6 w-full" loading={saving} onClick={handleFinalize} type="button">
+                Retry finalization
+              </Button>
+            </section>
           )}
           {step === ABOUT && (
             <StepAboutYou candidate={candidate} onChange={setCandidate} tried={tried} />
@@ -483,7 +548,7 @@ export default function OnboardingPage() {
               warnings={warnings}
               error={error}
               saving={saving}
-              onFinish={handleFinish}
+              onFinish={handleReviewComplete}
             />
           )}
           {step === SUCCESS && (
@@ -500,7 +565,7 @@ export default function OnboardingPage() {
           )}
         </div>
 
-        {step >= ABOUT && step <= REVIEW && (
+        {step >= ABOUT && step <= PROTECT_WORKSPACE && (
           <footer
             className="flex flex-shrink-0 gap-2.5 border-t border-[var(--border)] px-5 py-3.5"
             style={{
@@ -533,7 +598,7 @@ export default function OnboardingPage() {
         {step >= ABOUT && step < SUCCESS && (
           <div className="flex items-center justify-center gap-1.5 px-5 pb-3 text-center text-[11px] text-[var(--text-muted)]">
             <LockKeyhole size={12} aria-hidden="true" />
-            Progress and non-sensitive preferences are saved in this browser.
+            Progress and non-sensitive preferences are kept for this browser session only.
           </div>
         )}
       </div>

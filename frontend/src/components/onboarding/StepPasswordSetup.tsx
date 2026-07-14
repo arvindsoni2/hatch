@@ -5,7 +5,7 @@ import { Info, LockKeyhole } from "lucide-react";
 import { PasswordField } from "@/components/security/PasswordField";
 import { PasswordRequirementList } from "@/components/security/PasswordRequirementList";
 import { Button } from "@/components/ui/button";
-import { setupAppLock, type PasswordPolicy } from "@/lib/api";
+import { setupAppLock, type OnboardingState, type PasswordPolicy } from "@/lib/api";
 import {
   FALLBACK_PASSWORD_POLICY,
   isPasswordValid,
@@ -13,7 +13,7 @@ import {
 } from "@/lib/passwordPolicy";
 
 interface StepPasswordSetupProps {
-  onComplete: () => void;
+  onComplete: (result: { unlocked: boolean; onboarding: OnboardingState }) => void;
   policy?: PasswordPolicy;
 }
 
@@ -51,8 +51,10 @@ export function StepPasswordSetup({
     }
     setSubmitting(true);
     try {
-      await setupAppLock(password);
-      onComplete();
+      const result = await setupAppLock(password);
+      setPassword("");
+      setConfirm("");
+      onComplete(result);
     } catch (error) {
       setFormError(errorMessage(error));
     } finally {
@@ -72,7 +74,7 @@ export function StepPasswordSetup({
         Protect your Hatch workspace
       </h1>
       <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
-        Create the local app-lock password before adding job-search data. This is stored as a hash and is not a Hatch cloud account.
+        Create the local app-lock password after reviewing your setup. It is stored as a hash and is not a Hatch cloud account.
       </p>
 
       <form className="mt-6 space-y-4" onSubmit={submit} noValidate>
@@ -115,7 +117,7 @@ export function StepPasswordSetup({
         </div>
         {formError ? <p className="text-sm text-[var(--danger)]" role="alert">{formError}</p> : null}
         <Button className="w-full" disabled={!valid || submitting} loading={submitting} type="submit">
-          Set password and continue
+          Set password and finish
         </Button>
       </form>
     </section>
