@@ -265,23 +265,26 @@ def model_buckets(ram: float, disk: float) -> dict[str, list[str]]:
     return result
 
 
+def migrate_legacy_probe() -> bool:
+    """Copy a valid legacy probe into the canonical directory once."""
+    canonical = PROBE_DIR / "hardware_probe_latest.json"
+    legacy = CONFIG_DIR / "hardware_probe_latest.json"
+    if canonical.exists() or not legacy.is_file():
+        return False
+    snapshot = read_json(legacy, None)
+    if not isinstance(snapshot, dict) or snapshot.get("sanitised") is not True:
+        return False
+    write_json(canonical, snapshot)
+    return True
+
+
 def cmd_probe(_: argparse.Namespace) -> None:
     ensure_home()
+    migrate_legacy_probe()
     disk = round(shutil.disk_usage(MODELS_DIR).free / 1024**3, 2)
     ram = total_ram_gb()
     generated_at = datetime.now(timezone.utc).isoformat()
     buckets = model_buckets(ram, disk)
-    full = {
-        "generated_at": generated_at,
-        "os": platform.platform(),
-        "arch": platform.machine(),
-        "cpu_model": platform.processor() or None,
-        "cpu_cores": os.cpu_count() or 0,
-        "ram_total_gb": ram,
-        "disk_free_gb": disk,
-        "docker_available": shutil.which("docker") is not None,
-        "compose_available": shutil.which("docker") is not None,
-    }
     snapshot = {
         "schema_version": 1, "generated_at": generated_at,
         "source": "hatch_host_probe", "sanitised": True,
@@ -318,8 +321,7 @@ def cmd_probe(_: argparse.Namespace) -> None:
         },
         "warnings": [],
     }
-    write_json(PROBE_DIR / "hardware_probe.json", full)
-    write_json(CONFIG_DIR / "hardware_probe_latest.json", snapshot)
+    write_json(PROBE_DIR / "hardware_probe_latest.json", snapshot)
     print(f"Hardware probe saved. RAM: {ram} GB; model storage free: {disk} GB")
 
 
@@ -344,7 +346,9 @@ def sha256(path: Path) -> str:
 
 
 def cmd_models_list(_: argparse.Namespace) -> None:
-    snapshot = read_json(CONFIG_DIR / "hardware_probe_latest.json", {})
+    snapshot = read_json(PROBE_DIR / "hardware_probe_latest.json", {})
+    if not snapshot:
+        snapshot = read_json(CONFIG_DIR / "hardware_probe_latest.json", {})
     support = snapshot.get("model_support", {})
     for model in catalog():
         bucket = next(

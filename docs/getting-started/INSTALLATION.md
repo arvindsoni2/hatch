@@ -6,10 +6,11 @@ Hatch is a self-hosted workspace that runs through Docker Compose. The recommend
 
 ## Prerequisites
 
-- Docker with `docker compose`
 - Git
 - Python for the host `hatch` wrapper
 - Ports `3000` and `8000` available
+
+Docker with the Compose plugin is required at runtime, but the interactive Linux installer can install it on Ubuntu 22.04/24.04, Debian 12/13, and Fedora 43/44 after consent. Fedora 42, other Linux distributions, and macOS use manual Docker installation.
 
 Windows users should prefer the dedicated [Windows install guide](WINDOWS_INSTALL.md).
 
@@ -27,13 +28,27 @@ Windows:
 .\install-hatch.cmd
 ```
 
-The easy install:
+The managed install:
 
 - clones or updates the repo
 - creates `${HATCH_HOME:-~/.hatch}` for host-managed state
 - starts the lightweight backend profile
 - does not download local models unless you explicitly choose local AI
 - keeps provider secrets outside the browser
+- runs the hardware probe for every managed Linux mode
+
+Automation example:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh \
+  | bash -s -- \
+      --non-interactive --yes --install-docker --allow-docker-group \
+      --mode ai-later --backend-profile core
+```
+
+`--yes` does not authorize package removal or Docker-group membership. The installer never removes conflicting packages. The docker group grants root-level privileges, so `--allow-docker-group` is separate. Docker can create firewall rules for published ports; the installer warns but does not alter firewall policy.
+
+Run `./install.sh --check-only --json` for a no-write report. Use `--resume` separately to continue from a validated safe phase.
 
 ## Capability Profile Selection
 
@@ -84,6 +99,8 @@ Easy installs also use host-managed state under `${HATCH_HOME}`:
 - `${HATCH_HOME}/probe`
 - `${HATCH_HOME}/logs`
 - `${HATCH_HOME}/backups`
+
+The canonical snapshot is `${HATCH_HOME}/probe/hardware_probe_latest.json`; it is mounted read-only into the backend. The older config-directory path is read only as a temporary fallback.
 
 ## Initial Health Verification
 

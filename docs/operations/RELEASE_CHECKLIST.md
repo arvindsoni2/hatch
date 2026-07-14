@@ -66,6 +66,7 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [x] `docker compose -f docker-compose.easy.yml config --quiet` passed.
 - [ ] Documented Compose override combinations validated as needed.
 - [x] `bash -n install.sh` passed.
+- [ ] `bash scripts/tests/test_linux_installer.sh` passed on the release candidate.
 - [ ] Shell installer static analysis completed where tooling is available.
 - [x] PowerShell installer parsing/static validation completed where tooling is available.
 - [x] Windows installer regression in `scripts/tests/test_windows_installer.ps1` fixed for cross-platform CI determinism.
@@ -82,6 +83,14 @@ This is the canonical release checklist and evidence record for public Hatch rel
 - [ ] Restart persistence verified.
 - [ ] `hatch status`, `hatch doctor`, and `hatch probe` verified from the managed installer path.
 - [ ] Uninstall or update flow verified when documented.
+- [ ] Ubuntu 24.04 `x86_64` clean VM without Docker completed the managed installer and reached frontend/backend health.
+- [ ] Fedora 44 `x86_64` clean VM without Docker completed the managed installer and reached frontend/backend health.
+- [ ] Docker-installed/daemon-stopped recovery verified.
+- [ ] Docker socket-permission recovery verified with and without separate group consent.
+- [ ] Fedora 42 or another unsupported fixture followed the manual Docker path without host mutation.
+- [ ] macOS without Docker Desktop produced the documented manual prerequisite result.
+- [ ] Check-only created no log, state, repository, Docker, service, or group mutation.
+- [ ] Non-interactive Local mode ran the probe, downloaded no model, and reported model selection as action required.
 
 ## 10. GitHub Actions and security checks
 

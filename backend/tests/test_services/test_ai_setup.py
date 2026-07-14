@@ -89,3 +89,25 @@ def test_easy_install_defaults_to_not_configured(
 
     assert runtime["ai_mode"] == "not_configured"
     assert runtime["feature_gates"]["cv_tailoring"] is False
+
+
+def test_probe_reader_prefers_canonical_and_falls_back_to_legacy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = tmp_path / "config"
+    probe = tmp_path / "probe"
+    config.mkdir()
+    probe.mkdir()
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(config))
+    monkeypatch.setenv("HATCH_PROBE_DIR", str(probe))
+    legacy = {"sanitised": True, "source": "legacy"}
+    canonical = {"sanitised": True, "source": "canonical"}
+    (config / "hardware_probe_latest.json").write_text(json.dumps(legacy))
+
+    assert ai_setup.load_probe_snapshot() == legacy
+    assert "legacy hardware probe" in caplog.text.lower()
+
+    (probe / "hardware_probe_latest.json").write_text(json.dumps(canonical))
+    assert ai_setup.load_probe_snapshot() == canonical

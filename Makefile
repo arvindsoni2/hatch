@@ -118,7 +118,8 @@ reset-app-lock: ## Clear only the local app-lock password and sessions
 	@bash scripts/reset-app-lock.sh
 
 audit-scripts: ## Validate operational scripts without destructive live actions
-	@bash -n install.sh backend/entrypoint.sh scripts/*.sh scripts/tests/*.sh
+	@bash -n install.sh backend/entrypoint.sh scripts/*.sh scripts/installer/*.sh scripts/tests/*.sh
+	@bash scripts/tests/test_linux_installer.sh
 	@python -m compileall -q scripts backend/app/skills
 	@bash scripts/tests/test_reset_user_data.sh
 	@cd backend && pytest -q --no-cov tests/test_scripts/test_reset_app_lock.py

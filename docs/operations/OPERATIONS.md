@@ -14,6 +14,15 @@ curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh |
 
 Easy installs use `${HATCH_HOME:-~/.hatch}` for host-managed state. The managed checkout location can be changed separately when running the installer locally.
 
+The Linux installer can add Docker's official repository and install Docker Engine on Ubuntu 22.04/24.04, Debian 12/13, and Fedora 43/44. Fedora 42 and other Linux versions require manual Docker setup. macOS always requires Docker Desktop to be installed manually.
+
+```bash
+./install.sh --check-only --json
+./install.sh --resume
+```
+
+Check-only is strictly read-only and creates neither logs nor resume state. Do not combine it with resume.
+
 ### Windows PowerShell
 
 ```powershell
@@ -30,7 +39,7 @@ Both installers:
 - create `data/profile.yaml` and `.env` when missing
 - build and start the beginner-safe Docker Compose stack
 
-The default mode is `ai-later`. Choose a mode explicitly when needed:
+Interactive installation asks for the mode through `/dev/tty`; it does not silently choose one when invoked through a pipe. Non-interactive installation requires both mode and backend profile:
 
 ```bash
 ./install.sh --mode ai-later
@@ -38,7 +47,10 @@ The default mode is `ai-later`. Choose a mode explicitly when needed:
 ./install.sh --mode local
 ./install.sh --mode advanced
 ./install.sh --mode advanced --backend-profile full
+./install.sh --non-interactive --yes --install-docker --allow-docker-group --mode ai-later --backend-profile core
 ```
+
+`--install-docker` permits repository and package installation. It never permits conflict-package removal. Docker-group membership requires `--allow-docker-group` because the docker group grants root-level privileges. Docker's bridge networking and port publishing create firewall rules and may interact with `ufw` or `firewalld`; Hatch does not disable or rewrite firewall controls.
 
 PowerShell supports the same concepts:
 
@@ -71,6 +83,8 @@ hatch capabilities disable
 hatch update --dry-run
 hatch uninstall
 ```
+
+`hatch probe` writes `${HATCH_HOME}/probe/hardware_probe_latest.json`. The easy Compose stack mounts `${HATCH_HOME}/probe` read-only into the backend. A valid legacy snapshot under `${HATCH_HOME}/config` is copied forward without deleting the legacy file.
 
 ## Manual Docker installation
 
