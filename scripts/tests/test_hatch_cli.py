@@ -294,12 +294,16 @@ def test_update_validates_selected_backend_profile_compose_files(
 
 def test_install_scripts_and_readme_document_backend_profile_flow() -> None:
     install_sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+    installer_shell = install_sh + "\n" + "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "scripts" / "installer").glob("*.sh"))
+    )
     install_ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "--backend-profile" in install_sh
-    assert "backend_capabilities.json" in install_sh
-    assert "docker-compose.browser.yml" in install_sh
+    assert "--backend-profile" in installer_shell
+    assert "backend_capabilities.json" in installer_shell
+    assert "docker-compose.browser.yml" in installer_shell
     assert "-BackendProfile" in install_ps1
     assert "backend_capabilities.json" in install_ps1
     assert "LocalEmbeddings" in install_ps1
@@ -311,6 +315,12 @@ def test_install_scripts_and_readme_document_backend_profile_flow() -> None:
         "hatch capabilities disable",
         "./install.sh --mode advanced --backend-profile full",
         ".\\install.ps1 -Mode advanced -BackendProfile full",
+        "--non-interactive",
+        "--install-docker",
+        "--allow-docker-group",
+        "Fedora 43/44",
+        "docker group grants root-level privileges",
+        "${HATCH_HOME}/probe/hardware_probe_latest.json",
     ):
         assert expected in readme
 
@@ -334,6 +344,42 @@ def test_provider_env_canonicalizes_aliases_and_openrouter() -> None:
     assert hatch_cli.provider_env("google_gemini") == "GOOGLE_API_KEY"
     assert hatch_cli.provider_env("google") == "GOOGLE_API_KEY"
     assert hatch_cli.provider_env("openrouter") == "OPENROUTER_API_KEY"
+
+
+def test_probe_writes_only_canonical_snapshot_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_home(tmp_path, monkeypatch)
+    monkeypatch.setattr(hatch_cli, "total_ram_gb", lambda: 32.0)
+    monkeypatch.setattr(hatch_cli, "model_buckets", lambda *_: {
+        "recommended": [], "compatible": [], "not_recommended": [],
+    })
+    monkeypatch.setattr(hatch_cli, "docker_running", lambda: False)
+    monkeypatch.setattr(hatch_cli, "compose_available", lambda: False)
+    monkeypatch.setattr(hatch_cli, "port_status", lambda _: "available")
+
+    hatch_cli.cmd_probe(type("Args", (), {})())
+
+    canonical = tmp_path / "probe" / "hardware_probe_latest.json"
+    assert json.loads(canonical.read_text())["sanitised"] is True
+    assert not (tmp_path / "config" / "hardware_probe_latest.json").exists()
+
+
+def test_probe_migrates_valid_legacy_snapshot_without_deleting_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_home(tmp_path, monkeypatch)
+    hatch_cli.ensure_home()
+    legacy = tmp_path / "config" / "hardware_probe_latest.json"
+    legacy.write_text(json.dumps({"schema_version": 1, "sanitised": True}))
+
+    migrated = hatch_cli.migrate_legacy_probe()
+
+    assert migrated is True
+    assert legacy.exists()
+    assert json.loads((tmp_path / "probe" / "hardware_probe_latest.json").read_text())["sanitised"] is True
 
 
 def test_cloud_runtime_canonicalizes_provider_alias(

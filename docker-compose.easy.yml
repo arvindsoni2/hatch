@@ -14,6 +14,7 @@ services:
       DATABASE_URL: sqlite+aiosqlite:///./data/jobpilot.db
       LANGGRAPH_CHECKPOINT_DB: sqlite+aiosqlite:///./data/langgraph_checkpoints.db
       HATCH_CONFIG_DIR: /hatch-home/config
+      HATCH_PROBE_DIR: /hatch-home/probe
       HATCH_MODELS_DIR: /models
       HATCH_BACKEND_PROFILE: core
       HATCH_BROWSER_AUTOMATION_ENABLED: "0"
@@ -28,6 +29,7 @@ services:
       - ./data:/app/data:z
       - ./locales:/app/locales:ro,z
       - ${HATCH_HOME:-${HOME}/.hatch}/config:/hatch-home/config:z
+      - ${HATCH_HOME:-${HOME}/.hatch}/probe:/hatch-home/probe:ro,z
       - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z
     extra_hosts:
       - "host.docker.internal:host-gateway"

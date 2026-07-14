@@ -102,7 +102,7 @@ Hatch combines job discovery, document tailoring, and application tracking in on
 
 ## Install Hatch
 
-Hatch uses Docker Compose for the application stack. The installer starts the lightweight profile and lets you configure AI later.
+Hatch uses Docker Compose for the application stack. On supported Linux systems, the managed installer can install Docker Engine with explicit consent, then starts the lightweight profile and lets you configure AI later.
 
 ### Windows — recommended
 
@@ -127,6 +127,21 @@ For Docker/WSL recovery steps and diagnostic output, read the [Windows install g
 ```bash
 curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh | bash
 ```
+
+Automatic Docker installation supports Ubuntu 22.04/24.04, Debian 12/13, and Fedora 43/44. Fedora 42 and other distributions use the manual Docker path. Docker Desktop installation remains manual on macOS.
+
+For unattended Linux installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arvindsoni2/hatch/main/install.sh \
+  | bash -s -- \
+      --non-interactive --yes --install-docker --allow-docker-group \
+      --mode ai-later --backend-profile core
+```
+
+The installer rejects whole-script root execution. Run it as your normal user; it requests narrowly scoped `sudo` access when approved. Membership in the docker group grants root-level privileges and requires the separate `--allow-docker-group` consent. Docker also creates networking and firewall rules for published ports; Hatch does not weaken host firewall policy.
+
+Use `--check-only` for a strictly read-only readiness report, `--json` for schema-versioned machine output, or `--resume` after a safe incomplete phase. `--check-only` and `--resume` cannot be combined.
 
 ### Windows — advanced terminal install
 
@@ -161,6 +176,10 @@ hatch capabilities enable local-embeddings
 hatch capabilities enable full
 hatch capabilities disable
 ```
+
+The canonical sanitized hardware snapshot is `${HATCH_HOME}/probe/hardware_probe_latest.json`. The backend receives that directory through a dedicated read-only mount.
+
+Non-interactive Local mode runs the probe and records Local intent, but downloads no model and remains pending until explicit catalog model IDs are selected.
 
 Linux/macOS advanced capability example:
 

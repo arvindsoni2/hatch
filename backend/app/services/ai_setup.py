@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
@@ -27,6 +28,7 @@ PROVIDER_ALIASES = {
     "google": "google_genai",
     "google_gemini": "google_genai",
 }
+LOGGER = logging.getLogger(__name__)
 
 
 class AISetupIntent(BaseModel):
@@ -64,6 +66,10 @@ def provider_secret_env(provider: str | None) -> str | None:
 
 def config_dir() -> Path:
     return Path(os.getenv("HATCH_CONFIG_DIR", "/hatch-home/config"))
+
+
+def probe_dir() -> Path:
+    return Path(os.getenv("HATCH_PROBE_DIR", "/hatch-home/probe"))
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -321,8 +327,14 @@ def feature_enabled(name: str) -> bool:
 
 
 def load_probe_snapshot() -> dict[str, Any] | None:
-    value = _read_json(config_dir() / "hardware_probe_latest.json", None)
-    return value if isinstance(value, dict) and value.get("sanitised") is True else None
+    canonical = _read_json(probe_dir() / "hardware_probe_latest.json", None)
+    if isinstance(canonical, dict) and canonical.get("sanitised") is True:
+        return canonical
+    legacy = _read_json(config_dir() / "hardware_probe_latest.json", None)
+    if isinstance(legacy, dict) and legacy.get("sanitised") is True:
+        LOGGER.warning("Using legacy hardware probe path; run hatch probe to migrate it.")
+        return legacy
+    return None
 
 
 def file_sha256(path: Path) -> str:
