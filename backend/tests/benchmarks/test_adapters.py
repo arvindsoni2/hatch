@@ -61,6 +61,7 @@ async def test_ollama_adapter_sends_seed_json_format_and_collects_metrics() -> N
     assert client.observations[0].completion_tokens == 20
     assert client.observations[0].load_duration_ms == 2.0
     assert client.observations[0].eval_duration_ms == 40.0
+    assert client.raw_responses == ['{"summary":"ok"}']
 
 
 @pytest.mark.asyncio

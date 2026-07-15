@@ -98,3 +98,53 @@ class PairScore(StrictModel):
     cv: DocumentScore | None = None
     cover_letter: DocumentScore | None = None
     combined: float | None = Field(default=None, ge=0.0, le=100.0)
+
+
+class RepetitionResult(StrictModel):
+    model_id: str
+    repetition: int = Field(ge=1)
+    seed: int
+    status: Literal["succeeded", "failed", "unavailable"]
+    duration_ms: float = Field(ge=0.0)
+    cv: dict[str, Any] | None = None
+    cover_letter: dict[str, Any] | None = None
+    score: PairScore | None = None
+    observations: list[dict[str, Any]] = Field(default_factory=list)
+    error_type: str | None = None
+    error_message: str | None = None
+
+
+class ModelAggregate(StrictModel):
+    model_id: str
+    attempted: int = Field(ge=0)
+    succeeded: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    unavailable: int = Field(ge=0)
+    eligible: int = Field(ge=0)
+    hard_gate_pass_rate: float = Field(ge=0.0, le=1.0)
+    median_writing_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    writing_score_variance: float | None = Field(default=None, ge=0.0)
+    median_latency_ms: float | None = Field(default=None, ge=0.0)
+    gate_codes: dict[str, int] = Field(default_factory=dict)
+
+
+class Recommendation(StrictModel):
+    classification: Literal[
+        "keep_current_model",
+        "prompt_or_skill_change",
+        "model_change",
+        "inconclusive",
+    ]
+    rationale: list[str]
+    limitations: list[str]
+
+
+class BenchmarkSummary(StrictModel):
+    run_id: str
+    case_id: str
+    created_at: str
+    repetitions: int
+    selected_models: list[str]
+    models: list[ModelAggregate]
+    ranking: list[ModelAggregate]
+    recommendation: Recommendation

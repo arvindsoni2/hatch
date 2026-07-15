@@ -24,6 +24,10 @@ class BenchmarkHTTPError(BenchmarkInferenceError):
     pass
 
 
+class BenchmarkModelUnavailableError(BenchmarkHTTPError):
+    pass
+
+
 class BenchmarkTimeoutError(BenchmarkInferenceError):
     pass
 
@@ -85,6 +89,7 @@ class BenchmarkLLMClient:
         self.spec = spec
         self.seed = seed
         self.observations: list[GenerationObservation] = []
+        self.raw_responses: list[str] = []
         self._client = httpx.AsyncClient(
             base_url=str(spec.endpoint).rstrip("/"),
             timeout=timeout_seconds,
@@ -223,12 +228,17 @@ class BenchmarkLLMClient:
                         error="http_error",
                     )
                 )
-                raise BenchmarkHTTPError(
-                    f"{self.spec.id} returned HTTP {response.status_code}: {payload}"
+                error_type = (
+                    BenchmarkModelUnavailableError
+                    if response.status_code == 404
+                    else BenchmarkHTTPError
                 )
+                raise error_type(f"{self.spec.id} returned HTTP {response.status_code}: {payload}")
 
+            raw_response = self._content(payload)
+            self.raw_responses.append(raw_response)
             try:
-                result = _parse_json_object(self._content(payload))
+                result = _parse_json_object(raw_response)
             except BenchmarkMalformedJSONError as exc:
                 last_error = exc
                 self.observations.append(
