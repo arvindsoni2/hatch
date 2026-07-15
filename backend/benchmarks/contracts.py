@@ -72,3 +72,29 @@ class BenchmarkCase(StrictModel):
     seeds: list[int]
     cv_length_tolerance: float
     input_hashes: dict[str, str]
+
+
+class GateFinding(StrictModel):
+    code: str
+    message: str
+    document: Literal["cv", "cover_letter", "pair"]
+    blocking: bool = True
+
+
+class DimensionScore(StrictModel):
+    score: float = Field(ge=0.0, le=100.0)
+    weight: float = Field(ge=0.0, le=1.0)
+    observations: list[str] = Field(default_factory=list)
+
+
+class DocumentScore(StrictModel):
+    total: float = Field(ge=0.0, le=100.0)
+    dimensions: dict[str, DimensionScore]
+
+
+class PairScore(StrictModel):
+    eligible: bool
+    gates: list[GateFinding] = Field(default_factory=list)
+    cv: DocumentScore | None = None
+    cover_letter: DocumentScore | None = None
+    combined: float | None = Field(default=None, ge=0.0, le=100.0)
