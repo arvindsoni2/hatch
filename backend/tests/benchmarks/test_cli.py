@@ -75,3 +75,69 @@ def test_validate_returns_nonzero_for_invalid_case(tmp_path: Path, capsys: pytes
 
     assert exit_code == 2
     assert "missing required files" in capsys.readouterr().err
+
+
+def test_init_case_derives_expected_facts_from_master_cv(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    master_path = source / "master_cv.json"
+    master_path.write_text(
+        json.dumps(
+            {
+                "experience": [
+                    {
+                        "role": "Delivery Manager",
+                        "company": "Example Ltd",
+                        "period": "2020 - Present",
+                        "achievements": [
+                            {"text": "Led 3 delivery teams and improved flow by 20%."}
+                        ],
+                    }
+                ],
+                "education": [
+                    {
+                        "qualification": "BSc Computing",
+                        "institution": "Example University",
+                        "year": "2010",
+                    }
+                ],
+                "certifications": ["PSM I"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    jd_path = source / "job_description.txt"
+    jd_path.write_text("Delivery Manager job", encoding="utf-8")
+    analysis_path = source / "jd_analysis.json"
+    analysis_path.write_text(json.dumps({"role_title": "Delivery Manager"}), encoding="utf-8")
+    destination = tmp_path / "data" / "benchmarks" / "derived"
+
+    exit_code = cli.main(
+        [
+            "init-case",
+            "--case-id",
+            "derived",
+            "--destination",
+            str(destination),
+            "--master-cv",
+            str(master_path),
+            "--job-description",
+            str(jd_path),
+            "--jd-analysis",
+            str(analysis_path),
+        ]
+    )
+
+    assert exit_code == 0
+    facts = json.loads((destination / "expected_facts.json").read_text(encoding="utf-8"))
+    assert facts["roles"] == [
+        {
+            "role": "Delivery Manager",
+            "company": "Example Ltd",
+            "period": "2020 - Present",
+            "achievement_count": 1,
+        }
+    ]
+    assert facts["education"][0]["qualification"] == "BSc Computing"
+    assert facts["certifications"] == ["PSM I"]
+    assert set(facts["allowed_numeric_tokens"]) == {"2020", "3", "20%", "2010"}

@@ -17,7 +17,7 @@ from .contracts import (
 
 _NUMERIC_TOKEN_RE = re.compile(
     r"(?:[£$€¥][\d,]+(?:\.\d+)?(?:[KMBkm+]*)|"
-    r"\b\d[\d,]*(?:\.\d+)?(?:[KMBkm%+]*)\b)",
+    r"\b\d[\d,]*(?:\.\d+)?(?:[KMBkm%+]*)(?!\w))",
     re.IGNORECASE,
 )
 _PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]|\b(?:PLACEHOLDER|TODO|TBD)\b", re.IGNORECASE)

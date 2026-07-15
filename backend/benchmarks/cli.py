@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -66,7 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
     initialise.add_argument("--master-cv", required=True, type=Path)
     initialise.add_argument("--job-description", required=True, type=Path)
     initialise.add_argument("--jd-analysis", required=True, type=Path)
-    initialise.add_argument("--expected-facts", required=True, type=Path)
+    initialise.add_argument(
+        "--expected-facts",
+        type=Path,
+        help="Optional reviewed facts JSON; otherwise derive protected facts from master CV",
+    )
 
     smoke = commands.add_parser("smoke", help="Check every configured local model")
     smoke.add_argument("--case", required=True, type=Path)
@@ -89,10 +94,17 @@ def _init_case(args: argparse.Namespace) -> int:
         "master_cv.json": args.master_cv,
         "job_description.txt": args.job_description,
         "jd_analysis.json": args.jd_analysis,
-        "expected_facts.json": args.expected_facts,
     }
+    if args.expected_facts is not None:
+        sources["expected_facts.json"] = args.expected_facts
     for target_name, source in sources.items():
         shutil.copyfile(Path(source).expanduser().resolve(), destination / target_name)
+    if args.expected_facts is None:
+        master = json.loads((destination / "master_cv.json").read_text(encoding="utf-8"))
+        (destination / "expected_facts.json").write_text(
+            json.dumps(_derive_expected_facts(master), indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
     manifest = {
         "case_id": args.case_id,
         "cv_length_tolerance": 0.1,
@@ -104,6 +116,45 @@ def _init_case(args: argparse.Namespace) -> int:
     )
     print(f"Created private benchmark case at {destination}")
     return 0
+
+
+def _derive_expected_facts(master: dict) -> dict:
+    roles = []
+    for experience in master.get("experience", []):
+        if not isinstance(experience, dict):
+            continue
+        roles.append(
+            {
+                "role": str(experience.get("role", "")),
+                "company": str(experience.get("company", "")),
+                "period": str(experience.get("period") or experience.get("dates") or ""),
+                "achievement_count": len(experience.get("achievements", [])),
+            }
+        )
+    education_fields = ("qualification", "institution", "year", "field", "location", "details")
+    education = [
+        {key: entry[key] for key in education_fields if key in entry and entry[key] not in (None, "", [])}
+        for entry in master.get("education", [])
+        if isinstance(entry, dict)
+    ]
+    flattened = json.dumps(master, ensure_ascii=False)
+    numeric_tokens = list(
+        dict.fromkeys(
+            re.findall(
+                r"(?:[£$€¥][\d,]+(?:\.\d+)?(?:[KMBkm+]*)|"
+                r"\b\d[\d,]*(?:\.\d+)?(?:[KMBkm%+]*)(?!\w))",
+                flattened,
+                flags=re.IGNORECASE,
+            )
+        )
+    )
+    return {
+        "roles": roles,
+        "education": education,
+        "certifications": [str(item) for item in master.get("certifications", [])],
+        "allowed_numeric_tokens": numeric_tokens,
+        "approved_vocabulary": [],
+    }
 
 
 async def _smoke(case_path: Path) -> int:
