@@ -90,6 +90,20 @@ def make_mock_client(response_dict: dict) -> MagicMock:
     return client
 
 
+@pytest.mark.asyncio
+async def test_tailor_accepts_isolated_master_cv_loader():
+    loader = MagicMock(return_value=MOCK_MASTER_CV)
+    tailor = CVTailor(
+        make_mock_client(MOCK_TAILOR_RESPONSE),
+        master_cv_loader=loader,
+    )
+
+    result = await tailor.tailor(JD_ANALYSIS)
+
+    assert result.experience[0].company == "Company A"
+    assert loader.call_count >= 1
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
