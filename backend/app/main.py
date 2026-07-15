@@ -353,13 +353,20 @@ class AppLockMiddleware(BaseHTTPMiddleware):
             lock_service = AppLockService(db)
             session = await lock_service.session(token)
             allow_onboarding_upload = False
+            bootstrap_state_failed = False
             if session is None and self._is_onboarding_resume_upload(request):
-                configured_source = await lock_service.configured_source()
-                onboarding = await OnboardingService(db).status()
-                allow_onboarding_upload = (
-                    configured_source == "none" and onboarding.status != "complete"
-                )
-            await db.commit()
+                try:
+                    configured_source = await lock_service.configured_source()
+                    onboarding = await OnboardingService(db).status()
+                    allow_onboarding_upload = (
+                        configured_source == "none" and onboarding.status != "complete"
+                    )
+                except Exception:
+                    logger.exception("Unable to verify onboarding resume-upload state")
+                    await db.rollback()
+                    bootstrap_state_failed = True
+            if not bootstrap_state_failed:
+                await db.commit()
         if allow_onboarding_upload:
             return await call_next(request)
         if session is None:

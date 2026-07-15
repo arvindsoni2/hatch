@@ -4,7 +4,7 @@
 
 **Goal:** Send new workspaces to onboarding by default and allow the optional CV upload before the final password step without weakening protection for configured or completed workspaces.
 
-**Architecture:** `AppLockGate` derives first-run routing from its existing authoritative status query and prioritizes `/onboarding` over `/unlock`. `AppLockMiddleware` keeps resume upload protected by default and grants a narrow method/path exception only after database-backed checks prove the app lock is unconfigured and onboarding is incomplete.
+**Architecture:** The root server page and `AppLockGate` both derive first-run routing from authoritative lock status and prioritize `/onboarding` before protected product rendering can redirect to `/unlock`. `AppLockMiddleware` keeps resume upload protected by default and grants a narrow method/path exception only after database-backed checks prove the app lock is unconfigured and onboarding is incomplete.
 
 **Tech Stack:** Next.js 15 App Router, React 19, TanStack Query, Vitest/Testing Library, FastAPI 0.136, Starlette middleware, SQLAlchemy async sessions, pytest/httpx.
 
@@ -28,9 +28,9 @@
 - Consumes: `AppLockService.configured_source() -> str`, `OnboardingService.status() -> OnboardingState`, `request.method`, and `request.url.path`.
 - Produces: `AppLockMiddleware._is_onboarding_resume_upload(request) -> bool` and middleware behavior that calls the resume route only for the allowed first-run state.
 
-- [ ] **Step 1: Add failing middleware tests**
+- [x] **Step 1: Add failing middleware tests**
 
-Add tests that post an intentionally unsupported upload and assert it reaches resume validation with `422` for an unconfigured/incomplete workspace, while completed and configured workspaces receive `423` without a session:
+Add tests that send a valid PDF upload through a patched deterministic parser and assert `200` for an unconfigured/incomplete workspace, while completed and configured workspaces receive `423` without a session. Force bootstrap-state lookup to fail and assert that it also returns `423`.
 
 ```python
 @pytest.mark.asyncio
@@ -39,26 +39,25 @@ async def test_unconfigured_incomplete_onboarding_can_reach_resume_upload(
 ) -> None:
     response = await client.post(
         "/api/resume/upload",
-        files={"file": ("resume.txt", b"resume", "text/plain")},
+        files={"file": ("resume.pdf", b"synthetic pdf", "application/pdf")},
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Only PDF and DOCX files are supported."
+    assert response.status_code == 200
 ```
 
 Insert `OnboardingState(id=1, status="complete")` for the completed case and `AppLockConfig(id=1, password_hash="hash")` for the configured case, committing before the request. Each must assert status `423` and `{"detail": "Hatch is locked."}`.
 
-- [ ] **Step 2: Run the focused backend tests and verify RED**
+- [x] **Step 2: Run the focused backend tests and verify RED**
 
 Run:
 
 ```bash
-cd backend && python -m pytest tests/test_middleware/test_app_lock_gate.py -q
+cd backend && python -m pytest tests/test_middleware/test_app_lock_gate.py -q --no-cov
 ```
 
-Expected: the unconfigured/incomplete upload test fails because the current middleware returns `423` instead of downstream `422`; existing protected-route behavior remains green.
+Expected: the unconfigured/incomplete upload test fails because the current middleware returns `423` instead of downstream `200`; existing protected-route behavior remains green.
 
-- [ ] **Step 3: Implement the minimal conditional exception**
+- [x] **Step 3: Implement the minimal conditional exception**
 
 In `AppLockMiddleware`, add an exact matcher:
 
@@ -68,19 +67,19 @@ def _is_onboarding_resume_upload(request: StarletteRequest) -> bool:
     return request.method == "POST" and request.url.path == "/api/resume/upload"
 ```
 
-In `dispatch`, keep the existing public allowlists unchanged. After checking for a valid session, query bootstrap state only when the session is absent and the matcher is true. Call downstream only when `AppLockService.configured_source()` is `"none"` and `(await OnboardingService(db).status()).status != "complete"`. Otherwise return the existing `423` response.
+In `dispatch`, keep the existing public allowlists unchanged. After checking for a valid session, query bootstrap state only when the session is absent and the matcher is true. Call downstream only when `AppLockService.configured_source()` is `"none"` and `(await OnboardingService(db).status()).status != "complete"`. Otherwise return the existing `423` response. Roll back and return `423` if the conditional state lookup fails.
 
-- [ ] **Step 4: Run focused and neighboring backend tests and verify GREEN**
+- [x] **Step 4: Run focused and neighboring backend tests and verify GREEN**
 
 Run:
 
 ```bash
-cd backend && python -m pytest tests/test_middleware/test_app_lock_gate.py tests/test_routers/test_app_lock.py tests/test_routers/test_resume.py -q
+cd backend && python -m pytest tests/test_middleware/test_app_lock_gate.py tests/test_routers/test_app_lock.py tests/test_routers/test_resume_router.py -q --no-cov
 ```
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Commit the backend behavior**
+- [x] **Step 5: Commit the backend behavior**
 
 ```bash
 git add backend/app/main.py backend/tests/test_middleware/test_app_lock_gate.py
@@ -94,16 +93,18 @@ git commit -m "fix(onboarding): allow guarded bootstrap CV upload"
 **Files:**
 - Modify: `frontend/src/__tests__/components/AppLockGateState.test.tsx`
 - Modify: `frontend/src/components/AppLockGate.tsx`
+- Create: `frontend/src/__tests__/pages/root-routing.test.ts`
+- Modify: `frontend/src/app/page.tsx`
 
 **Interfaces:**
 - Consumes: existing `AppLockStatus` query data and `usePathname()`.
-- Produces: first-run route replacement to `/onboarding`; configured locked route replacement to `/unlock?next=...` remains unchanged.
+- Produces: a direct root-server redirect and client route replacement to `/onboarding`; configured locked route replacement to `/unlock?next=...` remains unchanged.
 
-- [ ] **Step 1: Add failing routing tests**
+- [x] **Step 1: Add failing routing tests**
 
-Extend `AppLockGateState.test.tsx` with an unconfigured/incomplete `/today` status and assert `router.replace("/onboarding")`. Add an explicit configured/incomplete case and assert `router.replace("/unlock?next=%2Ftoday")`.
+Extend `AppLockGateState.test.tsx` with an unconfigured/incomplete `/today` status and assert `router.replace("/onboarding")`. Add an explicit configured/incomplete case and assert `router.replace("/unlock?next=%2Ftoday")`. Add root-page tests proving first-run `/onboarding`, configured `/today`, and backend-unavailable `/today` behavior.
 
-- [ ] **Step 2: Run the focused frontend test and verify RED**
+- [x] **Step 2: Run the focused frontend test and verify RED**
 
 Run:
 
@@ -113,7 +114,7 @@ cd frontend && npm test -- src/__tests__/components/AppLockGateState.test.tsx
 
 Expected: the first-run test fails because the current gate requests `/unlock?next=%2Ftoday`.
 
-- [ ] **Step 3: Implement the minimal redirect precedence**
+- [x] **Step 3: Implement the minimal redirect precedence**
 
 Derive a primitive boolean from existing query data:
 
@@ -123,9 +124,9 @@ const isFirstRun = data?.enabled
   && data.onboarding?.status !== "complete";
 ```
 
-In the navigation effect, redirect a non-onboarding, non-unlock first-run route to `/onboarding` first. Apply the existing `/unlock` redirect only when `isFirstRun` is false. Include the derived boolean in the effect dependency list and reuse it for the locked-onboarding render exception.
+In the navigation effect, redirect a non-onboarding, non-unlock first-run route to `/onboarding` first. Apply the existing `/unlock` redirect only when `isFirstRun` is false. Include the derived boolean in the effect dependency list and reuse it for the locked-onboarding render exception. In the root server page, fetch `/api/app-lock/status` and redirect the same first-run state directly to `/onboarding` before `/today` can render protected data.
 
-- [ ] **Step 4: Run focused and neighboring frontend tests and verify GREEN**
+- [x] **Step 4: Run focused and neighboring frontend tests and verify GREEN**
 
 Run:
 
@@ -136,7 +137,7 @@ npm run type-check
 
 Expected: all selected tests and TypeScript checks pass.
 
-- [ ] **Step 5: Commit the frontend behavior**
+- [x] **Step 5: Commit the frontend behavior**
 
 ```bash
 git add frontend/src/components/AppLockGate.tsx frontend/src/__tests__/components/AppLockGateState.test.tsx
@@ -154,13 +155,13 @@ git commit -m "fix(onboarding): route first-run users before unlock"
 - Consumes: committed frontend/backend behavior.
 - Produces: pushed GitHub branch and refreshed `hatch-backend`/`hatch-frontend` containers with live acceptance evidence.
 
-- [ ] **Step 1: Run repository validation**
+- [x] **Step 1: Run repository validation**
 
 Run each command separately and stop on failure:
 
 ```bash
-cd backend && python -m pytest tests/test_middleware/test_app_lock_gate.py tests/test_routers/test_app_lock.py tests/test_routers/test_resume.py -q
-cd frontend && npm test -- src/__tests__/components/AppLockGateState.test.tsx src/__tests__/components/OnboardingGate.test.tsx src/__tests__/components/AppShell.test.tsx
+cd backend && python -m pytest tests/ -q
+cd frontend && npm test
 cd frontend && npm run type-check
 cd frontend && npm run build
 python3 scripts/check_docs.py
@@ -169,7 +170,7 @@ git diff --check
 
 Expected: every command exits zero.
 
-- [ ] **Step 2: Review the final diff and commit any plan bookkeeping**
+- [x] **Step 2: Review the final diff and commit any plan bookkeeping**
 
 Confirm only scoped files changed, no secrets are present, and tests prove both allowed and denied states. Mark plan checkboxes complete and commit the plan update if it changes.
 

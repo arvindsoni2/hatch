@@ -30,15 +30,15 @@ Creating the session earlier would make upload work through the normal protected
 
 ## Frontend Routing Design
 
-`AppLockGate` remains the owner of lock-aware navigation. When app-lock status says all of the following are true:
+The root server page queries the public app-lock status before redirecting. When app-lock status says all of the following are true:
 
 - app lock is enabled;
 - the configured source is `none`;
 - onboarding status is not `complete`;
 
-then any non-onboarding, non-unlock product route redirects to `/onboarding`. This first-run decision takes precedence over the normal redirect to `/unlock`.
+then `/` redirects directly to `/onboarding`, before a server-rendered product page can turn a protected API response into an `/unlock` redirect.
 
-The root page may continue to redirect to `/today`; the client gate will deterministically replace it with `/onboarding` once the authoritative status arrives. Existing configured workspaces continue to use `/unlock` when their session is absent.
+`AppLockGate` applies the same first-run decision to direct navigation to other product routes and prioritizes `/onboarding` over the normal `/unlock` redirect. Existing configured workspaces continue to use `/unlock` when their session is absent. If the root status check cannot reach the backend, it preserves the established `/today` fallback.
 
 Direct `/onboarding` access remains supported. Completed onboarding continues to use the existing product-route behaviour.
 
@@ -59,7 +59,7 @@ No other resume endpoints become bootstrap-accessible. Upload validation, size l
 
 - Browser/API secrets remain outside this flow.
 - The exception is limited by HTTP method and exact path.
-- The exception exists only during the unconfigured first-run state.
+- The exception is admitted only when the request begins during the unconfigured first-run state. Like an authenticated request whose session is revoked concurrently, an already-admitted request is allowed to finish.
 - Resetting only the app lock on an already completed workspace does not reopen unauthenticated resume upload.
 - Existing authenticated upload behaviour is unchanged.
 
@@ -76,13 +76,15 @@ Backend middleware tests will prove:
 1. An unconfigured, incomplete workspace can post to `/api/resume/upload` without an app-lock session and reaches the downstream route.
 2. A completed workspace without a session still receives `423` even if the password was reset.
 3. A configured incomplete workspace without a session still receives `423`.
-4. Unrelated protected endpoints remain locked.
+4. A bootstrap-state lookup failure returns `423` and never reaches resume parsing.
+5. Unrelated protected endpoints remain locked.
 
 Frontend tests will prove:
 
 1. A new unconfigured workspace visiting a normal product route is redirected to `/onboarding`.
-2. A configured locked workspace is redirected to `/unlock`.
-3. Direct onboarding remains renderable during first run.
+2. The root server page sends a new unconfigured workspace directly to `/onboarding`.
+3. A configured locked workspace is redirected to `/unlock`.
+4. Direct onboarding remains renderable during first run.
 
 ## Runtime Acceptance Criteria
 
