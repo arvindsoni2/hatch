@@ -174,7 +174,7 @@ Expected: every command exits zero.
 
 Confirm only scoped files changed, no secrets are present, and tests prove both allowed and denied states. Mark plan checkboxes complete and commit the plan update if it changes.
 
-- [ ] **Step 3: Push the feature branch**
+- [x] **Step 3: Push the feature branch**
 
 ```bash
 git push -u origin fix/first-run-onboarding-lock-routing
@@ -182,7 +182,7 @@ git push -u origin fix/first-run-onboarding-lock-routing
 
 Expected: GitHub accepts the branch and reports the upstream tracking reference.
 
-- [ ] **Step 4: Rebuild and recreate affected containers**
+- [x] **Step 4: Rebuild and recreate affected containers**
 
 ```bash
 docker compose build --pull backend frontend
@@ -191,7 +191,7 @@ docker compose up -d --force-recreate backend frontend
 
 If the Docker CLI cannot see the Podman Compose project, use the repository's working Podman Compose path with the same service scope and preserve the registry-backed LLM containers.
 
-- [ ] **Step 5: Verify live health and first-run behavior**
+- [x] **Step 5: Verify live health and first-run behavior**
 
 Run:
 
@@ -204,6 +204,6 @@ docker compose logs --tail 30 backend frontend
 
 Then verify against a controlled incomplete/unconfigured state that an unauthenticated unsupported resume upload reaches `422`, while completed/configured states remain `423`. Confirm the browser root route reaches `/onboarding` using the existing end-to-end tooling or an equivalent browser check.
 
-- [ ] **Step 6: Report publication and runtime evidence**
+- [x] **Step 6: Report publication and runtime evidence**
 
 Provide the branch, commit hashes, push result, container status, health responses, and any remaining limitation. Do not claim success without current command output.
