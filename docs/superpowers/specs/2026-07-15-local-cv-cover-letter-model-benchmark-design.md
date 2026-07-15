@@ -153,7 +153,18 @@ The command surface is:
 ```bash
 cd backend
 
+python -m benchmarks.cli init-case \
+  --case-id tds-delivery-manager \
+  --destination ../data/benchmarks/tds-delivery-manager \
+  --master-cv /path/to/master_cv.json \
+  --job-description /path/to/job_description.txt \
+  --jd-analysis /path/to/jd_analysis.json \
+  --expected-facts /path/to/expected_facts.json
+
 python -m benchmarks.cli validate \
+  --case ../data/benchmarks/tds-delivery-manager
+
+python -m benchmarks.cli smoke \
   --case ../data/benchmarks/tds-delivery-manager
 
 python -m benchmarks.cli run \
@@ -226,4 +237,3 @@ A live smoke command validates endpoint reachability and one minimal completion 
 - Automatic production model switching.
 - Benchmark UI in the frontend.
 - General model selection from a single Delivery Manager case.
-

@@ -92,6 +92,12 @@ def _model_aggregate(model_id: str, results: list[RepetitionResult]) -> ModelAgg
         if item.score is not None and item.score.eligible and item.score.combined is not None
     ]
     scores = [float(item.score.combined) for item in eligible if item.score and item.score.combined is not None]
+    cv_scores = [float(item.score.cv.total) for item in eligible if item.score and item.score.cv]
+    cl_scores = [
+        float(item.score.cover_letter.total)
+        for item in eligible
+        if item.score and item.score.cover_letter
+    ]
     latencies = [item.duration_ms for item in succeeded]
     gate_codes = Counter(
         finding.code
@@ -109,6 +115,8 @@ def _model_aggregate(model_id: str, results: list[RepetitionResult]) -> ModelAgg
         unavailable=sum(item.status == "unavailable" for item in results),
         eligible=len(eligible),
         hard_gate_pass_rate=(len(eligible) / attempted if attempted else 0.0),
+        median_cv_score=statistics.median(cv_scores) if cv_scores else None,
+        median_cover_letter_score=statistics.median(cl_scores) if cl_scores else None,
         median_writing_score=statistics.median(scores) if scores else None,
         writing_score_variance=statistics.pvariance(scores) if len(scores) > 1 else (0.0 if scores else None),
         median_latency_ms=statistics.median(latencies) if latencies else None,

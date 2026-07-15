@@ -122,6 +122,8 @@ class ModelAggregate(StrictModel):
     unavailable: int = Field(ge=0)
     eligible: int = Field(ge=0)
     hard_gate_pass_rate: float = Field(ge=0.0, le=1.0)
+    median_cv_score: float | None = Field(default=None, ge=0.0, le=100.0)
+    median_cover_letter_score: float | None = Field(default=None, ge=0.0, le=100.0)
     median_writing_score: float | None = Field(default=None, ge=0.0, le=100.0)
     writing_score_variance: float | None = Field(default=None, ge=0.0)
     median_latency_ms: float | None = Field(default=None, ge=0.0)
