@@ -58,6 +58,57 @@ describe("AppLockGate verification states", () => {
     expect(screen.getByText(/Check the backend is running/)).toBeVisible();
   });
 
+  it("redirects an unconfigured incomplete workspace to onboarding", async () => {
+    queryState.data = {
+      enabled: true,
+      configured_source: "none",
+      is_unlocked: false,
+      onboarding: { status: "not_started", last_completed_step: null },
+    };
+    queryState.isLoading = false;
+    const { AppLockGate } = await import("@/components/AppLockGate");
+
+    render(<AppLockGate><h1>Private content</h1></AppLockGate>);
+
+    await waitFor(() => {
+      expect(router.replace).toHaveBeenCalledWith("/onboarding");
+    });
+  });
+
+  it("redirects a configured locked workspace to unlock", async () => {
+    queryState.data = {
+      enabled: true,
+      configured_source: "database",
+      is_unlocked: false,
+      onboarding: { status: "in_progress", last_completed_step: "skills" },
+    };
+    queryState.isLoading = false;
+    const { AppLockGate } = await import("@/components/AppLockGate");
+
+    render(<AppLockGate><h1>Private content</h1></AppLockGate>);
+
+    await waitFor(() => {
+      expect(router.replace).toHaveBeenCalledWith("/unlock?next=%2Ftoday");
+    });
+  });
+
+  it("renders onboarding directly for an unconfigured incomplete workspace", async () => {
+    navigation.pathname = "/onboarding";
+    queryState.data = {
+      enabled: true,
+      configured_source: "none",
+      is_unlocked: false,
+      onboarding: { status: "in_progress", last_completed_step: "skills" },
+    };
+    queryState.isLoading = false;
+    const { AppLockGate } = await import("@/components/AppLockGate");
+
+    render(<AppLockGate><h1>Onboarding</h1></AppLockGate>);
+
+    expect(screen.getByRole("heading", { name: "Onboarding" })).toBeVisible();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it("does not expose locked onboarding after authoritative completion", async () => {
     navigation.pathname = "/onboarding";
     queryState.data = {
