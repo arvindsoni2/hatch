@@ -23,6 +23,11 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
     queryFn: getAppLockStatus,
     retry: 1,
   });
+  const isFirstRun = Boolean(
+    data?.enabled
+    && data.configured_source === "none"
+    && data.onboarding?.status !== "complete",
+  );
   const [slowCheck, setSlowCheck] = useState(false);
 
   useEffect(() => {
@@ -35,17 +40,22 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   }, [isLoading]);
 
   useEffect(() => {
-    const allowLockedOnboarding = isOnboardingRoute
-      && data?.configured_source === "none"
-      && data?.onboarding?.status !== "complete";
-    if (!isUnlockRoute && !allowLockedOnboarding && data?.enabled && !data.is_unlocked) {
+    const allowLockedOnboarding = isOnboardingRoute && isFirstRun;
+    if (!isUnlockRoute && !isOnboardingRoute && isFirstRun) {
+      router.replace("/onboarding");
+    } else if (
+      !isUnlockRoute
+      && !allowLockedOnboarding
+      && data?.enabled
+      && !data.is_unlocked
+    ) {
       const next = encodeURIComponent(pathname || "/today");
       router.replace(`/unlock?next=${next}`);
     }
     if (isUnlockRoute && data && (!data.enabled || data.is_unlocked)) {
       router.replace("/today");
     }
-  }, [data, isOnboardingRoute, isUnlockRoute, pathname, router]);
+  }, [data, isFirstRun, isOnboardingRoute, isUnlockRoute, pathname, router]);
 
   if (isUnlockRoute) {
     return <main className="min-h-screen">{children}</main>;
@@ -53,8 +63,7 @@ export function AppLockGate({ children }: { children: React.ReactNode }) {
   if (isLoading || (data?.enabled && !data.is_unlocked)) {
     if (
       isOnboardingRoute
-      && data?.configured_source === "none"
-      && data?.onboarding?.status !== "complete"
+      && isFirstRun
     ) {
       return (
         <main className="min-h-[100dvh]" id="main-content" tabIndex={-1}>

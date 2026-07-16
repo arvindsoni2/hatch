@@ -297,6 +297,10 @@ class AppLockMiddleware(BaseHTTPMiddleware):
         )
 
     @staticmethod
+    def _is_onboarding_resume_upload(request: StarletteRequest) -> bool:
+        return request.method == "POST" and request.url.path == "/api/resume/upload"
+
+    @staticmethod
     def _is_bootstrap_setup_request(request: StarletteRequest) -> bool:
         """Allow only non-secret setup intent and diagnostic operations."""
         path = request.url.path
@@ -342,11 +346,29 @@ class AppLockMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         from fastapi.responses import JSONResponse  # noqa: PLC0415
         from .services.app_lock_service import AppLockService  # noqa: PLC0415
+        from .services.onboarding_service import OnboardingService  # noqa: PLC0415
         token = request.cookies.get(settings.HATCH_APP_SESSION_COOKIE)
         session_factory = getattr(request.app.state, "app_lock_session_factory", AsyncSessionLocal)
         async with session_factory() as db:
-            session = await AppLockService(db).session(token)
-            await db.commit()
+            lock_service = AppLockService(db)
+            session = await lock_service.session(token)
+            allow_onboarding_upload = False
+            bootstrap_state_failed = False
+            if session is None and self._is_onboarding_resume_upload(request):
+                try:
+                    configured_source = await lock_service.configured_source()
+                    onboarding = await OnboardingService(db).status()
+                    allow_onboarding_upload = (
+                        configured_source == "none" and onboarding.status != "complete"
+                    )
+                except Exception:
+                    logger.exception("Unable to verify onboarding resume-upload state")
+                    await db.rollback()
+                    bootstrap_state_failed = True
+            if not bootstrap_state_failed:
+                await db.commit()
+        if allow_onboarding_upload:
+            return await call_next(request)
         if session is None:
             return JSONResponse({"detail": "Hatch is locked."}, status_code=423)
         return await call_next(request)
