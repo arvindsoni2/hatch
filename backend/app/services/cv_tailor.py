@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _FABRICATION_THRESHOLD = 70  # rapidfuzz score below this → warning
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
+MasterCVLoader = Callable[[], dict[str, Any]]
 
 
 def _default_skill_loader() -> SkillLoader:
@@ -27,13 +29,19 @@ def _default_skill_loader() -> SkillLoader:
 class CVTailor:
     """Tailors the master CV to a specific job description."""
 
-    def __init__(self, claude_client: LLMClient, skill_loader: SkillLoader | None = None) -> None:
+    def __init__(
+        self,
+        claude_client: LLMClient,
+        skill_loader: SkillLoader | None = None,
+        master_cv_loader: MasterCVLoader | None = None,
+    ) -> None:
         self._client = claude_client
         self._skill_loader = skill_loader or _default_skill_loader()
+        self._master_cv_loader = master_cv_loader or load_master_cv
 
     def _load_master_cv(self) -> dict[str, Any]:
         """Return the master CV, loaded via the central store (mtime-cached)."""
-        return load_master_cv()
+        return self._master_cv_loader()
 
     def _select_best_summary_variant(self, jd_analysis: JDAnalysisResult) -> str:
         """Pick the most relevant summary variant based on keyword overlap.

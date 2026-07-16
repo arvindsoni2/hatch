@@ -10,6 +10,11 @@ Use this index to find the current product, operations, architecture, developmen
 - Contributor: [Development setup](development/DEVELOPMENT_SETUP.md), [Repository structure](development/REPOSITORY_STRUCTURE.md), [Testing](development/TESTING.md)
 - Maintainer: [Architecture overview](architecture/OVERVIEW.md), [Release checklist](operations/RELEASE_CHECKLIST.md), [Archive](archive/)
 
+## Active Implementation Work
+
+- [Prompt, skill, and local writing reliability specification v4](implementation-specs/active/Hatch_Prompt_Skill_Local_Writing_Reliability_Codex_Spec_v4.md)
+- [Local writing model benchmark — 15 July 2026](benchmarks/LOCAL_WRITING_MODEL_BENCHMARK_2026-07-15.md)
+
 ## Documentation Map
 
 - Getting started: install, first-run, Windows, troubleshooting

@@ -98,6 +98,7 @@ data/langgraph_checkpoints.db-wal
 data/langgraph_checkpoints.db-shm
 data/chroma/
 data/logs/
+data/benchmarks/
 # Allow the example template and .gitkeep placeholder
 !data/profile.yaml.example
 !data/.gitkeep
