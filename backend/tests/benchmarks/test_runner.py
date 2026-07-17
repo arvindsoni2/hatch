@@ -245,6 +245,17 @@ async def test_runner_ranks_gate_pass_rate_before_quality(
     )
     assert result_payload["first_pass_cover_letter_word_count"] == result_payload["final_cover_letter_word_count"]
     assert result_payload["cover_letter_repair_count"] == 0
+    metrics = result_payload["pair_metrics"]
+    assert metrics["schema_succeeded"] is True
+    assert metrics["post_repair_hard_gate_passed"] is True
+    assert metrics["first_pass_hard_gate_passed"] is True
+    assert metrics["unsupported_candidate_claims"] == 0
+    assert metrics["unsupported_numeric_tokens"] == 0
+    assert metrics["immutable_token_mutations"] == 0
+    assert metrics["prompt_tokens"] == 200
+    assert metrics["output_tokens"] == 100
+    assert metrics["tokens_per_eligible_pair"] == 300
+    assert metrics["normalized_combined_quality"] == result_payload["score"]["combined"]
     workflow = result_payload["workflow_diagnostics"]
     assert workflow["skill_id"] == "cover-letter"
     assert workflow["skill_version"] == "1.0.0"
@@ -262,6 +273,125 @@ async def test_runner_ranks_gate_pass_rate_before_quality(
     assert json.loads(raw_payloads[0])["summary"].startswith(
         "Delivery Manager"
     )
+
+
+def test_pair_metrics_separate_first_pass_repair_and_evidence_coverage() -> None:
+    from types import SimpleNamespace
+
+    from app.services.writing_contracts import build_evidence_ledger
+    from benchmarks.contracts import PairScore
+    from benchmarks.runner import _pair_metrics
+
+    ledger = build_evidence_ledger(CASE.master_cv)
+    used_ids = [item.id for item in ledger[:2]]
+    cv = SimpleNamespace(
+        blocking_issues=[],
+        generation_provenance=SimpleNamespace(
+            source_evidence_ids=tuple(used_ids[:1]),
+        ),
+    )
+    letter = SimpleNamespace(
+        validation_status="repaired",
+        validation_issues=[],
+        grounding_issues=[],
+        generation_provenance=SimpleNamespace(
+            source_evidence_ids=tuple(item.id for item in ledger),
+            content_plan={
+                "opening_evidence_ids": used_ids[:1],
+                "primary_evidence_ids": used_ids[1:],
+                "secondary_evidence_ids": [],
+                "alignment_job_requirement_ids": ["jobreq-1"],
+            },
+            workflow={
+                "final_state": "repaired",
+                "attempts": [
+                    {
+                        "latency_ms": 800,
+                        "input_tokens": 100,
+                        "output_tokens": 40,
+                        "validator_results": {
+                            "passed": False,
+                            "issues": [
+                                {
+                                    "gate": "word_count",
+                                    "code": "under_length",
+                                    "severity": "blocking",
+                                    "message": "too short",
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "latency_ms": 300,
+                        "input_tokens": 50,
+                        "output_tokens": 20,
+                        "validator_results": {
+                            "passed": True,
+                            "issues": [],
+                        },
+                    },
+                ],
+            },
+        ),
+    )
+    metrics = _pair_metrics(
+        CASE,
+        cv,
+        letter,
+        PairScore(eligible=True, combined=88.5),
+        observations=[],
+        duration_ms=1400,
+    )
+
+    assert metrics.first_pass_hard_gate_passed is False
+    assert metrics.post_repair_hard_gate_passed is True
+    assert metrics.first_pass_latency_ms == 800
+    assert metrics.repair_latency_ms == 300
+    assert metrics.eligible_pair_latency_ms == 1400
+    assert metrics.prompt_tokens == 150
+    assert metrics.output_tokens == 60
+    assert metrics.tokens_per_eligible_pair == 210
+    assert metrics.evidence_items_used == 2
+    assert metrics.evidence_items_available == len(ledger)
+    assert metrics.evidence_coverage == pytest.approx(2 / len(ledger))
+
+
+def test_sparse_review_required_is_recorded_as_safe_fallback() -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.contracts import PairScore
+    from benchmarks.runner import _pair_metrics
+
+    sparse_case = CASE.model_copy(
+        update={"risk_tags": {"sparse_evidence"}}
+    )
+    cv = SimpleNamespace(
+        blocking_issues=[],
+        generation_provenance=None,
+    )
+    letter = SimpleNamespace(
+        validation_status="review_required",
+        validation_issues=["missing candidate evidence"],
+        grounding_issues=[],
+        generation_provenance=SimpleNamespace(
+            source_evidence_ids=(),
+            content_plan={},
+            workflow={"final_state": "review_required", "attempts": []},
+        ),
+    )
+
+    metrics = _pair_metrics(
+        sparse_case,
+        cv,
+        letter,
+        PairScore(eligible=False),
+        observations=[],
+        duration_ms=100,
+    )
+
+    assert metrics.missing_evidence_safe_fallback is True
+    assert metrics.post_repair_hard_gate_passed is False
+    assert metrics.normalized_combined_quality is None
 
 
 @pytest.mark.asyncio

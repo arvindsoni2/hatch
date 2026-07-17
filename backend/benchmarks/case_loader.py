@@ -138,4 +138,5 @@ def suite_case(suite: BenchmarkSuite, case_id: str) -> BenchmarkCase:
         seeds=suite.seeds,
         cv_length_tolerance=selected.cv_length_tolerance,
         input_hashes={"representative_suite.json": suite.suite_hash},
+        risk_tags=selected.risk_tags,
     )
