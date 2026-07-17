@@ -4,8 +4,10 @@ from __future__ import annotations
 import logging
 import json
 import re
+import time
+import uuid
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Callable
 
 from pathlib import Path
 
@@ -18,15 +20,35 @@ from .jd_analyser import _split_jinja_output
 from .writing_contracts import (
     COVER_LETTER_GENERATION_PROMPT,
     COVER_LETTER_PARAGRAPH_REGENERATION_PROMPT,
+    COVER_LETTER_REPAIR_PROMPT,
     EVIDENCE_SCHEMA_VERSION,
     FINAL_COMPLIANCE_REMINDER,
     SHARED_FACTUALITY_CONTRACT,
     SHARED_NUMERIC_FIDELITY_CONTRACT,
     EvidenceItem,
     GenerationProvenance,
+    ValidationIssue,
+    ValidationResult,
     build_evidence_ledger,
     evidence_records,
     validate_numeric_fidelity,
+)
+from .writing_workflow import (
+    AttemptDiagnostic,
+    CoverLetterContentPlan,
+    CreateContentPlanInput,
+    DraftGeneration,
+    GenerateDraftInput,
+    RepairSpecificFailureInput,
+    SelectEvidenceInput,
+    ValidateDraftInput,
+    WorkflowDiagnostics,
+    build_job_requirements,
+    create_content_plan,
+    select_evidence,
+    select_repair_action,
+    unused_evidence_ids,
+    validate_content_plan,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,6 +105,28 @@ def select_tone_variant(jd_analysis: "JDAnalysisResult") -> str:
 
 def _default_skill_loader() -> SkillLoader:
     return SkillLoader(SkillRegistry(_SKILLS_DIR))
+
+
+def _latest_observation(client: Any) -> Any | None:
+    observations = vars(client).get("observations")
+    if isinstance(observations, (list, tuple)) and observations:
+        return observations[-1]
+    return None
+
+
+def _model_id(client: Any) -> str | None:
+    spec = vars(client).get("spec")
+    for field in ("id", "model"):
+        value = getattr(spec, field, None)
+        if isinstance(value, str) and value:
+            return value
+    try:
+        from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+
+        value = load_profile().llm.primary_model
+        return value if isinstance(value, str) and value else None
+    except Exception:
+        return None
 
 
 def count_cover_letter_body_words(text: str) -> int:
@@ -166,8 +210,14 @@ def _numeric_repair_instruction(result: CoverLetterResult) -> str:
 
 
 def _repair_instruction(result: CoverLetterResult, defect: str) -> str:
-    if defect == "numeric_fidelity":
+    if defect in {"unsupported_numeric_token", "mutated_numeric_token"}:
         return _numeric_repair_instruction(result)
+    if defect == "missing_required_fields":
+        return (
+            "The previous draft failed required-field or placeholder validation. "
+            "Repair only that defect. Return non-empty subject, greeting, body paragraphs, "
+            "and sign-off without placeholders. Preserve all valid evidence and numbers."
+        )
     return _length_repair_instruction(result, defect)
 
 
@@ -177,6 +227,191 @@ class CoverLetterGenerator:
     def __init__(self, claude_client: LLMClient, skill_loader: SkillLoader | None = None) -> None:
         self._client = claude_client
         self._skill_loader = skill_loader or _default_skill_loader()
+
+    def select_evidence(self, stage_input: SelectEvidenceInput):
+        return select_evidence(stage_input.ledger)
+
+    def create_content_plan(
+        self,
+        stage_input: CreateContentPlanInput,
+    ) -> CoverLetterContentPlan:
+        return create_content_plan(
+            stage_input.selection,
+            stage_input.requirements,
+        )
+
+    async def generate_draft(
+        self,
+        stage_input: GenerateDraftInput,
+    ) -> DraftGeneration:
+        prompt_metadata = (
+            COVER_LETTER_REPAIR_PROMPT
+            if stage_input.repair_instruction
+            else COVER_LETTER_GENERATION_PROMPT
+        )
+        system_prompt, user_prompt = _split_jinja_output(
+            render_prompt(
+                "cl_generation.j2",
+                jd_analysis=stage_input.jd_analysis.model_dump(),
+                tailored_cv=stage_input.tailored_cv.model_dump(),
+                personal=stage_input.personal,
+                variant=stage_input.variant,
+                trim_instruction=stage_input.repair_instruction,
+                skill_instructions=stage_input.skill_instructions,
+                approved_evidence=evidence_records(stage_input.evidence_ledger),
+                content_plan=stage_input.content_plan.to_dict(),
+                unused_approved_evidence=evidence_records(
+                    stage_input.unused_evidence
+                ),
+                shared_factuality_contract=SHARED_FACTUALITY_CONTRACT,
+                shared_numeric_fidelity_contract=SHARED_NUMERIC_FIDELITY_CONTRACT,
+                prompt_metadata=asdict(prompt_metadata),
+                final_compliance_reminder=FINAL_COMPLIANCE_REMINDER,
+            )
+        )
+        started = time.monotonic()
+        raw: dict[str, Any] = await self._client.complete_json(
+            system_prompt,
+            user_prompt,
+            max_tokens=CL_BODY.max_output,
+        )
+        latency_ms = (time.monotonic() - started) * 1000
+        observation = _latest_observation(self._client)
+        return DraftGeneration(
+            draft=_parse_cover_letter(raw),
+            latency_ms=latency_ms,
+            input_tokens=getattr(observation, "prompt_tokens", None),
+            output_tokens=getattr(observation, "completion_tokens", None),
+        )
+
+    def validate_draft(
+        self,
+        stage_input: ValidateDraftInput,
+    ) -> ValidationResult:
+        result = stage_input.draft
+        issues = list(stage_input.content_plan_validation.issues)
+        grounding_messages = _validate_cover_letter_grounding(
+            result,
+            stage_input.tailored_cv,
+            stage_input.personal,
+            stage_input.jd_text,
+        )
+        for message in grounding_messages:
+            if "mutated immutable numeric token" in message:
+                code = "mutated_numeric_token"
+                gate = "numeric_fidelity"
+            elif "unsupported numeric token" in message:
+                code = "unsupported_numeric_token"
+                gate = "numeric_fidelity"
+            else:
+                code = "missing_required_fields"
+                gate = "placeholder"
+            issues.append(
+                ValidationIssue(
+                    gate=gate,
+                    code=code,
+                    severity="blocking",
+                    message=message,
+                )
+            )
+
+        required = (
+            result.subject_line.strip(),
+            result.greeting.strip(),
+            result.sign_off.strip(),
+            " ".join(result.body_paragraphs).strip(),
+        )
+        if not all(required):
+            issues.append(
+                ValidationIssue(
+                    gate="required_fields",
+                    code="missing_required_fields",
+                    severity="blocking",
+                    message="Cover letter is missing one or more required fields.",
+                )
+            )
+
+        if result.word_count < _MIN_WORDS:
+            issues.append(
+                ValidationIssue(
+                    gate="body_length",
+                    code="under_length",
+                    severity="blocking",
+                    message=_length_issue(result),
+                    expected=f"{_MIN_WORDS}-{_MAX_WORDS}",
+                    observed=str(result.word_count),
+                )
+            )
+        elif result.word_count > _MAX_WORDS:
+            issues.append(
+                ValidationIssue(
+                    gate="body_length",
+                    code="over_length",
+                    severity="blocking",
+                    message=_length_issue(result),
+                    expected=f"{_MIN_WORDS}-{_MAX_WORDS}",
+                    observed=str(result.word_count),
+                )
+            )
+
+        deduplicated: list[ValidationIssue] = []
+        seen = set()
+        for issue in issues:
+            key = (issue.gate, issue.code, issue.message)
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(issue)
+        return ValidationResult(
+            passed=not any(
+                issue.severity == "blocking" for issue in deduplicated
+            ),
+            issues=tuple(deduplicated),
+            metrics={
+                "body_word_count": result.word_count,
+                "paragraph_count": len(result.body_paragraphs),
+                "blocking_issue_count": sum(
+                    issue.severity == "blocking" for issue in deduplicated
+                ),
+            },
+        )
+
+    async def repair_specific_failure(
+        self,
+        stage_input: RepairSpecificFailureInput,
+    ) -> DraftGeneration:
+        unused = (
+            stage_input.unused_evidence
+            if stage_input.repair_action == "under_length"
+            else ()
+        )
+        generation_input = stage_input.generation_input
+        return await self.generate_draft(
+            GenerateDraftInput(
+                content_plan=generation_input.content_plan,
+                evidence_ledger=generation_input.evidence_ledger,
+                jd_analysis=generation_input.jd_analysis,
+                tailored_cv=generation_input.tailored_cv,
+                personal=generation_input.personal,
+                variant=generation_input.variant,
+                skill_instructions=generation_input.skill_instructions,
+                jd_text=generation_input.jd_text,
+                repair_instruction=_repair_instruction(
+                    stage_input.draft,
+                    stage_input.repair_action,
+                ),
+                unused_evidence=unused,
+            )
+        )
+
+    def render_document(
+        self,
+        result: CoverLetterResult,
+        renderer: Callable[[], tuple[str, int]],
+    ) -> tuple[str, int]:
+        """Run the explicit render stage only for a passing workflow result."""
+        if result.validation_status not in {"passed", "repaired"}:
+            raise ValueError("Cover letter workflow is not ready to render")
+        return renderer()
 
     async def generate(
         self,
@@ -197,93 +432,182 @@ class CoverLetterGenerator:
         Returns:
             CoverLetterResult, trimmed to <= 350 words.
         """
+        contract = self._skill_loader.contract("cover-letter")
+        if contract is None:
+            raise ValueError("Cover-letter skill contract is unavailable")
         skill_instructions = self._skill_loader.instructions("cover-letter")
         evidence_source = tailored_cv.model_dump(mode="json")
         evidence_source["personal"] = personal
         evidence_ledger = build_evidence_ledger(evidence_source)
-
-        system_prompt, user_prompt = _split_jinja_output(
-            render_prompt(
-                "cl_generation.j2",
-                jd_analysis=jd_analysis.model_dump(),
-                tailored_cv=tailored_cv.model_dump(),
-                personal=personal,
-                variant=variant,
-                skill_instructions=skill_instructions,
-                approved_evidence=evidence_records(evidence_ledger),
-                shared_factuality_contract=SHARED_FACTUALITY_CONTRACT,
-                shared_numeric_fidelity_contract=SHARED_NUMERIC_FIDELITY_CONTRACT,
-                prompt_metadata=asdict(COVER_LETTER_GENERATION_PROMPT),
-                final_compliance_reminder=FINAL_COMPLIANCE_REMINDER,
+        selection = self.select_evidence(
+            SelectEvidenceInput(ledger=evidence_ledger)
+        )
+        requirements = build_job_requirements(jd_analysis)
+        content_plan = self.create_content_plan(
+            CreateContentPlanInput(
+                selection=selection,
+                requirements=requirements,
             )
         )
-        raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CL_BODY.max_output)
-        result = _parse_cover_letter(raw)
-        _apply_cover_letter_contract(
-            result,
-            tailored_cv,
-            personal,
-            evidence_ledger,
-            jd_text,
+        plan_validation = validate_content_plan(
+            content_plan,
+            selection.evidence_ids,
+            tuple(item.id for item in requirements),
         )
+        run_id = str(uuid.uuid4())
+        model_id = _model_id(self._client)
+        if not plan_validation.passed:
+            result = _empty_failure_result(plan_validation)
+            diagnostics = WorkflowDiagnostics(
+                run_id=run_id,
+                task=COVER_LETTER_GENERATION_PROMPT.task_name,
+                skill_id=contract.skill_id,
+                skill_version=contract.skill_version,
+                prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
+                model_id=model_id,
+                attempts=(),
+                final_state="review_required",
+            )
+            _attach_workflow_provenance(
+                result,
+                evidence_ledger,
+                content_plan,
+                plan_validation,
+                diagnostics,
+            )
+            return result
 
-        result.attempt_count = 1
-        first_pass_word_count = result.word_count
-        result.first_pass_word_count = first_pass_word_count
-        targeted_defect: str | None = None
+        base_input = GenerateDraftInput(
+            content_plan=content_plan,
+            evidence_ledger=evidence_ledger,
+            jd_analysis=jd_analysis,
+            tailored_cv=tailored_cv,
+            personal=personal,
+            variant=variant,
+            skill_instructions=skill_instructions,
+            jd_text=jd_text,
+        )
+        unused_ids = set(unused_evidence_ids(selection, content_plan))
+        unused_evidence = tuple(
+            item for item in selection.evidence if item.id in unused_ids
+        )
+        attempts: list[AttemptDiagnostic] = []
+        repairs: list[str] = []
+        generated = await self.generate_draft(base_input)
+        first_pass_word_count = generated.draft.word_count
+
         while True:
-            defect = _blocking_defect(result)
-            if defect is None:
-                result.validation_status = "repaired" if result.attempt_count > 1 else "passed"
-                result.validation_issues = []
-                result.repair_count = result.attempt_count - 1
+            result = generated.draft
+            validation = self.validate_draft(
+                ValidateDraftInput(
+                    draft=result,
+                    tailored_cv=tailored_cv,
+                    personal=personal,
+                    evidence_ledger=evidence_ledger,
+                    content_plan_validation=plan_validation,
+                    jd_text=jd_text,
+                )
+            )
+            attempt_number = len(attempts) + 1
+            repair_type = repairs[-1] if repairs else None
+            attempts.append(
+                AttemptDiagnostic(
+                    attempt_number=attempt_number,
+                    repair_type=repair_type,
+                    input_tokens=generated.input_tokens,
+                    output_tokens=generated.output_tokens,
+                    latency_ms=generated.latency_ms,
+                    validation=validation,
+                    computed_body_count=result.word_count,
+                )
+            )
+            result.attempt_count = attempt_number
+            result.repair_count = len(repairs)
+            result.first_pass_word_count = first_pass_word_count
+            result.validation_issues = [
+                issue.message
+                for issue in validation.issues
+                if issue.severity == "blocking"
+            ]
+            result.grounding_issues = [
+                issue.message
+                for issue in validation.issues
+                if issue.severity == "blocking"
+                and issue.gate in {
+                    "numeric_fidelity",
+                    "placeholder",
+                    "required_fields",
+                    "content_plan_ids",
+                }
+            ]
+            if validation.passed:
+                result.validation_status = (
+                    "repaired" if repairs else "passed"
+                )
+                final_state = result.validation_status
+                diagnostics = WorkflowDiagnostics(
+                    run_id=run_id,
+                    task=COVER_LETTER_GENERATION_PROMPT.task_name,
+                    skill_id=contract.skill_id,
+                    skill_version=contract.skill_version,
+                    prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
+                    model_id=model_id,
+                    attempts=tuple(attempts),
+                    final_state=final_state,
+                )
+                _attach_workflow_provenance(
+                    result,
+                    evidence_ledger,
+                    content_plan,
+                    validation,
+                    diagnostics,
+                )
                 return result
 
-            result.validation_issues = (
-                list(result.grounding_issues)
-                if result.grounding_issues
-                else [_length_issue(result)]
+            repair_action = select_repair_action(
+                validation,
+                contract.allowed_repair_actions,
+                tuple(repairs),
             )
-            if result.attempt_count >= _MAX_ATTEMPTS or targeted_defect == defect:
-                result.validation_status = "review_required"
-                result.repair_count = result.attempt_count - 1
+            if (
+                repair_action is None
+                or attempt_number >= contract.maximum_attempts
+            ):
+                result.validation_status = contract.safe_failure_state
+                diagnostics = WorkflowDiagnostics(
+                    run_id=run_id,
+                    task=COVER_LETTER_GENERATION_PROMPT.task_name,
+                    skill_id=contract.skill_id,
+                    skill_version=contract.skill_version,
+                    prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
+                    model_id=model_id,
+                    attempts=tuple(attempts),
+                    final_state="review_required",
+                )
+                _attach_workflow_provenance(
+                    result,
+                    evidence_ledger,
+                    content_plan,
+                    validation,
+                    diagnostics,
+                )
                 return result
 
             logger.info(
                 "Cover letter %d words — requesting %s repair (variant %s)",
                 result.word_count,
-                defect.replace("_", "-"),
+                repair_action.replace("_", "-"),
                 variant,
             )
-            system_prompt2, user_prompt2 = _split_jinja_output(
-                render_prompt(
-                    "cl_generation.j2",
-                    jd_analysis=jd_analysis.model_dump(),
-                    tailored_cv=tailored_cv.model_dump(),
-                    personal=personal,
-                    variant=variant,
-                    trim_instruction=_repair_instruction(result, defect),
-                    skill_instructions=skill_instructions,
-                    approved_evidence=evidence_records(evidence_ledger),
-                    shared_factuality_contract=SHARED_FACTUALITY_CONTRACT,
-                    shared_numeric_fidelity_contract=SHARED_NUMERIC_FIDELITY_CONTRACT,
-                    prompt_metadata=asdict(COVER_LETTER_GENERATION_PROMPT),
-                    final_compliance_reminder=FINAL_COMPLIANCE_REMINDER,
+            repairs.append(repair_action)
+            generated = await self.repair_specific_failure(
+                RepairSpecificFailureInput(
+                    repair_action=repair_action,
+                    draft=result,
+                    generation_input=base_input,
+                    unused_evidence=unused_evidence,
                 )
             )
-            raw2: dict[str, Any] = await self._client.complete_json(system_prompt2, user_prompt2, max_tokens=CL_BODY.max_output)
-            previous_attempts = result.attempt_count
-            result = _parse_cover_letter(raw2)
-            _apply_cover_letter_contract(
-                result,
-                tailored_cv,
-                personal,
-                evidence_ledger,
-                jd_text,
-            )
-            result.attempt_count = previous_attempts + 1
-            result.first_pass_word_count = first_pass_word_count
-            targeted_defect = defect
 
     async def regenerate_paragraph(
         self,
@@ -386,6 +710,45 @@ def _parse_cover_letter(raw: dict[str, Any]) -> CoverLetterResult:
         word_count=_body_word_count(paragraphs),
         key_keywords_used=raw.get("key_keywords_used", []),
         grounding_issues=raw.get("grounding_issues", []),
+    )
+
+
+def _empty_failure_result(validation: ValidationResult) -> CoverLetterResult:
+    return CoverLetterResult(
+        subject_line="",
+        greeting="",
+        body_paragraphs=[],
+        sign_off="",
+        word_count=0,
+        grounding_issues=[
+            issue.message
+            for issue in validation.issues
+            if issue.severity == "blocking"
+        ],
+        validation_status="review_required",
+        validation_issues=[
+            issue.message
+            for issue in validation.issues
+            if issue.severity == "blocking"
+        ],
+        attempt_count=0,
+    )
+
+
+def _attach_workflow_provenance(
+    result: CoverLetterResult,
+    evidence_ledger: tuple[EvidenceItem, ...],
+    content_plan: CoverLetterContentPlan,
+    validation: ValidationResult,
+    diagnostics: WorkflowDiagnostics,
+) -> None:
+    result.generation_provenance = GenerationProvenance(
+        prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
+        evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
+        source_evidence_ids=tuple(item.id for item in evidence_ledger),
+        validation=validation,
+        content_plan=content_plan.to_dict(),
+        workflow=diagnostics.to_dict(),
     )
 
 

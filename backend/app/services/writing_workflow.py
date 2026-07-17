@@ -5,7 +5,11 @@ import hashlib
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
-from ..schemas.tailor import JDAnalysisResult
+from ..schemas.tailor import (
+    CoverLetterResult,
+    JDAnalysisResult,
+    TailoredCVResult,
+)
 from .writing_contracts import (
     EvidenceItem,
     PromptMetadata,
@@ -106,6 +110,57 @@ class CoverLetterWorkflowResult:
     content_plan: CoverLetterContentPlan
     validation: ValidationResult
     diagnostics: WorkflowDiagnostics
+
+
+@dataclass(frozen=True)
+class SelectEvidenceInput:
+    ledger: tuple[EvidenceItem, ...]
+
+
+@dataclass(frozen=True)
+class CreateContentPlanInput:
+    selection: EvidenceSelection
+    requirements: tuple[JobRequirement, ...]
+
+
+@dataclass(frozen=True)
+class GenerateDraftInput:
+    content_plan: CoverLetterContentPlan
+    evidence_ledger: tuple[EvidenceItem, ...]
+    jd_analysis: JDAnalysisResult
+    tailored_cv: TailoredCVResult
+    personal: dict[str, Any]
+    variant: str
+    skill_instructions: str
+    jd_text: str
+    repair_instruction: str | None = None
+    unused_evidence: tuple[EvidenceItem, ...] = ()
+
+
+@dataclass(frozen=True)
+class ValidateDraftInput:
+    draft: CoverLetterResult
+    tailored_cv: TailoredCVResult
+    personal: dict[str, Any]
+    evidence_ledger: tuple[EvidenceItem, ...]
+    content_plan_validation: ValidationResult
+    jd_text: str
+
+
+@dataclass(frozen=True)
+class RepairSpecificFailureInput:
+    repair_action: str
+    draft: CoverLetterResult
+    generation_input: GenerateDraftInput
+    unused_evidence: tuple[EvidenceItem, ...]
+
+
+@dataclass(frozen=True)
+class DraftGeneration:
+    draft: CoverLetterResult
+    latency_ms: float
+    input_tokens: int | None
+    output_tokens: int | None
 
 
 def _requirement_id(source_path: str, text: str) -> str:

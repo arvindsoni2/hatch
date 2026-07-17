@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 
-from app.schemas.tailor import JDAnalysisResult, Requirements
+from app.schemas.tailor import (
+    JDAnalysisResult,
+    Requirements,
+)
 from app.services.writing_contracts import (
     COVER_LETTER_GENERATION_PROMPT,
     EvidenceItem,
@@ -12,6 +16,11 @@ from app.services.writing_contracts import (
 from app.services.writing_workflow import (
     AttemptDiagnostic,
     CoverLetterContentPlan,
+    CreateContentPlanInput,
+    GenerateDraftInput,
+    RepairSpecificFailureInput,
+    SelectEvidenceInput,
+    ValidateDraftInput,
     WorkflowDiagnostics,
     build_job_requirements,
     create_content_plan,
@@ -202,3 +211,51 @@ def test_workflow_diagnostics_serialize_metadata_without_private_documents():
         "full cover letter body",
     ):
         assert private_value not in serialized
+
+
+def test_stage_inputs_expose_only_declared_dependencies():
+    assert {field.name for field in fields(SelectEvidenceInput)} == {"ledger"}
+    assert {field.name for field in fields(CreateContentPlanInput)} == {
+        "selection",
+        "requirements",
+    }
+    assert {field.name for field in fields(GenerateDraftInput)} == {
+        "content_plan",
+        "evidence_ledger",
+        "jd_analysis",
+        "tailored_cv",
+        "personal",
+        "variant",
+        "skill_instructions",
+        "jd_text",
+        "repair_instruction",
+        "unused_evidence",
+    }
+    assert {field.name for field in fields(ValidateDraftInput)} == {
+        "draft",
+        "tailored_cv",
+        "personal",
+        "evidence_ledger",
+        "content_plan_validation",
+        "jd_text",
+    }
+    assert {field.name for field in fields(RepairSpecificFailureInput)} == {
+        "repair_action",
+        "draft",
+        "generation_input",
+        "unused_evidence",
+    }
+    all_names = {
+        field.name
+        for stage in (
+            SelectEvidenceInput,
+            CreateContentPlanInput,
+            GenerateDraftInput,
+            ValidateDraftInput,
+            RepairSpecificFailureInput,
+        )
+        for field in fields(stage)
+    }
+    assert {"db", "repository", "builder", "api_key", "provider_secret"}.isdisjoint(
+        all_names
+    )
