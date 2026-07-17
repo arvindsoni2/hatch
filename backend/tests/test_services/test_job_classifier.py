@@ -15,7 +15,10 @@ from app.services.job_classifier import JobClassifier
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_job(title: str = "Cloud Architect", description: str = "Contract AWS role") -> MagicMock:
+def make_job(
+    title: str = "Cloud Architect",
+    description: str = "Contract AWS role, outside IR35, hybrid in London",
+) -> MagicMock:
     job = MagicMock()
     job.id = str(uuid.uuid4())
     job.title = title
@@ -134,6 +137,85 @@ async def test_classify_batch_handles_llm_exception():
         results = await classifier.classify_batch([job])
 
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_classify_batch_drops_unknown_ids_and_normalizes_assumptions():
+    job = make_job(description="Contract role with flexible arrangements")
+    response = json.dumps(
+        {
+            "jobs": [
+                {
+                    **SAMPLE_CLASSIFICATION,
+                    "id": "not-in-the-input-batch",
+                },
+                {
+                    **SAMPLE_CLASSIFICATION,
+                    "id": job.id,
+                    "ir35_status": "outside",
+                    "working_pattern": "remote",
+                    "match_score": 140,
+                },
+            ]
+        }
+    )
+
+    with patch(
+        "app.services.job_classifier.get_triage_model",
+        return_value=make_mock_model(response),
+    ):
+        results = await JobClassifier().classify_batch([job])
+
+    assert results == [
+        {
+            **SAMPLE_CLASSIFICATION,
+            "id": job.id,
+            "ir35_status": "unknown",
+            "working_pattern": "unknown",
+            "match_score": 100,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_classification_prompt_uses_runtime_profile_not_hardcoded_person():
+    job = make_job()
+    response = json.dumps(
+        {"jobs": [{**SAMPLE_CLASSIFICATION, "id": job.id}]}
+    )
+    model = make_mock_model(response)
+    profile = MagicMock()
+    profile.candidate.title = "Platform Reliability Engineer"
+    profile.candidate.years_experience = 9
+    profile.search.target_roles = ["Site Reliability Engineer"]
+    profile.skills.primary = ["Kubernetes", "SRE"]
+    profile.skills.secondary = ["Python"]
+    profile.compensation.currency = "GBP"
+    profile.compensation.min_rate = 450
+    profile.compensation.max_rate = 650
+    profile.compensation.rate_type = "daily"
+    profile.search.locations = []
+
+    with (
+        patch(
+            "app.services.job_classifier.get_triage_model",
+            return_value=model,
+        ),
+        patch(
+            "app.services.job_classifier.load_profile",
+            return_value=profile,
+        ),
+    ):
+        await JobClassifier().classify_batch([job])
+
+    prompt = "\n".join(
+        message.content
+        for message in model.ainvoke.await_args.args[0]
+    )
+    assert "Platform Reliability Engineer" in prompt
+    assert "Site Reliability Engineer" in prompt
+    assert "Arvind Soni" not in prompt
+    assert '"prompt_id": "job_classification"' in prompt
 
 
 # ---------------------------------------------------------------------------
