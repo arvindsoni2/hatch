@@ -204,6 +204,15 @@ async def run_benchmark(
     run_id = run_id or f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     run_dir = output_root / run_id
     writing_prompt_metadata = prompt_metadata_records()
+    active_prompt_metadata = {
+        prompt_id: writing_prompt_metadata[prompt_id]
+        for prompt_id in (
+            "cv_tailoring",
+            "cover_letter_generation",
+            "shared_factuality_contract",
+            "shared_numeric_fidelity_contract",
+        )
+    }
     _atomic_write_json(
         run_dir / "manifest.json",
         {
@@ -259,7 +268,7 @@ async def run_benchmark(
                         item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
                         for item in client.observations
                     ],
-                    prompt_metadata=writing_prompt_metadata,
+                    prompt_metadata=active_prompt_metadata,
                 )
             except BenchmarkModelUnavailableError as exc:
                 result = RepetitionResult(
@@ -272,7 +281,7 @@ async def run_benchmark(
                         item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
                         for item in client.observations
                     ],
-                    prompt_metadata=writing_prompt_metadata,
+                    prompt_metadata=active_prompt_metadata,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                 )
@@ -287,7 +296,7 @@ async def run_benchmark(
                         item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
                         for item in client.observations
                     ],
-                    prompt_metadata=writing_prompt_metadata,
+                    prompt_metadata=active_prompt_metadata,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                 )

@@ -84,6 +84,7 @@ def test_evidence_ledger_preserves_source_order_and_types() -> None:
         ("Served from 2018–2022", ("2018–2022",)),
         ("Supported +25 sites", ("+25 sites",)),
         ("Saved £2 million", ("£2 million",)),
+        ("Reached maturity level 5 with a 4.7 score", ("5", "4.7")),
     ],
 )
 def test_extract_numeric_tokens_preserves_immutable_expression(
@@ -117,6 +118,16 @@ def test_numeric_validation_blocks_mutated_and_unsupported_tokens() -> None:
         "unsupported_numeric_token",
     ]
     assert [issue.observed for issue in result.issues] == ["120 locations", "97%"]
+
+
+def test_numeric_validation_blocks_unsupported_plain_number() -> None:
+    result = validate_numeric_fidelity(
+        ["Reached maturity level 5."],
+        build_evidence_ledger({"summary": "Improved delivery maturity."}),
+    )
+
+    assert not result.passed
+    assert result.issues[0].observed == "5"
 
 
 def test_numeric_dates_and_metadata_outside_candidate_prose_are_not_false_positives() -> None:

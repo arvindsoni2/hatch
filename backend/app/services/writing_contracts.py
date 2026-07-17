@@ -186,16 +186,23 @@ _NUMERIC_TOKEN_RE = re.compile(
       | [+-]?{_NUMBER}\s*\+(?:\s+{_NUMERIC_UNIT})?
       | [+-]?{_NUMBER}(?:\s*[–—-]\s*[+-]?{_NUMBER})(?:\s+{_NUMERIC_UNIT})?
       | [+-]?{_NUMBER}(?:\s+{_NUMERIC_UNIT})
+      | [+-]?{_NUMBER}
     )
     (?![\w@])
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+_NON_PROSE_TOKEN_RE = re.compile(
+    r"https?://\S+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|<[^>]+>",
+    re.IGNORECASE,
+)
 
 
 def extract_numeric_tokens(text: str) -> tuple[NumericToken, ...]:
     """Extract immutable numeric expressions from prose in source order."""
-    normalized_text = normalize_evidence_text(text)
+    normalized_text = normalize_evidence_text(
+        _NON_PROSE_TOKEN_RE.sub(" ", str(text))
+    )
     tokens: list[NumericToken] = []
     for match in _NUMERIC_TOKEN_RE.finditer(normalized_text):
         raw = re.sub(r"\s*([–—-])\s*", r"\1", match.group(0)).strip()

@@ -218,6 +218,11 @@ async def test_runner_ranks_gate_pass_rate_before_quality(tmp_path: Path) -> Non
         ]
         == "2.0.0"
     )
+    assert "cover_letter_repair" not in result_payload["prompt_metadata"]
+    assert (
+        "cover_letter_paragraph_regeneration"
+        not in result_payload["prompt_metadata"]
+    )
     raw_payloads = json.loads(raw.read_text(encoding="utf-8"))
     assert json.loads(raw_payloads[0])["summary"].startswith(
         "Delivery Manager"
