@@ -24,6 +24,8 @@ Produce a "what to paste where" map for the external application form so the can
 
 - This skill produces a paste-map for the **human** to use — it does not automate form submission.
 - If the ATS cannot be detected, return an empty map with an `ats_unknown` flag rather than guessing.
+- If a source profile/document value is missing, leave `value` empty and attach
+  a `missing_field` flag; never infer personal, eligibility, or compensation data.
 - Field labels are ATS-specific; use only the labels defined in the resource YAML.
 
 ## Resources

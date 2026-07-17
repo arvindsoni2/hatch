@@ -71,3 +71,34 @@ def test_checked_in_audit_covers_every_prompt_and_skill() -> None:
     for skill_path in SKILLS_DIR.glob("*/SKILL.md"):
         relative = skill_path.relative_to(ROOT).as_posix()
         assert relative in audit
+
+
+def test_every_template_and_inline_prompt_has_runtime_metadata_wiring() -> None:
+    for contract in PROMPT_CONTRACTS.values():
+        source = (ROOT / contract.path).read_text(encoding="utf-8")
+        prompt_id = contract.metadata.prompt_id
+        if contract.path.endswith(".j2"):
+            assert (
+                "prompt_contract" in source or "prompt_metadata" in source
+            ), prompt_id
+        else:
+            assert (
+                prompt_id in source or prompt_id.upper() in source
+            ), prompt_id
+
+
+def test_audit_marks_migrations_complete_with_focused_coverage() -> None:
+    audit = AUDIT_PATH.read_text(encoding="utf-8")
+    assert "Completed migration" in audit
+    for contract in PROMPT_CONTRACTS.values():
+        if (
+            contract.candidate_fact_risk == "high"
+            or contract.employer_fact_risk == "high"
+            or contract.numeric_fidelity_risk == "high"
+        ):
+            row = next(
+                line
+                for line in audit.splitlines()
+                if f"| `{contract.metadata.prompt_id}` |" in line
+            )
+            assert "test_" in row

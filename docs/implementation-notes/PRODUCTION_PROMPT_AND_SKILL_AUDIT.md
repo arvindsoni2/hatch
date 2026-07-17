@@ -1,10 +1,10 @@
 # Production Prompt and Skill Audit
 
-This is the canonical PR4 inventory for production AI prompts and progressively disclosed skills. “Migration” records the required PR4 contract; completion is updated as each focused test slice lands.
+This is the canonical PR4 inventory for production AI prompts and progressively disclosed skills. Every migration listed below is completed in PR4 and linked to focused regression coverage.
 
 ## Prompt inventory
 
-| ID | Path | Owner/family | Inputs | Output schema | Candidate risk | Employer risk | Numeric risk | Current validation | Required migration | Version | Focused coverage |
+| ID | Path | Owner/family | Inputs | Output schema | Candidate risk | Employer risk | Numeric risk | Current validation | Completed migration | Version | Focused coverage |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `answer_evaluation` | `backend/app/prompts/answer_evaluation.j2` | Coach / evaluation | Question, transcript, metrics, reference answer | `AnswerEvaluation` | High | None | Low | Pydantic parsing and score clamps | Metadata; observation/interpretation/recommendation separation; transcript evidence | 1.0.0 | `test_answer_evaluator.py`, `test_coach_prompt_contracts.py` |
 | `ats_keywords` | `backend/app/prompts/ats_keywords.j2` | ATS scoring | CV, evidence bank, JD keywords | `ATSScoreResult` | High | None | High | Pydantic plus grounded retry | Shared contracts and metadata | 1.0.0 | `test_ats_optimiser.py` |
@@ -32,7 +32,7 @@ This is the canonical PR4 inventory for production AI prompts and progressively 
 
 ## Skill inventory
 
-| ID/path | Owning feature | Inputs | Output | Principal risk | Current validation | Required migration | Version | Coverage |
+| ID/path | Owning feature | Inputs | Output | Principal risk | Current validation | Completed migration | Version | Coverage |
 |---|---|---|---|---|---|---|---|---|
 | `backend/app/skills/ats-optimization/SKILL.md` | ATS optimisation | CV, JD keywords, evidence bank | Score and suggestions | Candidate claims | Deterministic lint plus Pydantic | Reference shared factuality/numeric contract and safe gaps | Frontmatter (unversioned) | `test_skill_injection.py`, `test_skills_inventory.py` |
 | `backend/app/skills/company-research/SKILL.md` | Company research | Public sources | Research brief | Employer facts | Prompt constraints | Add source/timestamp/verification contract | Frontmatter (unversioned) | `test_company_researcher.py`, `test_skills_inventory.py` |

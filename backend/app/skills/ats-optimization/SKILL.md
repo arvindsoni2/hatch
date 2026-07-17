@@ -37,5 +37,8 @@ Ensure the tailored CV will pass algorithmic screening before a human sees it.
 ## Constraints
 
 - Never recommend adding keywords that are absent from the candidate's real experience.
+- Treat the supplied evidence IDs as the only source of candidate facts and
+  preserve every numeric token exactly.
+- When evidence is missing, report a gap; do not manufacture a suggested claim.
 - Format warnings take priority over keyword suggestions when a parser failure would hide all content.
 - Improvement suggestions are ordered by impact: format issues > must-have gaps > coverage boosts.
