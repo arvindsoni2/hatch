@@ -8,6 +8,12 @@ from ..prompts import render_prompt
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import MODEL_ANSWER
 from .jd_analyser import _split_jinja_output
+from .prompt_catalog import (
+    candidate_claim_contract,
+    prompt_contract_block,
+    validate_candidate_output,
+)
+from .writing_contracts import build_evidence_ledger, evidence_records
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +46,9 @@ class ModelAnswerGeneratorService:
         Returns:
             Model answer as a plain text string.
         """
+        ledger = build_evidence_ledger({"summary": candidate_summary})
+        if not ledger:
+            return ""
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
                 "model_answer.j2",
@@ -48,12 +57,46 @@ class ModelAnswerGeneratorService:
                 difficulty=difficulty,
                 company_name=company_name,
                 company_research=company_research or {},
-                candidate_summary=candidate_summary or "Senior Solutions Architect with 20+ years experience.",
+                approved_evidence=evidence_records(ledger),
+                prompt_contract=prompt_contract_block("model_answer"),
+                candidate_contract=candidate_claim_contract("model_answer"),
             )
         )
         try:
             raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=MODEL_ANSWER.max_output)
-            return raw.get("model_answer", "")
+            if not isinstance(raw, dict):
+                return ""
+            model_answer = raw.get("model_answer", "")
+            if not isinstance(model_answer, str) or not model_answer.strip():
+                return ""
+            star = raw.get("star_breakdown", {})
+            star_prose = (
+                [str(value) for value in star.values()]
+                if isinstance(star, dict)
+                else []
+            )
+            employer_context = _string_values(company_research or {})
+            validation = validate_candidate_output(
+                [model_answer, *star_prose],
+                ledger,
+                employer_context,
+            )
+            return model_answer if validation.passed else ""
         except Exception as exc:
             logger.warning("Model answer generation failed: %s", exc)
             return ""
+
+
+def _string_values(value: Any) -> list[str]:
+    """Flatten supplied employer context for numeric validation exemptions."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [
+            text
+            for nested in value.values()
+            for text in _string_values(nested)
+        ]
+    if isinstance(value, list):
+        return [text for nested in value for text in _string_values(nested)]
+    return []

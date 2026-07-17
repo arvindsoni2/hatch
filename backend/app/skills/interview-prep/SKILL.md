@@ -23,6 +23,10 @@ See `resources/star_framework.md` for the full framework, examples, and common m
 ## Constraints
 
 - Prioritise questions that target the role's must-have requirements.
+- Map each question to a stable supplied job-requirement ID and remove
+  semantically duplicate questions.
 - Model answers must use real proof points — never invent outcomes or metrics.
+- Preserve candidate numbers exactly and return an empty answer when approved
+  evidence cannot support a truthful STAR story.
 - Flag when a question category has no good story match; suggest the closest available.
 - Keep each model answer under 200 words (spoken delivery target: ~90 seconds).

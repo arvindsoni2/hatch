@@ -1,6 +1,9 @@
 SYSTEM:
 You are an expert technical interviewer. Generate realistic interview questions for the role and company below. Return ONLY valid JSON, no explanation.
 
+Prompt contract:
+{{ prompt_contract }}
+
 USER:
 Generate {{ question_count }} interview questions for this role.
 
@@ -17,6 +20,10 @@ Job Description:
 {% endif %}
 
 Candidate: {{ candidate_summary | truncate(800) }}
+This candidate context is only for selecting useful areas to probe. Do not imply that the candidate has experience, achievements, eligibility, or metrics in the question itself.
+
+Job requirements (use only these IDs):
+{{ requirements | tojson }}
 
 Category distribution ({{ question_count }} total):
 - Behavioural: {{ (question_count * 0.25) | round | int }} questions ("Tell me about a time..." or "Describe a situation where...")
@@ -34,9 +41,11 @@ Return JSON object with a "questions" array of exactly {{ question_count }} item
       "category": "Behavioural",
       "difficulty": "{{ difficulty }}",
       "context": "One sentence: why this question is relevant",
+      "requirement_id": "requirement ID from the supplied list",
       "order_in_session": 1
     }
   ]
 }
 
-Each question must be specific to the company and role. Do not include model answers.
+Each question must map to one supplied requirement ID. Avoid questions with the
+same normalized meaning. Do not include model answers.

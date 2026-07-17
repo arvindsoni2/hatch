@@ -77,6 +77,7 @@ class QuestionPresentation(BaseModel):
     category: str
     difficulty: str
     context: str | None = None
+    requirement_id: str | None = None
     num: int
     total: int
 
