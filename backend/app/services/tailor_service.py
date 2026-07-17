@@ -14,6 +14,7 @@ from ..repositories.document_repository import DocumentRepository
 from ..schemas.document import GeneratedDocumentRead
 from ..schemas.tailor import (
     ATSScoreResult,
+    CoverLetterResult,
     JDAnalysisResult,
     JDAnalysisResponse,
     TailoredCVResult,
@@ -56,6 +57,21 @@ def _tailoring_params(
             "generation_provenance": provenance.to_dict(),
         }
     return json.dumps(values)
+
+
+def _cover_letter_failure_detail(
+    result: CoverLetterResult,
+) -> dict[str, Any] | None:
+    """Return safe validation metadata when a draft must be withheld."""
+    ready = result.validation_status in {"passed", "repaired"}
+    if ready and not result.grounding_issues:
+        return None
+    return {
+        "error": "Cover letter failed validation — document withheld.",
+        "final_state": result.validation_status,
+        "attempt_count": result.attempt_count,
+        "issues": result.validation_issues or result.grounding_issues,
+    }
 
 
 def _master_cv_text(master: dict[str, Any]) -> str:
@@ -388,19 +404,24 @@ class TailorService:
         cover_letter = await self._cl_generator.generate(
             analysis, tailored_cv, personal, cl_variant, jd_text=jd_text
         )
-        if cover_letter.grounding_issues:
+        failure_detail = _cover_letter_failure_detail(cover_letter)
+        if failure_detail:
             raise HTTPException(
                 status_code=422,
-                detail={
-                    "error": "Cover letter failed grounding checks — document withheld.",
-                    "issues": cover_letter.grounding_issues,
-                    "hint": "Regenerate with grounded evidence or edit the master CV.",
-                },
+                detail=failure_detail,
             )
 
         version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
-        file_path, file_size = self._cl_builder.build(
-            cover_letter, analysis, personal, application_id, version, variant
+        file_path, file_size = self._cl_generator.render_document(
+            cover_letter,
+            lambda: self._cl_builder.build(
+                cover_letter,
+                analysis,
+                personal,
+                application_id,
+                version,
+                variant,
+            ),
         )
 
         doc = await doc_repo.create(
@@ -586,20 +607,25 @@ class TailorService:
         cover_letter = await self._cl_generator.generate(
             analysis, tailored_cv, personal, cl_variant, jd_text=jd_text
         )
-        if cover_letter.grounding_issues:
+        failure_detail = _cover_letter_failure_detail(cover_letter)
+        if failure_detail:
             raise HTTPException(
                 status_code=422,
-                detail={
-                    "error": "Cover letter failed grounding checks — document withheld.",
-                    "issues": cover_letter.grounding_issues,
-                    "hint": "Regenerate with grounded evidence or edit the master CV.",
-                },
+                detail=failure_detail,
             )
         logger.info("Tailor package %s: cover letter content complete", application_id)
         cl_version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
-        cl_path, cl_size = self._cl_builder.build(
-            cover_letter, analysis, personal, application_id, cl_version, variant,
-            design_settings,
+        cl_path, cl_size = self._cl_generator.render_document(
+            cover_letter,
+            lambda: self._cl_builder.build(
+                cover_letter,
+                analysis,
+                personal,
+                application_id,
+                cl_version,
+                variant,
+                design_settings,
+            ),
         )
         cl_doc = await doc_repo.create(
             application_id=application_id,
@@ -692,14 +718,12 @@ class TailorService:
         cover_letter = await self._cl_generator.generate(
             analysis, tailored_cv, personal, cl_variant, jd_text=jd_text
         )
-        if cover_letter.grounding_issues:
+        failure_detail = _cover_letter_failure_detail(cover_letter)
+        if failure_detail:
             yield sse(
                 "error",
                 0,
-                json.dumps({
-                    "error": "Cover letter failed grounding checks — document withheld.",
-                    "issues": cover_letter.grounding_issues,
-                }),
+                json.dumps(failure_detail),
             )
             return
 
@@ -727,8 +751,16 @@ class TailorService:
         )
 
         cl_version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
-        cl_path, cl_size = self._cl_builder.build(
-            cover_letter, analysis, personal, application_id, cl_version, variant
+        cl_path, cl_size = self._cl_generator.render_document(
+            cover_letter,
+            lambda: self._cl_builder.build(
+                cover_letter,
+                analysis,
+                personal,
+                application_id,
+                cl_version,
+                variant,
+            ),
         )
         cl_doc = await doc_repo.create(
             application_id=application_id,
