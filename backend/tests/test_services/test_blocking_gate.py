@@ -8,6 +8,12 @@ from fastapi import HTTPException
 
 from app.schemas.tailor import TailoredCVResult
 from app.services.tailor_service import TailorService
+from app.services.writing_contracts import (
+    CV_TAILORING_PROMPT,
+    EVIDENCE_SCHEMA_VERSION,
+    GenerationProvenance,
+    ValidationResult,
+)
 
 _PROFILE_LOADER_TARGET = "app.agents.tools.profile_loader.load_profile"
 
@@ -26,7 +32,14 @@ def _mock_tailored_cv(blocking: list[str], advisory: list[str] | None = None) ->
 
 
 def _clean_tailored_cv() -> TailoredCVResult:
-    return _mock_tailored_cv(blocking=[], advisory=[])
+    result = _mock_tailored_cv(blocking=[], advisory=[])
+    result.generation_provenance = GenerationProvenance(
+        prompt_metadata=CV_TAILORING_PROMPT,
+        evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
+        source_evidence_ids=("evidence-1",),
+        validation=ValidationResult(passed=True, issues=(), metrics={}),
+    )
+    return result
 
 
 def _service_with_mocked_master_cv(tmp_path):
@@ -150,3 +163,14 @@ class TestBlockingGateGenerateCV:
                 result = await svc.generate_cv("app-1", "A", "some jd text", mock_db)
 
         svc._cv_builder.build.assert_called_once()
+        create_kwargs = mock_doc_repo.create.call_args.kwargs
+        persisted_params = __import__("json").loads(create_kwargs["tailoring_params"])
+        assert (
+            persisted_params["generation_provenance"]["prompt_metadata"][
+                "prompt_version"
+            ]
+            == "2.0.0"
+        )
+        assert persisted_params["generation_provenance"]["source_evidence_ids"] == [
+            "evidence-1"
+        ]

@@ -197,10 +197,27 @@ async def test_runner_ranks_gate_pass_rate_before_quality(tmp_path: Path) -> Non
         ("unsafe", 41),
     ]
     assert (tmp_path / "test-run" / "summary.json").exists()
+    manifest = json.loads(
+        (tmp_path / "test-run" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["prompt_versions"]["cv_tailoring"] == "2.0.0"
+    assert manifest["prompt_versions"]["cover_letter_generation"] == "2.0.0"
+    assert manifest["schema_versions"]["evidence_ledger"] == "1.0.0"
     artifact = tmp_path / "test-run" / "runs" / "qwen35-4b" / "01" / "result.json"
     raw = tmp_path / "test-run" / "runs" / "qwen35-4b" / "01" / "raw_responses.json"
     assert artifact.exists()
     assert raw.exists()
+    result_payload = json.loads(artifact.read_text(encoding="utf-8"))
+    assert (
+        result_payload["prompt_metadata"]["cv_tailoring"]["schema_version"]
+        == "1.0.0"
+    )
+    assert (
+        result_payload["prompt_metadata"]["cover_letter_generation"][
+            "prompt_version"
+        ]
+        == "2.0.0"
+    )
     raw_payloads = json.loads(raw.read_text(encoding="utf-8"))
     assert json.loads(raw_payloads[0])["summary"].startswith(
         "Delivery Manager"
