@@ -163,6 +163,7 @@ class PairMetrics(StrictModel):
     unsupported_candidate_claims: int = Field(default=0, ge=0)
     unsupported_numeric_tokens: int = Field(default=0, ge=0)
     immutable_token_mutations: int = Field(default=0, ge=0)
+    missing_evidence_case: bool = False
     missing_evidence_safe_fallback: bool = False
     evidence_items_available: int = Field(default=0, ge=0)
     evidence_items_used: int = Field(default=0, ge=0)

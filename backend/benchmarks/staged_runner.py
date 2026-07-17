@@ -184,9 +184,15 @@ def selection_metrics(
         if item.peak_memory_mb is not None
     ]
     role_values: dict[str, list[float]] = {}
+    cv_scores: list[float] = []
+    cover_letter_scores: list[float] = []
     for item in selected:
         if not item.score or not item.score.eligible:
             continue
+        if item.score.cv is not None:
+            cv_scores.append(item.score.cv.total)
+        if item.score.cover_letter is not None:
+            cover_letter_scores.append(item.score.cover_letter.total)
         for document_name in ("cv", "cover_letter"):
             document = getattr(item.score, document_name)
             if document is None:
@@ -204,6 +210,34 @@ def selection_metrics(
         item.status in {"unavailable", "timeout", "interrupted", "failed"}
         for item in selected
     )
+    sparse_metrics = [
+        item for item in pair_metrics if item.missing_evidence_case
+    ]
+    repairs = [
+        item.cover_letter_repair_count
+        for item in selected
+        if item.status == "succeeded"
+    ]
+    first_pass_latencies = [
+        item.first_pass_latency_ms
+        for item in pair_metrics
+        if item.first_pass_latency_ms is not None
+    ]
+    repair_latencies = [
+        item.repair_latency_ms
+        for item in pair_metrics
+        if item.repair_latency_ms is not None
+    ]
+    output_tokens = [
+        item.output_tokens
+        for item in pair_metrics
+        if item.output_tokens is not None
+    ]
+    eligible_tokens = [
+        item.tokens_per_eligible_pair
+        for item in eligible_metrics
+        if item.tokens_per_eligible_pair is not None
+    ]
     return ModelSelectionMetrics(
         model_id=model_id,
         attempted=len(selected),
@@ -240,7 +274,83 @@ def selection_metrics(
             key: statistics.median(values)
             for key, values in role_values.items()
         },
+        median_cv_quality=statistics.median(cv_scores) if cv_scores else None,
+        median_cover_letter_quality=(
+            statistics.median(cover_letter_scores)
+            if cover_letter_scores
+            else None
+        ),
+        mean_repair_count=statistics.mean(repairs) if repairs else 0.0,
+        median_repair_count=statistics.median(repairs) if repairs else 0.0,
+        missing_evidence_safe_fallback_rate=(
+            sum(item.missing_evidence_safe_fallback for item in sparse_metrics)
+            / len(sparse_metrics)
+            if sparse_metrics
+            else None
+        ),
+        mean_evidence_coverage=(
+            statistics.mean(item.evidence_coverage for item in pair_metrics)
+            if pair_metrics
+            else 0.0
+        ),
+        median_first_pass_latency_ms=(
+            statistics.median(first_pass_latencies)
+            if first_pass_latencies
+            else None
+        ),
+        median_repair_latency_ms=(
+            statistics.median(repair_latencies) if repair_latencies else None
+        ),
+        median_output_tokens=(
+            statistics.median(output_tokens) if output_tokens else None
+        ),
+        median_tokens_per_eligible_pair=(
+            statistics.median(eligible_tokens) if eligible_tokens else None
+        ),
     )
+
+
+def stage_metrics_from_progress(
+    run_dir: Path,
+) -> dict[str, list[ModelSelectionMetrics]]:
+    """Rebuild privacy-safe stage aggregates from ignored pair artifacts."""
+    payload = json.loads(
+        (run_dir / "staged_progress.json").read_text(encoding="utf-8")
+    )
+    grouped_results: dict[str, list[RepetitionResult]] = {
+        "A": [],
+        "B": [],
+        "C1": [],
+        "C2": [],
+    }
+    prefixes = {
+        "stage-a": "A",
+        "stage-b": "B",
+        "stage-c-1": "C1",
+        "stage-c-2": "C2",
+    }
+    for unit_id, raw_results in payload.get("unit_results", {}).items():
+        stage = next(
+            (
+                stage_name
+                for prefix, stage_name in prefixes.items()
+                if unit_id.startswith(prefix + "--")
+            ),
+            None,
+        )
+        if stage is None:
+            continue
+        grouped_results[stage].extend(
+            RepetitionResult.model_validate(item) for item in raw_results
+        )
+    return {
+        stage: [
+            selection_metrics(model_id, results)
+            for model_id in sorted({item.model_id for item in results})
+        ]
+        for stage, results in grouped_results.items()
+        if results
+    }
 
 
 def _projection(

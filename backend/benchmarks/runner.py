@@ -254,7 +254,7 @@ def _model_aggregate(model_id: str, results: list[RepetitionResult]) -> ModelAgg
     sparse_results = [
         metrics
         for metrics in pair_metrics
-        if metrics.missing_evidence_safe_fallback
+        if metrics.missing_evidence_case
     ]
     return ModelAggregate(
         model_id=model_id,
@@ -298,7 +298,10 @@ def _model_aggregate(model_id: str, results: list[RepetitionResult]) -> ModelAgg
             metrics.immutable_token_mutations for metrics in pair_metrics
         ),
         missing_evidence_safe_fallback_rate=(
-            len(sparse_results) / attempted if attempted else 0.0
+            sum(item.missing_evidence_safe_fallback for item in sparse_results)
+            / len(sparse_results)
+            if sparse_results
+            else 0.0
         ),
         mean_evidence_coverage=(
             statistics.mean(metrics.evidence_coverage for metrics in pair_metrics)
@@ -471,6 +474,7 @@ def _pair_metrics(
         unsupported_candidate_claims=unsupported_claims,
         unsupported_numeric_tokens=unsupported_numeric,
         immutable_token_mutations=immutable_mutations,
+        missing_evidence_case="sparse_evidence" in case.risk_tags,
         missing_evidence_safe_fallback=safe_fallback,
         evidence_items_available=len(ledger),
         evidence_items_used=len(used_ids),

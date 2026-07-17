@@ -37,6 +37,24 @@ class ModelSelectionMetrics(StrictSelectionModel):
     median_eligible_pair_latency_ms: float | None = Field(default=None, ge=0.0)
     peak_memory_mb: float | None = Field(default=None, ge=0.0)
     role_specific_median_scores: dict[str, float] = Field(default_factory=dict)
+    median_cv_quality: float | None = Field(default=None, ge=0.0, le=100.0)
+    median_cover_letter_quality: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=100.0,
+    )
+    mean_repair_count: float = Field(default=0.0, ge=0.0)
+    median_repair_count: float = Field(default=0.0, ge=0.0)
+    missing_evidence_safe_fallback_rate: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+    )
+    mean_evidence_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    median_first_pass_latency_ms: float | None = Field(default=None, ge=0.0)
+    median_repair_latency_ms: float | None = Field(default=None, ge=0.0)
+    median_output_tokens: float | None = Field(default=None, ge=0.0)
+    median_tokens_per_eligible_pair: float | None = Field(default=None, ge=0.0)
 
     @property
     def post_repair_hard_gate_rate(self) -> float:

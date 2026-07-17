@@ -390,6 +390,7 @@ def test_sparse_review_required_is_recorded_as_safe_fallback() -> None:
     )
 
     assert metrics.missing_evidence_safe_fallback is True
+    assert metrics.missing_evidence_case is True
     assert metrics.post_repair_hard_gate_passed is False
     assert metrics.normalized_combined_quality is None
 

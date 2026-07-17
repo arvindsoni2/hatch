@@ -13,9 +13,13 @@ from pathlib import Path
 from .adapters import BenchmarkLLMClient
 from .case_loader import CaseValidationError, load_case, load_suite
 from .contracts import BenchmarkSummary
-from .reporting import write_report
+from .reporting import write_report, write_staged_report
 from .runner import benchmark_profile, run_benchmark
-from .staged_runner import ProtectedStateChangedError, run_stage_suite
+from .staged_runner import (
+    ProtectedStateChangedError,
+    run_stage_suite,
+    stage_metrics_from_progress,
+)
 
 _DEFAULT_MODELS = [
     {
@@ -276,12 +280,20 @@ async def _run(args: argparse.Namespace) -> int:
 
 async def _staged_run(args: argparse.Namespace) -> int:
     suite = load_suite(args.suite)
+    output_root = args.output_root.expanduser().resolve()
     result = await run_stage_suite(
         suite,
-        output_root=args.output_root.expanduser().resolve(),
+        output_root=output_root,
         resume_run_id=args.resume,
         defer_stage_c=args.defer_stage_c,
         restart_evidence=args.restart_evidence,
+    )
+    run_dir = output_root / result.run_id
+    write_staged_report(
+        result,
+        stage_metrics_from_progress(run_dir),
+        run_dir / "report.md",
+        protected_hashes_unchanged=True,
     )
     print(
         f"Staged benchmark {result.run_id}: {result.state}; "
