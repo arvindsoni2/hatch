@@ -66,6 +66,38 @@ def _mock_llm(response_json: dict | None = None) -> MagicMock:
 class TestRubricSynthesiserService:
 
     @pytest.mark.asyncio
+    async def test_drops_evidence_not_supported_by_transcript_or_metrics(self) -> None:
+        from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415
+
+        response = {
+            "dimensions": {
+                "star_structure": {
+                    "score": 8,
+                    "score_band": "strong",
+                    "evidence": [
+                        "'implemented a blue-green deployment'",
+                        "Led 500 engineers",
+                    ],
+                    "drill": "Practise one STAR answer.",
+                }
+            },
+            "focus_for_next_session": "Practise STAR structure.",
+        }
+        mock_llm = _mock_llm(response)
+        with patch("app.services.rubric_synthesiser.get_json_model", return_value=mock_llm):
+            rubric = await RubricSynthesiserService().synthesise(
+                transcript="I implemented a blue-green deployment.",
+                evaluation=_make_evaluation(),
+            )
+
+        assert rubric.dimensions["star_structure"].evidence == [
+            "'implemented a blue-green deployment'"
+        ]
+        system_message = mock_llm.ainvoke.await_args.args[0][0].content
+        assert '"prompt_id": "rubric_synthesis"' in system_message
+        assert "OBSERVATION" in system_message
+
+    @pytest.mark.asyncio
     async def test_returns_session_rubric(self) -> None:
         """synthesise() returns a SessionRubric."""
         from app.services.rubric_synthesiser import RubricSynthesiserService  # noqa: PLC0415

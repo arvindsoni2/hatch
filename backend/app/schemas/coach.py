@@ -133,6 +133,7 @@ class AnswerEvaluation(BaseModel):
     feedback: str = ""
     strengths: list[str] = Field(default_factory=list)
     improvements: list[str] = Field(default_factory=list)
+    evidence_references: list[str] = Field(default_factory=list)
     follow_up_question: str | None = None
     speech_coaching: list[str] = Field(default_factory=list)
     rubric: SessionRubric | None = None

@@ -16,6 +16,7 @@ from .llm_client import LLMClient
 from ..agents.tools.context_budgets import FEEDBACK
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import load_master_cv
+from .prompt_catalog import prompt_contract_block
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,7 @@ class FeedbackGeneratorService:
                 category_scores=cat_avg,
                 question_summaries=q_summaries,
                 speech_summary=speech_summary,
+                prompt_contract=prompt_contract_block("session_report"),
             )
         )
 
