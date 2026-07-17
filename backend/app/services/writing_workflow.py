@@ -105,14 +105,6 @@ class WorkflowDiagnostics:
 
 
 @dataclass(frozen=True)
-class CoverLetterWorkflowResult:
-    draft: Any | None
-    content_plan: CoverLetterContentPlan
-    validation: ValidationResult
-    diagnostics: WorkflowDiagnostics
-
-
-@dataclass(frozen=True)
 class SelectEvidenceInput:
     ledger: tuple[EvidenceItem, ...]
 

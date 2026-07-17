@@ -56,7 +56,6 @@ logger = logging.getLogger(__name__)
 _MAX_WORDS = 350
 _MIN_WORDS = 250
 _TARGET_WORD_RANGE = "285-315"
-_MAX_ATTEMPTS = 3
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
 COVER_LETTER_WORD_RE = re.compile(
@@ -142,20 +141,6 @@ def count_cover_letter_body_words(text: str) -> int:
 
 def _body_word_count(paragraphs: list[str]) -> int:
     return count_cover_letter_body_words(" ".join(paragraphs))
-
-
-def _length_defect(result: CoverLetterResult) -> str | None:
-    if result.word_count < _MIN_WORDS:
-        return "under_length"
-    if result.word_count > _MAX_WORDS:
-        return "over_length"
-    return None
-
-
-def _blocking_defect(result: CoverLetterResult) -> str | None:
-    if result.grounding_issues:
-        return "numeric_fidelity"
-    return _length_defect(result)
 
 
 def _length_issue(result: CoverLetterResult) -> str:
@@ -829,42 +814,3 @@ def _validate_cover_letter_grounding(
         if normalized not in candidate_tokens and normalized not in employer_tokens:
             issues.append(f"Cover letter unsupported numeric token '{token}'.")
     return issues
-
-
-def _apply_cover_letter_contract(
-    result: CoverLetterResult,
-    tailored_cv: TailoredCVResult,
-    personal: dict[str, Any],
-    evidence_ledger: tuple[EvidenceItem, ...],
-    jd_text: str = "",
-) -> None:
-    """Apply shared grounding and provenance to the final generated draft."""
-    existing = _validate_cover_letter_grounding(
-        result,
-        tailored_cv,
-        personal,
-        jd_text,
-    )
-    numeric_validation = validate_numeric_fidelity(
-        result.body_paragraphs,
-        evidence_ledger,
-        (jd_text,),
-    )
-    result.grounding_issues = list(
-        dict.fromkeys(
-            [
-                *existing,
-                *(
-                    issue.message
-                    for issue in numeric_validation.issues
-                    if issue.severity == "blocking"
-                ),
-            ]
-        )
-    )
-    result.generation_provenance = GenerationProvenance(
-        prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
-        evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
-        source_evidence_ids=tuple(item.id for item in evidence_ledger),
-        validation=numeric_validation,
-    )
