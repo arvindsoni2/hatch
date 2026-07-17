@@ -56,11 +56,20 @@ class ValidationResult:
 
 
 @dataclass(frozen=True)
+class ClaimProvenance:
+    text: str
+    source_evidence_ids: tuple[str, ...]
+    change_type: Literal["preserved", "rephrased", "removed"]
+    new_claims: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class GenerationProvenance:
     prompt_metadata: PromptMetadata
     evidence_schema_version: str
     source_evidence_ids: tuple[str, ...]
     validation: ValidationResult
+    claims: tuple[ClaimProvenance, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +92,12 @@ COVER_LETTER_REPAIR_PROMPT = PromptMetadata(
     prompt_version="1.0.0",
     schema_version="1.0.0",
     task_name="cover_letter_repair",
+)
+COVER_LETTER_PARAGRAPH_REGENERATION_PROMPT = PromptMetadata(
+    prompt_id="cover_letter_paragraph_regeneration",
+    prompt_version="1.0.0",
+    schema_version="1.0.0",
+    task_name="cover_letter_paragraph_regeneration",
 )
 SHARED_FACTUALITY_PROMPT = PromptMetadata(
     prompt_id="shared_factuality_contract",
@@ -121,10 +136,16 @@ def prompt_metadata_records() -> dict[str, dict[str, str]]:
         CV_TAILORING_PROMPT,
         COVER_LETTER_GENERATION_PROMPT,
         COVER_LETTER_REPAIR_PROMPT,
+        COVER_LETTER_PARAGRAPH_REGENERATION_PROMPT,
         SHARED_FACTUALITY_PROMPT,
         SHARED_NUMERIC_FIDELITY_PROMPT,
     )
     return {item.prompt_id: asdict(item) for item in values}
+
+
+def evidence_records(ledger: Iterable[EvidenceItem]) -> list[dict[str, Any]]:
+    """Serialize approved evidence for deterministic prompt assembly."""
+    return [asdict(item) for item in ledger]
 
 
 def normalize_evidence_text(text: str) -> str:
@@ -285,6 +306,11 @@ def build_evidence_ledger(master: dict[str, Any]) -> tuple[EvidenceItem, ...]:
 
     for item_index, certification in enumerate(master.get("certifications", [])):
         add(f"certifications.{item_index}", certification, "certification")
+
+    personal = master.get("personal", {})
+    if isinstance(personal, dict):
+        for field, value in personal.items():
+            add(f"personal.{field}", value, "profile")
 
     for field, evidence_type in (
         ("preferences", "preference"),

@@ -11,6 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.schemas.tailor import JDAnalysisResult, TailoredCVResult
+from app.services.writing_contracts import (
+    SHARED_FACTUALITY_CONTRACT,
+    SHARED_NUMERIC_FIDELITY_CONTRACT,
+)
 
 _SENTINEL_CV = "flag it as a gap rather than inserting it"
 _SENTINEL_CL = "use the company name verbatim in paragraph one"
@@ -84,6 +88,9 @@ async def test_cv_prompt_contains_skill_guidance():
         "cv-tailoring SKILL.md guidance not found in the CV tailoring prompt. "
         "Pass skill_instructions to render_prompt."
     )
+    assert SHARED_FACTUALITY_CONTRACT in prompt
+    assert SHARED_NUMERIC_FIDELITY_CONTRACT in prompt
+    assert "APPROVED_EVIDENCE" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +113,9 @@ async def test_cl_prompt_contains_skill_guidance():
     assert _SENTINEL_CL in prompt, (
         "cover-letter SKILL.md guidance not found in the CL generation prompt."
     )
+    assert SHARED_FACTUALITY_CONTRACT in prompt
+    assert SHARED_NUMERIC_FIDELITY_CONTRACT in prompt
+    assert "APPROVED_EVIDENCE" in prompt
 
 
 # ---------------------------------------------------------------------------

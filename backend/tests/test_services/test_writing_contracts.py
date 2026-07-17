@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.schemas.tailor import CoverLetterResult, TailoredCVResult
 from app.services.writing_contracts import (
     EVIDENCE_SCHEMA_VERSION,
     build_evidence_ledger,
@@ -138,3 +139,21 @@ def test_numeric_dates_and_metadata_outside_candidate_prose_are_not_false_positi
 
     assert result.passed
     assert result.issues == ()
+
+
+def test_old_generated_records_without_prompt_metadata_remain_readable() -> None:
+    cv = TailoredCVResult.model_validate({"summary": "Grounded"})
+    letter = CoverLetterResult.model_validate(
+        {
+            "subject_line": "Application",
+            "greeting": "Dear Hiring Manager,",
+            "body_paragraphs": [],
+            "sign_off": "Kind regards,",
+            "word_count": 0,
+        }
+    )
+
+    assert cv.generation_provenance is None
+    assert letter.generation_provenance is None
+    assert "generation_provenance" not in cv.model_dump()
+    assert "generation_provenance" not in letter.model_dump()

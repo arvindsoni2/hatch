@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,20 @@ from ..agents.tools.context_budgets import CV_GENERATE
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import MasterCVMissingError, load_master_cv  # noqa: F401
 from .master_cv_validator import MasterCVError, normalise_master_cv, validate_master_cv
+from .writing_contracts import (
+    CV_TAILORING_PROMPT,
+    EVIDENCE_SCHEMA_VERSION,
+    FINAL_COMPLIANCE_REMINDER,
+    SHARED_FACTUALITY_CONTRACT,
+    SHARED_NUMERIC_FIDELITY_CONTRACT,
+    ClaimProvenance,
+    EvidenceItem,
+    GenerationProvenance,
+    build_evidence_ledger,
+    evidence_records,
+    normalize_evidence_text,
+    validate_numeric_fidelity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +203,7 @@ class CVTailor:
         skill_instructions = self._skill_loader.instructions("cv-tailoring")
         cv_slices = self._select_relevant_cv_slices(jd_analysis, master_cv)
         jd_compact = self._compact_jd(jd_analysis)
+        evidence_ledger = build_evidence_ledger(master_cv)
 
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
@@ -198,6 +214,11 @@ class CVTailor:
                 custom_instructions=custom_instructions or "",
                 best_summary_variant=best_summary,
                 skill_instructions=skill_instructions,
+                approved_evidence=evidence_records(evidence_ledger),
+                shared_factuality_contract=SHARED_FACTUALITY_CONTRACT,
+                shared_numeric_fidelity_contract=SHARED_NUMERIC_FIDELITY_CONTRACT,
+                prompt_metadata=asdict(CV_TAILORING_PROMPT),
+                final_compliance_reminder=FINAL_COMPLIANCE_REMINDER,
             )
         )
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CV_GENERATE.max_output)
@@ -211,10 +232,29 @@ class CVTailor:
 
         # Post-generation validation
         blocking, advisory = self._validate_no_fabrication(result, master_cv)
-        result.blocking_issues = blocking
+        numeric_validation = validate_numeric_fidelity(
+            _candidate_prose(result),
+            evidence_ledger,
+        )
+        numeric_blocking = [
+            issue.message
+            for issue in numeric_validation.issues
+            if issue.severity == "blocking"
+        ]
+        result.blocking_issues = list(dict.fromkeys([*blocking, *numeric_blocking]))
         result.fabrication_warnings = advisory
-        if blocking:
-            logger.warning("Blocking issues in tailored CV (document withheld): %s", blocking)
+        result.generation_provenance = GenerationProvenance(
+            prompt_metadata=CV_TAILORING_PROMPT,
+            evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
+            source_evidence_ids=tuple(item.id for item in evidence_ledger),
+            validation=numeric_validation,
+            claims=_cv_claim_provenance(result, evidence_ledger),
+        )
+        if result.blocking_issues:
+            logger.warning(
+                "Blocking issues in tailored CV (document withheld): %s",
+                result.blocking_issues,
+            )
         if advisory:
             logger.warning("Advisory fabrication warnings for tailored CV: %s", advisory)
 
@@ -231,6 +271,55 @@ class CVTailor:
         """
         from .grounding_validator import validate  # noqa: PLC0415
         return validate(tailored, master)
+
+
+def _candidate_prose(tailored: TailoredCVResult) -> list[str]:
+    """Return generated candidate prose, excluding identity and date metadata."""
+    prose = [tailored.summary]
+    for skill_group in tailored.skills:
+        if isinstance(skill_group, dict):
+            prose.extend(str(item) for item in skill_group.get("items", []) if item)
+    for experience in tailored.experience:
+        prose.extend(experience.achievements)
+    return prose
+
+
+def _cv_claim_provenance(
+    tailored: TailoredCVResult,
+    ledger: tuple[EvidenceItem, ...],
+) -> tuple[ClaimProvenance, ...]:
+    """Map structurally preserved CV bullets to their source evidence IDs."""
+    by_path = {item.source_path: item for item in ledger}
+    claims: list[ClaimProvenance] = []
+    for exp_index, experience in enumerate(tailored.experience):
+        for bullet_index, text in enumerate(experience.achievements):
+            source = by_path.get(
+                f"experience.{exp_index}.achievements.{bullet_index}"
+            )
+            if source is None:
+                claims.append(
+                    ClaimProvenance(
+                        text=text,
+                        source_evidence_ids=(),
+                        change_type="rephrased",
+                        new_claims=(text,),
+                    )
+                )
+                continue
+            change_type = (
+                "preserved"
+                if normalize_evidence_text(text)
+                == normalize_evidence_text(source.text)
+                else "rephrased"
+            )
+            claims.append(
+                ClaimProvenance(
+                    text=text,
+                    source_evidence_ids=(source.id,),
+                    change_type=change_type,
+                )
+            )
+    return tuple(claims)
 
 
 _ROLE_NOUNS = {
