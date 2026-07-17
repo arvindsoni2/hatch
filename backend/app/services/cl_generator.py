@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
+from dataclasses import asdict
 from typing import Any
 
 from pathlib import Path
@@ -13,6 +15,19 @@ from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import CL_BODY, CL_SNIPPET
 from .jd_analyser import _split_jinja_output
+from .writing_contracts import (
+    COVER_LETTER_GENERATION_PROMPT,
+    COVER_LETTER_PARAGRAPH_REGENERATION_PROMPT,
+    EVIDENCE_SCHEMA_VERSION,
+    FINAL_COMPLIANCE_REMINDER,
+    SHARED_FACTUALITY_CONTRACT,
+    SHARED_NUMERIC_FIDELITY_CONTRACT,
+    EvidenceItem,
+    GenerationProvenance,
+    build_evidence_ledger,
+    evidence_records,
+    validate_numeric_fidelity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +95,9 @@ class CoverLetterGenerator:
             CoverLetterResult, trimmed to <= 350 words.
         """
         skill_instructions = self._skill_loader.instructions("cover-letter")
+        evidence_source = tailored_cv.model_dump(mode="json")
+        evidence_source["personal"] = personal
+        evidence_ledger = build_evidence_ledger(evidence_source)
 
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
@@ -89,11 +107,15 @@ class CoverLetterGenerator:
                 personal=personal,
                 variant=variant,
                 skill_instructions=skill_instructions,
+                approved_evidence=evidence_records(evidence_ledger),
+                shared_factuality_contract=SHARED_FACTUALITY_CONTRACT,
+                shared_numeric_fidelity_contract=SHARED_NUMERIC_FIDELITY_CONTRACT,
+                prompt_metadata=asdict(COVER_LETTER_GENERATION_PROMPT),
+                final_compliance_reminder=FINAL_COMPLIANCE_REMINDER,
             )
         )
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CL_BODY.max_output)
         result = _parse_cover_letter(raw)
-        result.grounding_issues = _validate_cover_letter_grounding(result, tailored_cv, personal)
 
         # Trim loop: if over word limit, regenerate with tighter instruction
         if result.word_count > _MAX_WORDS:
@@ -107,12 +129,23 @@ class CoverLetterGenerator:
                     variant=variant,
                     trim_instruction=f"The previous draft was {result.word_count} words. "
                     f"STRICTLY keep total body to {_MAX_WORDS} words max.",
+                    skill_instructions=skill_instructions,
+                    approved_evidence=evidence_records(evidence_ledger),
+                    shared_factuality_contract=SHARED_FACTUALITY_CONTRACT,
+                    shared_numeric_fidelity_contract=SHARED_NUMERIC_FIDELITY_CONTRACT,
+                    prompt_metadata=asdict(COVER_LETTER_GENERATION_PROMPT),
+                    final_compliance_reminder=FINAL_COMPLIANCE_REMINDER,
                 )
             )
             raw2: dict[str, Any] = await self._client.complete_json(system_prompt2, user_prompt2, max_tokens=CL_BODY.max_output)
             result = _parse_cover_letter(raw2)
-            result.grounding_issues = _validate_cover_letter_grounding(result, tailored_cv, personal)
 
+        _apply_cover_letter_contract(
+            result,
+            tailored_cv,
+            personal,
+            evidence_ledger,
+        )
         return result
 
     async def regenerate_paragraph(
@@ -133,19 +166,33 @@ class CoverLetterGenerator:
         Returns:
             Updated CoverLetterResult with the new paragraph.
         """
-        system = (
-            "You are an expert cover letter writer. Rewrite only the specified paragraph "
-            "keeping the rest of the letter context in mind. Return JSON with key 'paragraph'."
-        )
         paragraphs = current_letter.body_paragraphs
         current_para = paragraphs[paragraph_index] if paragraph_index < len(paragraphs) else ""
+        evidence_ledger = build_evidence_ledger(
+            {"summary": "\n".join(current_letter.body_paragraphs)}
+        )
+        system = "\n\n".join(
+            (
+                "You are an expert cover letter writer. Rewrite only the specified paragraph.",
+                SHARED_FACTUALITY_CONTRACT,
+                SHARED_NUMERIC_FIDELITY_CONTRACT,
+                "PROMPT METADATA:\n"
+                + json.dumps(
+                    asdict(COVER_LETTER_PARAGRAPH_REGENERATION_PROMPT),
+                    sort_keys=True,
+                ),
+            )
+        )
 
         user = (
+            "APPROVED_EVIDENCE:\n"
+            f"{json.dumps(evidence_records(evidence_ledger), ensure_ascii=False, sort_keys=True)}\n\n"
             f"Current paragraph {paragraph_index + 1}:\n{current_para}\n\n"
             f"Instruction: {instruction}\n\n"
             f"JD role: {jd_analysis.role_title}\n"
             f"Key keywords: {', '.join(jd_analysis.ats_keywords.technical[:10])}\n\n"
-            f"Return JSON: {{\"paragraph\": \"<rewritten paragraph>\"}}"
+            f"Return JSON: {{\"paragraph\": \"<rewritten paragraph>\"}}\n\n"
+            f"{FINAL_COMPLIANCE_REMINDER}"
         )
         raw: dict[str, Any] = await self._client.complete_json(system, user, max_tokens=CL_SNIPPET.max_output)
         new_para = raw.get("paragraph", current_para)
@@ -159,7 +206,7 @@ class CoverLetterGenerator:
         full_text = " ".join(new_paragraphs)
         word_count = len(full_text.split())
 
-        return CoverLetterResult(
+        result = CoverLetterResult(
             subject_line=current_letter.subject_line,
             greeting=current_letter.greeting,
             body_paragraphs=new_paragraphs,
@@ -168,6 +215,29 @@ class CoverLetterGenerator:
             key_keywords_used=current_letter.key_keywords_used,
             grounding_issues=list(current_letter.grounding_issues),
         )
+        numeric_validation = validate_numeric_fidelity(
+            [new_para],
+            evidence_ledger,
+        )
+        result.grounding_issues = list(
+            dict.fromkeys(
+                [
+                    *result.grounding_issues,
+                    *(
+                        issue.message
+                        for issue in numeric_validation.issues
+                        if issue.severity == "blocking"
+                    ),
+                ]
+            )
+        )
+        result.generation_provenance = GenerationProvenance(
+            prompt_metadata=COVER_LETTER_PARAGRAPH_REGENERATION_PROMPT,
+            evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
+            source_evidence_ids=tuple(item.id for item in evidence_ledger),
+            validation=numeric_validation,
+        )
+        return result
 
 
 def _parse_cover_letter(raw: dict[str, Any]) -> CoverLetterResult:
@@ -215,9 +285,7 @@ def _validate_cover_letter_grounding(
     tailored_cv: TailoredCVResult,
     personal: dict[str, Any],
 ) -> list[str]:
-    text = " ".join(
-        [result.subject_line, result.greeting, result.sign_off] + result.body_paragraphs
-    )
+    text = " ".join(result.body_paragraphs)
     source = _source_text(tailored_cv, personal)
     issues: list[str] = []
     if _PLACEHOLDER_RE.search(text):
@@ -226,3 +294,35 @@ def _validate_cover_letter_grounding(
         if token.lower() not in source:
             issues.append(f"Cover letter numeric token '{token}' is not grounded in the tailored CV.")
     return issues
+
+
+def _apply_cover_letter_contract(
+    result: CoverLetterResult,
+    tailored_cv: TailoredCVResult,
+    personal: dict[str, Any],
+    evidence_ledger: tuple[EvidenceItem, ...],
+) -> None:
+    """Apply shared grounding and provenance to the final generated draft."""
+    existing = _validate_cover_letter_grounding(result, tailored_cv, personal)
+    numeric_validation = validate_numeric_fidelity(
+        result.body_paragraphs,
+        evidence_ledger,
+    )
+    result.grounding_issues = list(
+        dict.fromkeys(
+            [
+                *existing,
+                *(
+                    issue.message
+                    for issue in numeric_validation.issues
+                    if issue.severity == "blocking"
+                ),
+            ]
+        )
+    )
+    result.generation_provenance = GenerationProvenance(
+        prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
+        evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
+        source_evidence_ids=tuple(item.id for item in evidence_ledger),
+        validation=numeric_validation,
+    )

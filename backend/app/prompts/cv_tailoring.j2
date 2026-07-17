@@ -1,5 +1,12 @@
 You are an expert CV writer. Tailor the candidate's master CV to match the specific job description below, maximising ATS compatibility while remaining completely truthful.
 
+{{ shared_factuality_contract }}
+
+{{ shared_numeric_fidelity_contract }}
+
+PROMPT METADATA:
+{{ prompt_metadata | tojson }}
+
 CRITICAL RULES:
 1. NEVER fabricate achievements — every bullet must trace back to the master CV
 2. NEVER emit bracketed placeholders or LaTeX markup — if a value is unknown, omit the clause entirely; write £ for GBP, never \textsterling or $...$ notation
@@ -22,6 +29,9 @@ If the candidate's experience is in different sectors than the target (e.g. ener
 
 SKILL CATEGORY LABELS:
 Use the candidate's existing skill group names from the master CV. Do not introduce new category names that do not appear in the master CV. Only include a category if the candidate genuinely has skills for it.
+
+APPROVED_EVIDENCE:
+{{ approved_evidence | tojson }}
 
 MASTER CV (complete, relevance-ordered):
 {{ master_cv | tojson }}
@@ -87,3 +97,5 @@ Return ONLY valid JSON matching this schema:
   "ats_keywords_embedded": ["array — keywords successfully embedded in the CV that were already present in the master CV"],
   "tailoring_notes": "string — brief explanation of key tailoring decisions and any sector-transfer choices made"
 }
+
+{{ final_compliance_reminder }}

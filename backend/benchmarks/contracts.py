@@ -110,6 +110,7 @@ class RepetitionResult(StrictModel):
     cover_letter: dict[str, Any] | None = None
     score: PairScore | None = None
     observations: list[dict[str, Any]] = Field(default_factory=list)
+    prompt_metadata: dict[str, dict[str, str]] = Field(default_factory=dict)
     error_type: str | None = None
     error_message: str | None = None
 

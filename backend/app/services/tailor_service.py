@@ -27,6 +27,7 @@ from .docx_cl_builder import DocxCLBuilder
 from .docx_cv_builder import DocxCVBuilder
 from .jd_analyser import JDAnalyser
 from .master_cv_store import load_master_cv
+from .writing_contracts import GenerationProvenance
 from ..agents.tools.profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,20 @@ def _load_master_cv() -> dict[str, Any]:
 
 def _load_personal() -> dict[str, Any]:
     return load_master_cv().get("personal", {})
+
+
+def _tailoring_params(
+    values: dict[str, Any],
+    generated: Any,
+) -> str:
+    """Serialize existing tailoring parameters with optional internal provenance."""
+    provenance = getattr(generated, "generation_provenance", None)
+    if isinstance(provenance, GenerationProvenance):
+        values = {
+            **values,
+            "generation_provenance": provenance.to_dict(),
+        }
+    return json.dumps(values)
 
 
 def _master_cv_text(master: dict[str, Any]) -> str:
@@ -330,11 +345,14 @@ class TailorService:
             file_path=file_path,
             file_size_bytes=file_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({
-                "variant": variant,
-                "custom_instructions": custom_instructions,
-                "template_id": template_id or "ats_classic",
-            }),
+            tailoring_params=_tailoring_params(
+                {
+                    "variant": variant,
+                    "custom_instructions": custom_instructions,
+                    "template_id": template_id or "ats_classic",
+                },
+                tailored_cv,
+            ),
             ats_score=ats_result.overall_score,
             ats_details=json.dumps(ats_result.model_dump()),
             variant_label=variant,
@@ -390,7 +408,10 @@ class TailorService:
             file_path=file_path,
             file_size_bytes=file_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
+            tailoring_params=_tailoring_params(
+                {"variant": variant},
+                cover_letter,
+            ),
             variant_label=variant,
             status="generated",
         )
@@ -543,12 +564,15 @@ class TailorService:
             file_path=cv_path,
             file_size_bytes=cv_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({
-                "variant": variant,
-                "custom_instructions": custom_instructions,
-                "template_id": template_id or "ats_classic",
-                "design_settings": design_settings,
-            }),
+            tailoring_params=_tailoring_params(
+                {
+                    "variant": variant,
+                    "custom_instructions": custom_instructions,
+                    "template_id": template_id or "ats_classic",
+                    "design_settings": design_settings,
+                },
+                tailored_cv,
+            ),
             ats_score=ats_result.overall_score,
             ats_details=json.dumps(ats_result.model_dump()),
             variant_label=variant,
@@ -582,12 +606,15 @@ class TailorService:
             file_path=cl_path,
             file_size_bytes=cl_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({
-                "variant": variant,
-                "template_id": template_id,
-                "design_settings": design_settings,
-                "regeneration_instruction": custom_instructions,
-            }),
+            tailoring_params=_tailoring_params(
+                {
+                    "variant": variant,
+                    "template_id": template_id,
+                    "design_settings": design_settings,
+                    "regeneration_instruction": custom_instructions,
+                },
+                cover_letter,
+            ),
             variant_label=variant,
             status="generated",
         )
@@ -686,7 +713,10 @@ class TailorService:
             file_path=cv_path,
             file_size_bytes=cv_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
+            tailoring_params=_tailoring_params(
+                {"variant": variant},
+                tailored_cv,
+            ),
             ats_score=ats_result.overall_score,
             ats_details=json.dumps(ats_result.model_dump()),
             variant_label=variant,
@@ -703,7 +733,10 @@ class TailorService:
             file_path=cl_path,
             file_size_bytes=cl_size,
             jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
+            tailoring_params=_tailoring_params(
+                {"variant": variant},
+                cover_letter,
+            ),
             variant_label=variant,
         )
 

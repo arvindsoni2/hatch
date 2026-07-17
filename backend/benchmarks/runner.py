@@ -14,6 +14,11 @@ from typing import Any, Protocol
 
 from app.services.cl_generator import CoverLetterGenerator, select_tone_variant
 from app.services.cv_tailor import CVTailor
+from app.services.writing_contracts import (
+    EVIDENCE_SCHEMA_VERSION,
+    VALIDATION_SCHEMA_VERSION,
+    prompt_metadata_records,
+)
 
 from .adapters import BenchmarkLLMClient, BenchmarkModelUnavailableError
 from .contracts import (
@@ -198,6 +203,16 @@ async def run_benchmark(
 
     run_id = run_id or f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     run_dir = output_root / run_id
+    writing_prompt_metadata = prompt_metadata_records()
+    active_prompt_metadata = {
+        prompt_id: writing_prompt_metadata[prompt_id]
+        for prompt_id in (
+            "cv_tailoring",
+            "cover_letter_generation",
+            "shared_factuality_contract",
+            "shared_numeric_fidelity_contract",
+        )
+    }
     _atomic_write_json(
         run_dir / "manifest.json",
         {
@@ -206,6 +221,18 @@ async def run_benchmark(
             "git_commit": _git_commit(),
             "input_hashes": case.input_hashes,
             "repository_hashes": _repository_hashes(),
+            "prompt_versions": {
+                prompt_id: metadata["prompt_version"]
+                for prompt_id, metadata in writing_prompt_metadata.items()
+            },
+            "schema_versions": {
+                "evidence_ledger": EVIDENCE_SCHEMA_VERSION,
+                "writing_validation": VALIDATION_SCHEMA_VERSION,
+                **{
+                    prompt_id: metadata["schema_version"]
+                    for prompt_id, metadata in writing_prompt_metadata.items()
+                },
+            },
             "models": [available[item].model_dump(mode="json") for item in model_ids],
             "seeds": case.seeds[:repetitions],
         },
@@ -241,6 +268,7 @@ async def run_benchmark(
                         item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
                         for item in client.observations
                     ],
+                    prompt_metadata=active_prompt_metadata,
                 )
             except BenchmarkModelUnavailableError as exc:
                 result = RepetitionResult(
@@ -253,6 +281,7 @@ async def run_benchmark(
                         item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
                         for item in client.observations
                     ],
+                    prompt_metadata=active_prompt_metadata,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                 )
@@ -267,6 +296,7 @@ async def run_benchmark(
                         item.model_dump(mode="json") if hasattr(item, "model_dump") else dict(item)
                         for item in client.observations
                     ],
+                    prompt_metadata=active_prompt_metadata,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                 )

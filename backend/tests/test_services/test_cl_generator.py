@@ -97,6 +97,9 @@ async def test_generate_returns_cover_letter():
     assert result.subject_line != ""
     assert len(result.body_paragraphs) == 4
     assert result.word_count > 0
+    assert result.generation_provenance is not None
+    assert result.generation_provenance.prompt_metadata.prompt_version == "2.0.0"
+    assert "generation_provenance" not in result.model_dump()
 
 
 @pytest.mark.asyncio
@@ -172,6 +175,39 @@ async def test_regenerate_paragraph():
 
     assert result.body_paragraphs[1] == "Rewritten paragraph with AWS and Terraform focus."
     assert result.body_paragraphs[0] == "Para 1"  # Other paragraphs unchanged
+
+
+@pytest.mark.asyncio
+async def test_regenerate_paragraph_cannot_bypass_numeric_fidelity():
+    client = make_mock_client({"paragraph": "Managed 120 locations."})
+    gen = CoverLetterGenerator(client)
+    current = CoverLetterResult(
+        subject_line="Test",
+        greeting="Dear Hiring Manager,",
+        body_paragraphs=[
+            "Managed 120+ locations.",
+            "Delivered safely.",
+        ],
+        sign_off="Sincerely,",
+        word_count=5,
+    )
+
+    result = await gen.regenerate_paragraph(
+        0,
+        "Rephrase this paragraph",
+        current,
+        JD_ANALYSIS,
+    )
+
+    assert any("120 locations" in issue for issue in result.grounding_issues)
+    assert result.generation_provenance is not None
+    assert (
+        result.generation_provenance.prompt_metadata.prompt_id
+        == "cover_letter_paragraph_regeneration"
+    )
+    prompt = " ".join(str(arg) for arg in client.complete_json.call_args.args)
+    assert "SHARED FACTUALITY CONTRACT (v1.0.0)" in prompt
+    assert "SHARED NUMERIC-FIDELITY CONTRACT (v1.0.0)" in prompt
 
 
 def test_parse_cover_letter():
