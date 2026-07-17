@@ -684,6 +684,7 @@ async def run_benchmark(
             pair_score = score_pair(case, cv, letter)
             eligible = bool(pair_score.eligible and pair_score.combined is not None)
             exclusion = None if eligible else "blocked_by_hard_gate"
+            provenance = letter.generation_provenance
             result = RepetitionResult(
                 model_id=spec.id,
                 repetition=repetition,
@@ -706,6 +707,9 @@ async def run_benchmark(
                     for item in client.observations
                 ],
                 prompt_metadata=active_prompt_metadata,
+                workflow_diagnostics=(
+                    provenance.workflow if provenance is not None else None
+                ),
             )
             return result
         except BenchmarkModelUnavailableError as exc:

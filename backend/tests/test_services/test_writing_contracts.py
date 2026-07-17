@@ -4,7 +4,10 @@ import pytest
 
 from app.schemas.tailor import CoverLetterResult, TailoredCVResult
 from app.services.writing_contracts import (
+    COVER_LETTER_GENERATION_PROMPT,
     EVIDENCE_SCHEMA_VERSION,
+    GenerationProvenance,
+    ValidationResult,
     build_evidence_ledger,
     extract_numeric_tokens,
     normalize_evidence_text,
@@ -168,3 +171,28 @@ def test_old_generated_records_without_prompt_metadata_remain_readable() -> None
     assert letter.generation_provenance is None
     assert "generation_provenance" not in cv.model_dump()
     assert "generation_provenance" not in letter.model_dump()
+
+
+def test_generation_provenance_accepts_optional_id_only_workflow_metadata() -> None:
+    provenance = GenerationProvenance(
+        prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
+        evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
+        source_evidence_ids=("evidence-1",),
+        validation=ValidationResult(passed=True, issues=(), metrics={}),
+        content_plan={
+            "opening_evidence_ids": ["evidence-1"],
+            "primary_evidence_ids": [],
+            "secondary_evidence_ids": [],
+            "alignment_job_requirement_ids": ["requirement-1"],
+        },
+        workflow={
+            "run_id": "run-1",
+            "skill_id": "cover-letter",
+            "final_state": "passed",
+        },
+    )
+
+    payload = provenance.to_dict()
+
+    assert payload["content_plan"]["opening_evidence_ids"] == ["evidence-1"]
+    assert payload["workflow"]["final_state"] == "passed"

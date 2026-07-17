@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
@@ -250,3 +251,84 @@ class TestSkillLoaderScripts:
         assert isinstance(keywords, list)
         assert len(keywords) > 0
         assert all(isinstance(k, str) for k in keywords)
+
+
+class TestSkillLoaderContract:
+
+    def test_cover_letter_exposes_bounded_writing_contract(self):
+        from app.skills.skill_loader import SkillLoader, SkillRegistry
+
+        loader = SkillLoader(SkillRegistry(_SKILLS_DIR))
+        contract = loader.contract("cover-letter")
+
+        assert contract is not None
+        assert contract.skill_id == "cover-letter"
+        assert contract.skill_version == "1.0.0"
+        assert contract.input_schema == "CoverLetterWorkflowInput"
+        assert contract.output_schema == "CoverLetterResult"
+        assert contract.preconditions == (
+            "approved_evidence_available",
+            "job_analysis_available",
+        )
+        assert contract.validators == (
+            "content_plan_ids",
+            "required_fields",
+            "placeholder",
+            "numeric_fidelity",
+            "body_length",
+        )
+        assert contract.allowed_repair_actions == (
+            "unsupported_numeric_token",
+            "mutated_numeric_token",
+            "missing_required_fields",
+            "under_length",
+            "over_length",
+        )
+        assert contract.maximum_attempts == 3
+        assert contract.safe_failure_state == "review_required"
+
+    def test_unknown_skill_has_no_contract(self):
+        from app.skills.skill_loader import SkillLoader, SkillRegistry
+
+        loader = SkillLoader(SkillRegistry(_SKILLS_DIR))
+
+        assert loader.contract("does-not-exist") is None
+
+    def test_malformed_contract_raises_value_error(self, tmp_path: Path):
+        from app.skills.skill_loader import SkillLoader, SkillRegistry
+
+        skill_dir = tmp_path / "broken"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# Broken", encoding="utf-8")
+        (skill_dir / "contract.json").write_text("{broken", encoding="utf-8")
+        loader = SkillLoader(SkillRegistry(tmp_path))
+
+        with pytest.raises(ValueError, match="Invalid skill contract JSON"):
+            loader.contract("broken")
+
+    def test_contract_skill_id_must_match_folder(self, tmp_path: Path):
+        from app.skills.skill_loader import SkillLoader, SkillRegistry
+
+        skill_dir = tmp_path / "folder-name"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("# Contract", encoding="utf-8")
+        (skill_dir / "contract.json").write_text(
+            json.dumps(
+                {
+                    "skill_id": "different-name",
+                    "skill_version": "1.0.0",
+                    "input_schema": "Input",
+                    "output_schema": "Output",
+                    "preconditions": ["ready"],
+                    "validators": ["valid"],
+                    "allowed_repair_actions": ["repair"],
+                    "maximum_attempts": 1,
+                    "safe_failure_state": "failed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        loader = SkillLoader(SkillRegistry(tmp_path))
+
+        with pytest.raises(ValueError, match="does not match folder"):
+            loader.contract("folder-name")

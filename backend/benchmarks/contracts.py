@@ -125,6 +125,7 @@ class RepetitionResult(StrictModel):
     writing_quality_exclusion_reason: str | None = None
     observations: list[dict[str, Any]] = Field(default_factory=list)
     prompt_metadata: dict[str, dict[str, str]] = Field(default_factory=dict)
+    workflow_diagnostics: dict[str, Any] | None = None
     first_pass_cover_letter_word_count: int | None = None
     final_cover_letter_word_count: int | None = None
     cover_letter_repair_count: int = Field(default=0, ge=0)

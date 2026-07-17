@@ -2,9 +2,26 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class SkillContract:
+    """Machine-readable execution boundary for a registered skill."""
+
+    skill_id: str
+    skill_version: str
+    input_schema: str
+    output_schema: str
+    preconditions: tuple[str, ...]
+    validators: tuple[str, ...]
+    allowed_repair_actions: tuple[str, ...]
+    maximum_attempts: int
+    safe_failure_state: str
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -99,6 +116,63 @@ class SkillLoader:
         text = skill_md.read_text(encoding="utf-8")
         _, body = _parse_frontmatter(text)
         return body
+
+    def contract(self, name: str) -> SkillContract | None:
+        """Load and validate the optional machine-readable skill contract."""
+        if not self._registry.has(name):
+            return None
+        path = self._registry.skill_dir(name) / "contract.json"
+        if not path.exists():
+            return None
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise ValueError(f"Invalid skill contract JSON: {path}") from exc
+        if not isinstance(raw, dict):
+            raise ValueError(f"Skill contract must be a JSON object: {path}")
+
+        scalar_fields = (
+            "skill_id",
+            "skill_version",
+            "input_schema",
+            "output_schema",
+            "safe_failure_state",
+        )
+        list_fields = (
+            "preconditions",
+            "validators",
+            "allowed_repair_actions",
+        )
+        for field in scalar_fields:
+            if not isinstance(raw.get(field), str) or not raw[field]:
+                raise ValueError(f"Skill contract field {field!r} must be a non-empty string")
+        for field in list_fields:
+            value = raw.get(field)
+            if (
+                not isinstance(value, list)
+                or not value
+                or not all(isinstance(item, str) and item for item in value)
+            ):
+                raise ValueError(f"Skill contract field {field!r} must be a non-empty string list")
+        maximum_attempts = raw.get("maximum_attempts")
+        if not isinstance(maximum_attempts, int) or maximum_attempts < 1:
+            raise ValueError("Skill contract maximum_attempts must be a positive integer")
+        if raw["skill_id"] != name:
+            raise ValueError(
+                f"Skill contract ID {raw['skill_id']!r} does not match folder {name!r}"
+            )
+
+        return SkillContract(
+            skill_id=raw["skill_id"],
+            skill_version=raw["skill_version"],
+            input_schema=raw["input_schema"],
+            output_schema=raw["output_schema"],
+            preconditions=tuple(raw["preconditions"]),
+            validators=tuple(raw["validators"]),
+            allowed_repair_actions=tuple(raw["allowed_repair_actions"]),
+            maximum_attempts=maximum_attempts,
+            safe_failure_state=raw["safe_failure_state"],
+        )
 
     def resource(self, name: str, filename: str) -> str:
         """Return the raw string content of a resources/ file for the named skill.

@@ -245,6 +245,19 @@ async def test_runner_ranks_gate_pass_rate_before_quality(
     )
     assert result_payload["first_pass_cover_letter_word_count"] == result_payload["final_cover_letter_word_count"]
     assert result_payload["cover_letter_repair_count"] == 0
+    workflow = result_payload["workflow_diagnostics"]
+    assert workflow["skill_id"] == "cover-letter"
+    assert workflow["skill_version"] == "1.0.0"
+    assert workflow["final_state"] in {
+        "passed",
+        "repaired",
+        "review_required",
+    }
+    assert workflow["attempts"][0]["attempt_number"] == 1
+    serialized_workflow = json.dumps(workflow)
+    assert CASE.master_cv["personal"]["email"] not in serialized_workflow
+    assert CASE.master_cv["experience"][0]["achievements"][0]["text"] not in serialized_workflow
+    assert _cl_payload()["body_paragraphs"][0] not in serialized_workflow
     raw_payloads = json.loads(raw.read_text(encoding="utf-8"))
     assert json.loads(raw_payloads[0])["summary"].startswith(
         "Delivery Manager"
