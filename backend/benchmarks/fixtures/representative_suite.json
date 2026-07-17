@@ -1,0 +1,712 @@
+{
+  "suite_id": "representative-local-writing-v1",
+  "baseline_model_id": "qwen35-4b",
+  "seeds": [11, 23, 41, 59, 83],
+  "stage_b_case_ids": [
+    "delivery-project-manager",
+    "ai-software-engineer",
+    "sparse-cv",
+    "sponsorship-salary"
+  ],
+  "historical_median_pair_seconds": {
+    "qwen35-4b": 1279.2,
+    "qwen35-9b": 898.2,
+    "qwen3-8b": 1663.2,
+    "gemma4-e2b": 228.0,
+    "gemma4-e4b": 590.4
+  },
+  "models": [
+    {
+      "id": "qwen35-4b",
+      "runtime": "llamacpp",
+      "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+      "endpoint": "http://127.0.0.1:8080",
+      "context_size": 16384
+    },
+    {
+      "id": "qwen35-9b",
+      "runtime": "ollama",
+      "model": "qwen3.5:9b",
+      "endpoint": "http://127.0.0.1:11434",
+      "context_size": 16384
+    },
+    {
+      "id": "qwen3-8b",
+      "runtime": "ollama",
+      "model": "qwen3:8b",
+      "endpoint": "http://127.0.0.1:11434",
+      "context_size": 16384
+    },
+    {
+      "id": "gemma4-e2b",
+      "runtime": "ollama",
+      "model": "gemma4:e2b",
+      "endpoint": "http://127.0.0.1:11434",
+      "context_size": 16384
+    },
+    {
+      "id": "gemma4-e4b",
+      "runtime": "ollama",
+      "model": "gemma4:e4b",
+      "endpoint": "http://127.0.0.1:11434",
+      "context_size": 16384
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "delivery-project-manager",
+      "risk_tags": ["management"],
+      "cv_length_tolerance": 0.35,
+      "master_cv": {
+        "personal": {
+          "full_name": "Alex Morgan",
+          "email": "alex.morgan@example.test",
+          "phone": "+44 7700 900101",
+          "location": "Leeds, UK"
+        },
+        "summary_variants": {
+          "delivery": "Delivery and Project Manager leading regulated digital programmes through Scrum, Kanban, governance, and stakeholder alignment."
+        },
+        "skills": {
+          "delivery": {
+            "category": "Delivery Leadership",
+            "items": ["Scrum", "Kanban", "RAID management", "Product backlog", "Stakeholder management"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Delivery Manager",
+            "company": "Northstar Utilities Ltd",
+            "period": "2020 - Present",
+            "achievements": [
+              {"text": "Led 3 cross-functional teams delivering a regulated customer platform for 120,000 users."},
+              {"text": "Reduced release lead time by 25% while maintaining monthly governance reporting."},
+              {"text": "Managed a £4.2M programme budget and an executive RAID forum."}
+            ]
+          },
+          {
+            "role": "Project Manager",
+            "company": "Fictional Transit Group",
+            "period": "2016 - 2020",
+            "achievements": [
+              {"text": "Coordinated 18 workstreams across technology, operations, and supplier teams."},
+              {"text": "Introduced Kanban flow controls that reduced blocked work by 30%."}
+            ]
+          }
+        ],
+        "education": [
+          {
+            "qualification": "BSc Information Systems",
+            "institution": "Example Metropolitan University",
+            "year": "2012"
+          }
+        ],
+        "certifications": ["PRINCE2 Practitioner", "Professional Scrum Master I"]
+      },
+      "job_description": "Delivery Manager for a regulated digital programme. Essential criteria: Scrum or Kanban delivery, programme governance, RAID management, supplier coordination, executive stakeholders, and budget ownership.",
+      "jd_analysis": {
+        "role_title": "Delivery Manager",
+        "requirements": {
+          "must_have": ["Scrum", "Kanban", "programme governance", "RAID management", "stakeholder management"],
+          "nice_to_have": ["supplier coordination", "budget ownership"]
+        },
+        "ats_keywords": {
+          "methodologies": ["Scrum", "Kanban"],
+          "soft_skills": ["stakeholder management"],
+          "domain": ["regulated digital programme", "RAID management"]
+        },
+        "company_context": {
+          "company_name": "Civic Energy Example",
+          "sector": "utilities"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Delivery Manager", "company": "Northstar Utilities Ltd", "period": "2020 - Present", "achievement_count": 3},
+          {"role": "Project Manager", "company": "Fictional Transit Group", "period": "2016 - 2020", "achievement_count": 2}
+        ],
+        "education": [
+          {"qualification": "BSc Information Systems", "institution": "Example Metropolitan University", "year": "2012"}
+        ],
+        "certifications": ["PRINCE2 Practitioner", "Professional Scrum Master I"],
+        "allowed_numeric_tokens": ["3", "120,000", "25%", "£4.2M", "18", "30%", "2020", "2016", "2012"],
+        "approved_vocabulary": ["programme governance", "supplier coordination"]
+      }
+    },
+    {
+      "case_id": "ai-software-engineer",
+      "risk_tags": ["technical"],
+      "cv_length_tolerance": 0.35,
+      "master_cv": {
+        "personal": {
+          "full_name": "Priya Shah",
+          "email": "priya.shah@example.test",
+          "location": "Manchester, UK"
+        },
+        "summary_variants": {
+          "engineering": "Software Engineer building Python services, retrieval systems, and production machine-learning platforms."
+        },
+        "skills": {
+          "engineering": {
+            "category": "Engineering",
+            "items": ["Python", "FastAPI", "PostgreSQL", "Docker", "Kubernetes", "PyTorch"]
+          },
+          "ai": {
+            "category": "Applied AI",
+            "items": ["RAG", "Vector search", "Model evaluation", "Prompt testing"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Senior Software Engineer",
+            "company": "Synthetic Labs Ltd",
+            "period": "2021 - Present",
+            "achievements": [
+              {"text": "Built a Python and FastAPI retrieval service processing 2.5M documents."},
+              {"text": "Reduced p95 search latency from 900ms to 320ms using PostgreSQL and vector indexing."},
+              {"text": "Deployed PyTorch inference workloads to Kubernetes with 99.9% service availability."}
+            ]
+          },
+          {
+            "role": "Software Engineer",
+            "company": "Example Analytics PLC",
+            "period": "2018 - 2021",
+            "achievements": [
+              {"text": "Implemented Docker-based data services and automated model evaluation pipelines."},
+              {"text": "Improved test coverage from 62% to 86%."}
+            ]
+          }
+        ],
+        "education": [
+          {
+            "qualification": "MSc Computer Science",
+            "institution": "Example Northern University",
+            "year": "2018"
+          }
+        ],
+        "certifications": []
+      },
+      "job_description": "AI Software Engineer building Python APIs and retrieval-augmented generation services. Essential: Python, FastAPI, PostgreSQL, vector search, model evaluation, Docker, Kubernetes, and production observability.",
+      "jd_analysis": {
+        "role_title": "AI Software Engineer",
+        "requirements": {
+          "must_have": ["Python", "FastAPI", "PostgreSQL", "vector search", "model evaluation", "Docker", "Kubernetes"],
+          "nice_to_have": ["PyTorch", "RAG", "production observability"]
+        },
+        "ats_keywords": {
+          "technical": ["Python", "FastAPI", "PostgreSQL", "Docker", "Kubernetes", "PyTorch", "RAG", "vector search"],
+          "methodologies": ["model evaluation"],
+          "domain": ["retrieval-augmented generation"]
+        },
+        "company_context": {
+          "company_name": "Example AI Products",
+          "sector": "software"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Senior Software Engineer", "company": "Synthetic Labs Ltd", "period": "2021 - Present", "achievement_count": 3},
+          {"role": "Software Engineer", "company": "Example Analytics PLC", "period": "2018 - 2021", "achievement_count": 2}
+        ],
+        "education": [
+          {"qualification": "MSc Computer Science", "institution": "Example Northern University", "year": "2018"}
+        ],
+        "certifications": [],
+        "allowed_numeric_tokens": ["2.5M", "900", "320", "99.9%", "62%", "86%", "2021", "2018"],
+        "approved_vocabulary": ["retrieval-augmented generation", "production observability"]
+      }
+    },
+    {
+      "case_id": "solution-architect",
+      "risk_tags": ["seniority", "technical"],
+      "cv_length_tolerance": 0.35,
+      "master_cv": {
+        "personal": {
+          "full_name": "Jordan Lee",
+          "email": "jordan.lee@example.test",
+          "location": "London, UK"
+        },
+        "summary_variants": {
+          "architecture": "Solution Architect designing cloud integration, security, and data platforms for complex enterprises."
+        },
+        "skills": {
+          "architecture": {
+            "category": "Architecture",
+            "items": ["AWS", "Azure", "TOGAF", "API design", "Event-driven architecture", "Security architecture"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Solution Architect",
+            "company": "Invented Commerce Group",
+            "period": "2019 - Present",
+            "achievements": [
+              {"text": "Defined AWS and Azure reference architectures used across 14 product teams."},
+              {"text": "Designed an event-driven integration platform handling 35M messages per day."},
+              {"text": "Chaired architecture governance for a £12M transformation portfolio."}
+            ]
+          },
+          {
+            "role": "Technical Architect",
+            "company": "Example Retail Systems",
+            "period": "2015 - 2019",
+            "achievements": [
+              {"text": "Created API security standards adopted by 9 delivery squads."},
+              {"text": "Led TOGAF-aligned option assessments for cloud migration."}
+            ]
+          }
+        ],
+        "education": [
+          {
+            "qualification": "BEng Software Engineering",
+            "institution": "Example City University",
+            "year": "2015"
+          }
+        ],
+        "certifications": ["AWS Certified Solutions Architect - Professional"]
+      },
+      "job_description": "Lead Solution Architect responsible for cloud strategy, integration architecture, security controls, architecture governance, and executive option recommendations across a major transformation.",
+      "jd_analysis": {
+        "role_title": "Lead Solution Architect",
+        "requirements": {
+          "must_have": ["cloud strategy", "integration architecture", "security architecture", "architecture governance"],
+          "nice_to_have": ["AWS", "Azure", "TOGAF", "event-driven architecture"]
+        },
+        "ats_keywords": {
+          "technical": ["AWS", "Azure", "API design", "event-driven architecture"],
+          "methodologies": ["TOGAF", "architecture governance"],
+          "soft_skills": ["executive stakeholders"]
+        },
+        "company_context": {
+          "company_name": "Example Enterprise Services",
+          "sector": "technology"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Solution Architect", "company": "Invented Commerce Group", "period": "2019 - Present", "achievement_count": 3},
+          {"role": "Technical Architect", "company": "Example Retail Systems", "period": "2015 - 2019", "achievement_count": 2}
+        ],
+        "education": [
+          {"qualification": "BEng Software Engineering", "institution": "Example City University", "year": "2015"}
+        ],
+        "certifications": ["AWS Certified Solutions Architect - Professional"],
+        "allowed_numeric_tokens": ["14", "35M", "£12M", "9", "2019", "2015"],
+        "approved_vocabulary": ["cloud strategy", "executive stakeholders"]
+      }
+    },
+    {
+      "case_id": "career-transition",
+      "risk_tags": ["career_transition"],
+      "cv_length_tolerance": 0.35,
+      "master_cv": {
+        "personal": {
+          "full_name": "Taylor Evans",
+          "email": "taylor.evans@example.test",
+          "location": "Bristol, UK"
+        },
+        "summary_variants": {
+          "operations": "Operations Analyst experienced in process improvement, data analysis, controls, and stakeholder workshops."
+        },
+        "skills": {
+          "analysis": {
+            "category": "Analysis",
+            "items": ["SQL", "Power BI", "Process mapping", "Requirements gathering", "Risk controls"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Operations Analyst",
+            "company": "Fictional Logistics Ltd",
+            "period": "2022 - Present",
+            "achievements": [
+              {"text": "Mapped 24 operational processes and identified control gaps."},
+              {"text": "Built Power BI reporting that reduced weekly preparation time by 8 hours."},
+              {"text": "Facilitated requirements workshops with 6 business teams."}
+            ]
+          },
+          {
+            "role": "Operations Coordinator",
+            "company": "Example Distribution Co",
+            "period": "2019 - 2022",
+            "achievements": [
+              {"text": "Used SQL extracts to reconcile service records across 4 regions."}
+            ]
+          }
+        ],
+        "education": [
+          {
+            "qualification": "BA Business Management",
+            "institution": "Example West University",
+            "year": "2019"
+          }
+        ],
+        "certifications": []
+      },
+      "job_description": "Junior Business Analyst in financial services. Essential: requirements gathering, process mapping, data analysis, stakeholder workshops, and risk controls. Financial-services experience is desirable, not essential.",
+      "jd_analysis": {
+        "role_title": "Junior Business Analyst",
+        "requirements": {
+          "must_have": ["requirements gathering", "process mapping", "data analysis", "stakeholder workshops", "risk controls"],
+          "nice_to_have": ["financial services"]
+        },
+        "ats_keywords": {
+          "technical": ["SQL", "Power BI"],
+          "methodologies": ["process mapping", "requirements gathering"],
+          "soft_skills": ["stakeholder workshops"],
+          "domain": ["risk controls", "financial services"]
+        },
+        "company_context": {
+          "company_name": "Example Mutual",
+          "sector": "financial services"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Operations Analyst", "company": "Fictional Logistics Ltd", "period": "2022 - Present", "achievement_count": 3},
+          {"role": "Operations Coordinator", "company": "Example Distribution Co", "period": "2019 - 2022", "achievement_count": 1}
+        ],
+        "education": [
+          {"qualification": "BA Business Management", "institution": "Example West University", "year": "2019"}
+        ],
+        "certifications": [],
+        "allowed_numeric_tokens": ["24", "8", "6", "4", "2022", "2019"],
+        "approved_vocabulary": []
+      }
+    },
+    {
+      "case_id": "sparse-cv",
+      "risk_tags": ["sparse_evidence"],
+      "cv_length_tolerance": 0.5,
+      "master_cv": {
+        "personal": {
+          "full_name": "Sam Reed",
+          "email": "sam.reed@example.test",
+          "location": "Nottingham, UK"
+        },
+        "summary_variants": {
+          "default": "Support assistant with customer service and ticket-handling experience."
+        },
+        "skills": {
+          "support": {
+            "category": "Support",
+            "items": ["Customer service", "Ticket handling"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Support Assistant",
+            "company": "Example Helpdesk Ltd",
+            "period": "2024 - Present",
+            "achievements": [
+              {"text": "Resolved customer tickets and maintained clear case notes."}
+            ]
+          }
+        ],
+        "education": [],
+        "certifications": []
+      },
+      "job_description": "Cloud Support Engineer. Essential: Linux, networking, AWS, incident management, scripting, and monitoring. Candidates must demonstrate production troubleshooting experience.",
+      "jd_analysis": {
+        "role_title": "Cloud Support Engineer",
+        "requirements": {
+          "must_have": ["Linux", "networking", "AWS", "incident management", "scripting", "monitoring"],
+          "nice_to_have": ["production troubleshooting"]
+        },
+        "ats_keywords": {
+          "technical": ["Linux", "networking", "AWS", "scripting", "monitoring"],
+          "methodologies": ["incident management"],
+          "domain": ["production troubleshooting"]
+        },
+        "company_context": {
+          "company_name": "Example Cloud Operations",
+          "sector": "technology"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Support Assistant", "company": "Example Helpdesk Ltd", "period": "2024 - Present", "achievement_count": 1}
+        ],
+        "education": [],
+        "certifications": [],
+        "allowed_numeric_tokens": ["2024"],
+        "approved_vocabulary": []
+      }
+    },
+    {
+      "case_id": "detailed-multipage-cv",
+      "risk_tags": ["context_pressure", "management", "technical"],
+      "cv_length_tolerance": 0.35,
+      "master_cv": {
+        "personal": {
+          "full_name": "Morgan Chen",
+          "email": "morgan.chen@example.test",
+          "location": "Edinburgh, UK"
+        },
+        "summary_variants": {
+          "programme": "Technology Programme Director with experience across data platforms, cloud migration, cyber controls, operating models, and supplier delivery."
+        },
+        "skills": {
+          "leadership": {
+            "category": "Programme Leadership",
+            "items": ["Portfolio governance", "Operating models", "Commercial management", "Executive reporting"]
+          },
+          "technology": {
+            "category": "Technology",
+            "items": ["AWS", "Azure", "Snowflake", "Kafka", "Cyber security", "Data governance"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Technology Programme Director",
+            "company": "Synthetic Financial Group",
+            "period": "2018 - Present",
+            "achievements": [
+              {"text": "Directed a £28M cloud and data transformation spanning 11 delivery teams."},
+              {"text": "Migrated 140 applications while maintaining 99.95% critical-service availability."},
+              {"text": "Established portfolio governance for 46 senior stakeholders."},
+              {"text": "Negotiated supplier changes that avoided £3.6M of forecast cost."}
+            ]
+          },
+          {
+            "role": "Data Programme Manager",
+            "company": "Example Banking Systems",
+            "period": "2014 - 2018",
+            "achievements": [
+              {"text": "Delivered a Snowflake and Kafka platform serving 7 business units."},
+              {"text": "Implemented data governance controls across 320 critical data elements."},
+              {"text": "Coordinated remediation of 85 cyber and resilience findings."}
+            ]
+          },
+          {
+            "role": "Senior Project Manager",
+            "company": "Invented Insurance Services",
+            "period": "2010 - 2014",
+            "achievements": [
+              {"text": "Managed Azure infrastructure delivery across 5 countries."},
+              {"text": "Reduced environment provisioning from 15 days to 2 days."}
+            ]
+          },
+          {
+            "role": "Project Manager",
+            "company": "Example Technology Partners",
+            "period": "2006 - 2010",
+            "achievements": [
+              {"text": "Delivered customer-service systems for 3 regulated clients."}
+            ]
+          }
+        ],
+        "education": [
+          {
+            "qualification": "MSc Information Management",
+            "institution": "Example Scottish University",
+            "year": "2006"
+          },
+          {
+            "qualification": "BSc Computer Science",
+            "institution": "Example Coast University",
+            "year": "2004"
+          }
+        ],
+        "certifications": ["Managing Successful Programmes Practitioner", "TOGAF Certified"]
+      },
+      "job_description": "Technology Programme Director for enterprise cloud, data, and cyber transformation. Requires portfolio governance, executive reporting, commercial management, cloud migration, data governance, cyber controls, and complex supplier leadership.",
+      "jd_analysis": {
+        "role_title": "Technology Programme Director",
+        "requirements": {
+          "must_have": ["portfolio governance", "executive reporting", "commercial management", "cloud migration", "data governance", "cyber controls"],
+          "nice_to_have": ["AWS", "Azure", "Snowflake", "Kafka", "supplier leadership"]
+        },
+        "ats_keywords": {
+          "technical": ["AWS", "Azure", "Snowflake", "Kafka"],
+          "methodologies": ["portfolio governance", "data governance"],
+          "soft_skills": ["executive reporting", "commercial management"],
+          "domain": ["cyber controls", "cloud migration"]
+        },
+        "company_context": {
+          "company_name": "Example Regulated Enterprise",
+          "sector": "financial services"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Technology Programme Director", "company": "Synthetic Financial Group", "period": "2018 - Present", "achievement_count": 4},
+          {"role": "Data Programme Manager", "company": "Example Banking Systems", "period": "2014 - 2018", "achievement_count": 3},
+          {"role": "Senior Project Manager", "company": "Invented Insurance Services", "period": "2010 - 2014", "achievement_count": 2},
+          {"role": "Project Manager", "company": "Example Technology Partners", "period": "2006 - 2010", "achievement_count": 1}
+        ],
+        "education": [
+          {"qualification": "MSc Information Management", "institution": "Example Scottish University", "year": "2006"},
+          {"qualification": "BSc Computer Science", "institution": "Example Coast University", "year": "2004"}
+        ],
+        "certifications": ["Managing Successful Programmes Practitioner", "TOGAF Certified"],
+        "allowed_numeric_tokens": ["£28M", "11", "140", "99.95%", "46", "£3.6M", "7", "320", "85", "5", "15", "2", "3", "2018", "2014", "2010", "2006", "2004"],
+        "approved_vocabulary": ["supplier leadership"]
+      }
+    },
+    {
+      "case_id": "uk-public-sector",
+      "risk_tags": ["public_sector", "management"],
+      "cv_length_tolerance": 0.35,
+      "master_cv": {
+        "personal": {
+          "full_name": "Casey Patel",
+          "email": "casey.patel@example.test",
+          "location": "Cardiff, UK"
+        },
+        "summary_variants": {
+          "public": "Digital Delivery Lead experienced in accessible services, multidisciplinary teams, governance, and evidence-based prioritisation."
+        },
+        "skills": {
+          "delivery": {
+            "category": "Public Digital Delivery",
+            "items": ["Agile delivery", "GDS service standard", "Accessibility", "Benefits management", "Procurement"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Digital Delivery Lead",
+            "company": "Example Civic Services",
+            "period": "2019 - Present",
+            "achievements": [
+              {"text": "Led a multidisciplinary team of 16 delivering an accessible citizen service."},
+              {"text": "Prepared GDS service standard evidence for 3 assessment points."},
+              {"text": "Tracked £6.5M of forecast benefits through quarterly governance."}
+            ]
+          },
+          {
+            "role": "Service Delivery Manager",
+            "company": "Synthetic Council Digital",
+            "period": "2015 - 2019",
+            "achievements": [
+              {"text": "Managed procurement and supplier delivery for 5 digital work packages."},
+              {"text": "Improved online completion from 58% to 74%."}
+            ]
+          }
+        ],
+        "education": [
+          {
+            "qualification": "BA Public Administration",
+            "institution": "Example Wales University",
+            "year": "2015"
+          }
+        ],
+        "certifications": ["AgilePM Practitioner"]
+      },
+      "job_description": "UK public-sector Digital Delivery Lead. Essential criteria: multidisciplinary agile delivery, accessibility, governance, benefits management, supplier delivery, and evidence for service assessments. Desirable: GDS service standard and public procurement.",
+      "jd_analysis": {
+        "role_title": "Digital Delivery Lead",
+        "requirements": {
+          "must_have": ["multidisciplinary agile delivery", "accessibility", "governance", "benefits management", "supplier delivery"],
+          "nice_to_have": ["GDS service standard", "public procurement"]
+        },
+        "ats_keywords": {
+          "methodologies": ["Agile delivery", "GDS service standard"],
+          "soft_skills": ["multidisciplinary team"],
+          "domain": ["accessibility", "benefits management", "procurement"]
+        },
+        "company_context": {
+          "company_name": "Example Public Body",
+          "sector": "UK public sector"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Digital Delivery Lead", "company": "Example Civic Services", "period": "2019 - Present", "achievement_count": 3},
+          {"role": "Service Delivery Manager", "company": "Synthetic Council Digital", "period": "2015 - 2019", "achievement_count": 2}
+        ],
+        "education": [
+          {"qualification": "BA Public Administration", "institution": "Example Wales University", "year": "2015"}
+        ],
+        "certifications": ["AgilePM Practitioner"],
+        "allowed_numeric_tokens": ["16", "3", "£6.5M", "5", "58%", "74%", "2019", "2015"],
+        "approved_vocabulary": ["multidisciplinary agile delivery", "public procurement"]
+      }
+    },
+    {
+      "case_id": "sponsorship-salary",
+      "risk_tags": ["eligibility"],
+      "cv_length_tolerance": 0.35,
+      "master_cv": {
+        "personal": {
+          "full_name": "Robin Ahmed",
+          "email": "robin.ahmed@example.test",
+          "location": "Birmingham, UK",
+          "work_authorisation": "Skilled Worker visa valid until March 2028; requires continued sponsorship."
+        },
+        "summary_variants": {
+          "security": "Security Analyst experienced in cloud controls, vulnerability management, and incident response."
+        },
+        "skills": {
+          "security": {
+            "category": "Security",
+            "items": ["Azure", "SIEM", "Vulnerability management", "Incident response", "ISO 27001"]
+          }
+        },
+        "experience": [
+          {
+            "role": "Security Analyst",
+            "company": "Example Secure Systems",
+            "period": "2022 - Present",
+            "achievements": [
+              {"text": "Triaged 45 security alerts per week using SIEM workflows."},
+              {"text": "Reduced critical vulnerability backlog by 40%."},
+              {"text": "Supported ISO 27001 control testing across 12 services."}
+            ]
+          },
+          {
+            "role": "IT Support Engineer",
+            "company": "Synthetic Hosting Ltd",
+            "period": "2020 - 2022",
+            "achievements": [
+              {"text": "Resolved Azure access and endpoint incidents for 850 users."}
+            ]
+          }
+        ],
+        "education": [
+          {
+            "qualification": "BSc Cyber Security",
+            "institution": "Example Midlands University",
+            "year": "2020"
+          }
+        ],
+        "certifications": ["Microsoft Certified: Azure Security Engineer Associate"]
+      },
+      "job_description": "Security Analyst role paying £55,000-£65,000. The employer cannot provide visa sponsorship. Applicants must already have unrestricted UK work permission. Essential: SIEM, vulnerability management, incident response, Azure, and ISO 27001.",
+      "jd_analysis": {
+        "role_title": "Security Analyst",
+        "salary": {
+          "min": 55000,
+          "max": 65000,
+          "currency": "GBP",
+          "period": "annual"
+        },
+        "requirements": {
+          "must_have": ["SIEM", "vulnerability management", "incident response", "Azure", "ISO 27001", "unrestricted UK work permission"],
+          "nice_to_have": []
+        },
+        "ats_keywords": {
+          "technical": ["SIEM", "Azure"],
+          "methodologies": ["vulnerability management", "incident response"],
+          "domain": ["ISO 27001"]
+        },
+        "company_context": {
+          "company_name": "Example Security Employer",
+          "sector": "cyber security"
+        }
+      },
+      "expected_facts": {
+        "roles": [
+          {"role": "Security Analyst", "company": "Example Secure Systems", "period": "2022 - Present", "achievement_count": 3},
+          {"role": "IT Support Engineer", "company": "Synthetic Hosting Ltd", "period": "2020 - 2022", "achievement_count": 1}
+        ],
+        "education": [
+          {"qualification": "BSc Cyber Security", "institution": "Example Midlands University", "year": "2020"}
+        ],
+        "certifications": ["Microsoft Certified: Azure Security Engineer Associate"],
+        "allowed_numeric_tokens": ["2028", "45", "40%", "27001", "12", "850", "2022", "2020", "£55,000", "£65,000"],
+        "approved_vocabulary": []
+      }
+    }
+  ]
+}

@@ -74,6 +74,61 @@ class BenchmarkCase(StrictModel):
     input_hashes: dict[str, str]
 
 
+RiskTag = Literal[
+    "management",
+    "technical",
+    "seniority",
+    "career_transition",
+    "sparse_evidence",
+    "context_pressure",
+    "public_sector",
+    "eligibility",
+]
+
+
+class SuiteCase(StrictModel):
+    case_id: str = Field(min_length=1)
+    risk_tags: set[RiskTag] = Field(min_length=1)
+    master_cv: dict[str, Any]
+    job_description: str = Field(min_length=1)
+    jd_analysis: JDAnalysisResult
+    expected_facts: ExpectedFacts
+    cv_length_tolerance: float = Field(default=0.1, ge=0.0, le=1.0)
+
+
+class BenchmarkSuite(StrictModel):
+    suite_id: str = Field(min_length=1)
+    baseline_model_id: str = Field(min_length=1)
+    seeds: list[int] = Field(min_length=5)
+    models: list[ModelSpec] = Field(min_length=5)
+    stage_b_case_ids: list[str] = Field(min_length=4, max_length=4)
+    historical_median_pair_seconds: dict[str, float]
+    cases: list[SuiteCase] = Field(min_length=8, max_length=8)
+    suite_hash: str = Field(min_length=64, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_references(self) -> "BenchmarkSuite":
+        model_ids = [model.id for model in self.models]
+        case_ids = [case.case_id for case in self.cases]
+        if len(model_ids) != len(set(model_ids)):
+            raise ValueError("benchmark suite model ids must be unique")
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("benchmark suite case ids must be unique")
+        if self.baseline_model_id not in model_ids:
+            raise ValueError("baseline model must appear in suite models")
+        if len(self.seeds) != len(set(self.seeds)):
+            raise ValueError("benchmark suite seeds must be unique")
+        if not set(self.stage_b_case_ids) <= set(case_ids):
+            raise ValueError("Stage B case ids must appear in suite cases")
+        if set(self.historical_median_pair_seconds) != set(model_ids):
+            raise ValueError(
+                "historical median latency must cover every suite model"
+            )
+        if any(value <= 0 for value in self.historical_median_pair_seconds.values()):
+            raise ValueError("historical median latency must be positive")
+        return self
+
+
 class GateFinding(StrictModel):
     code: str
     message: str
