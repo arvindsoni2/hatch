@@ -70,6 +70,8 @@ class GenerationProvenance:
     source_evidence_ids: tuple[str, ...]
     validation: ValidationResult
     claims: tuple[ClaimProvenance, ...] = ()
+    content_plan: dict[str, list[str]] | None = None
+    workflow: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
