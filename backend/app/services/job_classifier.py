@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import select, update
@@ -13,10 +13,10 @@ from ..config import settings
 from ..models.job import JobPosting
 from ..prompts import render_prompt
 from ..agents.tools.llm_factory import get_triage_model
+from ..agents.tools.profile_loader import load_profile
+from .prompt_catalog import prompt_contract_block, source_contains
 
 logger = logging.getLogger(__name__)
-
-_PROFILE_PATH = Path(__file__).parent.parent / "templates" / "candidate_profile.json"
 
 # The bundled triage server runs two parallel slots in a 4096-token context,
 # leaving 2048 tokens per request. Three 500-character job excerpts plus the
@@ -53,11 +53,21 @@ class JobClassifier:
                 "description": (job.description or "")[:500],
                 "rate_text": job.rate_text or "",
                 "location": job.location or "",
+                "employment_type": _known_text_value(job, "employment_type"),
+                "ir35_status": _known_text_value(job, "ir35_status"),
+                "working_pattern": _known_text_value(job, "working_pattern"),
             }
             for job in jobs
         ]
+        profile = load_profile()
+        candidate_profile = _runtime_candidate_profile(profile)
 
-        prompt = render_prompt("job_classification.j2", jobs_json=json.dumps(jobs_payload, indent=2))
+        prompt = render_prompt(
+            "job_classification.j2",
+            jobs_json=json.dumps(jobs_payload, indent=2),
+            candidate_profile=candidate_profile,
+            prompt_contract=prompt_contract_block("job_classification"),
+        )
 
         # Split on SYSTEM: / USER: markers as used in other prompts
         if "USER:" in prompt:
@@ -86,9 +96,8 @@ class JobClassifier:
 
             result = json.loads(cleaned)
             # LLM may return {"jobs": [...]} or directly [...]
-            if isinstance(result, list):
-                return result
-            return result.get("jobs", [])
+            items = result if isinstance(result, list) else result.get("jobs", [])
+            return _validate_classifications(items, jobs_payload)
         except Exception as exc:
             logger.error("Batch classify failed (%d jobs): %s", len(jobs), exc)
             return []
@@ -173,3 +182,125 @@ class JobClassifier:
             )
 
         return classified
+
+
+def _runtime_candidate_profile(profile: Any) -> dict[str, Any]:
+    """Serialize only the profile fields required for job classification."""
+    return {
+        "title": profile.candidate.title,
+        "years_experience": profile.candidate.years_experience,
+        "target_roles": list(profile.search.target_roles),
+        "primary_skills": list(profile.skills.primary),
+        "secondary_skills": list(profile.skills.secondary),
+        "compensation": {
+            "currency": profile.compensation.currency,
+            "minimum": profile.compensation.min_rate,
+            "maximum": profile.compensation.max_rate,
+            "rate_type": profile.compensation.rate_type,
+        },
+        "locations": [
+            {
+                "city": location.city,
+                "country": location.country,
+                "remote_preference": location.remote_preference,
+            }
+            for location in profile.search.locations
+        ],
+    }
+
+
+def _known_text_value(job: Any, field: str) -> str:
+    """Return a persisted string value without serializing mock/ORM sentinels."""
+    value = getattr(job, field, "")
+    return value if isinstance(value, str) else ""
+
+
+def _validate_classifications(
+    raw_items: Any,
+    jobs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize model classifications against the supplied job batch."""
+    if not isinstance(raw_items, list):
+        return []
+    jobs_by_id = {job["id"]: job for job in jobs}
+    enums = {
+        "employment_type": {
+            "contract",
+            "permanent",
+            "fixed_term",
+            "part_time",
+            "freelance",
+            "unknown",
+        },
+        "ir35_status": {"outside", "inside", "not_applicable", "unknown"},
+        "working_pattern": {"remote", "hybrid", "onsite", "unknown"},
+        "seniority": {
+            "junior",
+            "mid",
+            "senior",
+            "lead",
+            "principal",
+            "head",
+            "director",
+            None,
+        },
+    }
+    normalized: list[dict[str, Any]] = []
+    for item in raw_items:
+        if not isinstance(item, dict) or item.get("id") not in jobs_by_id:
+            continue
+        job = jobs_by_id[item["id"]]
+        job_text = " ".join(
+            str(job.get(field) or "")
+            for field in (
+                "title",
+                "description",
+                "rate_text",
+                "location",
+                "employment_type",
+                "ir35_status",
+                "working_pattern",
+            )
+        )
+        clean = dict(item)
+        for field, allowed in enums.items():
+            if clean.get(field) not in allowed:
+                clean[field] = None if field == "seniority" else "unknown"
+        explicit_phrases = {
+            "ir35_status": {
+                "outside": "outside ir35",
+                "inside": "inside ir35",
+            },
+            "working_pattern": {
+                "remote": "remote",
+                "hybrid": "hybrid",
+                "onsite": "onsite",
+            },
+        }
+        for field, phrases in explicit_phrases.items():
+            value = clean.get(field)
+            phrase = phrases.get(value)
+            persisted_value = job.get(field)
+            if (
+                phrase
+                and persisted_value != value
+                and not source_contains(phrase, job_text)
+            ):
+                clean[field] = "unknown"
+        try:
+            score = int(clean.get("match_score", 0))
+        except (TypeError, ValueError):
+            score = 0
+        clean["match_score"] = max(0, min(100, score))
+        clean["match_reasons"] = [
+            str(value)
+            for value in clean.get("match_reasons", [])[:3]
+            if isinstance(value, str)
+        ]
+        clean["red_flags"] = [
+            str(value)
+            for value in clean.get("red_flags", [])
+            if isinstance(value, str)
+        ]
+        normalized.append(clean)
+    return normalized

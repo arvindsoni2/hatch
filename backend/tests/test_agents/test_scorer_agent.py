@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.job import JobPosting
+from app.agents.scorer_agent import _ScoreResult, _normalise_score_result
 
 
 def _insert_job(db_session, job_id: str, description: str = "Senior cloud architect role required for large-scale remote infrastructure project with AWS experience and Agile delivery background.") -> JobPosting:
@@ -91,6 +92,37 @@ def _make_mock_llm(triage_relevant: bool = True, score: float = 0.85):
     mock_primary_model.with_structured_output.return_value = primary_llm
 
     return mock_triage_model, mock_primary_model, triage_llm, primary_llm
+
+
+def test_llm_score_is_clamped_and_total_is_recomputed_from_weights():
+    result = _ScoreResult(
+        skill_match=1.4,
+        experience_match=0.8,
+        rate_match=-0.2,
+        location_match=0.6,
+        overall_score=0.99,
+        reasoning="AWS evidence is relevant.",
+        keyword_matches=["AWS", "InventedTool"],
+        keyword_misses=[],
+    )
+    weights = MagicMock(
+        skill_match=0.35,
+        experience_match=0.30,
+        rate_match=0.20,
+        location_match=0.15,
+    )
+
+    normalized = _normalise_score_result(
+        result,
+        weights,
+        candidate_text="AWS platform architect",
+        job_text="AWS architect role",
+    )
+
+    assert normalized.skill_match == 1.0
+    assert normalized.rate_match == 0.0
+    assert normalized.overall_score == 0.68
+    assert normalized.keyword_matches == ["AWS"]
 
 
 class TestScorerAgent:

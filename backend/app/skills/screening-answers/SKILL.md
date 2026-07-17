@@ -22,7 +22,9 @@ Produce pre-filled, copy-paste-ready answers to the standard knockout questions 
 
 ## Constraints
 
-- Answers must derive entirely from `profile.yaml` — never guess or fabricate.
+- Answers must derive entirely from explicit `profile.yaml` fields — never
+  infer work authorisation, sponsorship, availability, relocation, notice
+  period, or compensation from locale or another field.
 - If a required field is missing from the profile, return `{label, answer: ""}` with a `missing_field` flag.
 - Rate answers should respect the locale's convention (daily for UK contract, annual for permanent/AE/IN).
 

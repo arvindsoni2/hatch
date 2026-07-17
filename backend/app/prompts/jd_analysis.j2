@@ -1,5 +1,14 @@
 You are a recruitment analyst. Analyse the job description below and extract structured information for CV tailoring and ATS optimisation.
 
+{{ prompt_contract }}
+
+EXTRACTION STATES:
+- Classify each requested value as explicit, inferred, or absent before returning it.
+- Return a value only when it is explicit in the job description.
+- Use null for inferred or absent scalar values; use an empty array for absent lists.
+- Never infer salary, rate, sponsorship, location eligibility, security clearance, IR35 status, duration, or start date from generic wording.
+- Copy numeric tokens from the job description exactly. Do not calculate, normalize, round, or estimate them.
+
 Return ONLY valid JSON matching this exact schema:
 
 {

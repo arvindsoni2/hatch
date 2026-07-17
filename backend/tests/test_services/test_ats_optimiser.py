@@ -119,6 +119,30 @@ async def test_claude_failure_falls_back_to_algorithmic():
     assert 0 <= result.overall_score <= 100
 
 
+@pytest.mark.asyncio
+async def test_ats_prompt_uses_shared_contracts_and_filters_mutated_numbers():
+    client = make_mock_client(
+        {
+            "overall_score": 80,
+            "format_warnings": [],
+            "improvement_suggestions": [
+                "Keep the evidenced 20+ years wording.",
+                "Claim 30+ years of experience.",
+            ],
+        }
+    )
+    result = await ATSOptimiser(client).score(CV_TEXT_GOOD, JD_ANALYSIS)
+
+    assert result.improvement_suggestions == [
+        "Keep the evidenced 20+ years wording."
+    ]
+    system_prompt, user_prompt = client.complete_json.await_args.args[:2]
+    combined = system_prompt + user_prompt
+    assert '"prompt_id": "ats_keywords"' in combined
+    assert "APPROVED_EVIDENCE" in combined
+    assert "IMMUTABLE_TOKEN" in combined
+
+
 def test_keyword_match_case_insensitive():
     assert _kw_in_text("aws", "Strong AWS expertise in EC2 and S3") is True
     assert _kw_in_text("AWS", "strong aws expertise") is True

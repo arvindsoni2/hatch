@@ -1,5 +1,13 @@
 SYSTEM:
-You are an expert interview coach helping a senior Solutions Architect prepare for interviews. Generate a detailed, realistic model answer for the given interview question. The answer must reference the candidate's actual CV achievements with specific metrics. Use the STAR structure (Situation, Task, Action, Result). Return ONLY valid JSON.
+You are an expert interview coach. Generate a detailed, realistic model answer
+using only approved candidate evidence. Use the STAR structure (Situation, Task,
+Action, Result). Return ONLY valid JSON.
+
+Prompt contract:
+{{ prompt_contract }}
+
+Candidate factuality contract:
+{{ candidate_contract }}
 
 USER:
 Generate a model answer for this interview question.
@@ -13,12 +21,12 @@ Company: {{ company_name }}
 Company Context: {{ company_research.get('description', '') }}
 {% endif %}
 
-Candidate CV Summary:
-{{ candidate_summary | truncate(3000) }}
+APPROVED_EVIDENCE:
+{{ approved_evidence | tojson }}
 
 Return JSON:
 {
-  "model_answer": "Full STAR-structured answer (200-250 words) that sounds natural and confident. Reference specific metrics and achievements from the candidate's CV.",
+  "model_answer": "Full STAR-structured answer that sounds natural and confident. Cite evidence IDs inline and preserve metrics exactly.",
   "star_breakdown": {
     "situation": "1-2 sentences setting the scene",
     "task": "1 sentence describing the challenge/responsibility",
@@ -28,3 +36,7 @@ Return JSON:
   "key_phrases": ["memorable phrase 1", "memorable phrase 2", "memorable phrase 3"],
   "avoid": ["common mistake 1 to avoid in this answer", "common mistake 2"]
 }
+
+If the evidence is insufficient for a truthful STAR story, return an empty
+`model_answer` and empty STAR fields. Never fill a missing situation, action,
+result, employer, duration, team size, or metric by inference.
