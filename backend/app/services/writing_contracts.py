@@ -339,14 +339,21 @@ def build_evidence_ledger(master: dict[str, Any]) -> tuple[EvidenceItem, ...]:
 def validate_numeric_fidelity(
     candidate_prose: Iterable[str],
     ledger: Iterable[EvidenceItem],
+    allowed_context_prose: Iterable[str] = (),
 ) -> ValidationResult:
-    """Block numeric prose that is absent from the approved evidence ledger."""
+    """Block numeric prose absent from candidate evidence or declared context."""
     evidence = tuple(ledger)
     allowed = {
         normalize_evidence_text(token).casefold()
         for item in evidence
         for token in item.immutable_tokens
     }
+    context_tokens = {
+        token.normalized
+        for prose in allowed_context_prose
+        for token in extract_numeric_tokens(prose)
+    }
+    allowed.update(context_tokens)
     observed_count = 0
     issues: list[ValidationIssue] = []
     seen_unsupported: set[str] = set()
@@ -372,6 +379,7 @@ def validate_numeric_fidelity(
         issues=tuple(issues),
         metrics={
             "approved_evidence_count": len(evidence),
+            "allowed_context_numeric_tokens": len(context_tokens),
             "numeric_tokens_checked": observed_count,
             "unsupported_numeric_tokens": len(issues),
             "validation_schema_version": VALIDATION_SCHEMA_VERSION,

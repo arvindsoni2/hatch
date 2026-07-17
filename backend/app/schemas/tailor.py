@@ -131,6 +131,11 @@ class CoverLetterResult(BaseModel):
         default=None,
         exclude=True,
     )
+    validation_status: Literal["passed", "repaired", "review_required"] = "passed"
+    validation_issues: list[str] = Field(default_factory=list)
+    attempt_count: int = 1
+    repair_count: int = 0
+    first_pass_word_count: int | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -27,13 +27,14 @@ def render_report(summary: BenchmarkSummary) -> str:
         "",
         "## Safety and reliability",
         "",
-        "| Model | Succeeded | Failed | Unavailable | Gate pass rate | Blocking gates |",
-        "|---|---:|---:|---:|---:|---|",
+        "| Model | Succeeded | Failed | Unavailable | Timeout | Interrupted | Gate pass rate | Blocking gates |",
+        "|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for model in summary.models:
         lines.append(
             f"| {model.model_id} | {model.succeeded}/{model.attempted} | {model.failed} | "
-            f"{model.unavailable} | {model.hard_gate_pass_rate:.1%} | {_gate_text(model)} |"
+            f"{model.unavailable} | {model.timeout} | {model.interrupted} | "
+            f"{model.hard_gate_pass_rate:.1%} | {_gate_text(model)} |"
         )
 
     lines.extend(
@@ -59,13 +60,17 @@ def render_report(summary: BenchmarkSummary) -> str:
             "",
             "## Operational metrics",
             "",
-            "| Model | Median pair latency (ms) | Successful runs |",
-            "|---|---:|---:|",
+            "| Model | First-pass gate rate | Post-repair gate rate | Repairs | Final body words | Numeric fidelity failures | Median pair latency (ms) | Total latency (ms) | Successful runs |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for model in summary.models:
         lines.append(
-            f"| {model.model_id} | {_number(model.median_latency_ms, 1)} | "
+            f"| {model.model_id} | {model.first_pass_gate_pass_rate:.1%} | "
+            f"{model.post_repair_gate_pass_rate:.1%} | {model.total_repair_count} | "
+            f"{_number(model.median_final_cover_letter_body_words, 1)} | "
+            f"{model.numeric_fidelity_failures} | {_number(model.median_latency_ms, 1)} | "
+            f"{_number(model.total_latency_ms, 1)} | "
             f"{model.succeeded}/{model.attempted} |"
         )
 

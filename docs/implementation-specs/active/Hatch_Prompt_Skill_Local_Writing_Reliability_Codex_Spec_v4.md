@@ -5,6 +5,9 @@ status: active
 implementation_status: partial
 applies_to: main
 last_verified: 2026-07-16
+accepted_baseline_merge_sha: a5a4d729a4dfddcabb2ec4ca54c91120f616f6de
+accepted_baseline_pr: https://github.com/arvindsoni2/hatch/pull/36
+accepted_baseline_date: 2026-07-16
 supersedes:
   - Hatch_Prompt_Skill_Local_Writing_Reliability_Codex_Spec_v3.md
 superseded_by: []
@@ -15,7 +18,7 @@ superseded_by: []
 **Status:** Implementation-ready after baseline publication, decisions locked  
 **Repository:** `https://github.com/arvindsoni2/hatch`  
 **Historical benchmark source commit:** `4726aa8`  
-**Accepted implementation baseline:** baseline PR merge SHA, recorded by PR 1 as specified in section 5.1.2  
+**Accepted implementation baseline:** `a5a4d729a4dfddcabb2ec4ca54c91120f616f6de` (baseline PR #36, accepted 2026-07-16)
 **Reviewable benchmark evidence:** `docs/benchmarks/LOCAL_WRITING_MODEL_BENCHMARK_2026-07-15.md`  
 **Private raw benchmark source:** `data/benchmarks/results/20260715T183303Z-8d9f4a72/report.md` (ignored; not required in a fresh clone)  
 **Prepared:** 2026-07-16  

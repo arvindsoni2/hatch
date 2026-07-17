@@ -7,11 +7,11 @@ wraps: CoverLetterGenerator, DocxCLBuilder
 
 # Cover Letter Generation
 
-Produce a concise, targeted cover letter (250–350 words) that:
+Produce a targeted cover letter with five body paragraphs and 285-315 body words, while staying inside the hard 250-350 body-word range. It should:
 
-- Opens with the strongest proof-point match for this role.
-- Addresses the employer's two or three most pressing stated requirements directly.
-- Closes with a clear, confident call to action.
+- Open with the strongest proof-point match for this role.
+- Address the employer's two or three most pressing stated requirements directly.
+- Close with a clear, confident call to action.
 
 ## Process
 
@@ -21,7 +21,7 @@ Produce a concise, targeted cover letter (250–350 words) that:
    - **A (formal)**: construction, finance, government, energy, defence, banking, legal, infrastructure
    - **B (conversational)**: technology, tech, startup, creative, media, gaming, SaaS
    - Defaults to **A** when sector is absent or unrecognised.
-4. Trim to ≤ 350 words; never pad below 250.
+4. Validate the computed body count. If below 250, expand with approved evidence instead of filler. If above 350, compress without deleting required evidence.
 
 ## Company Name Handling
 

@@ -385,7 +385,9 @@ class TailorService:
 
         personal = _load_personal()
         cl_variant = select_tone_variant(analysis)
-        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
+        cover_letter = await self._cl_generator.generate(
+            analysis, tailored_cv, personal, cl_variant, jd_text=jd_text
+        )
         if cover_letter.grounding_issues:
             raise HTTPException(
                 status_code=422,
@@ -582,7 +584,7 @@ class TailorService:
 
         cl_variant = select_tone_variant(analysis)
         cover_letter = await self._cl_generator.generate(
-            analysis, tailored_cv, personal, cl_variant
+            analysis, tailored_cv, personal, cl_variant, jd_text=jd_text
         )
         if cover_letter.grounding_issues:
             raise HTTPException(
@@ -687,7 +689,9 @@ class TailorService:
         yield sse("generating_cl", 70, "Generating cover letter...")
         personal = _load_personal()
         cl_variant = select_tone_variant(analysis)
-        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
+        cover_letter = await self._cl_generator.generate(
+            analysis, tailored_cv, personal, cl_variant, jd_text=jd_text
+        )
         if cover_letter.grounding_issues:
             yield sse(
                 "error",

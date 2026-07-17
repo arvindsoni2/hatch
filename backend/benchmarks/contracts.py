@@ -100,17 +100,35 @@ class PairScore(StrictModel):
     combined: float | None = Field(default=None, ge=0.0, le=100.0)
 
 
+class BenchmarkProfile(StrictModel):
+    name: Literal["acceptance-smoke", "extended"] = "extended"
+    call_timeout_seconds: float = Field(default=1200.0, gt=0.0)
+    model_timeout_seconds: float = Field(default=2700.0, ge=0.0)
+    whole_run_timeout_seconds: float = Field(default=10800.0, ge=0.0)
+
+
 class RepetitionResult(StrictModel):
     model_id: str
     repetition: int = Field(ge=1)
     seed: int
-    status: Literal["succeeded", "failed", "unavailable"]
+    status: Literal["succeeded", "failed", "unavailable", "timeout", "interrupted"]
+    availability: Literal["available", "unavailable"] = "available"
+    execution_status: Literal[
+        "completed", "failed", "unavailable", "timeout", "interrupted"
+    ] | None = None
     duration_ms: float = Field(ge=0.0)
+    timeout_stage: Literal["call", "model", "whole_run"] | None = None
     cv: dict[str, Any] | None = None
     cover_letter: dict[str, Any] | None = None
     score: PairScore | None = None
+    eligible_for_ranking: bool = False
+    writing_quality_exclusion_reason: str | None = None
     observations: list[dict[str, Any]] = Field(default_factory=list)
     prompt_metadata: dict[str, dict[str, str]] = Field(default_factory=dict)
+    first_pass_cover_letter_word_count: int | None = None
+    final_cover_letter_word_count: int | None = None
+    cover_letter_repair_count: int = Field(default=0, ge=0)
+    numeric_fidelity_failures: list[str] = Field(default_factory=list)
     error_type: str | None = None
     error_message: str | None = None
 
@@ -121,6 +139,8 @@ class ModelAggregate(StrictModel):
     succeeded: int = Field(ge=0)
     failed: int = Field(ge=0)
     unavailable: int = Field(ge=0)
+    timeout: int = Field(default=0, ge=0)
+    interrupted: int = Field(default=0, ge=0)
     eligible: int = Field(ge=0)
     hard_gate_pass_rate: float = Field(ge=0.0, le=1.0)
     median_cv_score: float | None = Field(default=None, ge=0.0, le=100.0)
@@ -129,6 +149,12 @@ class ModelAggregate(StrictModel):
     writing_score_variance: float | None = Field(default=None, ge=0.0)
     median_latency_ms: float | None = Field(default=None, ge=0.0)
     gate_codes: dict[str, int] = Field(default_factory=dict)
+    first_pass_gate_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    post_repair_gate_pass_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    total_repair_count: int = Field(default=0, ge=0)
+    median_final_cover_letter_body_words: float | None = Field(default=None, ge=0.0)
+    numeric_fidelity_failures: int = Field(default=0, ge=0)
+    total_latency_ms: float | None = Field(default=None, ge=0.0)
 
 
 class Recommendation(StrictModel):
@@ -146,8 +172,16 @@ class BenchmarkSummary(StrictModel):
     run_id: str
     case_id: str
     created_at: str
+    benchmark_profile: str = "extended"
     repetitions: int
     selected_models: list[str]
+    completion_state: Literal[
+        "completed",
+        "running",
+        "completed_with_model_outcomes",
+        "incomplete_deadline",
+        "incomplete_interrupted",
+    ] = "completed"
     models: list[ModelAggregate]
     ranking: list[ModelAggregate]
     recommendation: Recommendation
