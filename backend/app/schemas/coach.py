@@ -218,6 +218,15 @@ class SessionListItem(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ResearchSource(BaseModel):
+    """A retrieved public source used to support company research facts."""
+
+    source_id: str
+    title: str
+    url: str
+    retrieved_at: datetime
+
+
 class CompanyResearchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -228,6 +237,13 @@ class CompanyResearchResponse(BaseModel):
     recent_news: list[str] = Field(default_factory=list)
     key_products: list[str] = Field(default_factory=list)
     tech_stack_signals: list[str] = Field(default_factory=list)
+    sources: list[ResearchSource] = Field(default_factory=list)
+    retrieved_at: datetime | None = None
+    verification_state: Literal[
+        "verified",
+        "partially_verified",
+        "not_verified",
+    ] = "not_verified"
 
 
 # ---------------------------------------------------------------------------

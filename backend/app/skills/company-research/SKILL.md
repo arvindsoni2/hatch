@@ -26,5 +26,7 @@ Produce structured intelligence about the target company: mission, recent news, 
 ## Constraints
 
 - Flag when scraped content is thin or stale (> 6 months old).
-- Do not fabricate news or product details; mark gaps explicitly.
+- Attach a supplied source ID and retrieval timestamp to every employer fact.
+- Do not fabricate news or product details; omit unsupported facts and return
+  `verification_state: not_verified` when no sourced fact survives validation.
 - Keep the brief under 500 words total — this is prep material, not a report.
