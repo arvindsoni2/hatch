@@ -22,6 +22,12 @@ def test_report_contains_auditable_sections_and_ranking() -> None:
         median_writing_score=88.5,
         writing_score_variance=0.25,
         median_latency_ms=1200.0,
+        first_pass_gate_pass_rate=2 / 3,
+        post_repair_gate_pass_rate=1.0,
+        total_repair_count=2,
+        median_final_cover_letter_body_words=301.0,
+        numeric_fidelity_failures=0,
+        total_latency_ms=3600.0,
     )
     alternative = ModelAggregate(
         model_id="gemma4-e2b",
@@ -29,6 +35,7 @@ def test_report_contains_auditable_sections_and_ranking() -> None:
         succeeded=2,
         failed=1,
         unavailable=0,
+        timeout=1,
         eligible=1,
         hard_gate_pass_rate=1 / 3,
         median_cv_score=90.0,
@@ -37,6 +44,12 @@ def test_report_contains_auditable_sections_and_ranking() -> None:
         writing_score_variance=0.0,
         median_latency_ms=900.0,
         gate_codes={"unsupported_numeric_token": 1},
+        first_pass_gate_pass_rate=1 / 3,
+        post_repair_gate_pass_rate=1 / 3,
+        total_repair_count=1,
+        median_final_cover_letter_body_words=275.0,
+        numeric_fidelity_failures=1,
+        total_latency_ms=2700.0,
     )
     summary = BenchmarkSummary(
         run_id="run-1",
@@ -57,10 +70,18 @@ def test_report_contains_auditable_sections_and_ranking() -> None:
 
     assert "# Local Writing Model Benchmark" in report
     assert "## Safety and reliability" in report
+    assert "Timeout" in report
+    assert "Interrupted" in report
     assert "## Writing quality" in report
     assert "Median CV" in report
     assert "Median cover letter" in report
     assert "## Operational metrics" in report
+    assert "First-pass gate rate" in report
+    assert "Post-repair gate rate" in report
+    assert "Repairs" in report
+    assert "Final body words" in report
+    assert "Numeric fidelity failures" in report
+    assert "Total latency" in report
     assert "## Ranking" in report
     assert "## Recommendation" in report
     assert "## Limitations" in report

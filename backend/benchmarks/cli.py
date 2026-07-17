@@ -7,13 +7,14 @@ import json
 import re
 import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .adapters import BenchmarkLLMClient
 from .case_loader import CaseValidationError, load_case
 from .contracts import BenchmarkSummary
 from .reporting import write_report
-from .runner import run_benchmark
+from .runner import benchmark_profile, run_benchmark
 
 _DEFAULT_MODELS = [
     {
@@ -80,6 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--case", required=True, type=Path)
     run.add_argument("--models", required=True)
     run.add_argument("--repetitions", type=int, default=3)
+    run.add_argument("--profile", choices=["acceptance-smoke", "extended"], default="extended")
+    run.add_argument("--resume", help="Resume an existing benchmark run ID")
+    run.add_argument(
+        "--retry-timeouts",
+        action="store_true",
+        help="Retry timed-out/interrupted repetitions when resuming",
+    )
     run.add_argument("--output-root", type=Path, default=Path("../data/benchmarks/results"))
 
     report = commands.add_parser("report", help="Regenerate Markdown from summary JSON")
@@ -157,6 +165,22 @@ def _derive_expected_facts(master: dict) -> dict:
     }
 
 
+def _run_command_text(args: argparse.Namespace) -> str:
+    parts = [
+        "python -m benchmarks run",
+        f"--case {args.case}",
+        f"--models {args.models}",
+        f"--repetitions {args.repetitions}",
+        f"--profile {args.profile}",
+    ]
+    if args.resume:
+        parts.append(f"--resume {args.resume}")
+    if args.retry_timeouts:
+        parts.append("--retry-timeouts")
+    parts.append(f"--output-root {args.output_root}")
+    return " ".join(parts)
+
+
 async def _smoke(case_path: Path) -> int:
     case = load_case(case_path)
     failures = 0
@@ -180,6 +204,7 @@ async def _smoke(case_path: Path) -> int:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    started_at = datetime.now(UTC).isoformat()
     case = load_case(args.case)
     model_ids = [item.strip() for item in args.models.split(",") if item.strip()]
     output_root = args.output_root.expanduser().resolve()
@@ -189,15 +214,48 @@ async def _run(args: argparse.Namespace) -> int:
             f"WARNING: output path {output_root} is outside ignored {private_root}",
             file=sys.stderr,
         )
+    profile = benchmark_profile(args.profile)
     summary = await run_benchmark(
         case,
         model_ids=model_ids,
         repetitions=args.repetitions,
         output_root=output_root,
+        profile=profile,
+        resume_run_id=args.resume,
+        retry_timeouts=args.retry_timeouts,
     )
     run_dir = output_root / summary.run_id
     write_report(summary, run_dir / "report.md")
+    ended_at = datetime.now(UTC).isoformat()
+    manifest_path = run_dir / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    commands = list(manifest.get("commands") or [])
+    commands.append(
+        {
+            "command": _run_command_text(args),
+            "exit_code": _exit_code_for_summary(summary, manifest),
+            "started_at": started_at,
+            "ended_at": ended_at,
+        }
+    )
+    manifest["commands"] = commands
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     print(f"Benchmark complete: {run_dir}")
+    return _exit_code_for_summary(summary, manifest)
+
+
+def _exit_code_for_summary(summary: BenchmarkSummary, manifest: dict | None = None) -> int:
+    if manifest and manifest.get("protected_hashes", {}).get("unchanged") is False:
+        return 5
+    if summary.completion_state == "incomplete_deadline":
+        return 4
+    if summary.completion_state == "incomplete_interrupted":
+        return 4
+    if any(model.failed or model.unavailable or model.timeout or model.interrupted for model in summary.models):
+        return 3
     return 0
 
 
@@ -227,7 +285,13 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(_run(args))
         if args.command == "report":
             return _report(args.run)
-    except (CaseValidationError, OSError, ValueError) as exc:
+    except CaseValidationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     parser.error(f"unknown command: {args.command}")

@@ -50,6 +50,20 @@ TAILORED_CV = TailoredCVResult(
     certifications=["PMP"],
 )
 
+TAILORED_CV_WITH_120_PLUS = TailoredCVResult(
+    summary="Delivery leader for complex estates.",
+    skills=[],
+    experience=[
+        TailoredExperience(
+            role="Delivery Manager",
+            company="Company B",
+            period="2020-Present",
+            achievements=["Managed rollout across 120+ locations for critical services."],
+        )
+    ],
+    certifications=[],
+)
+
 SHORT_CL_RESPONSE = {
     "subject_line": "Solutions Architect — Outside IR35",
     "greeting": "Dear Hiring Manager,",
@@ -74,6 +88,14 @@ LONG_CL_RESPONSE = {
     ],
     "word_count": 400,
 }
+
+
+def cl_response_with_counts(counts: list[int], *, word: str = "body") -> dict:
+    return {
+        **SHORT_CL_RESPONSE,
+        "body_paragraphs": [" ".join([word] * count) for count in counts],
+        "word_count": 999,
+    }
 
 
 def make_mock_client(response_dict: dict) -> MagicMock:
@@ -104,13 +126,11 @@ async def test_generate_returns_cover_letter():
 
 @pytest.mark.asyncio
 async def test_word_count_within_range():
-    client = make_mock_client(SHORT_CL_RESPONSE)
+    client = make_mock_client(cl_response_with_counts([50, 75, 70, 45, 35]))
     gen = CoverLetterGenerator(client)
     result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
 
-    # 62 words is below max — should not trigger trim
-    assert result.word_count <= 350
-    # Should only call complete_json once (no trim retry)
+    assert result.word_count == 275
     assert client.complete_json.call_count == 1
 
 
@@ -119,23 +139,36 @@ async def test_long_letter_triggers_trim_retry():
     """A letter > 350 words should trigger a second Claude call."""
     # First call returns too-long, second call returns short
     client = MagicMock()
-    client.complete_json = AsyncMock(side_effect=[LONG_CL_RESPONSE, SHORT_CL_RESPONSE])
+    client.complete_json = AsyncMock(side_effect=[LONG_CL_RESPONSE, cl_response_with_counts([60] * 5)])
     gen = CoverLetterGenerator(client)
 
     result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
 
     # Should have called twice (initial + trim retry)
     assert client.complete_json.call_count == 2
-    assert result.word_count <= 350
+    assert result.word_count == 300
 
 
 @pytest.mark.asyncio
 async def test_jd_keywords_present_in_result():
-    client = make_mock_client(SHORT_CL_RESPONSE)
+    client = make_mock_client(cl_response_with_counts([60] * 5))
     gen = CoverLetterGenerator(client)
     result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
 
     assert "AWS" in result.key_keywords_used
+
+
+@pytest.mark.asyncio
+async def test_initial_prompt_requests_five_paragraph_target_budget():
+    client = make_mock_client(cl_response_with_counts([60] * 5))
+    gen = CoverLetterGenerator(client)
+
+    await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    prompt = client.complete_json.call_args.args[1]
+    assert "five body paragraphs" in prompt
+    assert "285-315 body words" in prompt
+    assert "STRUCTURE (5 paragraphs)" in prompt
 
 
 @pytest.mark.asyncio
@@ -214,4 +247,223 @@ def test_parse_cover_letter():
     result = _parse_cover_letter(SHORT_CL_RESPONSE)
     assert result.subject_line == "Solutions Architect — Outside IR35"
     assert len(result.body_paragraphs) == 4
-    assert result.word_count == 62
+    assert result.word_count == 59
+
+
+def test_parse_cover_letter_counts_only_body_paragraphs():
+    result = _parse_cover_letter(
+        {
+            "subject_line": "Application: Solutions Architect",
+            "greeting": "Dear Hiring Manager,",
+            "body_paragraphs": ["one two three"],
+            "sign_off": "Kind regards,\nArvind Soni",
+            "word_count": 999,
+        }
+    )
+
+    assert result.word_count == 3
+
+
+def test_parse_cover_letter_uses_canonical_body_tokenizer_examples():
+    result = _parse_cover_letter(
+        {
+            "body_paragraphs": [
+                "£2.5m budget 20+ years 120+ locations 15% improvement U.K. delivery",
+                "candidate@example.com https://example.com/jobs/123 end-to-end design/architecture",
+                "cloud—platform candidate’s experience and/or (120+) locations",
+            ],
+            "word_count": 999,
+        }
+    )
+
+    assert result.word_count == 23
+
+
+def test_model_reported_word_count_cannot_override_computed_body_count():
+    result = _parse_cover_letter(
+        {
+            "body_paragraphs": [" ".join(["body"] * 249)],
+            "word_count": 300,
+        }
+    )
+
+    assert result.word_count == 249
+
+
+@pytest.mark.asyncio
+async def test_249_words_triggers_under_length_repair():
+    client = MagicMock()
+    client.complete_json = AsyncMock(
+        side_effect=[
+            cl_response_with_counts([49, 50, 50, 50, 50]),
+            cl_response_with_counts([60, 60, 60, 60, 60]),
+        ]
+    )
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    assert client.complete_json.call_count == 2
+    assert result.word_count == 300
+    repair_prompt = client.complete_json.call_args_list[1].args[1]
+    assert "previous draft was 249 body words" in repair_prompt
+    assert "target of 285-315 body words" in repair_prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [250, 350])
+async def test_boundary_word_counts_pass_without_repair(count: int):
+    client = make_mock_client(cl_response_with_counts([count]))
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    assert result.word_count == count
+    assert client.complete_json.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_351_words_triggers_over_length_repair():
+    client = MagicMock()
+    client.complete_json = AsyncMock(
+        side_effect=[
+            cl_response_with_counts([351]),
+            cl_response_with_counts([300]),
+        ]
+    )
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    assert client.complete_json.call_count == 2
+    assert result.word_count == 300
+    repair_prompt = client.complete_json.call_args_list[1].args[1]
+    assert "previous draft was 351 body words" in repair_prompt
+    assert "compress" in repair_prompt
+
+
+@pytest.mark.asyncio
+async def test_retry_limit_stops_after_same_under_length_defect():
+    client = MagicMock()
+    client.complete_json = AsyncMock(
+        side_effect=[
+            cl_response_with_counts([249]),
+            cl_response_with_counts([248]),
+            cl_response_with_counts([300]),
+        ]
+    )
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    assert client.complete_json.call_count == 2
+    assert result.word_count == 248
+    assert result.validation_status == "review_required"
+    assert any("expected 250-350" in issue for issue in result.validation_issues)
+
+
+@pytest.mark.asyncio
+async def test_second_repair_allowed_for_different_remaining_length_defect():
+    client = MagicMock()
+    client.complete_json = AsyncMock(
+        side_effect=[
+            cl_response_with_counts([351]),
+            cl_response_with_counts([249]),
+            cl_response_with_counts([300]),
+        ]
+    )
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    assert client.complete_json.call_count == 3
+    assert result.word_count == 300
+    assert result.validation_status == "repaired"
+
+
+@pytest.mark.asyncio
+async def test_mutated_candidate_numeric_token_blocks_and_repairs():
+    client = MagicMock()
+    client.complete_json = AsyncMock(
+        side_effect=[
+            {
+                **cl_response_with_counts([60] * 5),
+                "body_paragraphs": [
+                    "I managed rollout across 120 locations for critical services. " + " ".join(["body"] * 52),
+                    *cl_response_with_counts([60] * 4)["body_paragraphs"],
+                ],
+            },
+            {
+                **cl_response_with_counts([60] * 5),
+                "body_paragraphs": [
+                    "I managed rollout across 120+ locations for critical services. " + " ".join(["body"] * 52),
+                    *cl_response_with_counts([60] * 4)["body_paragraphs"],
+                ],
+            },
+        ]
+    )
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV_WITH_120_PLUS, PERSONAL)
+
+    assert client.complete_json.call_count == 2
+    assert result.validation_status == "repaired"
+    repair_prompt = client.complete_json.call_args_list[1].args[1]
+    assert "120+" in repair_prompt
+    assert "120" in repair_prompt
+
+
+@pytest.mark.asyncio
+async def test_unsupported_numeric_token_returns_review_required_after_failed_repair():
+    client = MagicMock()
+    client.complete_json = AsyncMock(
+        side_effect=[
+            {
+                **cl_response_with_counts([60] * 5),
+                "body_paragraphs": [
+                    "I improved platform reliability by 99%. " + " ".join(["body"] * 54),
+                    *cl_response_with_counts([60] * 4)["body_paragraphs"],
+                ],
+            },
+            {
+                **cl_response_with_counts([60] * 5),
+                "body_paragraphs": [
+                    "I improved platform reliability by 99%. " + " ".join(["body"] * 54),
+                    *cl_response_with_counts([60] * 4)["body_paragraphs"],
+                ],
+            },
+        ]
+    )
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(JD_ANALYSIS, TAILORED_CV, PERSONAL)
+
+    assert client.complete_json.call_count == 2
+    assert result.validation_status == "review_required"
+    assert any("unsupported numeric token '99%'" in issue for issue in result.validation_issues)
+
+
+@pytest.mark.asyncio
+async def test_job_description_numeric_token_is_allowed_as_employer_context():
+    client = make_mock_client(
+        {
+            **cl_response_with_counts([60] * 5),
+            "body_paragraphs": [
+                "Your programme spans 40 locations and needs pragmatic delivery leadership. "
+                + " ".join(["body"] * 51),
+                *cl_response_with_counts([60] * 4)["body_paragraphs"],
+            ],
+        }
+    )
+    gen = CoverLetterGenerator(client)
+
+    result = await gen.generate(
+        JD_ANALYSIS,
+        TAILORED_CV,
+        PERSONAL,
+        jd_text="The role supports a programme spanning 40 locations.",
+    )
+
+    assert client.complete_json.call_count == 1
+    assert result.validation_status == "passed"
+    assert result.validation_issues == []

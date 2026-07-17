@@ -33,7 +33,22 @@ logger = logging.getLogger(__name__)
 
 _MAX_WORDS = 350
 _MIN_WORDS = 250
+_TARGET_WORD_RANGE = "285-315"
+_MAX_ATTEMPTS = 3
 _SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+COVER_LETTER_WORD_RE = re.compile(
+    r"""
+    (?:https?://|www\.)[^\s<>()]+
+    |[\w.+-]+@[\w.-]+\.[^\W\d_]{2,}
+    |(?:[^\W\d_]\.){2,}
+    |(?:[£$€¥])?\d+(?:[.,]\d+)*(?:[kmb])?(?:%|\+)?
+       (?:[-–—]\d+(?:[.,]\d+)*(?:[kmb])?(?:%|\+)?)?
+       (?:/[A-Za-z]+)?
+    |[^\W\d_]+(?:['’][^\W\d_]+)*(?:-[^\W\d_]+)*
+    """,
+    re.UNICODE | re.VERBOSE | re.IGNORECASE,
+)
 
 _FORMAL_SECTORS = frozenset(
     {"construction", "finance", "government", "energy", "defence", "defense",
@@ -45,8 +60,9 @@ _CONVERSATIONAL_SECTORS = frozenset(
 )
 
 _NUMERIC_TOKEN_RE = re.compile(
-    r"(?:[£$€¥][\d,]+(?:\.\d+)?(?:[KMBkm+]*)|"
-    r"\d[\d,]*(?:\.\d+)?(?:[KMBkm%+]+))",
+    r"(?:[£$€¥])?\d+(?:[.,]\d+)*(?:[kmb])?(?:%|\+)?"
+    r"(?:[-–—]\d+(?:[.,]\d+)*(?:[kmb])?(?:%|\+)?)?"
+    r"(?:/[A-Za-z]+)?",
     re.IGNORECASE,
 )
 _PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]|\bPLACEHOLDER\b|\bTODO\b", re.IGNORECASE)
@@ -69,6 +85,92 @@ def _default_skill_loader() -> SkillLoader:
     return SkillLoader(SkillRegistry(_SKILLS_DIR))
 
 
+def count_cover_letter_body_words(text: str) -> int:
+    """Count substantive cover-letter body words using the PR1 contract tokenizer."""
+    normalized = " ".join(text.split())
+    count = 0
+    for match in COVER_LETTER_WORD_RE.findall(normalized):
+        token = match.rstrip(".,;:!?") if match.startswith(("http://", "https://", "www.")) else match
+        if token:
+            count += 1
+    return count
+
+
+def _body_word_count(paragraphs: list[str]) -> int:
+    return count_cover_letter_body_words(" ".join(paragraphs))
+
+
+def _length_defect(result: CoverLetterResult) -> str | None:
+    if result.word_count < _MIN_WORDS:
+        return "under_length"
+    if result.word_count > _MAX_WORDS:
+        return "over_length"
+    return None
+
+
+def _blocking_defect(result: CoverLetterResult) -> str | None:
+    if result.grounding_issues:
+        return "numeric_fidelity"
+    return _length_defect(result)
+
+
+def _length_issue(result: CoverLetterResult) -> str:
+    return f"Cover letter body has {result.word_count} words; expected 250-350."
+
+
+def _paragraph_word_counts(result: CoverLetterResult) -> list[int]:
+    return [count_cover_letter_body_words(paragraph) for paragraph in result.body_paragraphs]
+
+
+def _length_repair_instruction(result: CoverLetterResult, defect: str) -> str:
+    paragraph_counts = _paragraph_word_counts(result)
+    if defect == "under_length":
+        guidance_minimums = [45, 75, 70, 55, 30]
+        short = [
+            f"paragraph {index + 1}: {count} words"
+            for index, count in enumerate(paragraph_counts)
+            if index < len(guidance_minimums) and count < guidance_minimums[index]
+        ]
+        return (
+            f"The previous draft was {result.word_count} body words. It is below the 250-word minimum. "
+            "Repair only this defect and return a complete replacement JSON letter with five body paragraphs. "
+            f"Use a target of {_TARGET_WORD_RANGE} body words. "
+            f"Paragraphs below guidance budget: {', '.join(short) if short else 'not calculated'}. "
+            "Add concrete approved evidence already present in the tailored CV or personal details; do not add filler, "
+            "unsupported claims, or new numeric claims. Preserve all existing immutable numeric tokens and valid claims."
+        )
+
+    longest = sorted(
+        ((count, index + 1) for index, count in enumerate(paragraph_counts)),
+        reverse=True,
+    )[:2]
+    longest_text = ", ".join(f"paragraph {index}: {count} words" for count, index in longest)
+    return (
+        f"The previous draft was {result.word_count} body words. It is above the 350-word maximum. "
+        "Repair only this defect and return a complete replacement JSON letter with five body paragraphs. "
+        f"Use a target of {_TARGET_WORD_RANGE} body words; compress the longest paragraphs "
+        f"({longest_text or 'not calculated'}) without deleting required evidence. "
+        "Preserve all immutable numeric tokens."
+    )
+
+
+def _numeric_repair_instruction(result: CoverLetterResult) -> str:
+    issues = "; ".join(result.grounding_issues)
+    return (
+        "The previous draft failed numeric-fidelity validation. "
+        f"Issues: {issues}. "
+        "Repair only the numeric issue. If an approved immutable token was changed, restore it exactly. "
+        "If a numeric token is unsupported, remove it or replace it with approved non-numeric wording. "
+        "Do not add new numbers, estimates, rounded values, or inferred claims. Preserve all other valid content."
+    )
+
+
+def _repair_instruction(result: CoverLetterResult, defect: str) -> str:
+    if defect == "numeric_fidelity":
+        return _numeric_repair_instruction(result)
+    return _length_repair_instruction(result, defect)
+
+
 class CoverLetterGenerator:
     """Generates and refines cover letters for job applications."""
 
@@ -82,6 +184,7 @@ class CoverLetterGenerator:
         tailored_cv: TailoredCVResult,
         personal: dict[str, Any],
         variant: str = "A",
+        jd_text: str = "",
     ) -> CoverLetterResult:
         """Generate a cover letter for the given JD and tailored CV.
 
@@ -116,10 +219,42 @@ class CoverLetterGenerator:
         )
         raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CL_BODY.max_output)
         result = _parse_cover_letter(raw)
+        _apply_cover_letter_contract(
+            result,
+            tailored_cv,
+            personal,
+            evidence_ledger,
+            jd_text,
+        )
 
-        # Trim loop: if over word limit, regenerate with tighter instruction
-        if result.word_count > _MAX_WORDS:
-            logger.info("Cover letter %d words — trimming (variant %s)", result.word_count, variant)
+        result.attempt_count = 1
+        first_pass_word_count = result.word_count
+        result.first_pass_word_count = first_pass_word_count
+        targeted_defect: str | None = None
+        while True:
+            defect = _blocking_defect(result)
+            if defect is None:
+                result.validation_status = "repaired" if result.attempt_count > 1 else "passed"
+                result.validation_issues = []
+                result.repair_count = result.attempt_count - 1
+                return result
+
+            result.validation_issues = (
+                list(result.grounding_issues)
+                if result.grounding_issues
+                else [_length_issue(result)]
+            )
+            if result.attempt_count >= _MAX_ATTEMPTS or targeted_defect == defect:
+                result.validation_status = "review_required"
+                result.repair_count = result.attempt_count - 1
+                return result
+
+            logger.info(
+                "Cover letter %d words — requesting %s repair (variant %s)",
+                result.word_count,
+                defect.replace("_", "-"),
+                variant,
+            )
             system_prompt2, user_prompt2 = _split_jinja_output(
                 render_prompt(
                     "cl_generation.j2",
@@ -127,8 +262,7 @@ class CoverLetterGenerator:
                     tailored_cv=tailored_cv.model_dump(),
                     personal=personal,
                     variant=variant,
-                    trim_instruction=f"The previous draft was {result.word_count} words. "
-                    f"STRICTLY keep total body to {_MAX_WORDS} words max.",
+                    trim_instruction=_repair_instruction(result, defect),
                     skill_instructions=skill_instructions,
                     approved_evidence=evidence_records(evidence_ledger),
                     shared_factuality_contract=SHARED_FACTUALITY_CONTRACT,
@@ -138,15 +272,18 @@ class CoverLetterGenerator:
                 )
             )
             raw2: dict[str, Any] = await self._client.complete_json(system_prompt2, user_prompt2, max_tokens=CL_BODY.max_output)
+            previous_attempts = result.attempt_count
             result = _parse_cover_letter(raw2)
-
-        _apply_cover_letter_contract(
-            result,
-            tailored_cv,
-            personal,
-            evidence_ledger,
-        )
-        return result
+            _apply_cover_letter_contract(
+                result,
+                tailored_cv,
+                personal,
+                evidence_ledger,
+                jd_text,
+            )
+            result.attempt_count = previous_attempts + 1
+            result.first_pass_word_count = first_pass_word_count
+            targeted_defect = defect
 
     async def regenerate_paragraph(
         self,
@@ -203,15 +340,12 @@ class CoverLetterGenerator:
         else:
             new_paragraphs.append(new_para)
 
-        full_text = " ".join(new_paragraphs)
-        word_count = len(full_text.split())
-
         result = CoverLetterResult(
             subject_line=current_letter.subject_line,
             greeting=current_letter.greeting,
             body_paragraphs=new_paragraphs,
             sign_off=current_letter.sign_off,
-            word_count=word_count,
+            word_count=_body_word_count(new_paragraphs),
             key_keywords_used=current_letter.key_keywords_used,
             grounding_issues=list(current_letter.grounding_issues),
         )
@@ -243,15 +377,13 @@ class CoverLetterGenerator:
 def _parse_cover_letter(raw: dict[str, Any]) -> CoverLetterResult:
     """Convert raw Claude JSON into CoverLetterResult."""
     paragraphs: list[str] = raw.get("body_paragraphs", [])
-    full_text = " ".join(paragraphs)
-    word_count = raw.get("word_count") or len(full_text.split())
 
     return CoverLetterResult(
         subject_line=raw.get("subject_line", "Application"),
         greeting=raw.get("greeting", "Dear Hiring Manager,"),
         body_paragraphs=paragraphs,
         sign_off=raw.get("sign_off", "Yours sincerely,"),
-        word_count=word_count,
+        word_count=_body_word_count(paragraphs),
         key_keywords_used=raw.get("key_keywords_used", []),
         grounding_issues=raw.get("grounding_issues", []),
     )
@@ -277,22 +409,62 @@ def _source_text(tailored_cv: TailoredCVResult, personal: dict[str, Any]) -> str
         parts.extend(getattr(edu, "details", []) or [])
     parts.extend(tailored_cv.certifications)
     parts.extend(str(value) for value in personal.values() if value)
-    return " ".join(parts).lower()
+    return " ".join(parts)
+
+
+def _normalise_numeric_token(token: str) -> str:
+    return " ".join(token.strip().rstrip(".,;:!?").split()).lower()
+
+
+def _numeric_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in (_normalise_numeric_token(match) for match in _NUMERIC_TOKEN_RE.findall(text))
+        if token
+    ]
+
+
+def _mutated_numeric_forms(token: str) -> set[str]:
+    forms: set[str] = set()
+    if token.endswith("+"):
+        forms.add(token[:-1])
+    if token.endswith("%"):
+        forms.add(token[:-1])
+    currency_match = re.match(r"^[£$€¥](.+)$", token)
+    if currency_match:
+        forms.add(currency_match.group(1))
+    return {item for item in forms if item and item != token}
 
 
 def _validate_cover_letter_grounding(
     result: CoverLetterResult,
     tailored_cv: TailoredCVResult,
     personal: dict[str, Any],
+    jd_text: str = "",
 ) -> list[str]:
-    text = " ".join(result.body_paragraphs)
-    source = _source_text(tailored_cv, personal)
+    text = " ".join(
+        [result.subject_line, result.greeting, result.sign_off] + result.body_paragraphs
+    )
+    body_text = " ".join(result.body_paragraphs)
+    candidate_tokens = set(_numeric_tokens(_source_text(tailored_cv, personal)))
+    employer_tokens = set(_numeric_tokens(jd_text))
+    generated_tokens = _numeric_tokens(body_text)
+    generated_token_set = set(generated_tokens)
     issues: list[str] = []
     if _PLACEHOLDER_RE.search(text):
         issues.append("Cover letter contains placeholder text.")
-    for token in _NUMERIC_TOKEN_RE.findall(text):
-        if token.lower() not in source:
-            issues.append(f"Cover letter numeric token '{token}' is not grounded in the tailored CV.")
+
+    for expected in sorted(candidate_tokens):
+        observed = sorted(_mutated_numeric_forms(expected) & generated_token_set)
+        if observed and expected not in generated_token_set:
+            issues.append(
+                f"Cover letter mutated immutable numeric token '{expected}' as '{observed[0]}'."
+            )
+
+    for token in _NUMERIC_TOKEN_RE.findall(body_text):
+        normalized = _normalise_numeric_token(token)
+        if normalized not in candidate_tokens and normalized not in employer_tokens:
+            issues.append(f"Cover letter unsupported numeric token '{token}'.")
     return issues
 
 
@@ -301,12 +473,19 @@ def _apply_cover_letter_contract(
     tailored_cv: TailoredCVResult,
     personal: dict[str, Any],
     evidence_ledger: tuple[EvidenceItem, ...],
+    jd_text: str = "",
 ) -> None:
     """Apply shared grounding and provenance to the final generated draft."""
-    existing = _validate_cover_letter_grounding(result, tailored_cv, personal)
+    existing = _validate_cover_letter_grounding(
+        result,
+        tailored_cv,
+        personal,
+        jd_text,
+    )
     numeric_validation = validate_numeric_fidelity(
         result.body_paragraphs,
         evidence_ledger,
+        (jd_text,),
     )
     result.grounding_issues = list(
         dict.fromkeys(

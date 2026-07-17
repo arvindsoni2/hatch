@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks import cli
+from benchmarks.contracts import BenchmarkSummary, ModelAggregate, Recommendation
 
 
 def test_parser_exposes_five_subcommands() -> None:
@@ -15,6 +16,120 @@ def test_parser_exposes_five_subcommands() -> None:
     )
 
     assert set(subparsers.choices) == {"validate", "init-case", "smoke", "run", "report"}
+
+
+def test_run_parser_accepts_acceptance_profile_and_resume() -> None:
+    parser = cli.build_parser()
+
+    args = parser.parse_args(
+        [
+            "run",
+            "--case",
+            "/tmp/case",
+            "--models",
+            "qwen35-4b",
+            "--repetitions",
+            "1",
+            "--profile",
+            "acceptance-smoke",
+            "--resume",
+            "run-123",
+        ]
+    )
+
+    assert args.profile == "acceptance-smoke"
+    assert args.resume == "run-123"
+
+
+def test_acceptance_exit_code_allows_model_timeout_outcomes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    async def fake_run_benchmark(*args, **kwargs) -> BenchmarkSummary:
+        run_dir = tmp_path / "run-1"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps({"commands": [{"command": "original", "exit_code": 0}]}),
+            encoding="utf-8",
+        )
+        return BenchmarkSummary(
+            run_id="run-1",
+            case_id="delivery-manager",
+            created_at="2026-07-16T12:00:00+00:00",
+            benchmark_profile="acceptance-smoke",
+            repetitions=1,
+            selected_models=["qwen35-4b"],
+            completion_state="completed_with_model_outcomes",
+            models=[
+                ModelAggregate(
+                    model_id="qwen35-4b",
+                    attempted=1,
+                    succeeded=0,
+                    failed=0,
+                    unavailable=0,
+                    timeout=1,
+                    eligible=0,
+                    hard_gate_pass_rate=0.0,
+                )
+            ],
+            ranking=[],
+            recommendation=Recommendation(
+                classification="inconclusive",
+                rationale=["No eligible output."],
+                limitations=["Single case."],
+            ),
+        )
+
+    monkeypatch.setattr(cli, "load_case", lambda path: object())
+    monkeypatch.setattr(cli, "run_benchmark", fake_run_benchmark)
+
+    exit_code = cli.main(
+        [
+            "run",
+            "--case",
+            "/tmp/case",
+            "--models",
+            "qwen35-4b",
+            "--repetitions",
+            "1",
+            "--profile",
+            "acceptance-smoke",
+            "--output-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert exit_code == 3
+    manifest = json.loads((tmp_path / "run-1" / "run_manifest.json").read_text(encoding="utf-8"))
+    assert [command["command"] for command in manifest["commands"]] == [
+        "original",
+        "python -m benchmarks run --case /tmp/case --models qwen35-4b --repetitions 1 --profile acceptance-smoke --output-root "
+        + str(tmp_path),
+    ]
+
+
+def test_run_command_text_records_resume_flags(tmp_path: Path) -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "--case",
+            "/tmp/case",
+            "--models",
+            "qwen35-4b",
+            "--repetitions",
+            "1",
+            "--profile",
+            "acceptance-smoke",
+            "--resume",
+            "run-123",
+            "--retry-timeouts",
+            "--output-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert cli._run_command_text(args) == (
+        "python -m benchmarks run --case /tmp/case --models qwen35-4b --repetitions 1 "
+        f"--profile acceptance-smoke --resume run-123 --retry-timeouts --output-root {tmp_path}"
+    )
 
 
 def test_init_case_copies_only_declared_inputs(tmp_path: Path) -> None:
@@ -73,7 +188,7 @@ def test_init_case_copies_only_declared_inputs(tmp_path: Path) -> None:
 def test_validate_returns_nonzero_for_invalid_case(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = cli.main(["validate", "--case", str(tmp_path)])
 
-    assert exit_code == 2
+    assert exit_code == 1
     assert "missing required files" in capsys.readouterr().err
 
 
