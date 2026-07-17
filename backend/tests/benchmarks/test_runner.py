@@ -636,3 +636,21 @@ async def test_interrupted_run_flushes_current_attempt_and_incomplete_outputs(
     progress = json.loads((tmp_path / "interrupted-run" / "progress.json").read_text(encoding="utf-8"))
     assert progress["completion_state"] == "incomplete_interrupted"
     assert progress["models"]["unsafe"]["execution_status"] == "not_started"
+
+    resumed = await run_benchmark(
+        CASE,
+        model_ids=["qwen35-4b", "unsafe"],
+        repetitions=1,
+        output_root=tmp_path,
+        adapter_factory=lambda spec, seed: FakeClient(spec, seed, order),
+        resume_run_id="interrupted-run",
+        retry_timeouts=True,
+        profile=BenchmarkProfile(name="acceptance-smoke"),
+    )
+
+    assert resumed.completion_state == "completed"
+    assert order == [
+        ("qwen35-4b", 11),
+        ("qwen35-4b", 11),
+        ("unsafe", 11),
+    ]

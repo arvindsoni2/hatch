@@ -813,7 +813,6 @@ async def run_benchmark(
     resume_run_id: str | None = None,
     retry_timeouts: bool = False,
 ) -> BenchmarkSummary:
-    del retry_timeouts  # Timeout retries are intentionally explicit future behavior.
     if repetitions < 1:
         raise ValueError("repetitions must be at least 1")
     if repetitions > len(case.seeds):
@@ -894,6 +893,8 @@ async def run_benchmark(
                 if not path.exists():
                     continue
                 result = RepetitionResult.model_validate_json(path.read_text(encoding="utf-8"))
+                if retry_timeouts and result.status in {"timeout", "interrupted"}:
+                    continue
                 by_model[model_id].append(result)
 
     async def execute_repetition(
