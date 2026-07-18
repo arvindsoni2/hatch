@@ -7,7 +7,13 @@ from typing import Any
 
 from .ai_setup import load_runtime
 
-BACKEND_PROFILES = {"core", "browser", "local-embeddings", "full"}
+BACKEND_PROFILES = {
+    "core",
+    "browser",
+    "local-embeddings",
+    "observability",
+    "full",
+}
 
 
 def _env_enabled(name: str) -> bool | None:
@@ -29,6 +35,8 @@ def _profile_configured(profile: str, capability: str) -> bool:
         return profile in {"local-embeddings", "full"}
     if capability == "perception_advanced_coach":
         return profile == "full"
+    if capability == "observability":
+        return profile in {"observability", "full"}
     return False
 
 
@@ -40,7 +48,10 @@ def _configured(profile: str, capability: str, env_name: str) -> bool:
 
 
 def _module_available(module_name: str) -> bool:
-    return importlib.util.find_spec(module_name) is not None
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ModuleNotFoundError):
+        return False
 
 
 def _optional_capability(
@@ -82,6 +93,11 @@ def build_backend_capability_status() -> dict[str, Any]:
         _configured(profile, "perception_advanced_coach", "HATCH_PERCEPTION_ENABLED")
         or _configured(profile, "perception_advanced_coach", "HATCH_ADVANCED_COACH_ENABLED")
     )
+    observability_configured = _configured(
+        profile,
+        "observability",
+        "HATCH_OBSERVABILITY_ENABLED",
+    )
 
     capabilities = {
         "core_backend": {
@@ -111,6 +127,13 @@ def build_backend_capability_status() -> dict[str, Any]:
             not_configured_reason="Full backend capability profile is not enabled.",
             not_installed_reason="Perception and advanced coach dependencies are not installed in this backend image.",
             enable_command="hatch capabilities enable full",
+        ),
+        "observability": _optional_capability(
+            configured=observability_configured,
+            installed=_module_available("opentelemetry.sdk"),
+            not_configured_reason="Observability profile is not enabled.",
+            not_installed_reason="OpenTelemetry dependencies are not installed in this backend image.",
+            enable_command="hatch capabilities enable observability",
         ),
     }
 

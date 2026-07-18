@@ -34,9 +34,17 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -r requirements-local-ai.txt
 
 
+FROM core-builder AS observability-builder
+
+COPY requirements-observability.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --prefix=/install --no-cache-dir \
+        -r requirements-observability.txt
+
+
 FROM build-base AS full-builder
 
-COPY requirements-core.txt requirements-browser.txt requirements-local-ai.txt requirements-perception.txt requirements-full.txt ./
+COPY requirements-core.txt requirements-browser.txt requirements-local-ai.txt requirements-observability.txt requirements-perception.txt requirements-full.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install --prefix=/install --no-cache-dir \
@@ -142,6 +150,18 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 FROM runtime-base AS local-ai
 
 COPY --from=local-ai-builder /install /usr/local
+COPY --chown=appuser:appuser . .
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+USER appuser
+EXPOSE 8000
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+
+FROM runtime-base AS observability
+
+COPY --from=observability-builder /install /usr/local
 COPY --chown=appuser:appuser . .
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

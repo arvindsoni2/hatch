@@ -11,6 +11,7 @@ REQUIRED_GROUPS = {
     "requirements-core.txt",
     "requirements-browser.txt",
     "requirements-local-ai.txt",
+    "requirements-observability.txt",
     "requirements-perception.txt",
     "requirements-full.txt",
 }
@@ -22,6 +23,11 @@ CORE_FORBIDDEN_PACKAGES = {
     "tokenizers",
     "torch",
     "transformers",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-grpc",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-instrumentation-logging",
 }
 
 
@@ -73,7 +79,11 @@ def test_current_default_requirements_remain_full_runtime_contract() -> None:
 
 def test_optional_requirement_groups_reference_core() -> None:
     """Optional groups extend core instead of duplicating the default runtime list."""
-    for name in ("requirements-browser.txt", "requirements-local-ai.txt"):
+    for name in (
+        "requirements-browser.txt",
+        "requirements-local-ai.txt",
+        "requirements-observability.txt",
+    ):
         lines = _requirement_lines(BACKEND_DIR / name)
 
         assert lines[0] == "-r requirements-core.txt"
@@ -86,6 +96,7 @@ def test_full_requirements_include_all_capability_groups() -> None:
     assert "-r requirements-core.txt" in lines
     assert "-r requirements-browser.txt" in lines
     assert "-r requirements-local-ai.txt" in lines
+    assert "-r requirements-observability.txt" in lines
     assert "-r requirements-perception.txt" in lines
 
 

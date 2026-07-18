@@ -1,0 +1,8 @@
+-r requirements-core.txt
+
+# Optional local OpenTelemetry capability. Keep API/SDK/exporter versions aligned.
+opentelemetry-api==1.44.0
+opentelemetry-sdk==1.44.0
+opentelemetry-exporter-otlp-proto-grpc==1.44.0
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-instrumentation-logging==0.65b0
