@@ -120,3 +120,55 @@ def test_async_workflow_and_stage_decorators_preserve_result(monkeypatch) -> Non
         ("workflow", "cv_tailoring"),
         ("stage", "generate_initial"),
     ]
+
+
+def test_controlled_fallback_error_marks_workflow_outcome_failed() -> None:
+    outcomes: list[dict[str, object]] = []
+
+    class Instrument:
+        def record(self, *_args, **_kwargs) -> None:
+            return None
+
+        def add(self, _value, attributes) -> None:
+            outcomes.append(attributes)
+
+    class Meter:
+        def create_histogram(self, *_args, **_kwargs):
+            return Instrument()
+
+        def create_counter(self, *_args, **_kwargs):
+            return Instrument()
+
+    class RawSpan:
+        def add_event(self, *_args, **_kwargs) -> None:
+            return None
+
+        def set_status(self, *_args, **_kwargs) -> None:
+            return None
+
+    class Manager:
+        def __enter__(self):
+            return RawSpan()
+
+        def __exit__(self, *_args):
+            return False
+
+    class Tracer:
+        def start_as_current_span(self, *_args, **_kwargs):
+            return Manager()
+
+    telemetry = TelemetryRuntime(
+        status="active",
+        tracer=Tracer(),
+        meter=Meter(),
+    )
+
+    with telemetry.workflow_span("job_discovery_import"):
+        telemetry.mark_current_error("classification_failed")
+        result = []
+
+    assert result == []
+    assert any(
+        item.get("hatch.ai.validation.state") == "failed"
+        for item in outcomes
+    )

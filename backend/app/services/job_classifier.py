@@ -90,13 +90,24 @@ class JobClassifier:
                 HumanMessage(content=user),
             ]
             started = time.monotonic()
-            response = await model.ainvoke(messages)
-            get_telemetry().record_model_call(
-                workflow="job_discovery_import",
-                provider=type(model).__name__,
-                model_id=str(getattr(model, "model", "configured")),
-                duration_ms=(time.monotonic() - started) * 1000,
-            )
+            try:
+                response = await model.ainvoke(messages)
+            except Exception:
+                get_telemetry().record_model_call(
+                    workflow="job_discovery_import",
+                    provider=type(model).__name__,
+                    model_id=str(getattr(model, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    outcome="failed",
+                )
+                raise
+            else:
+                get_telemetry().record_model_call(
+                    workflow="job_discovery_import",
+                    provider=type(model).__name__,
+                    model_id=str(getattr(model, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                )
             text = response.content if isinstance(response.content, str) else str(response.content)
 
             cleaned = text.strip()
@@ -109,6 +120,10 @@ class JobClassifier:
             items = result if isinstance(result, list) else result.get("jobs", [])
             return _validate_classifications(items, jobs_payload)
         except Exception as exc:
+            get_telemetry().mark_current_error(
+                "classification_failed",
+                "workflow_error",
+            )
             logger.error("Batch classify failed (%d jobs): %s", len(jobs), exc)
             return []
 

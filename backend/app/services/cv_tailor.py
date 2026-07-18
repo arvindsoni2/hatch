@@ -234,11 +234,21 @@ class CVTailor:
                 "hatch.ai.skill.id": "cv-tailoring",
             },
         ):
-            raw: dict[str, Any] = await self._client.complete_json(
-                system_prompt,
-                user_prompt,
-                max_tokens=CV_GENERATE.max_output,
-            )
+            try:
+                raw: dict[str, Any] = await self._client.complete_json(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=CV_GENERATE.max_output,
+                )
+            except Exception:
+                get_telemetry().record_model_call(
+                    workflow="cv_tailoring",
+                    provider=type(self._client).__name__,
+                    model_id=str(getattr(self._client, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    outcome="failed",
+                )
+                raise
         get_telemetry().record_model_call(
             workflow="cv_tailoring",
             provider=type(self._client).__name__,
@@ -266,6 +276,21 @@ class CVTailor:
         ]
         result.blocking_issues = list(dict.fromkeys([*blocking, *numeric_blocking]))
         result.fabrication_warnings = advisory
+        for issue in result.blocking_issues:
+            gate_code = (
+                "numeric_fidelity"
+                if "numeric" in issue.casefold()
+                else "grounding"
+            )
+            get_telemetry().record_validation_failure(
+                "cv_tailoring",
+                gate_code,
+            )
+        if result.blocking_issues:
+            get_telemetry().mark_current_error(
+                "validation_failed",
+                "validation_failure",
+            )
         result.generation_provenance = GenerationProvenance(
             prompt_metadata=CV_TAILORING_PROMPT,
             evidence_schema_version=EVIDENCE_SCHEMA_VERSION,

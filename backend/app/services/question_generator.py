@@ -103,11 +103,21 @@ class QuestionGeneratorService:
         )
 
         started = time.monotonic()
-        raw = await self._client.complete_json(
-            system_prompt,
-            user_prompt,
-            max_tokens=QUESTION_GEN.max_output,
-        )
+        try:
+            raw = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=QUESTION_GEN.max_output,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
         get_telemetry().record_model_call(
             workflow="coach_generation",
             provider=type(self._client).__name__,

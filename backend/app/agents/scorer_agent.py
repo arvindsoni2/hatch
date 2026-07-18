@@ -406,16 +406,33 @@ class ScorerAgent(BaseAgent):
         # Triage pre-filter
         await limiter.acquire()
         triage_prompt = self._build_triage_prompt(job, profile)
+        triage_started = time.monotonic()
         try:
             triage: _TriageResult = await asyncio.wait_for(
                 triage_llm.ainvoke(triage_prompt), timeout=120
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(triage_model_name),
+                duration_ms=(time.monotonic() - triage_started) * 1000,
+                input_tokens=estimate_tokens(triage_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise
         triage_tok_in = estimate_tokens(triage_prompt)
         triage_tok_out = estimate_tokens(triage.reason)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(triage_model_name),
+            duration_ms=(time.monotonic() - triage_started) * 1000,
+            input_tokens=triage_tok_in,
+            output_tokens=triage_tok_out,
+        )
         db.add(CostTracking(
             agent_name="scorer",
             job_id=job_id,
@@ -438,6 +455,14 @@ class ScorerAgent(BaseAgent):
                 primary_llm.ainvoke(scoring_prompt), timeout=600
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(primary_model_name),
+                duration_ms=(time.monotonic() - t1) * 1000,
+                input_tokens=estimate_tokens(scoring_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise
@@ -513,16 +538,33 @@ class ScorerAgent(BaseAgent):
         # Triage pre-filter
         await limiter.acquire()
         triage_prompt = self._build_triage_prompt(job, profile)
+        triage_started = time.monotonic()
         try:
             triage: _TriageResult = await asyncio.wait_for(
                 triage_llm.ainvoke(triage_prompt), timeout=120
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(triage_model_name),
+                duration_ms=(time.monotonic() - triage_started) * 1000,
+                input_tokens=estimate_tokens(triage_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise
         triage_tok_in = estimate_tokens(triage_prompt)
         triage_tok_out = estimate_tokens(triage.reason)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(triage_model_name),
+            duration_ms=(time.monotonic() - triage_started) * 1000,
+            input_tokens=triage_tok_in,
+            output_tokens=triage_tok_out,
+        )
         db.add(CostTracking(
             agent_name="scorer",
             job_id=job_id,
@@ -545,6 +587,14 @@ class ScorerAgent(BaseAgent):
                 primary_llm.ainvoke(scoring_prompt), timeout=600
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(primary_model_name),
+                duration_ms=(time.monotonic() - t1) * 1000,
+                input_tokens=estimate_tokens(scoring_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise

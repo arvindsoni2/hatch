@@ -54,6 +54,9 @@ ALLOWED_ATTRIBUTE_KEYS = _STRING_KEYS | _INTEGER_KEYS | _SEQUENCE_KEYS
 _SECRET_SHAPE = re.compile(
     r"(?i)(?:bearer\s+\S+|api[_-]?key|authorization|password|secret|token\s*[:=])"
 )
+_PATH_SHAPE = re.compile(
+    r"(?i)(?:^[/\\\\]|^[a-z]:[\\\\/]|^~[/\\\\]|^file://|/(?:home|users|tmp|var)/)"
+)
 _MAX_STRING_LENGTH = 128
 _MAX_SEQUENCE_LENGTH = 32
 
@@ -62,7 +65,11 @@ def _safe_string(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip()
-    if not normalized or _SECRET_SHAPE.search(normalized):
+    if (
+        not normalized
+        or _SECRET_SHAPE.search(normalized)
+        or _PATH_SHAPE.search(normalized)
+    ):
         return None
     return normalized[:_MAX_STRING_LENGTH]
 

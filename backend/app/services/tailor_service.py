@@ -20,7 +20,7 @@ from ..schemas.tailor import (
     TailoredCVResult,
     TailorResultBundle,
 )
-from ..observability import get_telemetry
+from ..observability import get_telemetry, trace_workflow
 from .ats_optimiser import ATSOptimiser
 from .cl_generator import CoverLetterGenerator, select_tone_variant
 from .llm_client import LLMClient
@@ -307,6 +307,7 @@ class TailorService:
             skill_match=skill_match,
         )
 
+    @trace_workflow("cv_tailoring")
     async def generate_cv(
         self,
         application_id: str,
@@ -390,6 +391,7 @@ class TailorService:
             span.set_attribute("hatch.ai.document.id", str(doc.id))
         return doc
 
+    @trace_workflow("cover_letter_generation")
     async def generate_cover_letter(
         self,
         application_id: str,

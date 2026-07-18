@@ -256,11 +256,21 @@ class CoverLetterGenerator:
             )
         )
         started = time.monotonic()
-        raw: dict[str, Any] = await self._client.complete_json(
-            system_prompt,
-            user_prompt,
-            max_tokens=CL_BODY.max_output,
-        )
+        try:
+            raw: dict[str, Any] = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=CL_BODY.max_output,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="cover_letter_generation",
+                provider=type(self._client).__name__,
+                model_id=_model_id(self._client) or "configured",
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
         latency_ms = (time.monotonic() - started) * 1000
         observation = _latest_observation(self._client)
         get_telemetry().record_model_call(
@@ -503,6 +513,12 @@ class CoverLetterGenerator:
                     jd_text=jd_text,
                 )
             )
+            for issue in validation.issues:
+                if issue.severity == "blocking":
+                    get_telemetry().record_validation_failure(
+                        "cover_letter_generation",
+                        issue.code,
+                    )
             attempt_number = len(attempts) + 1
             repair_type = repairs[-1] if repairs else None
             attempts.append(
@@ -568,6 +584,10 @@ class CoverLetterGenerator:
                 repair_action is None
                 or attempt_number >= contract.maximum_attempts
             ):
+                get_telemetry().mark_current_error(
+                    "validation_failed",
+                    "validation_failure",
+                )
                 result.validation_status = contract.safe_failure_state
                 diagnostics = WorkflowDiagnostics(
                     run_id=run_id,
@@ -599,12 +619,6 @@ class CoverLetterGenerator:
                 "cover_letter_generation",
                 repair_action,
             )
-            for issue in validation.issues:
-                if issue.severity == "blocking":
-                    get_telemetry().record_validation_failure(
-                        "cover_letter_generation",
-                        issue.code,
-                    )
             generated = await self.repair_specific_failure(
                 RepairSpecificFailureInput(
                     repair_action=repair_action,

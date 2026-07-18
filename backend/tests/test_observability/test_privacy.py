@@ -33,6 +33,7 @@ def test_attribute_values_are_bounded_and_secret_shaped_values_are_dropped() -> 
         {
             MODEL_ID: "x" * 300,
             PROMPT_ID: "Bearer private-token",
+            "hatch.ai.document.id": "/home/user/private/cv.docx",
         }
     )
 

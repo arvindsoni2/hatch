@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, Literal
@@ -33,8 +34,14 @@ _ALLOWED_EVENT_NAMES = frozenset(
 class SafeSpan:
     """Best-effort span adapter that never raises into business logic."""
 
-    def __init__(self, span: Any = None) -> None:
+    def __init__(self, span: Any = None, parent: SafeSpan | None = None) -> None:
         self._span = span
+        self._parent = parent
+        self._failed = False
+
+    @property
+    def failed(self) -> bool:
+        return self._failed
 
     def set_attribute(self, key: str, value: Any) -> None:
         attributes = sanitize_attributes({key: value})
@@ -66,6 +73,9 @@ class SafeSpan:
         del exception
 
     def set_error(self, code: str) -> None:
+        self._failed = True
+        if self._parent is not None:
+            self._parent.set_error(code)
         if self._span is None:
             return
         try:
@@ -74,6 +84,12 @@ class SafeSpan:
             self._span.set_status(Status(StatusCode.ERROR, code[:64]))
         except Exception:
             return
+
+
+_current_span: ContextVar[SafeSpan | None] = ContextVar(
+    "hatch_current_telemetry_span",
+    default=None,
+)
 
 
 @dataclass(frozen=True)
@@ -140,7 +156,8 @@ class TelemetryRuntime:
         except Exception:
             yield SafeSpan()
             return
-        span = SafeSpan(raw_span)
+        span = SafeSpan(raw_span, parent=_current_span.get())
+        token = _current_span.set(span)
         try:
             yield span
         except BaseException as exc:
@@ -148,6 +165,7 @@ class TelemetryRuntime:
             span.set_error(type(exc).__name__)
             raise
         finally:
+            _current_span.reset(token)
             try:
                 manager.__exit__(None, None, None)
             except Exception:
@@ -168,6 +186,8 @@ class TelemetryRuntime:
                 safe_attributes,
             ) as span:
                 yield span
+                if span.failed:
+                    outcome = "failed"
         except BaseException:
             outcome = "failed"
             raise
@@ -220,11 +240,13 @@ class TelemetryRuntime:
         duration_ms: float,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        outcome: str = "completed",
     ) -> None:
         attributes = {
             WORKFLOW_NAME: workflow,
             PROVIDER_TYPE: provider,
             MODEL_ID: model_id,
+            VALIDATION_STATE: outcome,
         }
         self._record(self._model_duration, duration_ms, attributes)
         self._add(self._model_calls, 1, attributes)
@@ -248,6 +270,17 @@ class TelemetryRuntime:
             1,
             {WORKFLOW_NAME: workflow, FAILED_GATE_CODES: [gate_code]},
         )
+
+    def mark_current_error(
+        self,
+        code: str,
+        event_name: str = "workflow_error",
+    ) -> None:
+        span = _current_span.get()
+        if span is None:
+            return
+        span.add_event(event_name)
+        span.set_error(code)
 
     def _warn_once(self, message: str) -> None:
         with self._warning_lock:

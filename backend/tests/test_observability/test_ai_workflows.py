@@ -6,12 +6,18 @@ from app.services.coach_service import CoachService
 from app.services.cv_tailor import CVTailor
 from app.services.job_classifier import JobClassifier
 from app.services.question_generator import QuestionGeneratorService
+from app.services.tailor_service import TailorService
 
 
 def test_ai_entrypoints_declare_stable_workflow_names() -> None:
     assert CVTailor.tailor.__hatch_workflow__ == "cv_tailoring"
     assert (
         CoverLetterGenerator.generate.__hatch_workflow__
+        == "cover_letter_generation"
+    )
+    assert TailorService.generate_cv.__hatch_workflow__ == "cv_tailoring"
+    assert (
+        TailorService.generate_cover_letter.__hatch_workflow__
         == "cover_letter_generation"
     )
     assert ScorerAgent._score_with_llm.__hatch_workflow__ == "job_scoring"

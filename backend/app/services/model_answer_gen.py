@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import MODEL_ANSWER
 from .jd_analyser import _split_jinja_output
@@ -24,6 +26,7 @@ class ModelAnswerGeneratorService:
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
+    @trace_stage("coach_generation", "generate_initial")
     async def generate(
         self,
         question: str,
@@ -62,12 +65,31 @@ class ModelAnswerGeneratorService:
                 candidate_contract=candidate_claim_contract("model_answer"),
             )
         )
+        started = time.monotonic()
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=MODEL_ANSWER.max_output)
+            raw = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=MODEL_ANSWER.max_output,
+            )
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
             if not isinstance(raw, dict):
+                get_telemetry().record_validation_failure(
+                    "coach_generation",
+                    "invalid_model_answer",
+                )
                 return ""
             model_answer = raw.get("model_answer", "")
             if not isinstance(model_answer, str) or not model_answer.strip():
+                get_telemetry().record_validation_failure(
+                    "coach_generation",
+                    "missing_model_answer",
+                )
                 return ""
             star = raw.get("star_breakdown", {})
             star_prose = (
@@ -81,8 +103,24 @@ class ModelAnswerGeneratorService:
                 ledger,
                 employer_context,
             )
+            if not validation.passed:
+                get_telemetry().record_validation_failure(
+                    "coach_generation",
+                    "candidate_grounding",
+                )
             return model_answer if validation.passed else ""
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            get_telemetry().mark_current_error(
+                "model_answer_failed",
+                "model_error",
+            )
             logger.warning("Model answer generation failed: %s", exc)
             return ""
 

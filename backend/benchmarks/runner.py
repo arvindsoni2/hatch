@@ -1073,6 +1073,13 @@ async def run_benchmark(
                 "hatch.ai.attempt.number",
                 repetition,
             )
+            if validation_state != "passed":
+                span.add_event("workflow_error")
+                span.set_error(
+                    result.error_type
+                    or result.execution_status
+                    or result.status
+                )
             if result.cover_letter_repair_count is not None:
                 for _ in range(result.cover_letter_repair_count):
                     get_telemetry().record_repair(

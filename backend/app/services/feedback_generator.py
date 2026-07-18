@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import (
     AnswerEvaluation,
     PracticePlanDay,
@@ -35,6 +37,7 @@ class FeedbackGeneratorService:
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
+    @trace_stage("coach_generation", "generate_initial")
     async def generate_report(
         self,
         session_id: str,
@@ -110,9 +113,31 @@ class FeedbackGeneratorService:
             )
         )
 
+        started = time.monotonic()
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=FEEDBACK.max_output)
+            raw = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=FEEDBACK.max_output,
+            )
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            get_telemetry().mark_current_error(
+                "feedback_generation_failed",
+                "model_error",
+            )
             logger.warning("Session report generation failed: %s — using fallback", exc)
             raw = {}
 

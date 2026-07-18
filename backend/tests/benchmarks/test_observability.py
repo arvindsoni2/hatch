@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import pytest
 
 from benchmarks import runner
+from benchmarks.adapters import BenchmarkModelUnavailableError
 from benchmarks.runner import run_benchmark
 from tests.benchmarks.test_runner import CASE, FakeClient
 
@@ -15,13 +16,22 @@ async def test_benchmark_pair_uses_controlled_correlation_attributes(
     monkeypatch,
 ) -> None:
     spans: list[tuple[str, dict[str, object]]] = []
+    span_errors: list[str] = []
 
     class Span:
         def __init__(self, attributes):
             self.attributes = attributes
+            self.errors: list[str] = []
 
         def set_attribute(self, key, value) -> None:
             self.attributes[key] = value
+
+        def add_event(self, _name) -> None:
+            return None
+
+        def set_error(self, code) -> None:
+            self.errors.append(code)
+            span_errors.append(code)
 
     class Telemetry:
         @contextmanager
@@ -78,3 +88,25 @@ async def test_benchmark_pair_uses_controlled_correlation_attributes(
     serialized = str(pair)
     assert "alex@example.test" not in serialized
     assert CASE.job_description not in serialized
+
+    class UnavailableClient(FakeClient):
+        async def complete_json(self, *_args, **_kwargs):
+            raise BenchmarkModelUnavailableError("not installed")
+
+    spans.clear()
+    await run_benchmark(
+        CASE,
+        model_ids=["qwen35-4b"],
+        repetitions=1,
+        output_root=tmp_path,
+        adapter_factory=lambda spec, seed: UnavailableClient(
+            spec,
+            seed,
+            order,
+        ),
+        run_id="otel-failed-run",
+    )
+
+    failed_pair = next(item for item in spans if item[0] == "benchmark_pair")
+    assert failed_pair[1]["hatch.ai.validation.state"] == "unavailable"
+    assert span_errors == ["BenchmarkModelUnavailableError"]
