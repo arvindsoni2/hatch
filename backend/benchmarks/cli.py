@@ -11,10 +11,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .adapters import BenchmarkLLMClient
-from .case_loader import CaseValidationError, load_case
+from .case_loader import CaseValidationError, load_case, load_suite
 from .contracts import BenchmarkSummary
-from .reporting import write_report
+from .reporting import write_report, write_staged_report
 from .runner import benchmark_profile, run_benchmark
+from .staged_runner import (
+    ProtectedStateChangedError,
+    run_stage_suite,
+    stage_metrics_from_progress,
+)
 
 _DEFAULT_MODELS = [
     {
@@ -62,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="Validate a benchmark case without inference")
     validate.add_argument("--case", required=True, type=Path)
 
+    validate_suite = commands.add_parser(
+        "validate-suite",
+        help="Validate the synthetic representative suite without inference",
+    )
+    validate_suite.add_argument("--suite", required=True, type=Path)
+
     initialise = commands.add_parser("init-case", help="Create a private benchmark case")
     initialise.add_argument("--case-id", required=True)
     initialise.add_argument("--destination", required=True, type=Path)
@@ -89,6 +100,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Retry timed-out/interrupted repetitions when resuming",
     )
     run.add_argument("--output-root", type=Path, default=Path("../data/benchmarks/results"))
+
+    staged = commands.add_parser(
+        "staged-run",
+        help="Run or resume the representative staged model selection",
+    )
+    staged.add_argument("--suite", required=True, type=Path)
+    staged.add_argument("--output-root", type=Path, default=Path("data/benchmarks/results"))
+    staged.add_argument("--resume", help="Resume an existing staged run ID")
+    staged.add_argument(
+        "--defer-stage-c",
+        action="store_true",
+        help="Record benchmark_deferred instead of starting Stage C",
+    )
+    staged.add_argument(
+        "--restart-evidence",
+        action="append",
+        default=[],
+        type=Path,
+        help="Fresh service-restart evidence; provide once per official run",
+    )
 
     report = commands.add_parser("report", help="Regenerate Markdown from summary JSON")
     report.add_argument("--run", required=True, type=Path)
@@ -247,6 +278,30 @@ async def _run(args: argparse.Namespace) -> int:
     return _exit_code_for_summary(summary, manifest)
 
 
+async def _staged_run(args: argparse.Namespace) -> int:
+    suite = load_suite(args.suite)
+    output_root = args.output_root.expanduser().resolve()
+    result = await run_stage_suite(
+        suite,
+        output_root=output_root,
+        resume_run_id=args.resume,
+        defer_stage_c=args.defer_stage_c,
+        restart_evidence=args.restart_evidence,
+    )
+    run_dir = output_root / result.run_id
+    write_staged_report(
+        result,
+        stage_metrics_from_progress(run_dir),
+        run_dir / "report.md",
+        protected_hashes_unchanged=True,
+    )
+    print(
+        f"Staged benchmark {result.run_id}: {result.state}; "
+        f"decision={result.decision.decision}"
+    )
+    return 4 if result.state == "incomplete_interrupted" else 0
+
+
 def _exit_code_for_summary(summary: BenchmarkSummary, manifest: dict | None = None) -> int:
     if manifest and manifest.get("protected_hashes", {}).get("unchanged") is False:
         return 5
@@ -279,10 +334,19 @@ def main(argv: list[str] | None = None) -> int:
             case = load_case(args.case)
             print(f"Valid case {case.case_id}: {', '.join(item.id for item in case.models)}")
             return 0
+        if args.command == "validate-suite":
+            suite = load_suite(args.suite)
+            print(
+                f"Valid suite {suite.suite_id}: {len(suite.cases)} cases, "
+                f"{len(suite.models)} models"
+            )
+            return 0
         if args.command == "smoke":
             return asyncio.run(_smoke(args.case))
         if args.command == "run":
             return asyncio.run(_run(args))
+        if args.command == "staged-run":
+            return asyncio.run(_staged_run(args))
         if args.command == "report":
             return _report(args.run)
     except CaseValidationError as exc:
@@ -294,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except ProtectedStateChangedError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
     parser.error(f"unknown command: {args.command}")
     return 2
 

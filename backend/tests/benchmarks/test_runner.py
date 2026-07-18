@@ -171,6 +171,39 @@ class FakeClient:
 CASE = _case()
 
 
+def test_database_path_preserves_absolute_aiosqlite_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "jobpilot.db"
+    monkeypatch.setattr(
+        runner.settings,
+        "DATABASE_URL",
+        f"sqlite+aiosqlite:///{database}",
+    )
+
+    assert runner._database_path() == database
+
+
+def test_protected_hashes_include_sqlite_wal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "jobpilot.db"
+    database.write_bytes(b"database")
+    wal = Path(f"{database}-wal")
+    wal.write_bytes(b"before")
+    monkeypatch.setattr(
+        runner.settings,
+        "DATABASE_URL",
+        f"sqlite+aiosqlite:///{database}",
+    )
+    monkeypatch.setattr(runner, "current_profile_hash", lambda: "profile")
+
+    before = runner._protected_hashes()
+    wal.write_bytes(b"after")
+
+    assert runner._protected_hashes()["database"] != before["database"]
+
+
 @pytest.mark.asyncio
 async def test_runner_ranks_gate_pass_rate_before_quality(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -245,6 +278,17 @@ async def test_runner_ranks_gate_pass_rate_before_quality(
     )
     assert result_payload["first_pass_cover_letter_word_count"] == result_payload["final_cover_letter_word_count"]
     assert result_payload["cover_letter_repair_count"] == 0
+    metrics = result_payload["pair_metrics"]
+    assert metrics["schema_succeeded"] is True
+    assert metrics["post_repair_hard_gate_passed"] is True
+    assert metrics["first_pass_hard_gate_passed"] is True
+    assert metrics["unsupported_candidate_claims"] == 0
+    assert metrics["unsupported_numeric_tokens"] == 0
+    assert metrics["immutable_token_mutations"] == 0
+    assert metrics["prompt_tokens"] == 200
+    assert metrics["output_tokens"] == 100
+    assert metrics["tokens_per_eligible_pair"] == 300
+    assert metrics["normalized_combined_quality"] == result_payload["score"]["combined"]
     workflow = result_payload["workflow_diagnostics"]
     assert workflow["skill_id"] == "cover-letter"
     assert workflow["skill_version"] == "1.0.0"
@@ -262,6 +306,126 @@ async def test_runner_ranks_gate_pass_rate_before_quality(
     assert json.loads(raw_payloads[0])["summary"].startswith(
         "Delivery Manager"
     )
+
+
+def test_pair_metrics_separate_first_pass_repair_and_evidence_coverage() -> None:
+    from types import SimpleNamespace
+
+    from app.services.writing_contracts import build_evidence_ledger
+    from benchmarks.contracts import PairScore
+    from benchmarks.runner import _pair_metrics
+
+    ledger = build_evidence_ledger(CASE.master_cv)
+    used_ids = [item.id for item in ledger[:2]]
+    cv = SimpleNamespace(
+        blocking_issues=[],
+        generation_provenance=SimpleNamespace(
+            source_evidence_ids=tuple(used_ids[:1]),
+        ),
+    )
+    letter = SimpleNamespace(
+        validation_status="repaired",
+        validation_issues=[],
+        grounding_issues=[],
+        generation_provenance=SimpleNamespace(
+            source_evidence_ids=tuple(item.id for item in ledger),
+            content_plan={
+                "opening_evidence_ids": used_ids[:1],
+                "primary_evidence_ids": used_ids[1:],
+                "secondary_evidence_ids": [],
+                "alignment_job_requirement_ids": ["jobreq-1"],
+            },
+            workflow={
+                "final_state": "repaired",
+                "attempts": [
+                    {
+                        "latency_ms": 800,
+                        "input_tokens": 100,
+                        "output_tokens": 40,
+                        "validator_results": {
+                            "passed": False,
+                            "issues": [
+                                {
+                                    "gate": "word_count",
+                                    "code": "under_length",
+                                    "severity": "blocking",
+                                    "message": "too short",
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "latency_ms": 300,
+                        "input_tokens": 50,
+                        "output_tokens": 20,
+                        "validator_results": {
+                            "passed": True,
+                            "issues": [],
+                        },
+                    },
+                ],
+            },
+        ),
+    )
+    metrics = _pair_metrics(
+        CASE,
+        cv,
+        letter,
+        PairScore(eligible=True, combined=88.5),
+        observations=[],
+        duration_ms=1400,
+    )
+
+    assert metrics.first_pass_hard_gate_passed is False
+    assert metrics.post_repair_hard_gate_passed is True
+    assert metrics.first_pass_latency_ms == 800
+    assert metrics.repair_latency_ms == 300
+    assert metrics.eligible_pair_latency_ms == 1400
+    assert metrics.prompt_tokens == 150
+    assert metrics.output_tokens == 60
+    assert metrics.tokens_per_eligible_pair == 210
+    assert metrics.evidence_items_used == 2
+    assert metrics.evidence_items_available == len(ledger)
+    assert metrics.evidence_coverage == pytest.approx(2 / len(ledger))
+
+
+def test_sparse_review_required_is_recorded_as_safe_fallback() -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.contracts import PairScore
+    from benchmarks.runner import _pair_metrics
+
+    sparse_case = CASE.model_copy(
+        update={"risk_tags": {"sparse_evidence"}}
+    )
+    cv = SimpleNamespace(
+        blocking_issues=[],
+        generation_provenance=None,
+    )
+    letter = SimpleNamespace(
+        validation_status="review_required",
+        validation_issues=["missing candidate evidence"],
+        grounding_issues=[],
+        generation_provenance=SimpleNamespace(
+            source_evidence_ids=(),
+            content_plan={},
+            workflow={"final_state": "review_required", "attempts": []},
+        ),
+    )
+
+    metrics = _pair_metrics(
+        sparse_case,
+        cv,
+        letter,
+        PairScore(eligible=False),
+        observations=[],
+        duration_ms=100,
+    )
+
+    assert metrics.missing_evidence_safe_fallback is True
+    assert metrics.missing_evidence_case is True
+    assert metrics.post_repair_hard_gate_passed is False
+    assert metrics.normalized_combined_quality is None
 
 
 @pytest.mark.asyncio
@@ -506,3 +670,21 @@ async def test_interrupted_run_flushes_current_attempt_and_incomplete_outputs(
     progress = json.loads((tmp_path / "interrupted-run" / "progress.json").read_text(encoding="utf-8"))
     assert progress["completion_state"] == "incomplete_interrupted"
     assert progress["models"]["unsafe"]["execution_status"] == "not_started"
+
+    resumed = await run_benchmark(
+        CASE,
+        model_ids=["qwen35-4b", "unsafe"],
+        repetitions=1,
+        output_root=tmp_path,
+        adapter_factory=lambda spec, seed: FakeClient(spec, seed, order),
+        resume_run_id="interrupted-run",
+        retry_timeouts=True,
+        profile=BenchmarkProfile(name="acceptance-smoke"),
+    )
+
+    assert resumed.completion_state == "completed"
+    assert order == [
+        ("qwen35-4b", 11),
+        ("qwen35-4b", 11),
+        ("unsafe", 11),
+    ]

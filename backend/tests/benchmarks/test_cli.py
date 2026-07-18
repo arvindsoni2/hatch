@@ -9,13 +9,65 @@ from benchmarks import cli
 from benchmarks.contracts import BenchmarkSummary, ModelAggregate, Recommendation
 
 
-def test_parser_exposes_five_subcommands() -> None:
+def test_parser_exposes_staged_benchmark_subcommands() -> None:
     parser = cli.build_parser()
     subparsers = next(
         action for action in parser._actions if action.__class__.__name__ == "_SubParsersAction"
     )
 
-    assert set(subparsers.choices) == {"validate", "init-case", "smoke", "run", "report"}
+    assert set(subparsers.choices) == {
+        "validate",
+        "validate-suite",
+        "init-case",
+        "smoke",
+        "run",
+        "staged-run",
+        "report",
+    }
+
+
+def test_staged_run_parser_accepts_resume_defer_and_restart_evidence() -> None:
+    parser = cli.build_parser()
+
+    args = parser.parse_args(
+        [
+            "staged-run",
+            "--suite",
+            "/tmp/suite.json",
+            "--resume",
+            "staged-123",
+            "--defer-stage-c",
+            "--restart-evidence",
+            "/tmp/restart-1.json",
+            "--restart-evidence",
+            "/tmp/restart-2.json",
+        ]
+    )
+
+    assert args.resume == "staged-123"
+    assert args.defer_stage_c is True
+    assert args.restart_evidence == [
+        Path("/tmp/restart-1.json"),
+        Path("/tmp/restart-2.json"),
+    ]
+
+
+def test_validate_suite_reports_controlled_case_and_model_counts(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    suite_path = (
+        Path(__file__).resolve().parents[2]
+        / "benchmarks"
+        / "fixtures"
+        / "representative_suite.json"
+    )
+
+    exit_code = cli.main(
+        ["validate-suite", "--suite", str(suite_path)]
+    )
+
+    assert exit_code == 0
+    assert "8 cases, 5 models" in capsys.readouterr().out
 
 
 def test_run_parser_accepts_acceptance_profile_and_resume() -> None:

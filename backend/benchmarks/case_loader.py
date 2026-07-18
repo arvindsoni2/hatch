@@ -10,7 +10,12 @@ from pydantic import ValidationError
 
 from app.schemas.tailor import JDAnalysisResult
 
-from .contracts import BenchmarkCase, CaseManifest, ExpectedFacts
+from .contracts import (
+    BenchmarkCase,
+    BenchmarkSuite,
+    CaseManifest,
+    ExpectedFacts,
+)
 
 REQUIRED_CASE_FILES = (
     "case.json",
@@ -75,4 +80,63 @@ def load_case(path: Path | str) -> BenchmarkCase:
         seeds=manifest.seeds,
         cv_length_tolerance=manifest.cv_length_tolerance,
         input_hashes={name: hash_file(source_dir / name) for name in REQUIRED_CASE_FILES},
+    )
+
+
+def load_suite(path: Path | str) -> BenchmarkSuite:
+    """Load and privacy-check the checked-in representative benchmark suite."""
+    source_path = Path(path).expanduser().resolve()
+    raw = _read_json(source_path)
+    if not isinstance(raw, dict):
+        raise CaseValidationError("benchmark suite must contain a JSON object")
+    serialized = json.dumps(raw, ensure_ascii=False).casefold()
+    forbidden = (
+        "arvind soni",
+        "@gmail.com",
+        "@outlook.com",
+        "@hotmail.com",
+        "@yahoo.com",
+    )
+    if any(value in serialized for value in forbidden):
+        raise CaseValidationError(
+            "benchmark suite must contain synthetic identities only"
+        )
+    for case in raw.get("cases", []):
+        if not isinstance(case, dict):
+            continue
+        personal = case.get("master_cv", {}).get("personal", {})
+        email = personal.get("email", "") if isinstance(personal, dict) else ""
+        if email and not str(email).casefold().endswith("@example.test"):
+            raise CaseValidationError(
+                "benchmark suite must contain synthetic example.test emails"
+            )
+    raw["suite_hash"] = hash_file(source_path)
+    try:
+        return BenchmarkSuite.model_validate(raw)
+    except ValidationError as exc:
+        raise CaseValidationError(
+            f"Invalid benchmark suite {source_path.name}: {exc}"
+        ) from exc
+
+
+def suite_case(suite: BenchmarkSuite, case_id: str) -> BenchmarkCase:
+    """Convert one checked-in suite case to the existing execution contract."""
+    selected = next(
+        (candidate for candidate in suite.cases if candidate.case_id == case_id),
+        None,
+    )
+    if selected is None:
+        raise CaseValidationError(f"unknown benchmark suite case: {case_id}")
+    return BenchmarkCase(
+        case_id=selected.case_id,
+        source_dir=Path(f"fixture://{suite.suite_id}/{selected.case_id}"),
+        master_cv=selected.master_cv,
+        job_description=selected.job_description,
+        jd_analysis=selected.jd_analysis,
+        expected_facts=selected.expected_facts,
+        models=suite.models,
+        seeds=suite.seeds,
+        cv_length_tolerance=selected.cv_length_tolerance,
+        input_hashes={"representative_suite.json": suite.suite_hash},
+        risk_tags=selected.risk_tags,
     )

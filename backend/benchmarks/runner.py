@@ -22,6 +22,7 @@ from app.services.profile_service import current_profile_hash
 from app.services.writing_contracts import (
     EVIDENCE_SCHEMA_VERSION,
     VALIDATION_SCHEMA_VERSION,
+    build_evidence_ledger,
     prompt_metadata_records,
 )
 from app.config import settings
@@ -33,6 +34,8 @@ from .contracts import (
     BenchmarkSummary,
     ModelAggregate,
     ModelSpec,
+    PairMetrics,
+    PairScore,
     Recommendation,
     RepetitionResult,
 )
@@ -127,14 +130,31 @@ def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _database_state_sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    for suffix in ("", "-wal"):
+        component = Path(f"{path}{suffix}")
+        digest.update(suffix.encode("utf-8"))
+        if component.exists():
+            digest.update(b"\0present\0")
+            digest.update(component.read_bytes())
+        else:
+            digest.update(b"\0missing\0")
+    return digest.hexdigest()
+
+
 def _database_path() -> Path | None:
     url = settings.DATABASE_URL
     if not url.startswith("sqlite"):
         return None
     parsed = urlparse(url)
     raw_path = unquote(parsed.path or "")
-    if raw_path.startswith("/") and not url.startswith("sqlite:////"):
-        raw_path = raw_path.lstrip("/")
+    if raw_path.startswith("//"):
+        raw_path = raw_path[1:]
+    elif raw_path.startswith("/"):
+        raw_path = raw_path[1:]
     if not raw_path:
         return None
     path = Path(raw_path)
@@ -146,7 +166,11 @@ def _database_path() -> Path | None:
 def _protected_hashes() -> dict[str, str]:
     profile_hash = current_profile_hash()
     database = _database_path()
-    database_hash = _file_sha256(database) if database and database.exists() else None
+    database_hash = (
+        _database_state_sha256(database)
+        if database and database.exists()
+        else None
+    )
     return {
         "profile": profile_hash or "not_recorded",
         "database": database_hash or "not_recorded",
@@ -208,13 +232,21 @@ def _model_aggregate(model_id: str, results: list[RepetitionResult]) -> ModelAgg
         for item in eligible
         if item.score and item.score.cover_letter
     ]
-    latencies = [item.duration_ms for item in succeeded]
+    pair_metrics = [
+        item.pair_metrics
+        for item in succeeded
+        if item.pair_metrics is not None
+    ]
+    latencies = [
+        metrics.eligible_pair_latency_ms
+        for metrics in pair_metrics
+        if metrics.eligible_pair_latency_ms is not None
+    ]
     first_passes = [
         item
         for item in succeeded
-        if item.first_pass_cover_letter_word_count is not None
-        and 250 <= item.first_pass_cover_letter_word_count <= 350
-        and not item.numeric_fidelity_failures
+        if item.pair_metrics is not None
+        and item.pair_metrics.first_pass_hard_gate_passed
     ]
     final_body_counts = [
         item.final_cover_letter_word_count
@@ -229,6 +261,22 @@ def _model_aggregate(model_id: str, results: list[RepetitionResult]) -> ModelAgg
         if finding.blocking
     )
     attempted = len(results)
+    repairs = [item.cover_letter_repair_count for item in succeeded]
+    prompt_tokens = [
+        metrics.prompt_tokens
+        for metrics in pair_metrics
+        if metrics.prompt_tokens is not None
+    ]
+    output_tokens = [
+        metrics.output_tokens
+        for metrics in pair_metrics
+        if metrics.output_tokens is not None
+    ]
+    sparse_results = [
+        metrics
+        for metrics in pair_metrics
+        if metrics.missing_evidence_case
+    ]
     return ModelAggregate(
         model_id=model_id,
         attempted=attempted,
@@ -253,6 +301,40 @@ def _model_aggregate(model_id: str, results: list[RepetitionResult]) -> ModelAgg
         ),
         numeric_fidelity_failures=sum(len(item.numeric_fidelity_failures) for item in succeeded),
         total_latency_ms=sum(latencies) if latencies else None,
+        successful_response_rate=(len(succeeded) / attempted if attempted else 0.0),
+        schema_success_rate=(
+            sum(metrics.schema_succeeded for metrics in pair_metrics) / attempted
+            if attempted
+            else 0.0
+        ),
+        mean_repair_count=statistics.mean(repairs) if repairs else 0.0,
+        median_repair_count=statistics.median(repairs) if repairs else 0.0,
+        unsupported_candidate_claims=sum(
+            metrics.unsupported_candidate_claims for metrics in pair_metrics
+        ),
+        unsupported_numeric_tokens=sum(
+            metrics.unsupported_numeric_tokens for metrics in pair_metrics
+        ),
+        immutable_token_mutations=sum(
+            metrics.immutable_token_mutations for metrics in pair_metrics
+        ),
+        missing_evidence_safe_fallback_rate=(
+            sum(item.missing_evidence_safe_fallback for item in sparse_results)
+            / len(sparse_results)
+            if sparse_results
+            else 0.0
+        ),
+        mean_evidence_coverage=(
+            statistics.mean(metrics.evidence_coverage for metrics in pair_metrics)
+            if pair_metrics
+            else 0.0
+        ),
+        median_prompt_tokens=(
+            statistics.median(prompt_tokens) if prompt_tokens else None
+        ),
+        median_output_tokens=(
+            statistics.median(output_tokens) if output_tokens else None
+        ),
     )
 
 
@@ -264,6 +346,175 @@ def _numeric_fidelity_failures(letter: Any) -> list[str]:
         for issue in dict.fromkeys(str(item) for item in issues)
         if "numeric" in issue.lower()
     ]
+
+
+def _pair_metrics(
+    case: BenchmarkCase,
+    cv: Any,
+    letter: Any,
+    pair_score: PairScore,
+    observations: list[Any],
+    duration_ms: float,
+) -> PairMetrics:
+    """Derive the PR5 pair contract from production provenance and hard gates."""
+    workflow = getattr(
+        getattr(letter, "generation_provenance", None),
+        "workflow",
+        None,
+    ) or {}
+    attempts = workflow.get("attempts") or []
+    first_validation = (
+        attempts[0].get("validator_results", {})
+        if attempts and isinstance(attempts[0], dict)
+        else {}
+    )
+    cv_blocking = list(getattr(cv, "blocking_issues", []) or [])
+    first_passed = bool(
+        not cv_blocking
+        and first_validation
+        and first_validation.get("passed") is True
+    )
+    numeric_failures = _numeric_fidelity_failures(letter)
+    blocking_codes = [
+        finding.code
+        for finding in pair_score.gates
+        if finding.blocking
+    ]
+    unsupported_codes = {
+        "unsupported_candidate_claim",
+        "unsupported_numeric_token",
+        "production_grounding_failure",
+        "role_structure_mismatch",
+        "certification_mismatch",
+        "education_mismatch",
+    }
+    unsupported_claims = sum(
+        code in unsupported_codes for code in blocking_codes
+    )
+    unsupported_numeric = sum(
+        code == "unsupported_numeric_token" for code in blocking_codes
+    )
+    immutable_mutations = sum(
+        "mutat" in issue.casefold() or "immutable" in issue.casefold()
+        for issue in numeric_failures
+    )
+
+    ledger = build_evidence_ledger(case.master_cv)
+    available_ids = {item.id for item in ledger}
+    content_plan = getattr(
+        getattr(letter, "generation_provenance", None),
+        "content_plan",
+        None,
+    ) or {}
+    used_ids = {
+        evidence_id
+        for key, values in content_plan.items()
+        if key.endswith("_evidence_ids") and isinstance(values, list)
+        for evidence_id in values
+        if evidence_id in available_ids
+    }
+    cv_provenance = getattr(cv, "generation_provenance", None)
+    for evidence_id in getattr(cv_provenance, "source_evidence_ids", ()) or ():
+        if evidence_id in available_ids:
+            used_ids.add(evidence_id)
+
+    observation_prompt_tokens = [
+        item.prompt_tokens
+        for item in observations
+        if getattr(item, "prompt_tokens", None) is not None
+    ]
+    observation_output_tokens = [
+        item.completion_tokens
+        for item in observations
+        if getattr(item, "completion_tokens", None) is not None
+    ]
+    attempt_prompt_tokens = [
+        attempt.get("input_tokens")
+        for attempt in attempts
+        if isinstance(attempt, dict)
+        and isinstance(attempt.get("input_tokens"), int)
+    ]
+    attempt_output_tokens = [
+        attempt.get("output_tokens")
+        for attempt in attempts
+        if isinstance(attempt, dict)
+        and isinstance(attempt.get("output_tokens"), int)
+    ]
+    prompt_tokens = (
+        sum(observation_prompt_tokens)
+        if observation_prompt_tokens
+        else sum(attempt_prompt_tokens)
+        if attempt_prompt_tokens
+        else None
+    )
+    output_tokens = (
+        sum(observation_output_tokens)
+        if observation_output_tokens
+        else sum(attempt_output_tokens)
+        if attempt_output_tokens
+        else None
+    )
+    first_pass_latency = (
+        float(attempts[0].get("latency_ms", 0))
+        if attempts and isinstance(attempts[0], dict)
+        else None
+    )
+    repair_latency = (
+        sum(
+            float(attempt.get("latency_ms", 0))
+            for attempt in attempts[1:]
+            if isinstance(attempt, dict)
+        )
+        if len(attempts) > 1
+        else 0.0
+    )
+    memory_values = [
+        getattr(item, "raw_metadata", {}).get("peak_memory_mb")
+        for item in observations
+        if isinstance(getattr(item, "raw_metadata", None), dict)
+        and isinstance(
+            getattr(item, "raw_metadata", {}).get("peak_memory_mb"),
+            (int, float),
+        )
+    ]
+    final_state = workflow.get("final_state")
+    safe_fallback = bool(
+        "sparse_evidence" in case.risk_tags
+        and final_state == "review_required"
+        and not pair_score.eligible
+    )
+    total_tokens = (
+        prompt_tokens + output_tokens
+        if prompt_tokens is not None and output_tokens is not None
+        else None
+    )
+    return PairMetrics(
+        first_pass_hard_gate_passed=first_passed,
+        post_repair_hard_gate_passed=pair_score.eligible,
+        schema_succeeded=True,
+        unsupported_candidate_claims=unsupported_claims,
+        unsupported_numeric_tokens=unsupported_numeric,
+        immutable_token_mutations=immutable_mutations,
+        missing_evidence_case="sparse_evidence" in case.risk_tags,
+        missing_evidence_safe_fallback=safe_fallback,
+        evidence_items_available=len(ledger),
+        evidence_items_used=len(used_ids),
+        evidence_coverage=(len(used_ids) / len(ledger) if ledger else 0.0),
+        first_pass_latency_ms=first_pass_latency,
+        repair_latency_ms=repair_latency,
+        eligible_pair_latency_ms=(
+            duration_ms if pair_score.eligible else None
+        ),
+        prompt_tokens=prompt_tokens,
+        output_tokens=output_tokens,
+        tokens_per_eligible_pair=(
+            total_tokens if pair_score.eligible else None
+        ),
+        peak_memory_mb=max(memory_values) if memory_values else None,
+        normalized_combined_quality=(
+            pair_score.combined if pair_score.eligible else None
+        ),
+    )
 
 
 def _ranking_key(item: ModelAggregate) -> tuple[float, float, float, float, str]:
@@ -587,7 +838,6 @@ async def run_benchmark(
     resume_run_id: str | None = None,
     retry_timeouts: bool = False,
 ) -> BenchmarkSummary:
-    del retry_timeouts  # Timeout retries are intentionally explicit future behavior.
     if repetitions < 1:
         raise ValueError("repetitions must be at least 1")
     if repetitions > len(case.seeds):
@@ -601,9 +851,12 @@ async def run_benchmark(
         raise ValueError("unknown benchmark model ids: " + ", ".join(unknown))
     make_client: AdapterFactory
     if adapter_factory is _default_adapter_factory:
-        make_client = lambda spec, seed: BenchmarkLLMClient(
-            spec, seed, timeout_seconds=profile.call_timeout_seconds
-        )
+        def make_client(spec: ModelSpec, seed: int) -> BenchmarkLLMClient:
+            return BenchmarkLLMClient(
+                spec,
+                seed,
+                timeout_seconds=profile.call_timeout_seconds,
+            )
     else:
         make_client = adapter_factory
 
@@ -665,6 +918,8 @@ async def run_benchmark(
                 if not path.exists():
                     continue
                 result = RepetitionResult.model_validate_json(path.read_text(encoding="utf-8"))
+                if retry_timeouts and result.status in {"timeout", "interrupted"}:
+                    continue
                 by_model[model_id].append(result)
 
     async def execute_repetition(
@@ -685,6 +940,15 @@ async def run_benchmark(
             eligible = bool(pair_score.eligible and pair_score.combined is not None)
             exclusion = None if eligible else "blocked_by_hard_gate"
             provenance = letter.generation_provenance
+            duration_ms = (time.monotonic() - started) * 1000
+            pair_metrics = _pair_metrics(
+                case,
+                cv,
+                letter,
+                pair_score,
+                list(client.observations),
+                duration_ms,
+            )
             result = RepetitionResult(
                 model_id=spec.id,
                 repetition=repetition,
@@ -692,10 +956,11 @@ async def run_benchmark(
                 status="succeeded",
                 availability="available",
                 execution_status="completed",
-                duration_ms=(time.monotonic() - started) * 1000,
+                duration_ms=duration_ms,
                 cv=cv.model_dump(mode="json"),
                 cover_letter=letter.model_dump(mode="json"),
                 score=pair_score,
+                pair_metrics=pair_metrics,
                 eligible_for_ranking=eligible,
                 writing_quality_exclusion_reason=exclusion,
                 first_pass_cover_letter_word_count=letter.first_pass_word_count or letter.word_count,

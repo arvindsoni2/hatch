@@ -61,6 +61,18 @@ class CaseManifest(StrictModel):
         return self
 
 
+RiskTag = Literal[
+    "management",
+    "technical",
+    "seniority",
+    "career_transition",
+    "sparse_evidence",
+    "context_pressure",
+    "public_sector",
+    "eligibility",
+]
+
+
 class BenchmarkCase(StrictModel):
     case_id: str
     source_dir: Path
@@ -72,6 +84,50 @@ class BenchmarkCase(StrictModel):
     seeds: list[int]
     cv_length_tolerance: float
     input_hashes: dict[str, str]
+    risk_tags: set[RiskTag] = Field(default_factory=set)
+
+
+class SuiteCase(StrictModel):
+    case_id: str = Field(min_length=1)
+    risk_tags: set[RiskTag] = Field(min_length=1)
+    master_cv: dict[str, Any]
+    job_description: str = Field(min_length=1)
+    jd_analysis: JDAnalysisResult
+    expected_facts: ExpectedFacts
+    cv_length_tolerance: float = Field(default=0.1, ge=0.0, le=1.0)
+
+
+class BenchmarkSuite(StrictModel):
+    suite_id: str = Field(min_length=1)
+    baseline_model_id: str = Field(min_length=1)
+    seeds: list[int] = Field(min_length=5)
+    models: list[ModelSpec] = Field(min_length=5)
+    stage_b_case_ids: list[str] = Field(min_length=4, max_length=4)
+    historical_median_pair_seconds: dict[str, float]
+    cases: list[SuiteCase] = Field(min_length=8, max_length=8)
+    suite_hash: str = Field(min_length=64, max_length=64)
+
+    @model_validator(mode="after")
+    def validate_references(self) -> "BenchmarkSuite":
+        model_ids = [model.id for model in self.models]
+        case_ids = [case.case_id for case in self.cases]
+        if len(model_ids) != len(set(model_ids)):
+            raise ValueError("benchmark suite model ids must be unique")
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("benchmark suite case ids must be unique")
+        if self.baseline_model_id not in model_ids:
+            raise ValueError("baseline model must appear in suite models")
+        if len(self.seeds) != len(set(self.seeds)):
+            raise ValueError("benchmark suite seeds must be unique")
+        if not set(self.stage_b_case_ids) <= set(case_ids):
+            raise ValueError("Stage B case ids must appear in suite cases")
+        if set(self.historical_median_pair_seconds) != set(model_ids):
+            raise ValueError(
+                "historical median latency must cover every suite model"
+            )
+        if any(value <= 0 for value in self.historical_median_pair_seconds.values()):
+            raise ValueError("historical median latency must be positive")
+        return self
 
 
 class GateFinding(StrictModel):
@@ -100,6 +156,32 @@ class PairScore(StrictModel):
     combined: float | None = Field(default=None, ge=0.0, le=100.0)
 
 
+class PairMetrics(StrictModel):
+    first_pass_hard_gate_passed: bool
+    post_repair_hard_gate_passed: bool
+    schema_succeeded: bool
+    unsupported_candidate_claims: int = Field(default=0, ge=0)
+    unsupported_numeric_tokens: int = Field(default=0, ge=0)
+    immutable_token_mutations: int = Field(default=0, ge=0)
+    missing_evidence_case: bool = False
+    missing_evidence_safe_fallback: bool = False
+    evidence_items_available: int = Field(default=0, ge=0)
+    evidence_items_used: int = Field(default=0, ge=0)
+    evidence_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    first_pass_latency_ms: float | None = Field(default=None, ge=0.0)
+    repair_latency_ms: float | None = Field(default=None, ge=0.0)
+    eligible_pair_latency_ms: float | None = Field(default=None, ge=0.0)
+    prompt_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    tokens_per_eligible_pair: int | None = Field(default=None, ge=0)
+    peak_memory_mb: float | None = Field(default=None, ge=0.0)
+    normalized_combined_quality: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=100.0,
+    )
+
+
 class BenchmarkProfile(StrictModel):
     name: Literal["acceptance-smoke", "extended"] = "extended"
     call_timeout_seconds: float = Field(default=1200.0, gt=0.0)
@@ -121,6 +203,7 @@ class RepetitionResult(StrictModel):
     cv: dict[str, Any] | None = None
     cover_letter: dict[str, Any] | None = None
     score: PairScore | None = None
+    pair_metrics: PairMetrics | None = None
     eligible_for_ranking: bool = False
     writing_quality_exclusion_reason: str | None = None
     observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -156,6 +239,21 @@ class ModelAggregate(StrictModel):
     median_final_cover_letter_body_words: float | None = Field(default=None, ge=0.0)
     numeric_fidelity_failures: int = Field(default=0, ge=0)
     total_latency_ms: float | None = Field(default=None, ge=0.0)
+    successful_response_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    schema_success_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    mean_repair_count: float = Field(default=0.0, ge=0.0)
+    median_repair_count: float = Field(default=0.0, ge=0.0)
+    unsupported_candidate_claims: int = Field(default=0, ge=0)
+    unsupported_numeric_tokens: int = Field(default=0, ge=0)
+    immutable_token_mutations: int = Field(default=0, ge=0)
+    missing_evidence_safe_fallback_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+    )
+    mean_evidence_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    median_prompt_tokens: float | None = Field(default=None, ge=0.0)
+    median_output_tokens: float | None = Field(default=None, ge=0.0)
 
 
 class Recommendation(StrictModel):
