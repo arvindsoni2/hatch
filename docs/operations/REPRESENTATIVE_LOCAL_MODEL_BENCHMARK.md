@@ -5,6 +5,9 @@ Use this procedure to compare Hatch's five local writing models against the cont
 ## Keep the benchmark boundary stable
 
 Run the benchmark from a clean, committed branch. A resumed run rejects a changed source commit, suite hash, profile hash, or database hash.
+The database protection hash covers both the main SQLite database and its
+write-ahead log when present. A run refuses to start when either the profile or
+database state cannot be recorded.
 
 Before inference, confirm these conditions:
 
@@ -166,4 +169,3 @@ Exclude these values:
 - Secrets and environment values
 - Database or profile contents
 - Machine-specific absolute paths
-

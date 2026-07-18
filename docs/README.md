@@ -14,6 +14,7 @@ Use this index to find the current product, operations, architecture, developmen
 
 - [Prompt, skill, and local writing reliability specification v4](implementation-specs/active/Hatch_Prompt_Skill_Local_Writing_Reliability_Codex_Spec_v4.md)
 - [Local writing model benchmark — 15 July 2026](benchmarks/LOCAL_WRITING_MODEL_BENCHMARK_2026-07-15.md)
+- [Representative local-model selection — 18 July 2026](benchmarks/LOCAL_WRITING_MODEL_SELECTION_2026-07-18.md)
 
 ## Documentation Map
 
