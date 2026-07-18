@@ -10,6 +10,9 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.config import settings
+from app.observability import initialize_telemetry, shutdown_telemetry
+
 from .adapters import BenchmarkLLMClient
 from .case_loader import CaseValidationError, load_case, load_suite
 from .contracts import BenchmarkSummary
@@ -342,11 +345,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.command == "smoke":
-            return asyncio.run(_smoke(args.case))
+            return _run_with_telemetry(_smoke(args.case))
         if args.command == "run":
-            return asyncio.run(_run(args))
+            return _run_with_telemetry(_run(args))
         if args.command == "staged-run":
-            return asyncio.run(_staged_run(args))
+            return _run_with_telemetry(_staged_run(args))
         if args.command == "report":
             return _report(args.run)
     except CaseValidationError as exc:
@@ -363,6 +366,14 @@ def main(argv: list[str] | None = None) -> int:
         return 5
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _run_with_telemetry(operation) -> int:
+    initialize_telemetry(settings)
+    try:
+        return asyncio.run(operation)
+    finally:
+        shutdown_telemetry(deadline_seconds=5.0)
 
 
 if __name__ == "__main__":
