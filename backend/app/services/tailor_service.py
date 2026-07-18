@@ -20,6 +20,7 @@ from ..schemas.tailor import (
     TailoredCVResult,
     TailorResultBundle,
 )
+from ..observability import get_telemetry
 from .ats_optimiser import ATSOptimiser
 from .cl_generator import CoverLetterGenerator, select_tone_variant
 from .llm_client import LLMClient
@@ -350,31 +351,43 @@ class TailorService:
 
         personal = _load_personal()
         version = await doc_repo.get_latest_version(application_id, "cv") + 1
-        file_path, file_size = self._cv_builder.build(
-            tailored_cv, analysis, personal, application_id, version, variant, template_id
-        )
-
-        doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cv",
-            version=version,
-            file_path=file_path,
-            file_size_bytes=file_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=_tailoring_params(
-                {
-                    "variant": variant,
-                    "custom_instructions": custom_instructions,
-                    "template_id": template_id or "ats_classic",
-                },
+        with get_telemetry().stage_span("cv_tailoring", "render_document"):
+            file_path, file_size = self._cv_builder.build(
                 tailored_cv,
-            ),
-            ats_score=ats_result.overall_score,
-            ats_details=json.dumps(ats_result.model_dump()),
-            variant_label=variant,
-            status="generated",
-        )
-        await db.commit()
+                analysis,
+                personal,
+                application_id,
+                version,
+                variant,
+                template_id,
+            )
+
+        with get_telemetry().stage_span(
+            "cv_tailoring",
+            "persist_document",
+        ) as span:
+            doc = await doc_repo.create(
+                application_id=application_id,
+                document_type="cv",
+                version=version,
+                file_path=file_path,
+                file_size_bytes=file_size,
+                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                tailoring_params=_tailoring_params(
+                    {
+                        "variant": variant,
+                        "custom_instructions": custom_instructions,
+                        "template_id": template_id or "ats_classic",
+                    },
+                    tailored_cv,
+                ),
+                ats_score=ats_result.overall_score,
+                ats_details=json.dumps(ats_result.model_dump()),
+                variant_label=variant,
+                status="generated",
+            )
+            await db.commit()
+            span.set_attribute("hatch.ai.document.id", str(doc.id))
         return doc
 
     async def generate_cover_letter(
@@ -412,33 +425,42 @@ class TailorService:
             )
 
         version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
-        file_path, file_size = self._cl_generator.render_document(
-            cover_letter,
-            lambda: self._cl_builder.build(
+        with get_telemetry().stage_span(
+            "cover_letter_generation",
+            "render_document",
+        ):
+            file_path, file_size = self._cl_generator.render_document(
                 cover_letter,
-                analysis,
-                personal,
-                application_id,
-                version,
-                variant,
-            ),
-        )
+                lambda: self._cl_builder.build(
+                    cover_letter,
+                    analysis,
+                    personal,
+                    application_id,
+                    version,
+                    variant,
+                ),
+            )
 
-        doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cover_letter",
-            version=version,
-            file_path=file_path,
-            file_size_bytes=file_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=_tailoring_params(
-                {"variant": variant},
-                cover_letter,
-            ),
-            variant_label=variant,
-            status="generated",
-        )
-        await db.commit()
+        with get_telemetry().stage_span(
+            "cover_letter_generation",
+            "persist_document",
+        ) as span:
+            doc = await doc_repo.create(
+                application_id=application_id,
+                document_type="cover_letter",
+                version=version,
+                file_path=file_path,
+                file_size_bytes=file_size,
+                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                tailoring_params=_tailoring_params(
+                    {"variant": variant},
+                    cover_letter,
+                ),
+                variant_label=variant,
+                status="generated",
+            )
+            await db.commit()
+            span.set_attribute("hatch.ai.document.id", str(doc.id))
         return doc
 
     async def _create_manual_application(

@@ -12,6 +12,7 @@ from typing import Any, Callable
 from pathlib import Path
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_workflow
 from ..schemas.tailor import CoverLetterResult, JDAnalysisResult, TailoredCVResult
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
@@ -262,6 +263,14 @@ class CoverLetterGenerator:
         )
         latency_ms = (time.monotonic() - started) * 1000
         observation = _latest_observation(self._client)
+        get_telemetry().record_model_call(
+            workflow="cover_letter_generation",
+            provider=type(self._client).__name__,
+            model_id=_model_id(self._client) or "configured",
+            duration_ms=latency_ms,
+            input_tokens=getattr(observation, "prompt_tokens", None),
+            output_tokens=getattr(observation, "completion_tokens", None),
+        )
         return DraftGeneration(
             draft=_parse_cover_letter(raw),
             latency_ms=latency_ms,
@@ -398,6 +407,7 @@ class CoverLetterGenerator:
             raise ValueError("Cover letter workflow is not ready to render")
         return renderer()
 
+    @trace_workflow("cover_letter_generation")
     async def generate(
         self,
         jd_analysis: JDAnalysisResult,
@@ -585,6 +595,16 @@ class CoverLetterGenerator:
                 variant,
             )
             repairs.append(repair_action)
+            get_telemetry().record_repair(
+                "cover_letter_generation",
+                repair_action,
+            )
+            for issue in validation.issues:
+                if issue.severity == "blocking":
+                    get_telemetry().record_validation_failure(
+                        "cover_letter_generation",
+                        issue.code,
+                    )
             generated = await self.repair_specific_failure(
                 RepairSpecificFailureInput(
                     repair_action=repair_action,

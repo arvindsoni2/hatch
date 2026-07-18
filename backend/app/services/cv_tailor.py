@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_workflow
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredEducation, TailoredExperience
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
@@ -174,6 +176,7 @@ class CVTailor:
             "certifications": master_cv.get("certifications", []),
         }
 
+    @trace_workflow("cv_tailoring")
     async def tailor(
         self,
         jd_analysis: JDAnalysisResult,
@@ -221,7 +224,27 @@ class CVTailor:
                 final_compliance_reminder=FINAL_COMPLIANCE_REMINDER,
             )
         )
-        raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=CV_GENERATE.max_output)
+        started = time.monotonic()
+        with get_telemetry().stage_span(
+            "cv_tailoring",
+            "generate_initial",
+            {
+                "hatch.ai.prompt.id": CV_TAILORING_PROMPT.prompt_id,
+                "hatch.ai.prompt.version": CV_TAILORING_PROMPT.prompt_version,
+                "hatch.ai.skill.id": "cv-tailoring",
+            },
+        ):
+            raw: dict[str, Any] = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=CV_GENERATE.max_output,
+            )
+        get_telemetry().record_model_call(
+            workflow="cv_tailoring",
+            provider=type(self._client).__name__,
+            model_id=str(getattr(self._client, "model", "configured")),
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
         result = _parse_tailored_cv(raw)
         if best_summary and _summary_conflicts_with_role(result.summary, jd_analysis.role_title):
             # Summaries are curated, grounded master-CV content. Keep the

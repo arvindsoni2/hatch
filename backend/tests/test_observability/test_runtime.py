@@ -3,7 +3,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.observability import runtime
-from app.observability.runtime import TelemetryRuntime, initialize_telemetry
+from app.observability.runtime import (
+    TelemetryRuntime,
+    initialize_telemetry,
+    trace_stage,
+    trace_workflow,
+)
 
 
 def _settings(**overrides):
@@ -79,4 +84,39 @@ def test_metric_instruments_use_stable_names() -> None:
         "hatch.ai.tokens.input",
         "hatch.ai.tokens.output",
         "hatch.ai.workflow.outcomes",
+    ]
+
+
+def test_async_workflow_and_stage_decorators_preserve_result(monkeypatch) -> None:
+    events: list[tuple[str, str]] = []
+
+    class RecordingTelemetry:
+        def workflow_span(self, workflow):
+            events.append(("workflow", workflow))
+            return _manager()
+
+        def stage_span(self, workflow, stage):
+            events.append(("stage", stage))
+            return _manager()
+
+    class _manager:
+        def __enter__(self):
+            return SimpleNamespace()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(runtime, "get_telemetry", lambda: RecordingTelemetry())
+
+    @trace_workflow("cv_tailoring")
+    @trace_stage("cv_tailoring", "generate_initial")
+    async def operation():
+        return {"unchanged": True}
+
+    import asyncio
+
+    assert asyncio.run(operation()) == {"unchanged": True}
+    assert events == [
+        ("workflow", "cv_tailoring"),
+        ("stage", "generate_initial"),
     ]

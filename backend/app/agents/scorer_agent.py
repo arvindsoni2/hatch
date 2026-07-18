@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.job_score import JobScore
 from ..models.job import JobPosting
 from ..models.cost_tracking import CostTracking
+from ..observability import get_telemetry, trace_workflow
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
 from langchain_core.exceptions import OutputParserException
@@ -384,6 +385,7 @@ class ScorerAgent(BaseAgent):
 
     # ── Per-job helpers ───────────────────────────────────────────────
 
+    @trace_workflow("job_scoring")
     async def _score_with_llm_judge(
         self,
         event: dict[str, Any],
@@ -448,6 +450,14 @@ class ScorerAgent(BaseAgent):
         score_ms = int((time.monotonic() - t1) * 1000)
         score_tok_in = estimate_tokens(scoring_prompt)
         score_tok_out = estimate_tokens(score.reasoning)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(primary_model_name),
+            duration_ms=score_ms,
+            input_tokens=score_tok_in,
+            output_tokens=score_tok_out,
+        )
         cost = estimate_cost(primary_model_name, score_tok_in, score_tok_out)
         db.add(CostTracking(
             agent_name="scorer",
@@ -483,6 +493,7 @@ class ScorerAgent(BaseAgent):
         self._log.info("Job %s scored %.2f (LLM-judge) — %s", job_id, score.overall_score, score.reasoning[:80])
         return "scored"
 
+    @trace_workflow("job_scoring")
     async def _score_with_llm(
         self,
         event: dict[str, Any],
@@ -546,6 +557,14 @@ class ScorerAgent(BaseAgent):
         score_ms = int((time.monotonic() - t1) * 1000)
         score_tok_in = estimate_tokens(scoring_prompt)
         score_tok_out = estimate_tokens(score.reasoning)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(primary_model_name),
+            duration_ms=score_ms,
+            input_tokens=score_tok_in,
+            output_tokens=score_tok_out,
+        )
         cost = estimate_cost(primary_model_name, score_tok_in, score_tok_out)
         db.add(CostTracking(
             agent_name="scorer",

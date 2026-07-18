@@ -6,6 +6,8 @@ from .runtime import (
     initialize_telemetry,
     instrument_fastapi_app,
     shutdown_telemetry,
+    trace_stage,
+    trace_workflow,
 )
 
 __all__ = [
@@ -15,4 +17,6 @@ __all__ = [
     "initialize_telemetry",
     "instrument_fastapi_app",
     "shutdown_telemetry",
+    "trace_stage",
+    "trace_workflow",
 ]

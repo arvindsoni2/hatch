@@ -6,6 +6,7 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import wraps
 from typing import Any, Literal
 
 from .attributes import (
@@ -252,6 +253,37 @@ _runtime_lock = threading.Lock()
 
 def get_telemetry() -> TelemetryRuntime:
     return _runtime
+
+
+def trace_workflow(workflow: str):
+    """Decorate an async workflow with the current fail-open runtime."""
+
+    def decorate(function):
+        @wraps(function)
+        async def wrapped(*args, **kwargs):
+            with get_telemetry().workflow_span(workflow):
+                return await function(*args, **kwargs)
+
+        wrapped.__hatch_workflow__ = workflow
+        return wrapped
+
+    return decorate
+
+
+def trace_stage(workflow: str, stage: str):
+    """Decorate an async operation with a real workflow stage span."""
+
+    def decorate(function):
+        @wraps(function)
+        async def wrapped(*args, **kwargs):
+            with get_telemetry().stage_span(workflow, stage):
+                return await function(*args, **kwargs)
+
+        wrapped.__hatch_workflow__ = workflow
+        wrapped.__hatch_stage__ = stage
+        return wrapped
+
+    return decorate
 
 
 def _load_fastapi_instrumentor() -> Any:
