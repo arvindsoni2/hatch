@@ -112,6 +112,7 @@ blocked = {
     "sentence_transformers",
     "torch",
     "transformers",
+    "opentelemetry",
 }
 real_import = builtins.__import__
 
@@ -126,6 +127,9 @@ for module_name in (
     "app.agents.scorer_agent",
     "app.agents.tools.embedder",
     "app.agents.tools.semantic_scorer",
+    "app.observability",
+    "app.observability.logging",
+    "app.observability.runtime",
     "app.scrapers.registry",
     "app.services.transcriber",
     "app.services.voice_emotion_analyser",
