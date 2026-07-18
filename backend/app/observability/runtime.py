@@ -16,6 +16,7 @@ from .attributes import (
     WORKFLOW_NAME,
     sanitize_attributes,
 )
+from .logging import configure_log_correlation
 
 logger = logging.getLogger(__name__)
 TelemetryStatus = Literal["disabled", "active", "degraded"]
@@ -251,6 +252,35 @@ _runtime_lock = threading.Lock()
 
 def get_telemetry() -> TelemetryRuntime:
     return _runtime
+
+
+def _load_fastapi_instrumentor() -> Any:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    return FastAPIInstrumentor
+
+
+def instrument_fastapi_app(app: Any, telemetry: TelemetryRuntime) -> bool:
+    """Instrument one FastAPI app without capturing request data or headers."""
+    if telemetry.status != "active":
+        configure_log_correlation(enabled=False)
+        return False
+    try:
+        _load_fastapi_instrumentor().instrument_app(
+            app,
+            tracer_provider=telemetry.tracer_provider,
+            meter_provider=telemetry.meter_provider,
+            exclude_spans=["receive", "send"],
+        )
+        configure_log_correlation(enabled=True)
+    except Exception:
+        telemetry.status = "degraded"
+        telemetry._warn_once(
+            "OpenTelemetry HTTP instrumentation failed; "
+            "continuing with telemetry degraded."
+        )
+        return False
+    return True
 
 
 def shutdown_telemetry(deadline_seconds: float = 5.0) -> ShutdownResult:

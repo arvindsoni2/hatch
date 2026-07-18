@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from ..database import get_db
 from ..models.agent_event import AgentEvent
 from ..models.cost_tracking import CostTracking
+from ..observability import get_telemetry
 from ..repositories.job_repository import JobRepository
 from ..schemas.job import (
     JobPostingRead,
@@ -142,7 +143,11 @@ async def health_check() -> dict[str, object]:
     Returns JSON with status, timestamp, and optional ram_gb hint for onboarding.
     Includes degraded details when llama-server slot context is too small for the budgets.
     """
-    result: dict[str, object] = {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    result: dict[str, object] = {
+        "status": "ok",
+        "timestamp": datetime.utcnow().isoformat(),
+        "telemetry": {"status": get_telemetry().status},
+    }
     try:
         with open("/proc/meminfo") as _f:
             for _line in _f:

@@ -127,6 +127,7 @@ for module_name in (
     "app.agents.scorer_agent",
     "app.agents.tools.embedder",
     "app.agents.tools.semantic_scorer",
+    "app.main",
     "app.observability",
     "app.observability.logging",
     "app.observability.runtime",
