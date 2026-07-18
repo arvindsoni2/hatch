@@ -294,3 +294,27 @@ async def test_protected_hash_change_aborts_staged_run(tmp_path: Path) -> None:
         )
     )
     assert progress["state"] == "protected_state_changed"
+
+
+@pytest.mark.asyncio
+async def test_unrecorded_protected_hash_aborts_before_execution(
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, tuple[str, ...], int, bool]] = []
+
+    with pytest.raises(
+        ProtectedStateChangedError,
+        match="protected database/profile hashes must be recorded",
+    ):
+        await run_stage_suite(
+            load_suite(SUITE_PATH),
+            output_root=tmp_path,
+            run_id="staged-protection-unavailable",
+            executor=executor(stage_b_challengers_pass=False, calls=calls),
+            protected_hash_reader=lambda: {
+                "profile": "profile",
+                "database": "not_recorded",
+            },
+        )
+
+    assert calls == []

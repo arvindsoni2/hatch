@@ -130,14 +130,31 @@ def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _database_state_sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    for suffix in ("", "-wal"):
+        component = Path(f"{path}{suffix}")
+        digest.update(suffix.encode("utf-8"))
+        if component.exists():
+            digest.update(b"\0present\0")
+            digest.update(component.read_bytes())
+        else:
+            digest.update(b"\0missing\0")
+    return digest.hexdigest()
+
+
 def _database_path() -> Path | None:
     url = settings.DATABASE_URL
     if not url.startswith("sqlite"):
         return None
     parsed = urlparse(url)
     raw_path = unquote(parsed.path or "")
-    if raw_path.startswith("/") and not url.startswith("sqlite:////"):
-        raw_path = raw_path.lstrip("/")
+    if raw_path.startswith("//"):
+        raw_path = raw_path[1:]
+    elif raw_path.startswith("/"):
+        raw_path = raw_path[1:]
     if not raw_path:
         return None
     path = Path(raw_path)
@@ -149,7 +166,11 @@ def _database_path() -> Path | None:
 def _protected_hashes() -> dict[str, str]:
     profile_hash = current_profile_hash()
     database = _database_path()
-    database_hash = _file_sha256(database) if database and database.exists() else None
+    database_hash = (
+        _database_state_sha256(database)
+        if database and database.exists()
+        else None
+    )
     return {
         "profile": profile_hash or "not_recorded",
         "database": database_hash or "not_recorded",

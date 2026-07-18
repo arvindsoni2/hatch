@@ -91,6 +91,18 @@ ProtectedHashReader = Callable[[], dict[str, str]]
 Emitter = Callable[[str], None]
 
 
+def _require_recorded_protected_hashes(hashes: dict[str, str]) -> None:
+    unavailable = {
+        name
+        for name in ("profile", "database")
+        if hashes.get(name) in {None, "", "not_recorded"}
+    }
+    if unavailable:
+        raise ProtectedStateChangedError(
+            "protected database/profile hashes must be recorded before a staged run"
+        )
+
+
 def source_commit() -> str:
     try:
         return subprocess.run(
@@ -497,6 +509,7 @@ async def run_stage_suite(
             )
     else:
         protected_before = protected_hash_reader()
+        _require_recorded_protected_hashes(protected_before)
         progress = {
             "run_id": staged_run_id,
             "suite_hash": suite.suite_hash,

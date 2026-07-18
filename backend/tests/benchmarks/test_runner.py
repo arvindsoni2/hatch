@@ -171,6 +171,39 @@ class FakeClient:
 CASE = _case()
 
 
+def test_database_path_preserves_absolute_aiosqlite_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "jobpilot.db"
+    monkeypatch.setattr(
+        runner.settings,
+        "DATABASE_URL",
+        f"sqlite+aiosqlite:///{database}",
+    )
+
+    assert runner._database_path() == database
+
+
+def test_protected_hashes_include_sqlite_wal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "jobpilot.db"
+    database.write_bytes(b"database")
+    wal = Path(f"{database}-wal")
+    wal.write_bytes(b"before")
+    monkeypatch.setattr(
+        runner.settings,
+        "DATABASE_URL",
+        f"sqlite+aiosqlite:///{database}",
+    )
+    monkeypatch.setattr(runner, "current_profile_hash", lambda: "profile")
+
+    before = runner._protected_hashes()
+    wal.write_bytes(b"after")
+
+    assert runner._protected_hashes()["database"] != before["database"]
+
+
 @pytest.mark.asyncio
 async def test_runner_ranks_gate_pass_rate_before_quality(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
