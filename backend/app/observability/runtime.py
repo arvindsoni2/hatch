@@ -21,6 +21,13 @@ from .logging import configure_log_correlation
 
 logger = logging.getLogger(__name__)
 TelemetryStatus = Literal["disabled", "active", "degraded"]
+_ALLOWED_EVENT_NAMES = frozenset(
+    {
+        "model_error",
+        "validation_failure",
+        "workflow_error",
+    }
+)
 
 
 class SafeSpan:
@@ -41,19 +48,22 @@ class SafeSpan:
     def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
         if self._span is None:
             return
-        safe_name = name[:64] if isinstance(name, str) else "telemetry_event"
+        safe_name = (
+            name
+            if isinstance(name, str) and name in _ALLOWED_EVENT_NAMES
+            else "telemetry_event"
+        )
         try:
             self._span.add_event(safe_name, sanitize_attributes(attributes))
         except Exception:
             return
 
     def record_exception(self, exception: BaseException) -> None:
-        if self._span is None:
-            return
-        try:
-            self._span.record_exception(exception)
-        except Exception:
-            return
+        # OpenTelemetry's default exception event contains the message and a
+        # stack trace. Both can contain prompts, document content, secrets, or
+        # local paths, so Hatch deliberately records only the exception type
+        # through the sanitized status code in ``set_error``.
+        del exception
 
     def set_error(self, code: str) -> None:
         if self._span is None:
