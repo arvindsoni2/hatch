@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from pathlib import Path
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from ..schemas.tailor import ATSScoreResult, JDAnalysisResult, KeywordMatch
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
@@ -38,6 +40,7 @@ class ATSOptimiser:
         self._client = claude_client
         self._skill_loader = skill_loader or _default_skill_loader()
 
+    @trace_stage("cv_tailoring", "validate_output")
     async def score(
         self,
         cv_text: str,
@@ -87,8 +90,21 @@ class ATSOptimiser:
                 candidate_contract=candidate_claim_contract("ats_keywords"),
             )
         )
+        started = time.monotonic()
+        model_call_completed = False
         try:
-            raw: dict[str, Any] = await self._client.complete_json(system_prompt, user_prompt, max_tokens=ATS.max_output)
+            raw: dict[str, Any] = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=ATS.max_output,
+            )
+            get_telemetry().record_model_call(
+                workflow="cv_tailoring",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            model_call_completed = True
             semantic_score = float(raw.get("overall_score", 0)) / 100.0
             format_warnings: list[str] = raw.get("format_warnings", [])
             improvement_suggestions = [
@@ -98,6 +114,26 @@ class ATSOptimiser:
                 and validate_candidate_output([suggestion], ledger).passed
             ]
         except Exception as exc:
+            if not model_call_completed:
+                get_telemetry().record_model_call(
+                    workflow="cv_tailoring",
+                    provider=type(self._client).__name__,
+                    model_id=str(getattr(self._client, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    outcome="failed",
+                )
+            get_telemetry().mark_current_error(
+                (
+                    "ats_response_invalid"
+                    if model_call_completed
+                    else "ats_scoring_failed"
+                ),
+                (
+                    "validation_failure"
+                    if model_call_completed
+                    else "model_error"
+                ),
+            )
             logger.warning("Claude ATS scoring failed, using algorithmic only: %s", exc)
             semantic_score = algo_score
             format_warnings = []

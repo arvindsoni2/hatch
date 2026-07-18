@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import AnswerEvaluation, SpeechMetrics, VoiceToneResult
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import ANSWER_EVAL
@@ -28,6 +30,7 @@ class AnswerEvaluatorService:
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
+    @trace_stage("coach_generation", "validate_output")
     async def evaluate(
         self,
         question: str,
@@ -72,9 +75,31 @@ class AnswerEvaluatorService:
             )
         )
 
+        started = time.monotonic()
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=ANSWER_EVAL.max_output)
+            raw = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=ANSWER_EVAL.max_output,
+            )
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            get_telemetry().mark_current_error(
+                "answer_evaluation_failed",
+                "model_error",
+            )
             logger.warning("Answer evaluation failed: %s — returning default scores", exc)
             return AnswerEvaluation(
                 scores={dim: 5 for dim in _EVAL_DIMENSIONS},

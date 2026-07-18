@@ -17,7 +17,13 @@ COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 MODEL_ROLES = {"triage", "combined_capable_primary"}
 AI_MODES = {"not_configured", "none", "cloud", "local", "custom"}
 EXPERIENCES = {"essential", "full_ai", "custom"}
-BACKEND_PROFILES = {"core", "browser", "local-embeddings", "full"}
+BACKEND_PROFILES = {
+    "core",
+    "browser",
+    "local-embeddings",
+    "observability",
+    "full",
+}
 PROVIDER_SECRET_ENV = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",

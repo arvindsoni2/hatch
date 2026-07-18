@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..agents.tools.llm_factory import get_json_model
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import (
     AnswerEvaluation,
     RubricDimension,
@@ -153,6 +155,7 @@ class RubricSynthesiserService:
             self._llm = get_json_model()
         return self._llm
 
+    @trace_stage("coach_generation", "validate_output")
     async def synthesise(
         self,
         transcript: str,
@@ -188,12 +191,47 @@ class RubricSynthesiserService:
             HumanMessage(content=user_prompt),
         ]
 
+        model = None
+        started = time.monotonic()
         try:
-            response = await self._get_llm().ainvoke(messages)
+            model = self._get_llm()
+            response = await model.ainvoke(messages)
+        except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(model).__name__ if model is not None else "configured",
+                model_id=str(getattr(model, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            get_telemetry().mark_current_error(
+                "rubric_synthesis_failed",
+                "model_error",
+            )
+            logger.warning(
+                "RubricSynthesiser LLM call failed (%s) — using deterministic rubric.", exc
+            )
+            return baseline
+        get_telemetry().record_model_call(
+            workflow="coach_generation",
+            provider=type(model).__name__,
+            model_id=str(getattr(model, "model", "configured")),
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
+        try:
             raw = json.loads(response.content)
             return _parse_llm_rubric(raw, baseline, transcript, user_prompt)
         except Exception as exc:
+            get_telemetry().record_validation_failure(
+                "coach_generation",
+                "rubric_response_invalid",
+            )
+            get_telemetry().mark_current_error(
+                "rubric_response_invalid",
+                "validation_failure",
+            )
             logger.warning(
-                "RubricSynthesiser LLM call failed (%s) — using deterministic rubric.", exc
+                "RubricSynthesiser response was invalid (%s) — using deterministic rubric.",
+                exc,
             )
             return baseline

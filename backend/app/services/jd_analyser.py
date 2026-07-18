@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
+import time
 from copy import deepcopy
 from typing import Any
 from urllib.parse import urlparse
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..agents.tools.context_budgets import JD_ANALYSIS
 from ..prompts import render_prompt
+from ..observability import get_telemetry
 from ..schemas.tailor import ATSKeywords, JDAnalysisResult, SkillMatchResult
 from .llm_client import LLMClient
 from .prompt_catalog import prompt_contract_block, source_contains
@@ -90,11 +92,31 @@ class JDAnalyser:
                 prompt_contract=prompt_contract_block("jd_analysis"),
             )
         )
-        raw: dict[str, Any] = await self._client.complete_json(
-            system_prompt,
-            user_prompt,
-            max_tokens=JD_ANALYSIS.max_output,
-        )
+        telemetry = get_telemetry()
+        workflow = telemetry.current_workflow("job_discovery_import")
+        started = time.monotonic()
+        with telemetry.stage_span(workflow, "prepare_input"):
+            try:
+                raw: dict[str, Any] = await self._client.complete_json(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=JD_ANALYSIS.max_output,
+                )
+            except Exception:
+                telemetry.record_model_call(
+                    workflow=workflow,
+                    provider=type(self._client).__name__,
+                    model_id=str(getattr(self._client, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    outcome="failed",
+                )
+                raise
+            telemetry.record_model_call(
+                workflow=workflow,
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
         return _parse_jd_analysis(
             _ground_jd_analysis(raw, job_description),
             len(job_description),

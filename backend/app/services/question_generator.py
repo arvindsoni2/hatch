@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 from typing import Any
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, SessionConfig
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import QUESTION_GEN
@@ -55,6 +57,7 @@ class QuestionGeneratorService:
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
+    @trace_stage("coach_generation", "generate_initial")
     async def generate(
         self,
         config: SessionConfig,
@@ -99,7 +102,28 @@ class QuestionGeneratorService:
             )
         )
 
-        raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=QUESTION_GEN.max_output)
+        started = time.monotonic()
+        try:
+            raw = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=QUESTION_GEN.max_output,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
+        get_telemetry().record_model_call(
+            workflow="coach_generation",
+            provider=type(self._client).__name__,
+            model_id=str(getattr(self._client, "model", "configured")),
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
 
         # Handle both bare array and {"questions": [...]} wrapper
         if isinstance(raw, list):

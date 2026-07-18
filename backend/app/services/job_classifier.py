@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.job import JobPosting
+from ..observability import get_telemetry, trace_workflow
 from ..prompts import render_prompt
 from ..agents.tools.llm_factory import get_triage_model
 from ..agents.tools.profile_loader import load_profile
@@ -34,6 +36,7 @@ class JobClassifier:
     def __init__(self) -> None:
         pass
 
+    @trace_workflow("job_discovery_import")
     async def classify_batch(self, jobs: list[JobPosting]) -> list[dict]:
         """Classify a batch of jobs in a single LLM call.
 
@@ -86,7 +89,25 @@ class JobClassifier:
                 SystemMessage(content=system + json_instruction),
                 HumanMessage(content=user),
             ]
-            response = await model.ainvoke(messages)
+            started = time.monotonic()
+            try:
+                response = await model.ainvoke(messages)
+            except Exception:
+                get_telemetry().record_model_call(
+                    workflow="job_discovery_import",
+                    provider=type(model).__name__,
+                    model_id=str(getattr(model, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    outcome="failed",
+                )
+                raise
+            else:
+                get_telemetry().record_model_call(
+                    workflow="job_discovery_import",
+                    provider=type(model).__name__,
+                    model_id=str(getattr(model, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                )
             text = response.content if isinstance(response.content, str) else str(response.content)
 
             cleaned = text.strip()
@@ -99,6 +120,10 @@ class JobClassifier:
             items = result if isinstance(result, list) else result.get("jobs", [])
             return _validate_classifications(items, jobs_payload)
         except Exception as exc:
+            get_telemetry().mark_current_error(
+                "classification_failed",
+                "workflow_error",
+            )
             logger.error("Batch classify failed (%d jobs): %s", len(jobs), exc)
             return []
 

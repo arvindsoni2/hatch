@@ -18,6 +18,7 @@ from ..schemas.coach import (
     SessionResponse,
     SubmitAnswerRequest,
 )
+from ..observability import trace_workflow
 from .answer_evaluator import AnswerEvaluatorService
 from .llm_client import LLMClient
 from .company_researcher import CompanyResearchService
@@ -96,6 +97,7 @@ class CoachService:
         await db.commit()
         return result
 
+    @trace_workflow("coach_generation")
     async def create_session(
         self, request: CreateSessionRequest, db: AsyncSession, session_id: str | None = None
     ) -> SessionResponse:
@@ -210,6 +212,7 @@ class CoachService:
             technical_drills=drills,
         )
 
+    @trace_workflow("coach_generation")
     async def submit_answer(
         self,
         session_id: str,
@@ -295,6 +298,7 @@ class CoachService:
 
         return evaluation
 
+    @trace_workflow("coach_generation")
     async def end_session(self, session_id: str, db: AsyncSession) -> SessionFeedbackReport:
         """End a session and generate the comprehensive feedback report.
 

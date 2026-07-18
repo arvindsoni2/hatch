@@ -12,6 +12,7 @@ from typing import Any, Callable
 from pathlib import Path
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from ..schemas.tailor import CoverLetterResult, JDAnalysisResult, TailoredCVResult
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
@@ -255,13 +256,31 @@ class CoverLetterGenerator:
             )
         )
         started = time.monotonic()
-        raw: dict[str, Any] = await self._client.complete_json(
-            system_prompt,
-            user_prompt,
-            max_tokens=CL_BODY.max_output,
-        )
+        try:
+            raw: dict[str, Any] = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=CL_BODY.max_output,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="cover_letter_generation",
+                provider=type(self._client).__name__,
+                model_id=_model_id(self._client) or "configured",
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
         latency_ms = (time.monotonic() - started) * 1000
         observation = _latest_observation(self._client)
+        get_telemetry().record_model_call(
+            workflow="cover_letter_generation",
+            provider=type(self._client).__name__,
+            model_id=_model_id(self._client) or "configured",
+            duration_ms=latency_ms,
+            input_tokens=getattr(observation, "prompt_tokens", None),
+            output_tokens=getattr(observation, "completion_tokens", None),
+        )
         return DraftGeneration(
             draft=_parse_cover_letter(raw),
             latency_ms=latency_ms,
@@ -398,6 +417,7 @@ class CoverLetterGenerator:
             raise ValueError("Cover letter workflow is not ready to render")
         return renderer()
 
+    @trace_stage("cover_letter_generation", "generate_initial")
     async def generate(
         self,
         jd_analysis: JDAnalysisResult,
@@ -493,6 +513,12 @@ class CoverLetterGenerator:
                     jd_text=jd_text,
                 )
             )
+            for issue in validation.issues:
+                if issue.severity == "blocking":
+                    get_telemetry().record_validation_failure(
+                        "cover_letter_generation",
+                        issue.code,
+                    )
             attempt_number = len(attempts) + 1
             repair_type = repairs[-1] if repairs else None
             attempts.append(
@@ -558,6 +584,10 @@ class CoverLetterGenerator:
                 repair_action is None
                 or attempt_number >= contract.maximum_attempts
             ):
+                get_telemetry().mark_current_error(
+                    "validation_failed",
+                    "validation_failure",
+                )
                 result.validation_status = contract.safe_failure_state
                 diagnostics = WorkflowDiagnostics(
                     run_id=run_id,
@@ -585,6 +615,10 @@ class CoverLetterGenerator:
                 variant,
             )
             repairs.append(repair_action)
+            get_telemetry().record_repair(
+                "cover_letter_generation",
+                repair_action,
+            )
             generated = await self.repair_specific_failure(
                 RepairSpecificFailureInput(
                     repair_action=repair_action,
@@ -594,6 +628,7 @@ class CoverLetterGenerator:
                 )
             )
 
+    @trace_stage("cover_letter_generation", "repair_output")
     async def regenerate_paragraph(
         self,
         paragraph_index: int,
@@ -640,7 +675,28 @@ class CoverLetterGenerator:
             f"Return JSON: {{\"paragraph\": \"<rewritten paragraph>\"}}\n\n"
             f"{FINAL_COMPLIANCE_REMINDER}"
         )
-        raw: dict[str, Any] = await self._client.complete_json(system, user, max_tokens=CL_SNIPPET.max_output)
+        started = time.monotonic()
+        try:
+            raw: dict[str, Any] = await self._client.complete_json(
+                system,
+                user,
+                max_tokens=CL_SNIPPET.max_output,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="cover_letter_generation",
+                provider=type(self._client).__name__,
+                model_id=_model_id(self._client) or "configured",
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
+        get_telemetry().record_model_call(
+            workflow="cover_letter_generation",
+            provider=type(self._client).__name__,
+            model_id=_model_id(self._client) or "configured",
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
         new_para = raw.get("paragraph", current_para)
 
         new_paragraphs = list(paragraphs)
