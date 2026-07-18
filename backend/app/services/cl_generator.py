@@ -12,7 +12,7 @@ from typing import Any, Callable
 from pathlib import Path
 
 from ..prompts import render_prompt
-from ..observability import get_telemetry, trace_workflow
+from ..observability import get_telemetry, trace_stage
 from ..schemas.tailor import CoverLetterResult, JDAnalysisResult, TailoredCVResult
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
@@ -417,7 +417,7 @@ class CoverLetterGenerator:
             raise ValueError("Cover letter workflow is not ready to render")
         return renderer()
 
-    @trace_workflow("cover_letter_generation")
+    @trace_stage("cover_letter_generation", "generate_initial")
     async def generate(
         self,
         jd_analysis: JDAnalysisResult,
@@ -628,6 +628,7 @@ class CoverLetterGenerator:
                 )
             )
 
+    @trace_stage("cover_letter_generation", "repair_output")
     async def regenerate_paragraph(
         self,
         paragraph_index: int,
@@ -674,7 +675,28 @@ class CoverLetterGenerator:
             f"Return JSON: {{\"paragraph\": \"<rewritten paragraph>\"}}\n\n"
             f"{FINAL_COMPLIANCE_REMINDER}"
         )
-        raw: dict[str, Any] = await self._client.complete_json(system, user, max_tokens=CL_SNIPPET.max_output)
+        started = time.monotonic()
+        try:
+            raw: dict[str, Any] = await self._client.complete_json(
+                system,
+                user,
+                max_tokens=CL_SNIPPET.max_output,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="cover_letter_generation",
+                provider=type(self._client).__name__,
+                model_id=_model_id(self._client) or "configured",
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
+        get_telemetry().record_model_call(
+            workflow="cover_letter_generation",
+            provider=type(self._client).__name__,
+            model_id=_model_id(self._client) or "configured",
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
         new_para = raw.get("paragraph", current_para)
 
         new_paragraphs = list(paragraphs)

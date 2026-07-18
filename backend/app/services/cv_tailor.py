@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..prompts import render_prompt
-from ..observability import get_telemetry, trace_workflow
+from ..observability import get_telemetry, trace_stage
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredEducation, TailoredExperience
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
@@ -176,7 +176,7 @@ class CVTailor:
             "certifications": master_cv.get("certifications", []),
         }
 
-    @trace_workflow("cv_tailoring")
+    @trace_stage("cv_tailoring", "generate_initial")
     async def tailor(
         self,
         jd_analysis: JDAnalysisResult,

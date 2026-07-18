@@ -212,6 +212,7 @@ class CoachService:
             technical_drills=drills,
         )
 
+    @trace_workflow("coach_generation")
     async def submit_answer(
         self,
         session_id: str,
