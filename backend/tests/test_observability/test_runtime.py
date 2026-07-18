@@ -172,3 +172,18 @@ def test_controlled_fallback_error_marks_workflow_outcome_failed() -> None:
         item.get("hatch.ai.validation.state") == "failed"
         for item in outcomes
     )
+
+
+def test_current_workflow_uses_active_root_then_restores_default() -> None:
+    telemetry = TelemetryRuntime(status="disabled")
+
+    assert telemetry.current_workflow("job_discovery_import") == "job_discovery_import"
+    with telemetry.workflow_span("cv_tailoring"):
+        assert telemetry.current_workflow("job_discovery_import") == "cv_tailoring"
+        with telemetry.workflow_span("cover_letter_generation"):
+            assert (
+                telemetry.current_workflow("job_discovery_import")
+                == "cover_letter_generation"
+            )
+        assert telemetry.current_workflow("job_discovery_import") == "cv_tailoring"
+    assert telemetry.current_workflow("job_discovery_import") == "job_discovery_import"

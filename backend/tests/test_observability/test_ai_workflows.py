@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from app.agents.scorer_agent import ScorerAgent
 from app.services.cl_generator import CoverLetterGenerator
+from app.services.company_researcher import CompanyResearchService
 from app.services.coach_service import CoachService
 from app.services.cv_tailor import CVTailor
 from app.services.answer_evaluator import AnswerEvaluatorService
 from app.services.ats_optimiser import ATSOptimiser
-from app.services.jd_analyser import JDAnalyser
 from app.services.job_classifier import JobClassifier
 from app.services.question_generator import QuestionGeneratorService
 from app.services.rubric_synthesiser import RubricSynthesiserService
 from app.services.tailor_service import TailorService
+from app.services.technical_drills import TechnicalDrillsService
 
 
 def test_ai_entrypoints_declare_stable_workflow_names() -> None:
@@ -49,7 +50,6 @@ def test_coach_model_boundary_declares_real_child_stage() -> None:
         QuestionGeneratorService.generate.__hatch_stage__
         == "generate_initial"
     )
-    assert JDAnalyser.analyse.__hatch_stage__ == "prepare_input"
     assert ATSOptimiser.score.__hatch_stage__ == "validate_output"
     assert (
         CoverLetterGenerator.regenerate_paragraph.__hatch_stage__
@@ -57,3 +57,5 @@ def test_coach_model_boundary_declares_real_child_stage() -> None:
     )
     assert AnswerEvaluatorService.evaluate.__hatch_stage__ == "validate_output"
     assert RubricSynthesiserService.synthesise.__hatch_stage__ == "validate_output"
+    assert CompanyResearchService.research.__hatch_stage__ == "prepare_input"
+    assert TechnicalDrillsService._build_single_drill.__hatch_stage__ == "generate_initial"

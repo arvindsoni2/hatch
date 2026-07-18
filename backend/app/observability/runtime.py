@@ -90,6 +90,10 @@ _current_span: ContextVar[SafeSpan | None] = ContextVar(
     "hatch_current_telemetry_span",
     default=None,
 )
+_current_workflow: ContextVar[str | None] = ContextVar(
+    "hatch_current_telemetry_workflow",
+    default=None,
+)
 
 
 @dataclass(frozen=True)
@@ -180,6 +184,7 @@ class TelemetryRuntime:
         started = time.monotonic()
         safe_attributes = {WORKFLOW_NAME: workflow, **(attributes or {})}
         outcome = "completed"
+        workflow_token = _current_workflow.set(workflow)
         try:
             with self._span(
                 f"hatch.ai.workflow.{workflow}",
@@ -192,6 +197,7 @@ class TelemetryRuntime:
             outcome = "failed"
             raise
         finally:
+            _current_workflow.reset(workflow_token)
             duration_ms = (time.monotonic() - started) * 1000
             self._record(self._workflow_duration, duration_ms, safe_attributes)
             self._add(
@@ -281,6 +287,11 @@ class TelemetryRuntime:
             return
         span.add_event(event_name)
         span.set_error(code)
+
+    @staticmethod
+    def current_workflow(default: str) -> str:
+        """Return the active Hatch workflow, or a safe caller-provided default."""
+        return _current_workflow.get() or default
 
     def _warn_once(self, message: str) -> None:
         with self._warning_lock:
