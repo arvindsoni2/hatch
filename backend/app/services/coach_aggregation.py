@@ -29,6 +29,14 @@ _DIMENSION_PRIORITY = (
     "presence",
 )
 _TERMINAL_NO_SCORE = {"skipped", "unavailable", "invalid", "failed"}
+_REQUIRED_SCORE_DIMENSIONS = {
+    "relevance",
+    "star_structure",
+    "technical_depth",
+    "conciseness",
+    "communication",
+    "impact_metrics",
+}
 
 
 @dataclass(frozen=True)
@@ -53,7 +61,13 @@ def _parse_completed(recording: Any) -> AnswerEvaluation | None:
         evaluation = AnswerEvaluation.model_validate(raw)
     except Exception:
         return None
-    if evaluation.evaluation_state != "completed" or evaluation.overall is None:
+    if (
+        evaluation.evaluation_state != "completed"
+        or evaluation.overall is None
+        or not 0 <= evaluation.overall <= 10
+        or set(evaluation.scores) != _REQUIRED_SCORE_DIMENSIONS
+        or any(not 0 <= score <= 10 for score in evaluation.scores.values())
+    ):
         return None
     return evaluation
 

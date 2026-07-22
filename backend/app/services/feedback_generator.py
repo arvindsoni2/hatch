@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -24,6 +25,13 @@ from .coach_contracts import CoachDiagnostic, configured_model_id, run_with_stag
 from .prompt_catalog import prompt_contract_block, prompt_metadata
 
 logger = logging.getLogger(__name__)
+
+_CANDIDATE_HISTORY_CLAIM = re.compile(
+    r"\b(?:i|the candidate|they|he|she)\s+"
+    r"(?:built|created|delivered|designed|implemented|led|managed|reduced|saved|"
+    r"worked|achieved|increased|decreased)\b",
+    re.IGNORECASE,
+)
 
 
 def _load_candidate_name() -> str:
@@ -91,6 +99,7 @@ class FeedbackGeneratorService:
                 total_questions=base.question_count_total,
                 overall_score=base.overall_score,
                 category_scores=base.category_scores,
+                authoritative_improvement_areas=base.improvement_areas,
                 question_summaries=q_summaries,
                 speech_summary=speech_summary,
                 prompt_contract=prompt_contract_block("session_report"),
@@ -138,6 +147,23 @@ class FeedbackGeneratorService:
                 base,
                 self._diagnostic(
                     "fallback_deterministic", ["coach_report_schema_invalid"], started
+                ),
+            )
+
+        schema_valid = _valid_report_narrative_schema(raw)
+        if not schema_valid:
+            return _as_fallback(
+                base,
+                self._diagnostic(
+                    "fallback_deterministic", ["coach_report_schema_invalid"], started
+                ),
+            )
+
+        if _contains_candidate_history_claim(raw):
+            return _as_fallback(
+                base,
+                self._diagnostic(
+                    "fallback_deterministic", ["coach_report_unsupported_claim"], started
                 ),
             )
 
@@ -217,6 +243,34 @@ def _immutable_report_gates(
     ):
         gates.append("coach_report_priority_mismatch")
     return gates
+
+
+def _valid_report_narrative_schema(raw: dict[str, Any]) -> bool:
+    if not isinstance(raw.get("executive_summary"), str):
+        return False
+    for field in ("strengths", "improvement_areas", "coaching_points"):
+        value = raw.get(field)
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) for item in value
+        ):
+            return False
+    practice_plan = raw.get("practice_plan")
+    return isinstance(practice_plan, list) and all(
+        isinstance(item, dict) for item in practice_plan
+    )
+
+
+def _contains_candidate_history_claim(raw: dict[str, Any]) -> bool:
+    narrative = [raw["executive_summary"]]
+    for field in ("strengths", "improvement_areas", "coaching_points"):
+        narrative.extend(raw[field])
+    for item in raw["practice_plan"]:
+        narrative.extend(
+            str(item[field])
+            for field in ("focus", "activity", "resource")
+            if item.get(field) is not None
+        )
+    return any(_CANDIDATE_HISTORY_CLAIM.search(item) for item in narrative)
 
 
 def _legacy_deterministic_report(

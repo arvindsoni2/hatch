@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -124,6 +125,23 @@ def test_round_half_up_and_recording_id_tie_break_are_authoritative() -> None:
     assert rubric.dimensions["relevance"].score == 8
 
 
+def test_completed_attempt_requires_all_six_valid_score_dimensions() -> None:
+    now = datetime.utcnow()
+    questions = [_question("q1", 1)]
+    incomplete = _recording("r1", "q1", "completed", now, 7.5)
+    incomplete.evaluation_json = json.dumps({
+        "evaluation_state": "completed",
+        "scores": {"relevance": 7},
+        "overall": 7.5,
+    })
+
+    report = build_deterministic_report("s1", questions, [incomplete])
+
+    assert report.question_count_evaluated == 0
+    assert report.question_count_unanswered == 1
+    assert report.overall_score is None
+
+
 @pytest.mark.asyncio
 async def test_report_model_cannot_mutate_authoritative_values() -> None:
     now = datetime.utcnow()
@@ -175,3 +193,49 @@ async def test_report_provider_failure_returns_deterministic_fallback() -> None:
     assert report.overall_score is None
     assert report.diagnostic is not None
     assert report.diagnostic.gate_codes == ["coach_report_provider_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_report_schema_returns_untouched_deterministic_fallback() -> None:
+    base = build_deterministic_report("s1", [_question("q1", 1)], [])
+    client = MagicMock(model="configured-model")
+    client.complete_json = AsyncMock(return_value={"executive_summary": "Only one field"})
+
+    report = await FeedbackGeneratorService(client).generate_report(
+        session_id="s1",
+        role_title="Engineer",
+        company_name="Example",
+        question_evaluations=[],
+        deterministic_report=base,
+    )
+
+    assert report.report_state == "fallback"
+    assert report.executive_summary == base.executive_summary
+    assert report.diagnostic is not None
+    assert report.diagnostic.gate_codes == ["coach_report_schema_invalid"]
+
+
+@pytest.mark.asyncio
+async def test_report_candidate_history_claim_discards_model_narrative() -> None:
+    base = build_deterministic_report("s1", [_question("q1", 1)], [])
+    client = MagicMock(model="configured-model")
+    client.complete_json = AsyncMock(return_value={
+        "executive_summary": "The candidate built a payments platform at Example.",
+        "strengths": [],
+        "improvement_areas": base.improvement_areas,
+        "coaching_points": [],
+        "practice_plan": [],
+    })
+
+    report = await FeedbackGeneratorService(client).generate_report(
+        session_id="s1",
+        role_title="Engineer",
+        company_name="Example",
+        question_evaluations=[],
+        deterministic_report=base,
+    )
+
+    assert report.report_state == "fallback"
+    assert report.executive_summary == base.executive_summary
+    assert report.diagnostic is not None
+    assert report.diagnostic.gate_codes == ["coach_report_unsupported_claim"]

@@ -22,6 +22,9 @@ Score Breakdown by Category:
 - {{ category }}: {{ score | round(1) }}/10
 {% endfor %}
 
+Authoritative Improvement Priorities (preserve this exact list and order):
+{{ authoritative_improvement_areas }}
+
 Question-by-Question Summary:
 {% for q in question_summaries %}
 Q{{ loop.index }}. [{{ q.category }}] {{ q.question_text | truncate(100) }}
@@ -66,3 +69,6 @@ Generate a personalised feedback report. Return JSON:
   "readiness_assessment": "Brief statement on interview readiness (e.g., 'Ready with preparation', 'Needs 1-2 more practice sessions')",
   "motivational_note": "1 encouraging sentence to close the report"
 }
+
+The `improvement_areas` array must equal the Authoritative Improvement Priorities
+exactly. Use `coaching_points` and `practice_plan` for explanatory narrative.
