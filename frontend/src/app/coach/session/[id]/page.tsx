@@ -39,6 +39,10 @@ import { Loader2, FlagTriangleRight, Volume2, TrendingUp, ChevronRight } from "l
 type RecordingMode = CoachMode;
 type SessionState = "idle" | "recording" | "submitted" | "evaluated";
 
+const hasCompletedScore = (result: AnswerEvaluation) =>
+  (result.evaluation_state ?? "completed") === "completed" &&
+  result.overall !== null;
+
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -106,7 +110,13 @@ export default function SessionPage() {
           await new Promise((r) => setTimeout(r, 2000));
         }
         setEvaluation(eval_);
-        setAnsweredIds((prev) => { const next = new Set(prev); next.add(currentQuestion.id); return next; });
+        if (hasCompletedScore(eval_)) {
+          setAnsweredIds((prev) => {
+            const next = new Set(prev);
+            next.add(currentQuestion.id);
+            return next;
+          });
+        }
         setSessionState("evaluated");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Submission failed");
@@ -169,7 +179,13 @@ export default function SessionPage() {
           await new Promise((r) => setTimeout(r, 2000));
         }
         setEvaluation(eval_);
-        setAnsweredIds((prev) => { const next = new Set(prev); next.add(currentQuestion.id); return next; });
+        if (hasCompletedScore(eval_)) {
+          setAnsweredIds((prev) => {
+            const next = new Set(prev);
+            next.add(currentQuestion.id);
+            return next;
+          });
+        }
         setSessionState("evaluated");
         setFaceSummary(null);
       } catch (err) {
@@ -190,6 +206,14 @@ export default function SessionPage() {
       setEvaluation(null);
       setSessionState("idle");
     }
+  };
+
+  const handleRetryAnswer = () => {
+    setEvaluation(null);
+    setSessionState("idle");
+    setError(null);
+    setFaceSummary(null);
+    setFaceActive(recordingMode === "video");
   };
 
   const handleEndSession = async () => {
@@ -267,6 +291,9 @@ export default function SessionPage() {
 
   const unansweredCount = session.questions.filter((q) => !answeredIds.has(q.id)).length;
   const allAnswered = unansweredCount === 0;
+  const retryableNoScore = Boolean(
+    evaluation && !hasCompletedScore(evaluation) && evaluation.retryable
+  );
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
@@ -393,7 +420,15 @@ export default function SessionPage() {
                 <div className="space-y-3">
                   <EvaluationCard evaluation={evaluation} />
                   <ModelAnswer modelAnswer={currentQuestion.model_answer} />
-                  {!allAnswered && (
+                  {retryableNoScore && (
+                    <Button
+                      onClick={handleRetryAnswer}
+                      className="w-full bg-amber-700 hover:bg-amber-600"
+                    >
+                      Try this question again
+                    </Button>
+                  )}
+                  {!retryableNoScore && !allAnswered && (
                     <Button
                       onClick={handleNext}
                       className="w-full bg-indigo-600 hover:bg-indigo-500"
@@ -401,7 +436,7 @@ export default function SessionPage() {
                       Next Question →
                     </Button>
                   )}
-                  {allAnswered && (
+                  {!retryableNoScore && allAnswered && (
                     <>
                       <Button
                         onClick={handleEndSession}
