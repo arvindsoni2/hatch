@@ -192,3 +192,105 @@ async def test_evaluation_keeps_only_transcript_or_metric_evidence(good_answer) 
     combined = "".join(client.complete_json.await_args.args[:2])
     assert '"prompt_id": "answer_evaluation"' in combined
     assert "OBSERVATION" in combined
+    assert result.diagnostic is not None
+    assert result.diagnostic.gate_codes == ["coach_evaluation_evidence_ungrounded"]
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_is_unavailable_without_neutral_score(good_answer) -> None:
+    client = MagicMock()
+    client.complete_json = AsyncMock(side_effect=RuntimeError("offline"))
+
+    result = await AnswerEvaluatorService(client).evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+    )
+
+    assert result.evaluation_state == "unavailable"
+    assert result.scores == {}
+    assert result.overall is None
+    assert result.rubric is None
+    assert result.diagnostic is not None
+    assert result.diagnostic.gate_codes == ["coach_evaluation_provider_unavailable"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "gate"),
+    [
+        ({"scores": {"relevance": 8}}, "coach_evaluation_dimension_missing"),
+        ({"scores": {**GOOD_EVAL_RESPONSE["scores"], "relevance": 11}}, "coach_evaluation_score_out_of_range"),
+        ({"overall": 2.0}, "coach_evaluation_overall_inconsistent"),
+    ],
+)
+async def test_invalid_evaluation_contract_has_no_score(
+    good_answer, mutation, gate
+) -> None:
+    raw = {**GOOD_EVAL_RESPONSE, **mutation}
+    client = MagicMock()
+    client.complete_json = AsyncMock(return_value=raw)
+
+    result = await AnswerEvaluatorService(client).evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+    )
+
+    assert result.evaluation_state == "invalid"
+    assert result.scores == {}
+    assert result.overall is None
+    assert result.rubric is None
+    assert result.diagnostic is not None
+    assert gate in result.diagnostic.gate_codes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overall", "supplied_followup", "expects_followup", "gate"),
+    [
+        (5.9, None, True, "coach_evaluation_followup_missing"),
+        (6.0, "An unexpected follow-up", False, "coach_evaluation_followup_unexpected"),
+    ],
+)
+async def test_followup_threshold_is_enforced_deterministically(
+    good_answer, overall, supplied_followup, expects_followup, gate
+) -> None:
+    scores = {dimension: 6 for dimension in GOOD_EVAL_RESPONSE["scores"]}
+    raw = {
+        **GOOD_EVAL_RESPONSE,
+        "scores": scores,
+        "overall": overall,
+        "follow_up_question": supplied_followup,
+    }
+    client = MagicMock()
+    client.complete_json = AsyncMock(return_value=raw)
+
+    result = await AnswerEvaluatorService(client).evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+    )
+
+    assert (result.follow_up_question is not None) is expects_followup
+    assert result.diagnostic is not None
+    assert gate in result.diagnostic.gate_codes
+
+
+@pytest.mark.asyncio
+async def test_empty_transcript_is_invalid_without_model_call() -> None:
+    client = MagicMock()
+    client.complete_json = AsyncMock()
+
+    result = await AnswerEvaluatorService(client).evaluate(
+        question="Question?",
+        category="Technical",
+        transcript="   ",
+    )
+
+    assert result.evaluation_state == "invalid"
+    assert result.scores == {}
+    assert result.overall is None
+    assert result.diagnostic is not None
+    assert result.diagnostic.gate_codes == ["coach_answer_empty_transcript"]
+    client.complete_json.assert_not_awaited()

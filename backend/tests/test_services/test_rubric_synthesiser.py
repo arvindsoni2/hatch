@@ -92,6 +92,11 @@ class TestRubricSynthesiserService:
         assert rubric.dimensions["star_structure"].evidence == [
             "'implemented a blue-green deployment'"
         ]
+        assert rubric.dimensions["star_structure"].score == 7
+        assert rubric.dimensions["star_structure"].score_band == "good"
+        assert rubric.diagnostic is not None
+        assert "coach_rubric_score_mutation" in rubric.diagnostic.gate_codes
+        assert "coach_rubric_evidence_ungrounded" in rubric.diagnostic.gate_codes
         system_message = mock_llm.ainvoke.await_args.args[0][0].content
         assert '"prompt_id": "rubric_synthesis"' in system_message
         assert "OBSERVATION" in system_message
@@ -179,6 +184,9 @@ class TestRubricSynthesiserService:
         assert isinstance(rubric, SessionRubric)
         for dim in CONTENT_DIMENSIONS:
             assert dim in rubric.dimensions, f"Missing fallback dimension: {dim}"
+        assert rubric.diagnostic is not None
+        assert rubric.diagnostic.outcome == "fallback_deterministic"
+        assert rubric.diagnostic.gate_codes == ["coach_rubric_provider_unavailable"]
 
     @pytest.mark.asyncio
     async def test_focus_for_next_session_populated(self) -> None:
@@ -211,3 +219,33 @@ class TestRubricSynthesiserService:
         if "star_structure" in rubric.dimensions:
             dim = rubric.dimensions["star_structure"]
             assert isinstance(dim.evidence, list)
+
+    @pytest.mark.asyncio
+    async def test_llm_cannot_add_dimension_without_available_signal(self) -> None:
+        from app.services.rubric_synthesiser import RubricSynthesiserService
+
+        response = {
+            "dimensions": {
+                "delivery": {
+                    "score": 10,
+                    "score_band": "strong",
+                    "evidence": ["145 WPM"],
+                    "drill": "Practise.",
+                }
+            },
+            "focus_for_next_session": "Delivery",
+        }
+        with patch(
+            "app.services.rubric_synthesiser.get_json_model",
+            return_value=_mock_llm(response),
+        ):
+            rubric = await RubricSynthesiserService().synthesise(
+                transcript="Answer",
+                evaluation=_make_evaluation(),
+            )
+
+        assert "delivery" not in rubric.dimensions
+        assert rubric.diagnostic is not None
+        assert "coach_rubric_optional_dimension_unexpected" in (
+            rubric.diagnostic.gate_codes
+        )

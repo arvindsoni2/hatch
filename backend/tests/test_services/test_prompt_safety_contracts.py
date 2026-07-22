@@ -15,7 +15,7 @@ def test_prompt_contract_block_serializes_stable_metadata() -> None:
 
     assert "PROMPT METADATA:" in block
     assert '"prompt_id": "model_answer"' in block
-    assert '"prompt_version": "1.0.0"' in block
+    assert '"prompt_version": "2.0.0"' in block
     assert '"schema_version": "1.0.0"' in block
 
 

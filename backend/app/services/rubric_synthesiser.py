@@ -15,6 +15,7 @@ import time
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..agents.tools.llm_factory import get_json_model
+from ..config import settings
 from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import (
     AnswerEvaluation,
@@ -23,8 +24,9 @@ from ..schemas.coach import (
     SpeechMetrics,
     VoiceToneResult,
 )
-from .rubric_builder import build_rubric, score_to_band
-from .prompt_catalog import prompt_contract_block, source_contains
+from .coach_contracts import CoachDiagnostic, configured_model_id, run_with_stage_deadline
+from .rubric_builder import build_rubric
+from .prompt_catalog import prompt_contract_block, prompt_metadata, source_contains
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,9 @@ framed as interpretations. Drills are RECOMMENDATIONS, not candidate facts.
 Keep each evidence string under 100 characters.
 
 Also write a 'focus_for_next_session' sentence identifying the 1-2 weakest dimensions.
+
+Scores, score bands, and dimension membership are immutable inputs. Repeat them
+exactly; only evidence, drill wording, and focus_for_next_session may be enriched.
 
 Respond with valid JSON only:
 {
@@ -91,35 +96,54 @@ def _parse_llm_rubric(
     baseline: SessionRubric,
     transcript: str,
     metric_context: str,
-) -> SessionRubric:
-    """Merge LLM output into the baseline rubric; fall back per-dim on parse error."""
+) -> tuple[SessionRubric, list[str]]:
+    """Merge narrative only while retaining authoritative deterministic scores."""
     merged: dict[str, RubricDimension] = dict(baseline.dimensions)
+    gates: list[str] = []
 
     llm_dims = raw.get("dimensions", {})
+    if not isinstance(llm_dims, dict):
+        return baseline, ["coach_rubric_dimension_missing"]
+    if set(baseline.dimensions) - set(llm_dims):
+        gates.append("coach_rubric_dimension_missing")
     for dim_name, dim_data in llm_dims.items():
+        if dim_name not in baseline.dimensions:
+            gates.append("coach_rubric_optional_dimension_unexpected")
+            continue
         if not isinstance(dim_data, dict):
+            gates.append("coach_rubric_dimension_missing")
             continue
         try:
-            score = max(0, min(10, int(dim_data.get("score", baseline.dimensions.get(dim_name, RubricDimension()).score))))
-            band = dim_data.get("score_band") or score_to_band(score)
+            authoritative = baseline.dimensions[dim_name]
+            if (
+                dim_data.get("score") != authoritative.score
+                or dim_data.get("score_band") != authoritative.score_band
+            ):
+                gates.append("coach_rubric_score_mutation")
+            raw_evidence = dim_data.get("evidence") or []
             evidence = [
                 str(item)
-                for item in (dim_data.get("evidence") or [])[:2]
+                for item in raw_evidence[:2]
                 if _evidence_is_grounded(str(item), transcript, metric_context)
             ]
+            if len(evidence) != len(raw_evidence[:2]):
+                gates.append("coach_rubric_evidence_ungrounded")
             drill = dim_data.get("drill") or ""
-            if isinstance(evidence, list) and evidence:
-                merged[dim_name] = RubricDimension(
-                    score=score,
-                    score_band=band,
-                    evidence=evidence,
-                    drill=str(drill) if drill else (merged.get(dim_name, RubricDimension()).drill),
-                )
+            merged[dim_name] = RubricDimension(
+                score=authoritative.score,
+                score_band=authoritative.score_band,
+                evidence=evidence or authoritative.evidence,
+                drill=str(drill) if drill else authoritative.drill,
+            )
         except Exception as exc:
             logger.debug("Skipping malformed LLM rubric dim '%s': %s", dim_name, exc)
+            gates.append("coach_rubric_dimension_missing")
 
     focus = raw.get("focus_for_next_session") or baseline.focus_for_next_session
-    return SessionRubric(dimensions=merged, focus_for_next_session=str(focus))
+    return (
+        SessionRubric(dimensions=merged, focus_for_next_session=str(focus)),
+        list(dict.fromkeys(gates)),
+    )
 
 
 def _evidence_is_grounded(
@@ -154,6 +178,29 @@ class RubricSynthesiserService:
         if self._llm is None:
             self._llm = get_json_model()
         return self._llm
+
+    @staticmethod
+    def _diagnostic(
+        model: object,
+        *,
+        outcome: str,
+        gates: list[str],
+        duration_ms: int,
+    ) -> CoachDiagnostic:
+        metadata = prompt_metadata("rubric_synthesis")
+        return CoachDiagnostic(
+            stage="rubric_synthesis",
+            outcome=outcome,
+            execution_mode="llm",
+            prompt_id=metadata.prompt_id,
+            prompt_version=metadata.prompt_version,
+            output_schema_version=metadata.schema_version,
+            model_id=configured_model_id(model),
+            attempt_count=1,
+            repair_count=0,
+            gate_codes=gates,
+            duration_ms=duration_ms,
+        )
 
     @trace_stage("coach_generation", "validate_output")
     async def synthesise(
@@ -195,13 +242,17 @@ class RubricSynthesiserService:
         started = time.monotonic()
         try:
             model = self._get_llm()
-            response = await model.ainvoke(messages)
+            response = await run_with_stage_deadline(
+                model.ainvoke(messages),
+                settings.HATCH_COACH_TIMEOUT_RUBRIC_ENRICHMENT_SECONDS,
+            )
         except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
             get_telemetry().record_model_call(
                 workflow="coach_generation",
                 provider=type(model).__name__ if model is not None else "configured",
                 model_id=str(getattr(model, "model", "configured")),
-                duration_ms=(time.monotonic() - started) * 1000,
+                duration_ms=duration_ms,
                 outcome="failed",
             )
             get_telemetry().mark_current_error(
@@ -211,16 +262,38 @@ class RubricSynthesiserService:
             logger.warning(
                 "RubricSynthesiser LLM call failed (%s) — using deterministic rubric.", exc
             )
+            gate = (
+                "coach_stage_timeout"
+                if isinstance(exc, TimeoutError)
+                else "coach_rubric_provider_unavailable"
+            )
+            baseline.diagnostic = self._diagnostic(
+                model or self,
+                outcome="fallback_deterministic",
+                gates=[gate],
+                duration_ms=duration_ms,
+            )
             return baseline
+        duration_ms = int((time.monotonic() - started) * 1000)
         get_telemetry().record_model_call(
             workflow="coach_generation",
             provider=type(model).__name__,
             model_id=str(getattr(model, "model", "configured")),
-            duration_ms=(time.monotonic() - started) * 1000,
+            duration_ms=duration_ms,
         )
         try:
             raw = json.loads(response.content)
-            return _parse_llm_rubric(raw, baseline, transcript, user_prompt)
+            metric_context = _metric_context(speech_metrics, tone_result)
+            rubric, gates = _parse_llm_rubric(
+                raw, baseline, transcript, metric_context
+            )
+            rubric.diagnostic = self._diagnostic(
+                model,
+                outcome="completed",
+                gates=gates,
+                duration_ms=duration_ms,
+            )
+            return rubric
         except Exception as exc:
             get_telemetry().record_validation_failure(
                 "coach_generation",
@@ -234,4 +307,35 @@ class RubricSynthesiserService:
                 "RubricSynthesiser response was invalid (%s) — using deterministic rubric.",
                 exc,
             )
+            baseline.diagnostic = self._diagnostic(
+                model,
+                outcome="fallback_deterministic",
+                gates=["coach_rubric_dimension_missing"],
+                duration_ms=duration_ms,
+            )
             return baseline
+
+
+def _metric_context(
+    speech_metrics: SpeechMetrics | None,
+    tone_result: VoiceToneResult | None,
+) -> str:
+    values: list[str] = []
+    if speech_metrics:
+        values.extend(
+            [
+                f"{speech_metrics.wpm:g} WPM",
+                f"{speech_metrics.filler_count} filler words",
+                f"{speech_metrics.pause_count} pauses",
+                f"{speech_metrics.star_coverage:g} STAR coverage",
+            ]
+        )
+    if tone_result:
+        values.extend(
+            [
+                f"{tone_result.arousal:g} arousal",
+                f"{tone_result.valence:g} valence",
+                f"{tone_result.dominance:g} dominance",
+            ]
+        )
+    return "\n".join(values)

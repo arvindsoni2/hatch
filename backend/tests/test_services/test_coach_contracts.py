@@ -214,6 +214,15 @@ def test_unavailable_evaluation_supports_absent_score_and_rubric() -> None:
     assert evaluation.rubric is None
 
 
+def test_unavailable_evaluation_rejects_numeric_fallback() -> None:
+    with pytest.raises(ValidationError):
+        AnswerEvaluation(
+            evaluation_state="unavailable",
+            scores={"relevance": 5},
+            overall=5.0,
+        )
+
+
 def test_historical_report_and_question_payloads_remain_readable() -> None:
     report = SessionFeedbackReport(session_id="s1", overall_score=8.0)
     question = SessionQuestionRead(

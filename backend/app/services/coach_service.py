@@ -198,7 +198,7 @@ class CoachService:
 
         db_questions = []
         for i, q in enumerate(questions):
-            model_answer = await self._model_answer_gen.generate(
+            model_answer_result = await self._model_answer_gen.generate(
                 question=q.text,
                 category=q.category,
                 difficulty=q.difficulty,
@@ -212,8 +212,11 @@ class CoachService:
                 "category": q.category,
                 "difficulty": q.difficulty,
                 "context": q.context,
-                "model_answer": model_answer,
+                "model_answer": model_answer_result.model_answer,
                 "requirement_id": q.requirement_id,
+                "model_answer_diagnostics": model_answer_result.diagnostic.model_dump(
+                    mode="json"
+                ),
                 "order_in_session": i + 1,
             })
 

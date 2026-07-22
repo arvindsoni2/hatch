@@ -71,7 +71,7 @@ def _contract(
 
 _CONTRACT_LIST = (
     _contract(
-        _metadata("answer_evaluation"),
+        _metadata("answer_evaluation", prompt_version="2.0.0"),
         "backend/app/prompts/answer_evaluation.j2",
         "coach_recommendations",
         "AnswerEvaluation",
@@ -145,7 +145,7 @@ _CONTRACT_LIST = (
         numeric="high",
     ),
     _contract(
-        _metadata("model_answer"),
+        _metadata("model_answer", prompt_version="2.0.0"),
         "backend/app/prompts/model_answer.j2",
         "interview_answers",
         "ModelAnswerResult",
@@ -241,7 +241,7 @@ _CONTRACT_LIST = (
         numeric="high",
     ),
     _contract(
-        _metadata("rubric_synthesis"),
+        _metadata("rubric_synthesis", prompt_version="2.0.0"),
         "backend/app/services/rubric_synthesiser.py",
         "coach_recommendations",
         "SessionRubric",

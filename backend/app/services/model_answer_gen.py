@@ -1,27 +1,76 @@
-"""Model Answer Generator — produces STAR-structured model answers via Claude."""
+"""Candidate-grounded Coach model answers with explicit safe outcomes."""
 from __future__ import annotations
 
 import logging
 import time
 from typing import Any
 
-from ..prompts import render_prompt
-from ..observability import get_telemetry, trace_stage
-from .llm_client import LLMClient
 from ..agents.tools.context_budgets import MODEL_ANSWER
+from ..config import settings
+from ..observability import get_telemetry, trace_stage
+from ..prompts import render_prompt
+from ..schemas.coach import ModelAnswerResult
+from .coach_contracts import CoachDiagnostic, configured_model_id, run_with_stage_deadline
 from .jd_analyser import _split_jinja_output
+from .llm_client import LLMClient
 from .prompt_catalog import (
     candidate_claim_contract,
     prompt_contract_block,
+    prompt_metadata,
     validate_candidate_output,
 )
 from .writing_contracts import build_evidence_ledger, evidence_records
 
 logger = logging.getLogger(__name__)
 
+_STAR_KEYS = ("situation", "task", "action", "result")
+
+
+def _diagnostic(
+    client: object,
+    *,
+    outcome: str,
+    gates: list[str],
+    duration_ms: int,
+    execution_mode: str = "llm",
+) -> CoachDiagnostic:
+    if execution_mode != "llm":
+        return CoachDiagnostic(
+            stage="model_answer",
+            outcome=outcome,
+            execution_mode=execution_mode,
+            attempt_count=0,
+            repair_count=0,
+            gate_codes=gates,
+            duration_ms=duration_ms,
+        )
+    metadata = prompt_metadata("model_answer")
+    return CoachDiagnostic(
+        stage="model_answer",
+        outcome=outcome,
+        execution_mode="llm",
+        prompt_id=metadata.prompt_id,
+        prompt_version=metadata.prompt_version,
+        output_schema_version=metadata.schema_version,
+        model_id=configured_model_id(client),
+        attempt_count=1,
+        repair_count=0,
+        gate_codes=gates,
+        duration_ms=duration_ms,
+    )
+
+
+def _empty_result(diagnostic: CoachDiagnostic) -> ModelAnswerResult:
+    return ModelAnswerResult(
+        model_answer="",
+        star_breakdown={},
+        evidence_references=[],
+        diagnostic=diagnostic,
+    )
+
 
 class ModelAnswerGeneratorService:
-    """Generates STAR-structured model answers for interview questions."""
+    """Generate a STAR answer, withholding every unvalidated candidate claim."""
 
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
@@ -35,23 +84,19 @@ class ModelAnswerGeneratorService:
         company_name: str,
         company_research: dict[str, Any] | None = None,
         candidate_summary: str = "",
-    ) -> str:
-        """Generate a STAR-structured model answer for a single question.
-
-        Args:
-            question: The interview question text.
-            category: Question category (Technical, Behavioural, etc.).
-            difficulty: Question difficulty level.
-            company_name: Company name for context.
-            company_research: Optional company research dict.
-            candidate_summary: Candidate CV summary text.
-
-        Returns:
-            Model answer as a plain text string.
-        """
+    ) -> ModelAnswerResult:
         ledger = build_evidence_ledger({"summary": candidate_summary})
         if not ledger:
-            return ""
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="withheld_insufficient_evidence",
+                    gates=["coach_model_answer_no_evidence"],
+                    duration_ms=0,
+                    execution_mode="not_run",
+                )
+            )
+
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
                 "model_answer.j2",
@@ -67,62 +112,136 @@ class ModelAnswerGeneratorService:
         )
         started = time.monotonic()
         try:
-            raw = await self._client.complete_json(
-                system_prompt,
-                user_prompt,
-                max_tokens=MODEL_ANSWER.max_output,
+            raw = await run_with_stage_deadline(
+                self._client.complete_json(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=MODEL_ANSWER.max_output,
+                ),
+                settings.HATCH_COACH_TIMEOUT_MODEL_ANSWER_SECONDS,
             )
-            get_telemetry().record_model_call(
-                workflow="coach_generation",
-                provider=type(self._client).__name__,
-                model_id=str(getattr(self._client, "model", "configured")),
-                duration_ms=(time.monotonic() - started) * 1000,
-            )
-            if not isinstance(raw, dict):
-                get_telemetry().record_validation_failure(
-                    "coach_generation",
-                    "invalid_model_answer",
-                )
-                return ""
-            model_answer = raw.get("model_answer", "")
-            if not isinstance(model_answer, str) or not model_answer.strip():
-                get_telemetry().record_validation_failure(
-                    "coach_generation",
-                    "missing_model_answer",
-                )
-                return ""
-            star = raw.get("star_breakdown", {})
-            star_prose = (
-                [str(value) for value in star.values()]
-                if isinstance(star, dict)
-                else []
-            )
-            employer_context = _string_values(company_research or {})
-            validation = validate_candidate_output(
-                [model_answer, *star_prose],
-                ledger,
-                employer_context,
-            )
-            if not validation.passed:
-                get_telemetry().record_validation_failure(
-                    "coach_generation",
-                    "candidate_grounding",
-                )
-            return model_answer if validation.passed else ""
         except Exception as exc:
+            duration_ms = int((time.monotonic() - started) * 1000)
             get_telemetry().record_model_call(
                 workflow="coach_generation",
                 provider=type(self._client).__name__,
-                model_id=str(getattr(self._client, "model", "configured")),
-                duration_ms=(time.monotonic() - started) * 1000,
+                model_id=configured_model_id(self._client),
+                duration_ms=duration_ms,
                 outcome="failed",
             )
-            get_telemetry().mark_current_error(
-                "model_answer_failed",
-                "model_error",
+            gate = (
+                "coach_stage_timeout"
+                if isinstance(exc, TimeoutError)
+                else "coach_model_answer_provider_unavailable"
             )
             logger.warning("Model answer generation failed: %s", exc)
-            return ""
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="unavailable",
+                    gates=[gate],
+                    duration_ms=duration_ms,
+                )
+            )
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        get_telemetry().record_model_call(
+            workflow="coach_generation",
+            provider=type(self._client).__name__,
+            model_id=configured_model_id(self._client),
+            duration_ms=duration_ms,
+        )
+        if not isinstance(raw, dict):
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=["coach_model_answer_schema_invalid"],
+                    duration_ms=duration_ms,
+                )
+            )
+
+        model_answer = raw.get("model_answer")
+        if not isinstance(model_answer, str) or not model_answer.strip():
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=["coach_model_answer_empty"],
+                    duration_ms=duration_ms,
+                )
+            )
+
+        star = raw.get("star_breakdown")
+        if not isinstance(star, dict) or any(
+            not isinstance(star.get(key), str) or not star[key].strip()
+            for key in _STAR_KEYS
+        ):
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=["coach_model_answer_star_incomplete"],
+                    duration_ms=duration_ms,
+                )
+            )
+        star_breakdown = {key: str(star[key]).strip() for key in _STAR_KEYS}
+
+        references = raw.get("evidence_references", [])
+        if not isinstance(references, list) or any(
+            not isinstance(reference, str) for reference in references
+        ):
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=["coach_model_answer_schema_invalid"],
+                    duration_ms=duration_ms,
+                )
+            )
+        allowed_ids = {item.id for item in ledger}
+        if any(reference not in allowed_ids for reference in references):
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=["coach_model_answer_unknown_evidence_id"],
+                    duration_ms=duration_ms,
+                )
+            )
+
+        validation = validate_candidate_output(
+            [model_answer, *star_breakdown.values()],
+            ledger,
+            _string_values(company_research or {}),
+        )
+        if not validation.passed:
+            gate = (
+                "coach_model_answer_numeric_fidelity"
+                if any(issue.code == "unsupported_numeric_token" for issue in validation.issues)
+                else "coach_model_answer_unsupported_claim"
+            )
+            get_telemetry().record_validation_failure("coach_generation", gate)
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=[gate],
+                    duration_ms=duration_ms,
+                )
+            )
+
+        return ModelAnswerResult(
+            model_answer=model_answer.strip(),
+            star_breakdown=star_breakdown,
+            evidence_references=references,
+            diagnostic=_diagnostic(
+                self._client,
+                outcome="completed",
+                gates=[],
+                duration_ms=duration_ms,
+            ),
+        )
 
 
 def _string_values(value: Any) -> list[str]:
@@ -130,11 +249,7 @@ def _string_values(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
-        return [
-            text
-            for nested in value.values()
-            for text in _string_values(nested)
-        ]
+        return [text for nested in value.values() for text in _string_values(nested)]
     if isinstance(value, list):
         return [text for nested in value for text in _string_values(nested)]
     return []

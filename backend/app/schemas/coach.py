@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing_extensions import Self
 
 from ..services.coach_contracts import CoachDiagnostic
 
@@ -151,6 +152,17 @@ class AnswerEvaluation(BaseModel):
     follow_up_question: str | None = None
     speech_coaching: list[str] = Field(default_factory=list)
     rubric: SessionRubric | None = None
+
+    @model_validator(mode="after")
+    def validate_score_state(self) -> Self:
+        if self.evaluation_state == "completed":
+            if self.overall is None:
+                raise ValueError("completed evaluations require an overall score")
+        elif self.scores or self.overall is not None or self.rubric is not None:
+            raise ValueError(
+                "unavailable or invalid evaluations cannot contain scores or a rubric"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
