@@ -14,13 +14,23 @@ const SCORE_COLOR = (s: number) =>
 export function FeedbackReport({ report }: FeedbackReportProps) {
   return (
     <div className="space-y-6">
+      {report.report_state === "fallback" ? (
+        <div className="rounded-lg border border-amber-800 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+          This report uses deterministic fallback feedback because the coaching narrative was unavailable.
+        </div>
+      ) : null}
+
       {/* Header */}
       <div className="flex flex-col items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 p-6 text-center">
         <Trophy className="h-8 w-8 text-amber-400" />
-        <span className={`text-5xl font-bold tabular-nums ${SCORE_COLOR(report.overall_score)}`}>
-          {report.overall_score.toFixed(1)}
-          <span className="text-xl text-slate-500">/10</span>
-        </span>
+        {report.overall_score === null ? (
+          <span className="text-xl font-semibold text-slate-300">No score available</span>
+        ) : (
+          <span className={`text-5xl font-bold tabular-nums ${SCORE_COLOR(report.overall_score)}`}>
+            {report.overall_score.toFixed(1)}
+            <span className="text-xl text-slate-500">/10</span>
+          </span>
+        )}
         <p className="text-sm text-slate-400">Overall Score</p>
       </div>
 

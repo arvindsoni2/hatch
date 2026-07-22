@@ -24,13 +24,37 @@ const DIMENSION_LABELS: Record<string, string> = {
 };
 
 export function EvaluationCard({ evaluation }: EvaluationCardProps) {
+  if (
+    (evaluation.evaluation_state ?? "completed") !== "completed" ||
+    evaluation.overall === null
+  ) {
+    return (
+      <div className="rounded-xl border border-amber-800 bg-amber-950/20 p-5">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+          <div>
+            <h3 className="font-semibold text-slate-200">Evaluation could not be completed</h3>
+            <p className="mt-1 text-sm text-slate-400">
+              {evaluation.feedback || "Your answer was kept, but no score is available."}
+            </p>
+            {evaluation.retryable ? (
+              <p className="mt-2 text-sm text-amber-300">You can submit the answer again.</p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const overall = evaluation.overall;
+
   return (
     <div className="rounded-xl border border-slate-700 bg-slate-800 p-5 space-y-5">
       {/* Overall */}
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-slate-200">Answer Evaluation</h3>
-        <span className={`text-2xl font-bold tabular-nums ${SCORE_COLOR(evaluation.overall)}`}>
-          {evaluation.overall.toFixed(1)}<span className="text-sm text-slate-500">/10</span>
+        <span className={`text-2xl font-bold tabular-nums ${SCORE_COLOR(overall)}`}>
+          {overall.toFixed(1)}<span className="text-sm text-slate-500">/10</span>
         </span>
       </div>
 

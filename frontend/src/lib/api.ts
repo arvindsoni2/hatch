@@ -1135,6 +1135,7 @@ export interface QuestionPresentation {
   category: string;
   difficulty: string;
   context: string | null;
+  requirement_id?: string | null;
   num: number;
   total: number;
 }
@@ -1148,17 +1149,37 @@ export interface SessionQuestion {
   difficulty: string;
   context: string | null;
   model_answer: string | null;
+  requirement_id?: string | null;
+  model_answer_diagnostics?: CoachDiagnostic | null;
   order_in_session: number;
 }
 
+export interface CoachDiagnostic {
+  validation_schema_version: "1.0.0";
+  stage: string;
+  outcome: string;
+  execution_mode: "llm" | "deterministic" | "cache" | "not_run";
+  prompt_id?: string | null;
+  prompt_version?: string | null;
+  output_schema_version?: string | null;
+  model_id?: string | null;
+  attempt_count: number;
+  repair_count: number;
+  gate_codes: string[];
+  duration_ms: number;
+}
+
 export interface AnswerEvaluation {
+  evaluation_state?: "completed" | "unavailable" | "invalid";
+  diagnostic?: CoachDiagnostic | null;
   scores: Record<string, number>;
-  overall: number;
+  overall: number | null;
   feedback: string;
   strengths: string[];
   improvements: string[];
   follow_up_question: string | null;
   speech_coaching: string[];
+  retryable?: boolean;
 }
 
 export interface SessionResponse {
@@ -1195,13 +1216,21 @@ export interface QuestionEvaluationSummary {
   question_text: string;
   category: string;
   overall_score: number;
+  scores?: Record<string, number>;
   strengths: string[];
   improvements: string[];
 }
 
 export interface SessionFeedbackReport {
   session_id: string;
-  overall_score: number;
+  report_state?: "completed" | "fallback";
+  diagnostic?: CoachDiagnostic | null;
+  overall_score: number | null;
+  question_count_total?: number;
+  question_count_evaluated?: number;
+  question_count_skipped?: number;
+  question_count_unavailable?: number;
+  question_count_unanswered?: number;
   category_scores: Record<string, number>;
   executive_summary: string;
   strengths: string[];
