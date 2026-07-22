@@ -31,32 +31,6 @@ from .writing_contracts import build_evidence_ledger, evidence_records
 logger = logging.getLogger(__name__)
 
 _STAR_KEYS = ("situation", "task", "action", "result")
-_STAR_ROLE_PATTERNS = {
-    "situation": re.compile(
-        r"(?:^\s*(?:during|when|while|at the time)\b|"
-        r"\b(?:i|we|[a-z]+(?:\s+[a-z]+){0,3})\s+"
-        r"(?:was|were|had|faced|suffered|inherited|encountered)\b)",
-        re.IGNORECASE,
-    ),
-    "task": re.compile(
-        r"(?:\b(?:i|we)\s+(?:needed|required|aimed|had to)\b|"
-        r"\b(?:i|we)\s+(?:was|were)\s+(?:responsible|tasked)\b|"
-        r"\b(?:my|our)\s+(?:goal|objective)\s+(?:was|became|involved)\b)",
-        re.IGNORECASE,
-    ),
-    "action": re.compile(
-        r"\b(?:i|we)\s+(?:(?:personally|then|also)\s+){0,2}"
-        r"(?!(?:needed|required|tasked|aimed|faced|achieved|grew|improved|increased|"
-        r"decreased|reduced|saved|fell|resulted|delivered)\b)"
-        r"(?:[a-z]{3,}ed|built|chose|drove|led|made|ran|took|wrote)\b",
-        re.IGNORECASE,
-    ),
-    "result": re.compile(
-        r"\b(?:achieved|grew|improved|increased|decreased|reduced|saved|fell|"
-        r"dropped|resulted|outcome|delivered)\b",
-        re.IGNORECASE,
-    ),
-}
 
 
 def _diagnostic(
@@ -300,10 +274,7 @@ class ModelAnswerGeneratorService:
                 )
             )
 
-        if any(
-            _classify_star_role(value) != key
-            for key, value in star_breakdown.items()
-        ):
+        if not _star_sections_follow_answer_order(model_answer, star_breakdown):
             return _empty_result(
                 _diagnostic(
                     self._client,
@@ -370,12 +341,28 @@ def _normalized_claim(text: str) -> tuple[str, ...]:
     return tuple(_content_tokens(text))
 
 
-def _classify_star_role(text: str) -> str | None:
-    """Classify conservative STAR prose using precedence for ambiguous wording."""
-    for role in ("task", "situation", "result", "action"):
-        if _STAR_ROLE_PATTERNS[role].search(text):
-            return role
-    return None
+def _atomic_claim_tokens(prose: str) -> list[tuple[str, ...]]:
+    return [
+        tuple(_content_tokens(claim))
+        for claim in re.split(r"[.!?]+|\n+|\s+[–—]\s+|\s*;\s*", prose)
+        if _content_tokens(claim)
+    ]
+
+
+def _star_sections_follow_answer_order(
+    model_answer: str, star_breakdown: dict[str, str]
+) -> bool:
+    """Require grounded STAR section clauses to occur in declared order."""
+    answer_claims = _atomic_claim_tokens(model_answer)
+    cursor = 0
+    for key in _STAR_KEYS:
+        for section_claim in _atomic_claim_tokens(star_breakdown[key]):
+            try:
+                position = answer_claims.index(section_claim, cursor)
+            except ValueError:
+                return False
+            cursor = position + 1
+    return True
 
 
 def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:
@@ -385,19 +372,11 @@ def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:
 
 def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
     """Require each generated clause to match one atomic evidence record."""
-    claims = [
-        claim.strip(" \t-*•")
-        for claim in re.split(r"[.!?]+|\n+|\s+[–—]\s+|\s*;\s*", prose)
-        if claim.strip(" \t-*•")
-    ]
+    claims = _atomic_claim_tokens(prose)
     evidence_tokens = [_content_tokens(item.text) for item in evidence]
     return bool(claims) and all(
-        bool(observed := _content_tokens(claim))
-        and any(
-            _tokens_match_claim(observed, supported)
-            for supported in evidence_tokens
-        )
-        for claim in claims
+        any(_tokens_match_claim(list(observed), supported) for supported in evidence_tokens)
+        for observed in claims
     )
 
 

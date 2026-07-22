@@ -37,7 +37,7 @@ async def test_model_answer_preserves_approved_metric_and_includes_evidence_ids(
         "25% through automation."
     )
     client = _client(
-        "I reduced incident volume by 25% through automation.",
+        candidate_summary,
         "I reduced incident volume by 25% through automation.",
         candidate_summary,
     )
@@ -468,14 +468,15 @@ async def test_model_answer_rejects_overlapping_star_role_keywords() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_answer_requires_exclusive_star_role_semantics() -> None:
+async def test_model_answer_rejects_breakdown_out_of_full_answer_order() -> None:
     candidate_summary = (
         "I improved the service. We achieved the goal. "
         "We faced a service challenge. I needed to deliver an improved outcome."
     )
     client = _client(
-        candidate_summary,
-        "I needed to deliver an improved outcome.",
+        "We faced a service challenge. I needed to deliver an improved outcome. "
+        "I improved the service. We achieved the goal.",
+        "We achieved the goal.",
         candidate_summary,
     )
     client.complete_json.return_value["star_breakdown"] = {
@@ -581,17 +582,42 @@ async def test_model_answer_accepts_temporal_phrase_inside_action() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_answer_rejects_objective_object_and_inherited_action_swap() -> None:
+async def test_model_answer_accepts_action_containing_outcome_word() -> None:
     candidate_summary = (
-        "A service had recurring incidents. I coordinated the objective review. "
-        "We inherited legacy systems. Latency dropped by 25%."
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I implemented changes that improved reliability. Latency dropped by 25%."
     )
     client = _client(candidate_summary, "Latency dropped by 25%.", candidate_summary)
     client.complete_json.return_value["star_breakdown"] = {
         "situation": "A service had recurring incidents.",
-        "task": "I coordinated the objective review.",
-        "action": "We inherited legacy systems.",
+        "task": "I needed to improve reliability.",
+        "action": "I implemented changes that improved reliability.",
         "result": "Latency dropped by 25%.",
+    }
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.diagnostic.outcome == "completed"
+
+
+@pytest.mark.asyncio
+async def test_model_answer_rejects_action_result_breakdown_reordering() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I reduced the alert threshold. I exceeded the latency target."
+    )
+    client = _client(candidate_summary, "I exceeded the latency target.", candidate_summary)
+    client.complete_json.return_value["star_breakdown"] = {
+        "situation": "A service had recurring incidents.",
+        "task": "I needed to improve reliability.",
+        "action": "I exceeded the latency target.",
+        "result": "I reduced the alert threshold.",
     }
 
     result = await ModelAnswerGeneratorService(client).generate(

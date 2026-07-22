@@ -726,6 +726,7 @@ A completed model answer must:
 - use only known evidence IDs when IDs are emitted;
 - avoid invented employer, title, date, duration, team size, action, or result;
 - include meaningful Situation, Task, Action, and Result content;
+- include four non-empty, distinct, grounded sections represented in the full answer in Situation, Task, Action, then Result order; C1 validates this deterministic structure and does not infer semantic roles from ambiguous keywords;
 - distinguish employer context from candidate history.
 
 #### Valid withholding

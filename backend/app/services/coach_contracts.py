@@ -301,11 +301,15 @@ def contains_candidate_history_claim(
     return any(
         re.search(
             rf"\b{re.escape(candidate_name.strip())}\b"
-            rf"\s+(?:(?:is|was|are|were)\s+(?:[a-z]+ly\s+)?[a-z]{{3,}}ing|"
-            rf"(?:has|had)\s+(?:[a-z]+ly\s+)?(?:"
-            rf"been\s+(?:[a-z]+ly\s+)?[a-z]{{3,}}ing|"
+            rf"\s+(?:(?:is|was|are|were)\s+"
+            rf"(?:(?!(?:should|can|could|may|might|must|would|will)\b)[a-z]+\s+)?"
+            rf"[a-z]{{3,}}ing|(?:has|had)\s+"
+            rf"(?:(?!(?:should|can|could|may|might|must|would|will)\b)[a-z]+\s+)?(?:"
+            rf"been\s+(?:(?!(?:should|can|could|may|might|must|would|will)\b)"
+            rf"[a-z]+\s+)?[a-z]{{3,}}ing|"
             rf"(?:{_CANDIDATE_HISTORY_VERBS}|[a-z]{{3,}}ed|set|cut))|"
-            rf"(?:[a-z]+ly\s+)?(?:{_CANDIDATE_HISTORY_VERBS}|"
+            rf"(?:(?!(?:should|can|could|may|might|must|would|will)\b)[a-z]+\s+)?"
+            rf"(?:{_CANDIDATE_HISTORY_VERBS}|"
             rf"[a-z]{{3,}}ed|[a-z]{{3,}}s|set|cut))\b",
             candidate_text,
             flags=re.IGNORECASE,
