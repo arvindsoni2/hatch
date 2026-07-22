@@ -342,3 +342,37 @@ class TestRubricSynthesiserService:
         ].evidence
         assert rubric.diagnostic is not None
         assert "coach_rubric_evidence_ungrounded" in rubric.diagnostic.gate_codes
+
+    @pytest.mark.asyncio
+    async def test_quote_does_not_ground_unsupported_surrounding_claim(self) -> None:
+        from app.services.rubric_synthesiser import RubricSynthesiserService
+
+        response = {
+            "dimensions": {
+                dimension: {
+                    "score": 7,
+                    "score_band": "good",
+                    "evidence": [],
+                    "drill": "Practise.",
+                }
+                for dimension in CONTENT_DIMENSIONS
+            },
+            "focus_for_next_session": "STAR structure",
+        }
+        response["dimensions"]["star_structure"]["evidence"] = [
+            "'implemented a blue-green deployment' proves Alex led 500 engineers"
+        ]
+        with patch(
+            "app.services.rubric_synthesiser.get_json_model",
+            return_value=_mock_llm(response),
+        ):
+            rubric = await RubricSynthesiserService().synthesise(
+                transcript="I implemented a blue-green deployment.",
+                evaluation=_make_evaluation(),
+            )
+
+        assert "500 engineers" not in " ".join(
+            rubric.dimensions["star_structure"].evidence
+        )
+        assert rubric.diagnostic is not None
+        assert "coach_rubric_evidence_ungrounded" in rubric.diagnostic.gate_codes

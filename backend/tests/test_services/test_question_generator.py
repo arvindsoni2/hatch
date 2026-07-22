@@ -134,6 +134,22 @@ def test_question_rejects_confirmed_second_person_history() -> None:
     assert "coach_question_candidate_claim" in result.gate_codes
 
 
+def test_question_rejects_unseen_named_candidate_action() -> None:
+    result = _validate_questions(
+        [{
+            "text": "Tell me how Alex spearheaded the Acme migration.",
+            "category": "Behavioural",
+            "difficulty": "medium",
+            "requirement_id": "requirement-1",
+        }],
+        expected_count=1,
+        requirement_ids=("requirement-1",),
+    )
+
+    assert result.accepted == []
+    assert "coach_question_candidate_claim" in result.gate_codes
+
+
 @pytest.mark.asyncio
 async def test_generate_with_company_research(generator: QuestionGeneratorService) -> None:
     """generate() succeeds when company_research is provided."""

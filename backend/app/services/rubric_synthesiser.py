@@ -157,8 +157,8 @@ def _evidence_is_grounded(
     """Accept a transcript quote or an exact deterministic metric citation."""
     if source_contains(evidence, transcript) or source_contains(evidence, metric_context):
         return True
-    quoted = re.findall(r"['\"]([^'\"]+)['\"]", evidence)
-    if any(source_contains(quote, transcript) for quote in quoted):
+    quoted_only = re.fullmatch(r"\s*['\"]([^'\"]+)['\"]\s*[.!]?\s*", evidence)
+    if quoted_only and source_contains(quoted_only.group(1), transcript):
         return True
     return False
 

@@ -43,6 +43,12 @@ _GENERIC_PAST_CANDIDATE_CLAIM = re.compile(
     r"(?:\s+\w+){0,4}\s+(?!(?:need|seed|feed|speed)\b)[a-z]{3,}ed\b",
     re.IGNORECASE,
 )
+_GENERIC_NAMED_PAST_CLAIM = re.compile(
+    r"\b(?!(?:Compare|Explain|Describe|Design|Discuss|Outline|Practice|Practise|"
+    r"Keep|Focus|Identify|Evaluate|Analyse|Analyze|Review|Consider|Try|Step)\b)"
+    r"[A-Z][a-z]{1,30}\b(?:\s+\w+){0,4}\s+"
+    r"(?!(?:need|seed|feed|speed)\b)[a-z]{3,}ed\b"
+)
 
 
 class CoachConflictError(RuntimeError):
@@ -265,5 +271,6 @@ def contains_candidate_history_claim(text: str) -> bool:
             _CANDIDATE_HISTORY_CLAIM,
             _NAMED_CANDIDATE_HISTORY_CLAIM,
             _GENERIC_PAST_CANDIDATE_CLAIM,
+            _GENERIC_NAMED_PAST_CLAIM,
         )
     )

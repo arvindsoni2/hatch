@@ -314,18 +314,32 @@ def _string_values(value: Any) -> list[str]:
     return []
 
 
-def _content_tokens(text: str) -> set[str]:
-    return {
+def _content_tokens(text: str) -> list[str]:
+    return [
         token
         for token in re.findall(r"[a-z0-9]+", text.casefold())
         if token not in _GROUNDING_STOPWORDS
-    }
+    ]
 
 
 def _same_lexeme(left: str, right: str) -> bool:
     return left == right or (
         len(left) >= 5 and len(right) >= 5 and left[:5] == right[:5]
     )
+
+
+def _tokens_are_ordered_subset(observed: list[str], supported: list[str]) -> bool:
+    """Match material tokens in order so directional relations cannot invert."""
+    source_index = 0
+    for token in observed:
+        while source_index < len(supported) and not _same_lexeme(
+            token, supported[source_index]
+        ):
+            source_index += 1
+        if source_index == len(supported):
+            return False
+        source_index += 1
+    return True
 
 
 def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
@@ -339,10 +353,7 @@ def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
     return bool(claims) and all(
         bool(observed := _content_tokens(claim))
         and any(
-            all(
-                any(_same_lexeme(token, source) for source in supported)
-                for token in observed
-            )
+            _tokens_are_ordered_subset(observed, supported)
             for supported in evidence_tokens
         )
         for claim in claims

@@ -341,3 +341,28 @@ async def test_report_unseen_candidate_action_discards_model_narrative() -> None
     assert report.executive_summary == base.executive_summary
     assert report.diagnostic is not None
     assert report.diagnostic.gate_codes == ["coach_report_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+async def test_report_unknown_named_action_discards_model_narrative() -> None:
+    base = build_deterministic_report("s1", [_question("q1", 1)], [])
+    client = MagicMock(model="configured-model")
+    client.complete_json = AsyncMock(return_value={
+        "executive_summary": "Alex spearheaded the migration for Acme.",
+        "strengths": [],
+        "improvement_areas": base.improvement_areas,
+        "coaching_points": [],
+        "practice_plan": [],
+    })
+
+    report = await FeedbackGeneratorService(client).generate_report(
+        session_id="s1",
+        role_title="Engineer",
+        company_name="Example",
+        question_evaluations=[],
+        deterministic_report=base,
+    )
+
+    assert report.report_state == "fallback"
+    assert report.diagnostic is not None
+    assert report.diagnostic.gate_codes == ["coach_report_unsupported_claim"]

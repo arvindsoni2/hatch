@@ -254,3 +254,28 @@ async def test_model_answer_rejects_cross_claim_word_recombination() -> None:
 
     assert result.model_answer == ""
     assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+async def test_model_answer_rejects_relational_inversion() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. "
+        "I led the migration from Acme to Beta. Incident volume fell by 25%."
+    )
+    client = _client(
+        "I led the migration from Beta to Acme.",
+        "Incident volume fell by 25%.",
+        candidate_summary,
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about a migration.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
