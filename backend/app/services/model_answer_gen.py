@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import unicodedata
 from typing import Any
 
 from ..agents.tools.context_budgets import MODEL_ANSWER
@@ -192,6 +193,17 @@ class ModelAnswerGeneratorService:
                 )
             )
         star_breakdown = {key: str(star[key]).strip() for key in _STAR_KEYS}
+        if len({_normalized_claim(value) for value in star_breakdown.values()}) != len(
+            _STAR_KEYS
+        ):
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=["coach_model_answer_star_incomplete"],
+                    duration_ms=duration_ms,
+                )
+            )
 
         references = raw.get("evidence_references", [])
         if not isinstance(references, list) or any(
@@ -278,7 +290,22 @@ def _string_values(value: Any) -> list[str]:
 
 
 def _content_tokens(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.casefold())
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    tokens: list[str] = []
+    current: list[str] = []
+    for character in normalized:
+        if character.isalnum():
+            current.append(character)
+        elif current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _normalized_claim(text: str) -> tuple[str, ...]:
+    return tuple(_content_tokens(text))
 
 
 def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:
@@ -307,7 +334,7 @@ def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
 def _build_candidate_evidence(candidate_summary: str) -> tuple[Any, ...]:
     """Split combined prompt context into atomic candidate evidence records."""
     segments = [
-        segment.strip()
+        re.sub(r"^(?:summary|key skills):\s*", "", segment.strip(), flags=re.IGNORECASE)
         for segment in re.split(r"(?<=[.!?])\s+|\n+|\s*;\s*", candidate_summary)
         if segment.strip()
     ]

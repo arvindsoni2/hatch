@@ -358,3 +358,61 @@ async def test_model_answer_rejects_actor_and_lexeme_substitution(
 
     assert result.model_answer == ""
     assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+async def test_model_answer_preserves_unicode_entities_during_grounding() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. I worked at 東京. "
+        "Incident volume fell by 25%."
+    )
+    client = _client(
+        "I worked at 北京.",
+        "Incident volume fell by 25%.",
+        candidate_summary,
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about your experience.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+async def test_model_answer_rejects_duplicate_star_sections() -> None:
+    claim = "Incident volume fell by 25%."
+    candidate_summary = f"{claim}"
+    client = _client(claim, claim, candidate_summary)
+    client.complete_json.return_value["star_breakdown"] = {
+        key: claim for key in ("situation", "task", "action", "result")
+    }
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_star_incomplete"]
+
+
+def test_candidate_evidence_removes_display_labels_from_atomic_claims() -> None:
+    evidence = _build_candidate_evidence(
+        "Summary: Led a platform migration.\nKey Skills: AWS; Terraform"
+    )
+
+    assert [item.text for item in evidence] == [
+        "Led a platform migration.",
+        "AWS",
+        "Terraform",
+    ]

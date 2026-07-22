@@ -24,12 +24,17 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Alex wrote the migration plan for Acme.",
         "Alex chose the migration approach.",
         "Alex was responsible for the Acme migration.",
+        "Alex owns the migration program at Acme.",
+        "Alex has written the migration plan.",
+        "The candidate was responsible for the migration.",
     ):
         assert contains_candidate_history_claim(claim)
     for recommendation in (
         "Use examples tailored to the role.",
         "Include tailored examples in the next answer.",
         "Record completed answers for review.",
+        "Add tailored examples to the next answer.",
+        "Rehearse completed answers before the interview.",
     ):
         assert not contains_candidate_history_claim(recommendation)
 

@@ -26,7 +26,7 @@ APPROVED_EVIDENCE:
 
 Return JSON:
 {
-  "model_answer": "Full STAR-structured answer that sounds natural and confident. Cite evidence IDs inline and preserve metrics exactly.",
+  "model_answer": "Full STAR-structured answer. Copy only complete approved evidence clauses exactly, list IDs only in evidence_references, and preserve metrics exactly.",
   "star_breakdown": {
     "situation": "1-2 sentences setting the scene",
     "task": "1 sentence describing the challenge/responsibility",
@@ -44,3 +44,5 @@ result, employer, duration, team size, or metric by inference.
 Every non-empty answer must include at least one exact approved evidence ID in
 `evidence_references`, and every factual term in every answer and STAR field
 must be supported by those referenced evidence records.
+Each STAR field must use distinct evidence content appropriate to that field;
+do not duplicate one evidence clause across Situation, Task, Action, and Result.
