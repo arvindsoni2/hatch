@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 
 from ..config import settings
@@ -14,6 +13,7 @@ from .coach_contracts import (
     CoachDiagnostic,
     configured_attempt_count,
     configured_model_id,
+    contains_candidate_history_claim,
     run_with_stage_deadline,
 )
 from .jd_analyser import _split_jinja_output
@@ -23,12 +23,6 @@ from .prompt_catalog import prompt_contract_block, prompt_metadata
 logger = logging.getLogger(__name__)
 
 _TECHNICAL_CATEGORIES = {"technical", "domain"}
-_CANDIDATE_CLAIM = re.compile(
-    r"\b(?:i|the candidate)\s+(?:built|created|delivered|designed|implemented|led|managed|reduced|saved|worked)\b",
-    re.IGNORECASE,
-)
-
-
 class TechnicalDrillsResult(list[TechnicalDrill]):
     """List-compatible drill result with per-item and summary diagnostics."""
 
@@ -195,6 +189,8 @@ def _validate_drill(raw: object, question: SessionQuestion) -> str | None:
         return "coach_drill_schema_invalid"
     if len(walkthrough.split()) > 200:
         return "coach_drill_length_exceeded"
-    if _CANDIDATE_CLAIM.search(walkthrough) or _CANDIDATE_CLAIM.search(drill_prompt):
+    if contains_candidate_history_claim(walkthrough) or contains_candidate_history_claim(
+        drill_prompt
+    ):
         return "coach_drill_candidate_claim"
     return None

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import re
 from collections.abc import Awaitable
 from typing import Any, Literal, TypeVar
 
@@ -16,6 +17,20 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import Self
 
 COACH_VALIDATION_SCHEMA_VERSION = "1.0.0"
+
+_CANDIDATE_HISTORY_VERBS = (
+    r"built|created|delivered|designed|implemented|led|managed|reduced|saved|"
+    r"worked|achieved|increased|decreased|drove|owned|launched|migrated|"
+    r"developed|engineered|deployed|ran|oversaw|authored"
+)
+_CANDIDATE_HISTORY_CLAIM = re.compile(
+    rf"(?:\b(?:i|we|you|he|she|they|the candidate|candidate)\b|"
+    rf"\b[A-Z][a-z]{{1,30}}\b)(?:\s+\w+){{0,4}}\s+"
+    rf"(?:{_CANDIDATE_HISTORY_VERBS})\b|"
+    rf"\b(?:was|were)\s+(?:{_CANDIDATE_HISTORY_VERBS})\s+by\s+"
+    rf"(?:me|us|you|him|her|them|the candidate|[A-Z][a-z]{{1,30}})\b",
+    re.IGNORECASE,
+)
 
 
 class CoachConflictError(RuntimeError):
@@ -228,3 +243,8 @@ def configured_attempt_count(client: object) -> int:
     """Return a task-local provider-attempt count when the client exposes one."""
     value = getattr(client, "last_json_attempt_count", 1)
     return value if isinstance(value, int) and value >= 1 else 1
+
+
+def contains_candidate_history_claim(text: str) -> bool:
+    """Detect unsupported candidate-history assertions in narrative output."""
+    return bool(_CANDIDATE_HISTORY_CLAIM.search(text))

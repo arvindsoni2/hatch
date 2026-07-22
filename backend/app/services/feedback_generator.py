@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -25,19 +24,12 @@ from .coach_contracts import (
     CoachDiagnostic,
     configured_attempt_count,
     configured_model_id,
+    contains_candidate_history_claim,
     run_with_stage_deadline,
 )
 from .prompt_catalog import prompt_contract_block, prompt_metadata
 
 logger = logging.getLogger(__name__)
-
-_CANDIDATE_HISTORY_CLAIM = re.compile(
-    r"\b(?:i|the candidate|they|he|she)\s+"
-    r"(?:built|created|delivered|designed|implemented|led|managed|reduced|saved|"
-    r"worked|achieved|increased|decreased)\b",
-    re.IGNORECASE,
-)
-
 
 def _load_candidate_name() -> str:
     try:
@@ -275,7 +267,7 @@ def _contains_candidate_history_claim(raw: dict[str, Any]) -> bool:
             for field in ("focus", "activity", "resource")
             if item.get(field) is not None
         )
-    return any(_CANDIDATE_HISTORY_CLAIM.search(item) for item in narrative)
+    return any(contains_candidate_history_claim(item) for item in narrative)
 
 
 def _legacy_deterministic_report(

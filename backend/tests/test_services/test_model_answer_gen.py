@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.services.model_answer_gen import ModelAnswerGeneratorService
+from app.services.writing_contracts import build_evidence_ledger
 
 
-def _client(answer: str, result: str) -> MagicMock:
+def _client(answer: str, result: str, candidate_summary: str) -> MagicMock:
+    evidence_id = build_evidence_ledger({"summary": candidate_summary})[0].id
     client = MagicMock()
     client.complete_json = AsyncMock(
         return_value={
@@ -19,6 +21,7 @@ def _client(answer: str, result: str) -> MagicMock:
                 "action": "I automated the recurring remediation.",
                 "result": result,
             },
+            "evidence_references": [evidence_id],
         }
     )
     return client
@@ -26,9 +29,15 @@ def _client(answer: str, result: str) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_model_answer_preserves_approved_metric_and_includes_evidence_ids() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. I reduced incident volume by "
+        "25% through automation."
+    )
     client = _client(
         "I reduced incident volume by 25% through automation.",
-        "Incident volume fell by 25%.",
+        "I reduced incident volume by 25%.",
+        candidate_summary,
     )
     service = ModelAnswerGeneratorService(client)
 
@@ -37,7 +46,7 @@ async def test_model_answer_preserves_approved_metric_and_includes_evidence_ids(
         category="Behavioural",
         difficulty="medium",
         company_name="Example",
-        candidate_summary="Reduced incident volume by 25% through automation.",
+        candidate_summary=candidate_summary,
     )
 
     assert "25%" in result.model_answer
@@ -50,10 +59,15 @@ async def test_model_answer_preserves_approved_metric_and_includes_evidence_ids(
 
 @pytest.mark.asyncio
 async def test_model_answer_withholds_mutated_metric() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. Incident volume fell by 25%."
+    )
     service = ModelAnswerGeneratorService(
         _client(
             "I reduced incident volume by 40%.",
             "Incident volume fell by 40%.",
+            candidate_summary,
         )
     )
 
@@ -62,7 +76,7 @@ async def test_model_answer_withholds_mutated_metric() -> None:
         category="Behavioural",
         difficulty="medium",
         company_name="Example",
-        candidate_summary="Reduced incident volume by 25%.",
+        candidate_summary=candidate_summary,
     )
 
     assert result.model_answer == ""
@@ -72,7 +86,8 @@ async def test_model_answer_withholds_mutated_metric() -> None:
 
 @pytest.mark.asyncio
 async def test_model_answer_without_candidate_evidence_is_empty() -> None:
-    client = _client("A fabricated STAR story.", "A fabricated result.")
+    client = MagicMock()
+    client.complete_json = AsyncMock()
     service = ModelAnswerGeneratorService(client)
 
     result = await service.generate(
@@ -131,9 +146,14 @@ async def test_model_answer_rejects_incomplete_star_output() -> None:
 
 @pytest.mark.asyncio
 async def test_model_answer_rejects_unknown_evidence_id() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. Incident volume fell by 25%."
+    )
     client = _client(
         "I reduced incident volume by 25% through automation.",
         "Incident volume fell by 25%.",
+        candidate_summary,
     )
     client.complete_json.return_value["evidence_references"] = ["unknown-id"]
 
@@ -142,10 +162,68 @@ async def test_model_answer_rejects_unknown_evidence_id() -> None:
         category="Behavioural",
         difficulty="medium",
         company_name="Example",
-        candidate_summary="Reduced incident volume by 25% through automation.",
+        candidate_summary=candidate_summary,
     )
 
     assert result.model_answer == ""
     assert result.diagnostic.gate_codes == [
         "coach_model_answer_unknown_evidence_id"
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsupported_answer",
+    [
+        "I built a payments platform.",
+        "Alex drove the cloud migration.",
+        "You delivered the customer portal.",
+        "The customer portal was delivered by Alex.",
+    ],
+)
+async def test_model_answer_withholds_unsupported_non_numeric_claims(
+    unsupported_answer: str,
+) -> None:
+    candidate_summary = "I maintained a service and automated incident remediation."
+    client = _client(
+        unsupported_answer,
+        "I maintained a service and automated incident remediation.",
+        candidate_summary,
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about a project.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.outcome == "invalid_output"
+    assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+async def test_model_answer_requires_evidence_references() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. Incident volume fell by 25%."
+    )
+    client = _client(
+        "I automated the recurring remediation.",
+        "Incident volume fell by 25%.",
+        candidate_summary,
+    )
+    client.complete_json.return_value["evidence_references"] = []
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]

@@ -205,3 +205,22 @@ async def test_invalid_drill_is_omitted_with_diagnostic(mutation, gate) -> None:
 
     assert result == []
     assert gate in result.items_diagnostics[0]["diagnostic"]["gate_codes"]
+
+
+@pytest.mark.asyncio
+async def test_drill_rejects_passive_named_candidate_history_claim() -> None:
+    question = _make_question("q-claim", "Explain a migration.", "Technical")
+    client = MagicMock(model="configured-model")
+    client.complete_json = AsyncMock(return_value={
+        "question_id": question.id,
+        "question_text": question.text,
+        "walkthrough": "The customer portal was delivered by Alex.",
+        "drill_prompt": "Explain the design trade-offs out loud.",
+    })
+
+    result = await TechnicalDrillsService(client).build_drills([question])
+
+    assert result == []
+    assert result.items_diagnostics[0]["diagnostic"]["gate_codes"] == [
+        "coach_drill_candidate_claim"
+    ]

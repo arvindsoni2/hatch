@@ -41,3 +41,6 @@ Return JSON:
 If the evidence is insufficient for a truthful STAR story, return an empty
 `model_answer` and empty STAR fields. Never fill a missing situation, action,
 result, employer, duration, team size, or metric by inference.
+Every non-empty answer must include at least one exact approved evidence ID in
+`evidence_references`, and every factual term in every answer and STAR field
+must be supported by those referenced evidence records.

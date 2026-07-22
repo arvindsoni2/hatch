@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -29,6 +30,43 @@ from .writing_contracts import build_evidence_ledger, evidence_records
 logger = logging.getLogger(__name__)
 
 _STAR_KEYS = ("situation", "task", "action", "result")
+_GROUNDING_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "be",
+    "because",
+    "by",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "i",
+    "in",
+    "into",
+    "it",
+    "my",
+    "of",
+    "on",
+    "our",
+    "so",
+    "that",
+    "the",
+    "their",
+    "then",
+    "this",
+    "to",
+    "was",
+    "were",
+    "we",
+    "when",
+    "while",
+    "with",
+    "through",
+}
 
 
 def _diagnostic(
@@ -236,6 +274,22 @@ class ModelAnswerGeneratorService:
                 )
             )
 
+        referenced_evidence = tuple(item for item in ledger if item.id in references)
+        if not referenced_evidence or not all(
+            _prose_is_grounded(prose, referenced_evidence)
+            for prose in (model_answer, *star_breakdown.values())
+        ):
+            gate = "coach_model_answer_unsupported_claim"
+            get_telemetry().record_validation_failure("coach_generation", gate)
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=[gate],
+                    duration_ms=duration_ms,
+                )
+            )
+
         return ModelAnswerResult(
             model_answer=model_answer.strip(),
             star_breakdown=star_breakdown,
@@ -258,3 +312,27 @@ def _string_values(value: Any) -> list[str]:
     if isinstance(value, list):
         return [text for nested in value for text in _string_values(nested)]
     return []
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.casefold())
+        if token not in _GROUNDING_STOPWORDS
+    }
+
+
+def _same_lexeme(left: str, right: str) -> bool:
+    return left == right or (
+        len(left) >= 5 and len(right) >= 5 and left[:5] == right[:5]
+    )
+
+
+def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
+    """Conservatively require every material token in referenced evidence."""
+    observed = _content_tokens(prose)
+    supported = _content_tokens(" ".join(item.text for item in evidence))
+    return bool(observed) and all(
+        any(_same_lexeme(token, source) for source in supported)
+        for token in observed
+    )
