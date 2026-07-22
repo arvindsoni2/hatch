@@ -1,0 +1,11 @@
+{
+  "scenario_id": "ma_02_insufficient_evidence",
+  "stage": "model_answer",
+  "description": "Unsupported quantum-cryptography competency must be withheld.",
+  "qualification_scope": "model_capability",
+  "input": {"question": "Describe your delivery of a quantum-cryptography programme.", "category": "Technical", "difficulty": "hard", "company_name": "Atlas Example Cloud", "evidence_ids": []},
+  "expected": {"outcome": "withheld_insufficient_evidence"},
+  "scoring": {},
+  "quality_dimensions": [],
+  "acceptance_smoke": true
+}

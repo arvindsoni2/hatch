@@ -1,0 +1,12 @@
+{
+  "scenario_id": "ae_h01_provider_unavailable",
+  "stage": "answer_evaluation",
+  "description": "Deterministic provider unavailability produces the production no-score contract.",
+  "qualification_scope": "harness_contract",
+  "input": {"question": "Describe a delivery improvement.", "category": "Behavioural", "transcript": "A fully synthetic answer."},
+  "expected": {"outcome": "unavailable", "blocking_gate_codes_absent": []},
+  "scoring": {},
+  "quality_dimensions": [],
+  "acceptance_smoke": false,
+  "forced_failure": "provider_unavailable"
+}

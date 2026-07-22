@@ -1,0 +1,11 @@
+{
+  "company_name": "Atlas Example Cloud",
+  "sector": "workflow software",
+  "description": "Atlas Example Cloud builds workflow software for regulated service teams.",
+  "key_products": ["Atlas Flow", "Atlas Service Insights"],
+  "recent_news": ["A fictional July 2026 release added event-driven integration tools."],
+  "tech_stack_signals": ["event-driven integration", "APIs", "data services"],
+  "source_ids": ["SRC-OFFICIAL-01", "SRC-OFFICIAL-02", "SRC-NEWS-01"],
+  "verification_state": "verified",
+  "retrieved_at": "2026-07-01T09:00:00Z"
+}

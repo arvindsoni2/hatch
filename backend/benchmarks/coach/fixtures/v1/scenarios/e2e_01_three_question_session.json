@@ -1,0 +1,11 @@
+{
+  "scenario_id": "e2e_01_three_question_session",
+  "stage": "end_to_end",
+  "description": "Three-question text session persists strong, weak, and skipped outcomes in a temporary database.",
+  "qualification_scope": "model_capability",
+  "input": {"company_name": "Atlas Example Cloud", "role_title": "Senior Technology Delivery Manager", "question_count": 3, "answers": [{"kind": "strong", "transcript": "I introduced dependency reviews and reduced lead time by 18% in 2023."}, {"kind": "weak", "transcript": "I worked with teams and things improved."}, {"kind": "skipped", "transcript": ""}]},
+  "expected": {"outcome": "completed", "expected_gap_tags": ["specificity", "impact"], "expected_priority_dimensions": ["specificity", "impact"]},
+  "scoring": {},
+  "quality_dimensions": ["score_count_fidelity", "follow_up_alignment"],
+  "acceptance_smoke": false
+}

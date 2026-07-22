@@ -1,0 +1,11 @@
+{
+  "scenario_id": "cr_01_grounded_synthesis",
+  "stage": "company_research",
+  "description": "Verified fixed sources produce grounded company synthesis.",
+  "qualification_scope": "model_capability",
+  "input": {"company_name": "Atlas Example Cloud", "sector": "workflow software", "source_bundle": "company_research_sources.json"},
+  "expected": {"outcome": "completed"},
+  "scoring": {"fact_groups": [["workflow software", "regulated service teams"], ["Atlas Flow"], ["event-driven integration"]], "allowed_source_ids": ["SRC-OFFICIAL-01", "SRC-OFFICIAL-02", "SRC-NEWS-01"], "expected_source_ids": ["SRC-OFFICIAL-01", "SRC-OFFICIAL-02", "SRC-NEWS-01"], "expected_verification_state": "verified", "role_relevance_term_groups": [["workflow"], ["regulated"]], "min_words": 20, "target_max_words": 180, "hard_max_words": 260},
+  "quality_dimensions": ["source_grounding", "verification", "relevance", "conciseness"],
+  "acceptance_smoke": false
+}

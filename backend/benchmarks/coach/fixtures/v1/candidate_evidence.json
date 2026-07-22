@@ -1,0 +1,20 @@
+{
+  "candidate": {"full_name": "Maya Chen-Fiction", "location": "Exampleford, UK"},
+  "roles": [
+    {"role": "Delivery Lead", "company": "Northstar Example Systems", "period": "2021-2024"},
+    {"role": "Business Analyst", "company": "Harbour Fiction Labs", "period": "2018-2021"}
+  ],
+  "evidence": [
+    {"evidence_id": "EVID-ROLE1-01", "situation": "Release delays affected a public-service platform.", "task": "Stabilise delivery across three teams.", "action": "Introduced dependency reviews and weekly risk decisions.", "result": "Reduced lead time by 18% in 2023."},
+    {"evidence_id": "EVID-ROLE1-02", "situation": "Twelve critical incidents had unclear ownership.", "task": "Create accountable incident follow-through.", "action": "Defined owners, service reviews, and escalation thresholds.", "result": "Closed all 12 critical actions within six weeks."},
+    {"evidence_id": "EVID-ROLE1-03", "situation": "A migration served 240 internal users.", "task": "Protect continuity during cutover.", "action": "Ran rehearsals, rollback checks, and user communications.", "result": "Migrated 240 users with no priority-one incident."},
+    {"evidence_id": "EVID-ROLE1-04", "situation": "Commercial reporting lacked a stable baseline.", "task": "Make supplier delivery measurable.", "action": "Agreed service measures and monthly evidence reviews.", "result": "Reduced disputed milestones from 8 to 2."},
+    {"evidence_id": "EVID-ROLE2-01", "situation": "Customer onboarding required repeated manual checks.", "task": "Clarify requirements for automation.", "action": "Mapped journeys and acceptance rules with operations.", "result": "Removed 6 duplicate checks."},
+    {"evidence_id": "EVID-ROLE2-02", "situation": "Stakeholders disagreed on prioritisation.", "task": "Create a transparent decision process.", "action": "Facilitated scoring workshops and recorded trade-offs.", "result": "Approved one roadmap across 4 departments."}
+  ],
+  "skills": ["delivery leadership", "risk management", "stakeholder facilitation", "SQL", "service operations"],
+  "education": [{"qualification": "BSc Information Systems", "institution": "Exampleford University", "year": "2018"}],
+  "certifications": ["Professional Scrum Master I"],
+  "immutable_numeric_tokens": ["18%", "12", "240", "2023", "8", "2", "6", "4"],
+  "unsupported_competency": "quantum cryptography"
+}

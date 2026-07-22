@@ -1,0 +1,11 @@
+{
+  "scenario_id": "td_01_technical_drill",
+  "stage": "technical_drill",
+  "description": "Technical question produces a bounded relevant drill without candidate-history claims.",
+  "qualification_scope": "model_capability",
+  "input": {"question_id": "Q-SYNTH-TECH-01", "question": "How would you manage API migration rollback risk?", "category": "Technical", "requirement_id": "REQ-07"},
+  "expected": {"outcome": "completed", "required_term_groups": [["rollback"], ["API"]]},
+  "scoring": {"expected_tradeoff_term_groups": [["speed", "safety"], ["availability", "consistency"]], "min_words": 20, "target_max_words": 160, "hard_max_words": 220},
+  "quality_dimensions": ["question_alignment", "worked_example", "tradeoff_coverage", "instruction_clarity"],
+  "acceptance_smoke": false
+}

@@ -1,0 +1,11 @@
+{
+  "scenario_id": "rb_01_score_immutability",
+  "stage": "rubric_synthesis",
+  "description": "Narrative enrichment preserves authoritative baseline scores and grounded evidence.",
+  "qualification_scope": "model_capability",
+  "input": {"transcript": "I introduced dependency reviews and reduced lead time by 18% in 2023.", "baseline_scores": {"content": 8, "structure": 8, "relevance": 9, "specificity": 9, "delivery": 7}, "focus_dimensions": ["delivery", "structure"]},
+  "expected": {"outcome": "completed", "allowed_evidence_ids": ["EVID-ROLE1-01"], "required_term_groups": [], "expected_priority_dimensions": ["delivery", "structure"]},
+  "scoring": {"min_words": 4, "target_max_words": 80, "hard_max_words": 120},
+  "quality_dimensions": ["score_immutability", "evidence_grounding", "drill_specificity", "focus_alignment"],
+  "acceptance_smoke": false
+}

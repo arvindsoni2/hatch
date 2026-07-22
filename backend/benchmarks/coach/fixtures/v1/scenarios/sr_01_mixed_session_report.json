@@ -1,0 +1,11 @@
+{
+  "scenario_id": "sr_01_mixed_session_report",
+  "stage": "session_report",
+  "description": "Mixed completed, skipped, and unavailable answers retain authoritative scores and counts.",
+  "qualification_scope": "model_capability",
+  "input": {"session_id": "SESSION-SYNTH-01", "role_title": "Senior Technology Delivery Manager", "company_name": "Atlas Example Cloud", "authoritative_report": {"question_count_total": 4, "question_count_evaluated": 2, "question_count_skipped": 1, "question_count_unavailable": 1, "overall_score": 6.5, "category_scores": {"Behavioural": 8.0, "Technical": 5.0}, "improvement_areas": ["specificity", "technical_depth"]}},
+  "expected": {"outcome": "completed", "expected_strength_tags": ["structure"], "expected_gap_tags": ["specificity", "technical_depth"], "expected_priority_dimensions": ["technical_depth", "specificity"]},
+  "scoring": {"role_relevance_term_groups": [["delivery"], ["technical"]], "min_words": 20, "target_max_words": 220, "hard_max_words": 320},
+  "quality_dimensions": ["score_count_fidelity", "prioritisation", "actionability", "specificity", "conciseness"],
+  "acceptance_smoke": true
+}

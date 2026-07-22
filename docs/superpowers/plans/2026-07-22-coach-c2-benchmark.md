@@ -146,7 +146,7 @@ Commit: `feat(coach-benchmark): add strict contracts and profiles`
 - Consumes: Task 1 `CoachSuite`, `CoachScenario`, and `ModelSpec`.
 - Produces: `load_suite(path: Path) -> LoadedCoachSuite`, `hash_file(path) -> str`, `scan_public_value(value) -> list[PrivacyFinding]`.
 
-- [ ] **Step 1: Write failing loader/privacy tests**
+- [x] **Step 1: Write failing loader/privacy tests**
 
 ```python
 def test_v1_suite_loads_and_records_every_hash() -> None:
@@ -166,17 +166,17 @@ def test_forced_failure_cannot_be_model_capability(tmp_path: Path) -> None:
         load_suite(fixture)
 ```
 
-- [ ] **Step 2: Run tests and verify missing-loader failures**
+- [x] **Step 2: Run tests and verify missing-loader failures**
 
-Run: `cd backend && pytest -q tests/benchmarks/coach/test_suite_loader.py tests/benchmarks/coach/test_fixture_contract.py`
+Run: `cd backend && pytest --no-cov -q tests/benchmarks/coach/test_suite_loader.py tests/benchmarks/coach/test_fixture_contract.py`
 
 Expected: tests fail because loader and v1 fixtures do not exist.
 
-- [ ] **Step 3: Implement fictional inputs and all scenario metadata**
+- [x] **Step 3: Implement fictional inputs and all scenario metadata**
 
 Use a fictional candidate with two roles, explicit STAR evidence IDs, immutable numbers, skills, education/certification, and one unsupported competency. Include six-to-eight JD requirements, an employer-context number, and malicious embedded instructions. Fixed research facts must refer only to allowed source IDs.
 
-- [ ] **Step 4: Implement strict loading, hashes, privacy, and cross-file validation**
+- [x] **Step 4: Implement strict loading, hashes, privacy, and cross-file validation**
 
 ```python
 def load_suite(path: Path | str) -> LoadedCoachSuite:
@@ -194,13 +194,13 @@ def load_suite(path: Path | str) -> LoadedCoachSuite:
 
 Reject undeclared files, missing files, hash mismatches, duplicate IDs, non-loopback endpoints, absolute paths, secret-like keys/headers/tokens, known private identity markers, and stage-inapplicable fixture fields.
 
-- [ ] **Step 5: Run focused suite tests and validation**
+- [x] **Step 5: Run focused suite tests and validation**
 
-Run: `cd backend && pytest -q tests/benchmarks/coach/test_suite_loader.py tests/benchmarks/coach/test_fixture_contract.py`
+Run: `cd backend && pytest --no-cov -q tests/benchmarks/coach/test_suite_loader.py tests/benchmarks/coach/test_fixture_contract.py`
 
 Expected: all tests pass and the committed suite loads with stable hashes.
 
-- [ ] **Step 6: Commit checkpoint C2.2**
+- [x] **Step 6: Commit checkpoint C2.2**
 
 Commit: `feat(coach-benchmark): add synthetic v1 suite`
 
@@ -569,7 +569,7 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 
 - [x] C2.0 Design approved and committed: `036cd8d`
 - [x] C2.1 Strict contracts and profiles
-- [ ] C2.2 Synthetic suite and loader
+- [x] C2.2 Synthetic suite and loader
 - [ ] C2.3 Production adapter
 - [ ] C2.4 Gates and scoring
 - [ ] C2.5 Runner and resume

@@ -1,0 +1,9 @@
+{
+  "models": [
+    {"id": "qwen35-4b", "runtime": "llamacpp", "model": "Qwen_Qwen3.5-4B-Q4_K_M.gguf", "endpoint": "http://127.0.0.1:8080", "context_size": 32768},
+    {"id": "qwen35-9b", "runtime": "ollama", "model": "qwen3.5:9b", "endpoint": "http://127.0.0.1:11434", "context_size": 32768},
+    {"id": "qwen3-8b", "runtime": "ollama", "model": "qwen3:8b", "endpoint": "http://127.0.0.1:11434", "context_size": 32768},
+    {"id": "gemma4-e2b", "runtime": "ollama", "model": "gemma4:e2b", "endpoint": "http://127.0.0.1:11434", "context_size": 32768},
+    {"id": "gemma4-e4b", "runtime": "ollama", "model": "gemma4:e4b", "endpoint": "http://127.0.0.1:11434", "context_size": 32768}
+  ]
+}

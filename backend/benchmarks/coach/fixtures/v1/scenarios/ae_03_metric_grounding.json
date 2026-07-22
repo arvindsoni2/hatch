@@ -1,0 +1,11 @@
+{
+  "scenario_id": "ae_03_metric_grounding",
+  "stage": "answer_evaluation",
+  "description": "Evaluation preserves supplied transcript and speech-metric evidence.",
+  "qualification_scope": "model_capability",
+  "input": {"question": "How did you manage a migration?", "category": "Technical", "transcript": "I rehearsed rollback checks and migrated 240 users with no priority-one incident.", "speech_metrics": {"words_per_minute": 132, "filler_count": 1, "pause_count": 2}},
+  "expected": {"outcome": "completed", "score_ranges": {"content": [6, 10], "structure": [5, 10], "relevance": [7, 10], "specificity": [7, 10], "delivery": [5, 10], "overall": [6, 10]}, "allowed_evidence_ids": ["EVID-ROLE1-03"], "required_term_groups": [["240"]]},
+  "scoring": {},
+  "quality_dimensions": ["dimension_band_agreement", "overall_calibration", "grounded_feedback"],
+  "acceptance_smoke": false
+}
