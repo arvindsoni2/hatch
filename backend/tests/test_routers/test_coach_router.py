@@ -108,13 +108,10 @@ async def test_submit_answer_unknown_session_does_not_queue_work(client) -> None
 
 
 @pytest.mark.asyncio
-async def test_end_session_returns_202(client) -> None:
-    """POST /api/coach/sessions/{id}/end returns 202 with job_id (async pattern)."""
+async def test_end_session_unknown_returns_404(client) -> None:
+    """An unknown session cannot create an orphan report job."""
     response = await client.post("/api/coach/sessions/session-uuid-001/end")
-    assert response.status_code == 202
-    data = response.json()
-    assert "job_id" in data
-    assert data["type"] == "end_session"
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -236,13 +233,12 @@ async def test_get_next_question_with_mock_service() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_session_report_with_mock_service() -> None:
+async def test_get_session_report_with_mock_service(client) -> None:
     """GET /api/coach/sessions/{id}/report returns 200 with a SessionFeedbackReport."""
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.get_report = AsyncMock(return_value=SAMPLE_REPORT)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/coach/sessions/session-uuid-001/report")
+        response = await client.get("/api/coach/sessions/session-uuid-001/report")
     assert response.status_code == 200
     data = response.json()
     assert data["session_id"] == "session-uuid-001"

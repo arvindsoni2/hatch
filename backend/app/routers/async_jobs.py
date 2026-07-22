@@ -50,6 +50,9 @@ async def get_async_job(
     db: AsyncSession = Depends(get_db),
 ) -> AsyncJobRead:
     """Return the current status and result of a background job."""
+    from ..services.coach_reconciliation import reconcile_job
+
+    await reconcile_job(db, job_id)
     job = await AsyncJobService.get(db, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")

@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.coach_session import InterviewSession, SessionQuestion, SessionRecording
@@ -124,7 +124,7 @@ class SessionRepository:
         )
 
     async def update_session_score(
-        self, session_id: str, overall_score: float, feedback_summary: str
+        self, session_id: str, overall_score: float | None, feedback_summary: str
     ) -> None:
         """Persist the overall score and executive feedback summary for a session.
 
@@ -155,6 +155,115 @@ class SessionRepository:
             .where(InterviewSession.id == session_id)
             .values(diagnostics=merged)
         )
+
+    async def claim_report(
+        self,
+        session_id: str,
+        job_id: str,
+        expected_activity_version: int,
+    ) -> bool:
+        """Atomically claim report generation when the session is stable and open."""
+        pending = exists().where(
+            SessionRecording.session_id == session_id,
+            SessionRecording.evaluation_state == "pending",
+        )
+        result = await self._session.execute(
+            update(InterviewSession)
+            .where(
+                InterviewSession.id == session_id,
+                InterviewSession.status == "active",
+                InterviewSession.report_state.in_(("not_started", "failed")),
+                InterviewSession.activity_version == expected_activity_version,
+                ~pending,
+            )
+            .values(
+                report_state="building",
+                report_job_id=job_id,
+                report_started_at=datetime.utcnow(),
+            )
+        )
+        return result.rowcount == 1
+
+    async def finalize_report_claim(
+        self,
+        session_id: str,
+        job_id: str,
+        *,
+        report_json: dict,
+        rubric: dict,
+        overall_score: float | None,
+        feedback_summary: str,
+        report_state: str,
+        report_diagnostic: dict,
+        aggregation_diagnostic: dict,
+    ) -> bool:
+        """Persist a complete immutable snapshot iff this worker owns the claim."""
+        session = await self.get_session(session_id)
+        if session is None:
+            return False
+        diagnostics = merge_stage_diagnostic(
+            session.diagnostics,
+            "session_rubric_aggregation",
+            {"final": aggregation_diagnostic},
+        )
+        diagnostics = merge_stage_diagnostic(
+            diagnostics,
+            "session_report",
+            {"final": report_diagnostic},
+        )
+        result = await self._session.execute(
+            update(InterviewSession)
+            .where(
+                InterviewSession.id == session_id,
+                InterviewSession.report_job_id == job_id,
+                InterviewSession.report_state == "building",
+            )
+            .values(
+                report_json=report_json,
+                rubric=rubric,
+                overall_score=overall_score,
+                feedback_summary=feedback_summary,
+                diagnostics=diagnostics,
+                report_state=report_state,
+                status="completed",
+                completed_at=datetime.utcnow(),
+                report_started_at=None,
+            )
+        )
+        return result.rowcount == 1
+
+    async def fail_report_claim(
+        self,
+        session_id: str,
+        job_id: str,
+        diagnostic: dict,
+        reason_code: str | None = None,
+    ) -> bool:
+        """Return an owned building report claim to a retryable failed state."""
+        session = await self.get_session(session_id)
+        if session is None:
+            return False
+        stage_value = {"final": diagnostic}
+        if reason_code:
+            stage_value["reason_code"] = reason_code
+        diagnostics = merge_stage_diagnostic(
+            session.diagnostics, "session_report", stage_value
+        )
+        result = await self._session.execute(
+            update(InterviewSession)
+            .where(
+                InterviewSession.id == session_id,
+                InterviewSession.report_job_id == job_id,
+                InterviewSession.report_state == "building",
+            )
+            .values(
+                report_state="failed",
+                status="active",
+                report_started_at=None,
+                diagnostics=diagnostics,
+            )
+        )
+        return result.rowcount == 1
 
     # ──────────────────────── Questions ────────────────────────
 

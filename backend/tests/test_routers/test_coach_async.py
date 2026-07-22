@@ -1,6 +1,7 @@
 """Tests that coach endpoints return 202 + job_id."""
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -194,13 +195,68 @@ async def test_fenced_answer_finalisation_requires_job_and_pending_state(db_sess
 
 
 @pytest.mark.asyncio
-async def test_end_session_returns_202(client):
+async def test_end_session_returns_202(client, db_session):
     """POST /api/coach/sessions/{id}/end returns 202 with job_id."""
-    response = await client.post("/api/coach/sessions/fake-session-id/end")
+    await _seed_active_question(db_session, "session-end", "question-end")
+    with patch("app.routers.coach.AsyncJobService.run") as run:
+        response = await client.post("/api/coach/sessions/session-end/end")
     assert response.status_code == 202
     data = response.json()
     assert "job_id" in data
     assert data["type"] == "end_session"
+    session = (
+        await db_session.execute(
+            select(InterviewSession).where(InterviewSession.id == "session-end")
+        )
+    ).scalar_one()
+    assert session.report_state == "building"
+    assert session.report_job_id == data["job_id"]
+    run.call_args.args[1].close()
+
+
+@pytest.mark.asyncio
+async def test_end_reuses_existing_claim_and_does_not_launch(client, db_session):
+    await _seed_active_question(db_session, "session-reuse", "question-reuse")
+    session = (
+        await db_session.execute(
+            select(InterviewSession).where(InterviewSession.id == "session-reuse")
+        )
+    ).scalar_one()
+    session.report_state = "building"
+    session.report_job_id = "existing-job"
+    session.report_started_at = datetime.utcnow()
+    db_session.add(AsyncJob(id="existing-job", type="end_session", status="running"))
+    await db_session.commit()
+
+    with patch("app.routers.coach.AsyncJobService.run") as run:
+        response = await client.post("/api/coach/sessions/session-reuse/end")
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "job_id": "existing-job",
+        "status": "pending",
+        "type": "end_session",
+        "reused": True,
+    }
+    run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_end_rejects_pending_answers(client, db_session):
+    await _seed_active_question(db_session, "session-pending", "question-pending")
+    db_session.add(SessionRecording(
+        session_id="session-pending",
+        question_id="question-pending",
+        recording_type="text",
+        evaluation_state="pending",
+        async_job_id="answer-job",
+    ))
+    await db_session.commit()
+
+    response = await client.post("/api/coach/sessions/session-pending/end")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "coach_answers_processing"
 
 
 # ---------------------------------------------------------------------------

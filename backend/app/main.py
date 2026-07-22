@@ -83,6 +83,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database ready.")
 
+    # Recover Coach-owned claims before the application is marked ready.
+    try:
+        from .services.coach_reconciliation import (  # noqa: PLC0415
+            reconcile_stale_coach_state,
+        )
+
+        recovered = await reconcile_stale_coach_state()
+        if recovered:
+            logger.warning("Recovered %d stale Coach async states.", recovered)
+    except Exception:
+        logger.exception("Coach startup reconciliation failed; lazy recovery remains enabled.")
+
     # Reset any jobs left in "running" state from a previous crash
     from sqlalchemy import update as _sa_update  # noqa: PLC0415
     from .models.async_job import AsyncJob as _AsyncJob  # noqa: PLC0415

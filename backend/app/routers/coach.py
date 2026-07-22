@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -239,6 +239,9 @@ async def skip_question(
 ) -> Response:
     """Skip a question by recording an empty answer (so it counts as answered)."""
     from ..repositories.session_repository import SessionRepository
+    from ..services.coach_reconciliation import reconcile_session
+
+    await reconcile_session(db, session_id)
     repo = SessionRepository(db)
     try:
         await repo.record_skip(session_id=session_id, question_id=question_id)
@@ -268,7 +271,9 @@ async def submit_answer(
 ) -> dict:
     """Kick off answer evaluation. Poll /api/async-jobs/{job_id} for scores + feedback."""
     from ..repositories.session_repository import SessionRepository
+    from ..services.coach_reconciliation import reconcile_session
 
+    await reconcile_session(db, session_id)
     async_job = await AsyncJobService.create(db, "submit_answer")
     try:
         recording = await SessionRepository(db).reserve_answer_attempt(
@@ -367,7 +372,9 @@ async def submit_audio(
             logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
 
     from ..repositories.session_repository import SessionRepository
+    from ..services.coach_reconciliation import reconcile_session
 
+    await reconcile_session(db, session_id)
     async_job = await AsyncJobService.create(db, "submit_audio")
     job_id = async_job.id
     suffix = _AUDIO_CT_TO_EXT.get(ct, ".audio")
@@ -489,19 +496,90 @@ async def end_session(
     svc: CoachService = Depends(get_coach_service),
 ) -> dict:
     """Kick off feedback report generation. Poll /api/async-jobs/{job_id} for report."""
+    from ..repositories.session_repository import SessionRepository
+    from ..services.coach_contracts import CoachDiagnostic
+    from ..services.coach_reconciliation import reconcile_session
+
+    await reconcile_session(db, session_id)
+    repository = SessionRepository(db)
+    session = await repository.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.report_state in {"completed", "fallback"} and session.report_json:
+        return JSONResponse(status_code=200, content=session.report_json)
+    if session.report_state == "building" and session.report_job_id:
+        return {
+            "job_id": session.report_job_id,
+            "status": "pending",
+            "type": "end_session",
+            "reused": True,
+        }
+
     async_job = await AsyncJobService.create(db, "end_session")
+    claimed = await repository.claim_report(
+        session_id, async_job.id, session.activity_version
+    )
+    if not claimed:
+        await db.rollback()
+        session = await repository.get_session(session_id)
+        recordings = await repository.get_recordings(session_id)
+        if any(recording.evaluation_state == "pending" for recording in recordings):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "coach_answers_processing",
+                    "message": "Answer evaluations are still processing.",
+                },
+            )
+        if session and session.report_state == "building" and session.report_job_id:
+            return {
+                "job_id": session.report_job_id,
+                "status": "pending",
+                "type": "end_session",
+                "reused": True,
+            }
+        if session and session.report_state in {"completed", "fallback"} and session.report_json:
+            return JSONResponse(status_code=200, content=session.report_json)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "coach_session_closed", "message": "Session cannot be ended."},
+        )
     await db.commit()
 
-    async def _work() -> None:
-        try:
-            result = await svc.end_session(session_id, db)
-            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
-        except Exception as exc:
-            logger.error("end_session job %s failed: %s", async_job.id, exc)
-            await AsyncJobService._finish(async_job.id, None, str(exc))
+    job_id = async_job.id
 
-    AsyncJobService.run(async_job.id, _work())
-    return {"job_id": async_job.id, "status": "pending", "type": "end_session"}
+    async def _work() -> None:
+        from ..database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as job_db:
+            try:
+                result = await CoachService().end_session(
+                    session_id, job_db, report_job_id=job_id
+                )
+                await AsyncJobService._finish(
+                    job_id, result.model_dump_json(), None, db=job_db
+                )
+            except Exception as exc:
+                logger.error("end_session job %s failed: %s", job_id, exc)
+                diagnostic = CoachDiagnostic(
+                    stage="session_report",
+                    outcome="failed",
+                    execution_mode="deterministic",
+                    attempt_count=0,
+                    repair_count=0,
+                    gate_codes=["coach_async_job_failed"],
+                    duration_ms=0,
+                )
+                await SessionRepository(job_db).fail_report_claim(
+                    session_id,
+                    job_id,
+                    diagnostic.model_dump(mode="json"),
+                )
+                await job_db.commit()
+                await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
+
+    AsyncJobService.run(job_id, _work())
+    return {"job_id": job_id, "status": "pending", "type": "end_session"}
 
 
 @router.get("/sessions/{session_id}/report", response_model=SessionFeedbackReport)
@@ -511,6 +589,9 @@ async def get_session_report(
     svc: CoachService = Depends(get_coach_service),
 ) -> SessionFeedbackReport:
     """Return the feedback report for a completed session."""
+    from ..services.coach_reconciliation import reconcile_session
+
+    await reconcile_session(db, session_id)
     return await svc.get_report(session_id, db)
 
 

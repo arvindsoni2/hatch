@@ -371,7 +371,13 @@ class CoachService:
         return evaluation
 
     @trace_workflow("coach_generation")
-    async def end_session(self, session_id: str, db: AsyncSession) -> SessionFeedbackReport:
+    async def end_session(
+        self,
+        session_id: str,
+        db: AsyncSession,
+        *,
+        report_job_id: str | None = None,
+    ) -> SessionFeedbackReport:
         """End a session and generate the comprehensive feedback report.
 
         Args:
@@ -391,28 +397,32 @@ class CoachService:
         recordings = await session_repo.get_recordings(session_id)
         questions = await session_repo.get_questions(session_id)
 
-        # Build question evaluation tuples
-        q_map = {q.id: q for q in questions}
+        from .coach_aggregation import (
+            aggregate_session_rubric,
+            build_deterministic_report,
+            resolve_canonical_attempts,
+        )
+
+        resolved = resolve_canonical_attempts(questions, recordings)
+        deterministic_report = build_deterministic_report(
+            session_id, questions, recordings
+        )
+        aggregate_rubric = aggregate_session_rubric(resolved)
+
+        # Build narrative inputs from canonical completed attempts only.
         question_evaluations: list[tuple[str, str, str, AnswerEvaluation]] = []
         speech_summaries: list[dict] = []
-
-        for rec in recordings:
-            if not rec.evaluation_json:
+        for item in resolved:
+            if item.evaluation is None or item.recording is None:
                 continue
-            try:
-                eval_data = json.loads(rec.evaluation_json)
-                eval_ = AnswerEvaluation(**eval_data)
-                q = q_map.get(rec.question_id or "")
-                question_evaluations.append((
-                    rec.question_id or "",
-                    q.text if q else "Unknown question",
-                    q.category if q else "General",
-                    eval_,
-                ))
-                if rec.speech_metrics:
-                    speech_summaries.append(rec.speech_metrics)
-            except Exception as exc:
-                logger.warning("Failed to parse recording evaluation: %s", exc)
+            question_evaluations.append((
+                str(item.question.id),
+                item.question.text,
+                item.question.category,
+                item.evaluation,
+            ))
+            if item.recording.speech_metrics:
+                speech_summaries.append(item.recording.speech_metrics)
 
         # Generate report
         report = await self._feedback_gen.generate_report(
@@ -421,13 +431,48 @@ class CoachService:
             company_name=session.company_name,
             question_evaluations=question_evaluations,
             speech_summaries=speech_summaries or None,
+            deterministic_report=deterministic_report,
         )
 
-        # Update session with score and summary
-        await session_repo.update_session_score(
-            session_id, report.overall_score, report.executive_summary
-        )
-        await session_repo.update_session_status(session_id, "completed")
+        if report_job_id:
+            report_diagnostic = report.diagnostic
+            aggregation_diagnostic = aggregate_rubric.diagnostic
+            if report_diagnostic is None or aggregation_diagnostic is None:
+                raise RuntimeError("Coach report diagnostics are incomplete")
+            changed = await session_repo.finalize_report_claim(
+                session_id,
+                report_job_id,
+                report_json=report.model_dump(mode="json"),
+                rubric=aggregate_rubric.model_dump(mode="json"),
+                overall_score=report.overall_score,
+                feedback_summary=report.executive_summary,
+                report_state=report.report_state,
+                report_diagnostic=report_diagnostic.model_dump(mode="json"),
+                aggregation_diagnostic=aggregation_diagnostic.model_dump(mode="json"),
+            )
+            if not changed:
+                from .coach_contracts import StaleWorkerFencedError
+
+                await db.rollback()
+                raise StaleWorkerFencedError("stale_worker_fenced")
+        else:
+            # Compatibility for direct service callers. HTTP completion always uses
+            # a fenced database claim.
+            from sqlalchemy import update
+            from ..models.coach_session import InterviewSession
+
+            await db.execute(
+                update(InterviewSession)
+                .where(InterviewSession.id == session_id)
+                .values(
+                    report_json=report.model_dump(mode="json"),
+                    rubric=aggregate_rubric.model_dump(mode="json"),
+                    overall_score=report.overall_score,
+                    feedback_summary=report.executive_summary,
+                    report_state=report.report_state,
+                    status="completed",
+                )
+            )
         await db.commit()
 
         return report
@@ -449,11 +494,31 @@ class CoachService:
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
+        if session.report_json:
+            return SessionFeedbackReport.model_validate(session.report_json)
+
         if session.status not in ("completed",):
             raise HTTPException(status_code=422, detail="Session is not yet complete")
 
-        # Regenerate from recordings
-        return await self.end_session.__wrapped__(self, session_id, db)  # type: ignore[attr-defined]
+        # Legacy completed rows have no immutable snapshot. Build an in-memory
+        # deterministic fallback without model work or persistence.
+        from .coach_aggregation import build_deterministic_report
+        from .coach_contracts import CoachDiagnostic
+
+        questions = await session_repo.get_questions(session_id)
+        recordings = await session_repo.get_recordings(session_id)
+        report = build_deterministic_report(session_id, questions, recordings)
+        report.report_state = "fallback"
+        report.diagnostic = CoachDiagnostic(
+            stage="session_report",
+            outcome="fallback_deterministic",
+            execution_mode="deterministic",
+            attempt_count=0,
+            repair_count=0,
+            gate_codes=["coach_report_fallback_unclassified"],
+            duration_ms=0,
+        )
+        return report
 
     async def list_sessions(
         self,
