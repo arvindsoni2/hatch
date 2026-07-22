@@ -292,7 +292,12 @@ async def test_report_candidate_history_claim_discards_model_narrative() -> None
 
 
 @pytest.mark.asyncio
-async def test_report_named_candidate_claim_discards_model_narrative() -> None:
+async def test_report_named_candidate_claim_discards_model_narrative(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.feedback_generator._load_candidate_name", lambda: "Alex Smith"
+    )
     base = build_deterministic_report("s1", [_question("q1", 1)], [])
     client = MagicMock(model="configured-model")
     client.complete_json = AsyncMock(return_value={
@@ -318,7 +323,12 @@ async def test_report_named_candidate_claim_discards_model_narrative() -> None:
 
 
 @pytest.mark.asyncio
-async def test_report_unseen_candidate_action_discards_model_narrative() -> None:
+async def test_report_unseen_candidate_action_discards_model_narrative(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.feedback_generator._load_candidate_name", lambda: "Alex Smith"
+    )
     base = build_deterministic_report("s1", [_question("q1", 1)], [])
     client = MagicMock(model="configured-model")
     client.complete_json = AsyncMock(return_value={
@@ -344,7 +354,12 @@ async def test_report_unseen_candidate_action_discards_model_narrative() -> None
 
 
 @pytest.mark.asyncio
-async def test_report_unknown_named_action_discards_model_narrative() -> None:
+async def test_report_unknown_named_action_discards_model_narrative(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.feedback_generator._load_candidate_name", lambda: "Alex Smith"
+    )
     base = build_deterministic_report("s1", [_question("q1", 1)], [])
     client = MagicMock(model="configured-model")
     client.complete_json = AsyncMock(return_value={

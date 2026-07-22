@@ -7,7 +7,7 @@ import pytest
 
 from app.models.coach_session import SessionQuestion
 from app.schemas.coach import TechnicalDrill
-from app.services.technical_drills import TechnicalDrillsService
+from app.services.technical_drills import TechnicalDrillsService, _validate_drill
 
 
 def _make_question(
@@ -20,6 +20,22 @@ def _make_question(
     q.text = text
     q.category = category
     return q
+
+
+def test_drill_rejects_unseen_action_for_known_candidate_alias() -> None:
+    question = _make_question()
+    gate = _validate_drill(
+        {
+            "question_id": question.id,
+            "question_text": question.text,
+            "walkthrough": "Alex refactored cloud migration workflows.",
+            "drill_prompt": "Describe a safe migration plan.",
+        },
+        question,
+        candidate_names=("Alex Smith", "Alex"),
+    )
+
+    assert gate == "coach_drill_candidate_claim"
 
 
 # ---------------------------------------------------------------------------

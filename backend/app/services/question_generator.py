@@ -16,6 +16,7 @@ from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, Sessi
 from .coach_contracts import (
     CoachDiagnostic,
     CoachGateCode,
+    candidate_name_aliases,
     configured_attempt_count,
     configured_model_id,
     contains_candidate_history_claim,
@@ -292,8 +293,7 @@ class QuestionGeneratorService:
         jd_text: str | None = None,
     ) -> QuestionGenerationResult:
         candidate_summary = _load_candidate_summary()
-        candidate_name = candidate_summary.splitlines()[0].strip()
-        candidate_names = (candidate_name,) if candidate_name else ()
+        candidate_names = candidate_name_aliases(candidate_summary.splitlines()[0])
         research_dict = (
             company_research.model_dump(mode="json")
             if company_research and company_research.verification_state != "not_verified"

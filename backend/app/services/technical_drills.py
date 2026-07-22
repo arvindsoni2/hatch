@@ -11,6 +11,7 @@ from ..prompts import render_prompt
 from ..schemas.coach import TechnicalDrill
 from .coach_contracts import (
     CoachDiagnostic,
+    candidate_name_aliases,
     configured_attempt_count,
     configured_model_id,
     contains_candidate_history_claim,
@@ -18,6 +19,7 @@ from .coach_contracts import (
 )
 from .jd_analyser import _split_jinja_output
 from .llm_client import LLMClient
+from .master_cv_store import load_master_cv
 from .prompt_catalog import prompt_contract_block, prompt_metadata
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,7 @@ class TechnicalDrillsService:
     async def build_drills(
         self, questions: list[SessionQuestion]
     ) -> TechnicalDrillsResult:
+        candidate_names = _load_candidate_names()
         technical = [
             question
             for question in questions
@@ -54,7 +57,7 @@ class TechnicalDrillsService:
         items: list[TechnicalDrill] = []
         diagnostics: list[dict[str, object]] = []
         for question in technical:
-            drill, diagnostic = await self._build_single_drill(question)
+            drill, diagnostic = await self._build_single_drill(question, candidate_names)
             diagnostics.append({
                 "question_id": question.id,
                 "diagnostic": diagnostic.model_dump(mode="json"),
@@ -100,7 +103,7 @@ class TechnicalDrillsService:
 
     @trace_stage("coach_generation", "generate_initial")
     async def _build_single_drill(
-        self, question: SessionQuestion
+        self, question: SessionQuestion, candidate_names: tuple[str, ...] = ()
     ) -> tuple[TechnicalDrill | None, CoachDiagnostic]:
         metadata = prompt_metadata("technical_drill")
         system, user = _split_jinja_output(render_prompt(
@@ -122,7 +125,7 @@ class TechnicalDrillsService:
                 model_id=configured_model_id(self._claude),
                 duration_ms=(time.monotonic() - started) * 1000,
             )
-            gate = _validate_drill(raw, question)
+            gate = _validate_drill(raw, question, candidate_names=candidate_names)
             diagnostic = self._diagnostic(
                 metadata,
                 "completed" if gate is None else "invalid_output",
@@ -172,7 +175,20 @@ class TechnicalDrillsService:
         )
 
 
-def _validate_drill(raw: object, question: SessionQuestion) -> str | None:
+def _load_candidate_names() -> tuple[str, ...]:
+    try:
+        cv = load_master_cv()
+        return candidate_name_aliases(cv.get("personal", {}).get("full_name", ""))
+    except Exception:
+        return ()
+
+
+def _validate_drill(
+    raw: object,
+    question: SessionQuestion,
+    *,
+    candidate_names: tuple[str, ...] = (),
+) -> str | None:
     if not isinstance(raw, dict):
         return "coach_drill_schema_invalid"
     if raw.get("question_id") != question.id:
@@ -189,8 +205,10 @@ def _validate_drill(raw: object, question: SessionQuestion) -> str | None:
         return "coach_drill_schema_invalid"
     if len(walkthrough.split()) > 200:
         return "coach_drill_length_exceeded"
-    if contains_candidate_history_claim(walkthrough) or contains_candidate_history_claim(
-        drill_prompt
+    if contains_candidate_history_claim(
+        walkthrough, candidate_names=candidate_names
+    ) or contains_candidate_history_claim(
+        drill_prompt, candidate_names=candidate_names
     ):
         return "coach_drill_candidate_claim"
     return None

@@ -12,6 +12,7 @@ from app.services.coach_contracts import (
     COACH_VALIDATION_SCHEMA_VERSION,
     CoachDiagnostic,
     contains_candidate_history_claim,
+    candidate_name_aliases,
     merge_stage_diagnostic,
     run_with_stage_deadline,
 )
@@ -34,7 +35,7 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Alex set priorities for the migration.",
         "Alex cut costs at Acme.",
     ):
-        assert contains_candidate_history_claim(claim)
+        assert contains_candidate_history_claim(claim, candidate_names=("Alex",))
     for recommendation in (
         "Use examples tailored to the role.",
         "Include tailored examples in the next answer.",
@@ -43,6 +44,8 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Rehearse completed answers before the interview.",
         "Provide tailored examples in the next answer.",
         "Share completed examples during practice.",
+        "Provide improved examples in the next answer.",
+        "Share improved examples during practice.",
     ):
         assert not contains_candidate_history_claim(recommendation)
 
@@ -50,6 +53,7 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Alex refactored cloud migration workflows.",
         candidate_names=("Alex",),
     )
+    assert candidate_name_aliases("  Alex   Smith ") == ("Alex Smith", "Alex")
 
 
 

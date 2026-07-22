@@ -498,6 +498,33 @@ async def test_model_answer_requires_exclusive_star_role_semantics() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_answer_accepts_unambiguous_service_action_and_project_result() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the service remediation. I delivered the project on time."
+    )
+    client = _client(
+        candidate_summary,
+        "I delivered the project on time.",
+        candidate_summary,
+    )
+    client.complete_json.return_value["star_breakdown"]["action"] = (
+        "I automated the service remediation."
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.diagnostic.outcome == "completed"
+    assert result.model_answer == candidate_summary
+
+
+@pytest.mark.asyncio
 async def test_model_answer_accepts_explicit_truthful_withholding() -> None:
     candidate_summary = "AWS. Terraform. Python. SQL."
     client = MagicMock()

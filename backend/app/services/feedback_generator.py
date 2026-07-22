@@ -22,6 +22,7 @@ from .jd_analyser import _split_jinja_output
 from .master_cv_store import load_master_cv
 from .coach_contracts import (
     CoachDiagnostic,
+    candidate_name_aliases,
     configured_attempt_count,
     configured_model_id,
     contains_candidate_history_claim,
@@ -156,7 +157,9 @@ class FeedbackGeneratorService:
                 ),
             )
 
-        if _contains_candidate_history_claim(raw):
+        if _contains_candidate_history_claim(
+            raw, candidate_names=candidate_name_aliases(candidate_name)
+        ):
             return _as_fallback(
                 base,
                 self._diagnostic(
@@ -257,7 +260,9 @@ def _valid_report_narrative_schema(raw: dict[str, Any]) -> bool:
     )
 
 
-def _contains_candidate_history_claim(raw: dict[str, Any]) -> bool:
+def _contains_candidate_history_claim(
+    raw: dict[str, Any], *, candidate_names: tuple[str, ...] = ()
+) -> bool:
     narrative = [raw["executive_summary"]]
     for field in ("strengths", "improvement_areas", "coaching_points"):
         narrative.extend(raw[field])
@@ -267,7 +272,10 @@ def _contains_candidate_history_claim(raw: dict[str, Any]) -> bool:
             for field in ("focus", "activity", "resource")
             if item.get(field) is not None
         )
-    return any(contains_candidate_history_claim(item) for item in narrative)
+    return any(
+        contains_candidate_history_claim(item, candidate_names=candidate_names)
+        for item in narrative
+    )
 
 
 def _legacy_deterministic_report(

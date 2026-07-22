@@ -292,7 +292,6 @@ def contains_candidate_history_claim(
         pattern.search(candidate_text)
         for pattern in (
             _CANDIDATE_HISTORY_CLAIM,
-            _NAMED_CANDIDATE_HISTORY_CLAIM,
             _GENERIC_PAST_CANDIDATE_CLAIM,
             _EMBEDDED_NAMED_PAST_CLAIM,
             _NAMED_RESPONSIBILITY_CLAIM,
@@ -310,3 +309,12 @@ def contains_candidate_history_claim(
         for candidate_name in candidate_names
         if candidate_name.strip() and candidate_name.casefold() != "candidate"
     )
+
+
+def candidate_name_aliases(full_name: str) -> tuple[str, ...]:
+    """Return the full and given name used to identify candidate assertions."""
+    normalized = " ".join(full_name.split())
+    if not normalized or normalized.casefold() == "candidate":
+        return ()
+    first_name = normalized.split()[0]
+    return tuple(dict.fromkeys((normalized, first_name)))
