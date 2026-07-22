@@ -525,6 +525,37 @@ async def test_model_answer_accepts_unambiguous_service_action_and_project_resul
 
 
 @pytest.mark.asyncio
+async def test_model_answer_accepts_common_star_role_wording() -> None:
+    candidate_summary = (
+        "The production system suffered recurring incidents. "
+        "My objective was to improve reliability. "
+        "I automated the recurring remediation. Latency dropped by 25%."
+    )
+    client = _client(
+        candidate_summary,
+        "Latency dropped by 25%.",
+        candidate_summary,
+    )
+    client.complete_json.return_value["star_breakdown"] = {
+        "situation": "The production system suffered recurring incidents.",
+        "task": "My objective was to improve reliability.",
+        "action": "I automated the recurring remediation.",
+        "result": "Latency dropped by 25%.",
+    }
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.diagnostic.outcome == "completed"
+    assert result.model_answer == candidate_summary
+
+
+@pytest.mark.asyncio
 async def test_model_answer_accepts_explicit_truthful_withholding() -> None:
     candidate_summary = "AWS. Terraform. Python. SQL."
     client = MagicMock()

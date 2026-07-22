@@ -53,6 +53,20 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Alex refactored cloud migration workflows.",
         candidate_names=("Alex",),
     )
+    for progressive_claim in (
+        "Alex is leading the Acme migration.",
+        "Alex has been leading the Acme migration.",
+    ):
+        assert contains_candidate_history_claim(
+            progressive_claim, candidate_names=("Alex Smith", "Alex")
+        )
+    for recommendation in (
+        "Alex should provide improved examples.",
+        "Alex can use structured examples.",
+    ):
+        assert not contains_candidate_history_claim(
+            recommendation, candidate_names=("Alex Smith", "Alex")
+        )
     assert candidate_name_aliases("  Alex   Smith ") == ("Alex Smith", "Alex")
 
 

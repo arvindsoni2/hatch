@@ -33,11 +33,12 @@ logger = logging.getLogger(__name__)
 _STAR_KEYS = ("situation", "task", "action", "result")
 _STAR_ROLE_PATTERNS = {
     "situation": re.compile(
-        r"\b(?:was|were|had|faced|during|when|context|environment)\b",
+        r"\b(?:was|were|had|faced|suffered|during|when|context|environment)\b",
         re.IGNORECASE,
     ),
     "task": re.compile(
-        r"\b(?:needed|required|responsible|tasked|had to|aimed)\b",
+        r"(?:\b(?:needed|required|responsible|tasked|had to|aimed)\b|"
+        r"\b(?:my|our|the)\s+(?:goal|objective)\b)",
         re.IGNORECASE,
     ),
     "action": re.compile(
@@ -49,7 +50,7 @@ _STAR_ROLE_PATTERNS = {
     ),
     "result": re.compile(
         r"\b(?:achieved|grew|improved|increased|decreased|reduced|saved|fell|"
-        r"resulted|outcome|delivered)\b",
+        r"dropped|resulted|outcome|delivered)\b",
         re.IGNORECASE,
     ),
 }
@@ -296,7 +297,10 @@ class ModelAnswerGeneratorService:
                 )
             )
 
-        if any(_star_roles(value) != {key} for key, value in star_breakdown.items()):
+        if any(
+            _classify_star_role(value) != key
+            for key, value in star_breakdown.items()
+        ):
             return _empty_result(
                 _diagnostic(
                     self._client,
@@ -363,10 +367,12 @@ def _normalized_claim(text: str) -> tuple[str, ...]:
     return tuple(_content_tokens(text))
 
 
-def _star_roles(text: str) -> set[str]:
-    return {
-        role for role, pattern in _STAR_ROLE_PATTERNS.items() if pattern.search(text)
-    }
+def _classify_star_role(text: str) -> str | None:
+    """Classify conservative STAR prose using precedence for ambiguous wording."""
+    for role in ("task", "situation", "result", "action"):
+        if _STAR_ROLE_PATTERNS[role].search(text):
+            return role
+    return None
 
 
 def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:
