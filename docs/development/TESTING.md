@@ -53,6 +53,7 @@ cd frontend
 npx vitest run \
   src/__tests__/components/coach/EvaluationCard.test.tsx \
   src/__tests__/components/coach/FeedbackReport.test.tsx \
-  src/__tests__/components/CoachSessionQuestionBank.test.tsx
+  src/__tests__/components/CoachSessionQuestionBank.test.tsx \
+  src/__tests__/components/CoachSessionRetry.test.tsx
 npm run type-check
 ```
