@@ -5,11 +5,15 @@ import json
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.async_job import AsyncJob
 from app.models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from app.repositories.session_repository import SessionRepository
-from app.services.coach_reconciliation import reconcile_session
+from app.services.coach_reconciliation import (
+    reconcile_session,
+    reconcile_stale_coach_state,
+)
 from app.services.coach_service import CoachService
 
 
@@ -144,6 +148,105 @@ async def test_report_claim_rejects_pending_and_fences_old_worker(db_session) ->
         report_diagnostic={},
         aggregation_diagnostic={},
     )
+
+
+@pytest.mark.asyncio
+async def test_stale_report_recovery_is_retryable_idempotent_and_fenced(
+    db_session,
+) -> None:
+    session, _ = await _session_with_question(db_session)
+    old = datetime.utcnow() - timedelta(days=1)
+    job = AsyncJob(type="end_coach_session", status="running", updated_at=old)
+    db_session.add(job)
+    await db_session.flush()
+    session.report_state = "building"
+    session.report_job_id = job.id
+    session.report_started_at = old
+    old_job_id = job.id
+    session_id = session.id
+    await db_session.commit()
+
+    assert await reconcile_session(db_session, session_id) == 1
+    await db_session.refresh(session)
+    await db_session.refresh(job)
+    assert session.report_state == "failed"
+    assert session.status == "active"
+    assert session.report_started_at is None
+    assert job.status == "failed"
+    report_diagnostic = session.diagnostics["stages"]["session_report"]
+    assert report_diagnostic["reason_code"] == "stale_async_job_recovered"
+    assert report_diagnostic["final"]["gate_codes"] == ["coach_async_job_failed"]
+    assert await reconcile_session(db_session, session_id) == 0
+
+    repository = SessionRepository(db_session)
+    assert await repository.claim_report(session_id, "replacement-job", 0)
+    await db_session.commit()
+    assert not await repository.finalize_report_claim(
+        session_id,
+        old_job_id,
+        report_json={},
+        rubric={},
+        overall_score=None,
+        feedback_summary="",
+        report_state="fallback",
+        report_diagnostic={},
+        aggregation_diagnostic={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_done_job_building_report_records_persistence_failure(db_session) -> None:
+    session, _ = await _session_with_question(db_session)
+    old = datetime.utcnow() - timedelta(days=1)
+    job = AsyncJob(type="end_coach_session", status="done", updated_at=old)
+    db_session.add(job)
+    await db_session.flush()
+    session.report_state = "building"
+    session.report_job_id = job.id
+    session.report_started_at = old
+    await db_session.commit()
+
+    assert await reconcile_session(db_session, session.id) == 1
+    await db_session.refresh(session)
+    await db_session.refresh(job)
+    gates = session.diagnostics["stages"]["session_report"]["final"]["gate_codes"]
+    assert gates == ["coach_async_job_failed", "coach_persistence_failed"]
+    assert session.report_state == "failed"
+    assert session.status == "active"
+    assert job.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_startup_reconciliation_uses_fresh_session_for_stale_report(
+    db_session,
+    monkeypatch,
+) -> None:
+    session, _ = await _session_with_question(db_session)
+    old = datetime.utcnow() - timedelta(days=1)
+    job = AsyncJob(type="end_coach_session", status="running", updated_at=old)
+    db_session.add(job)
+    await db_session.flush()
+    session.report_state = "building"
+    session.report_job_id = job.id
+    session.report_started_at = old
+    session_id = session.id
+    await db_session.commit()
+
+    fresh_session_factory = async_sessionmaker(
+        bind=db_session.bind,
+        expire_on_commit=False,
+    )
+    monkeypatch.setattr(
+        "app.services.coach_reconciliation.AsyncSessionLocal",
+        fresh_session_factory,
+    )
+
+    assert await reconcile_stale_coach_state(batch_size=1) == 1
+    db_session.expire_all()
+    recovered = await SessionRepository(db_session).get_session(session_id)
+    assert recovered is not None
+    assert recovered.report_state == "failed"
+    assert recovered.status == "active"
 
 
 @pytest.mark.asyncio
