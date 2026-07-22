@@ -1,12 +1,20 @@
 """Tests for QuestionGeneratorService — question count, category weights, model answers."""
 from __future__ import annotations
 
+import copy
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.schemas.coach import QuestionPresentation, SessionConfig
-from app.services.question_generator import QuestionGeneratorService, _CATEGORY_WEIGHTS
+from app.services.question_generator import (
+    QuestionGenerationContractError,
+    QuestionGenerationResult,
+    QuestionGeneratorService,
+    _CATEGORY_WEIGHTS,
+    _build_requirements,
+)
 
 MOCK_QUESTIONS_RESPONSE = [
     {
@@ -14,35 +22,30 @@ MOCK_QUESTIONS_RESPONSE = [
         "category": "Technical",
         "difficulty": "hard",
         "context": "Focus on AWS or Azure solutions architecture.",
-        "model_answer": "STAR: Situation — FTSE 100 retailer...",
     },
     {
         "text": "Describe a situation where you had to manage conflicting stakeholder priorities.",
         "category": "Behavioural",
         "difficulty": "medium",
         "context": None,
-        "model_answer": "STAR: Situation — Board-level disagreement...",
     },
     {
         "text": "How would you approach migrating a monolith to microservices in 6 months?",
         "category": "Situational",
         "difficulty": "hard",
         "context": "Assume a 200-service estate.",
-        "model_answer": "I would start with domain decomposition...",
     },
     {
         "text": "What domain knowledge do you bring to financial services cloud projects?",
         "category": "Domain",
         "difficulty": "medium",
         "context": None,
-        "model_answer": "Having delivered three FS cloud migrations...",
     },
     {
         "text": "What does being commercially aware mean to you as an architect?",
         "category": "Commercial",
         "difficulty": "medium",
         "context": None,
-        "model_answer": "Commercial awareness means understanding TCO...",
     },
 ]
 
@@ -50,7 +53,15 @@ MOCK_QUESTIONS_RESPONSE = [
 @pytest.fixture()
 def mock_claude():
     claude = MagicMock()
-    claude.complete_json = AsyncMock(return_value=MOCK_QUESTIONS_RESPONSE)
+
+    async def response_with_allowed_ids(_system: str, user: str, **_kwargs):
+        requirement_ids = list(dict.fromkeys(re.findall(r"requirement-[a-f0-9]{12}", user)))
+        payload = copy.deepcopy(MOCK_QUESTIONS_RESPONSE)
+        for index, question in enumerate(payload):
+            question["requirement_id"] = requirement_ids[index % len(requirement_ids)]
+        return payload
+
+    claude.complete_json = AsyncMock(side_effect=response_with_allowed_ids)
     return claude
 
 
@@ -73,7 +84,7 @@ async def test_generate_returns_question_presentations(generator: QuestionGenera
         company_name="Accenture",
         role_title="Solutions Architect",
     )
-    assert isinstance(result, list)
+    assert isinstance(result, QuestionGenerationResult)
     assert all(isinstance(q, QuestionPresentation) for q in result)
 
 
@@ -145,14 +156,21 @@ async def test_generate_with_jd_text(generator: QuestionGeneratorService) -> Non
 
 @pytest.mark.asyncio
 async def test_questions_are_mapped_deduplicated_and_versioned(mock_claude) -> None:
+    requirement_ids = [
+        item["requirement_id"]
+        for item in _build_requirements(
+            "Design secure AWS platforms.\nLead architecture reviews."
+        )
+    ]
     mock_claude.complete_json = AsyncMock(
-        return_value={
+        side_effect=[
+            {
             "questions": [
                 {
                     "text": "How do you design secure AWS platforms?",
                     "category": "Technical",
                     "difficulty": "hard",
-                    "requirement_id": "unknown",
+                    "requirement_id": requirement_ids[0],
                 },
                 {
                     "text": " How do you design secure AWS platforms? ",
@@ -161,7 +179,18 @@ async def test_questions_are_mapped_deduplicated_and_versioned(mock_claude) -> N
                     "requirement_id": "unknown",
                 },
             ]
-        }
+            },
+            {
+                "questions": [
+                    {
+                        "text": "How do you lead architecture reviews?",
+                        "category": "Behavioural",
+                        "difficulty": "medium",
+                        "requirement_id": requirement_ids[1],
+                    }
+                ]
+            },
+        ]
     )
     generator = QuestionGeneratorService(mock_claude)
     result = await generator.generate(
@@ -171,10 +200,103 @@ async def test_questions_are_mapped_deduplicated_and_versioned(mock_claude) -> N
         jd_text="Design secure AWS platforms.\nLead architecture reviews.",
     )
 
-    assert len(result) == 1
-    assert result[0].requirement_id.startswith("requirement-")
+    assert len(result) == 2
+    assert [question.requirement_id for question in result] == requirement_ids
     assert result[0].category == "Technical"
-    system_prompt, user_prompt = mock_claude.complete_json.await_args.args[:2]
+    assert result.initial_diagnostic.gate_codes == [
+        "coach_question_duplicate",
+        "coach_question_category_invalid",
+        "coach_question_requirement_unknown",
+        "coach_question_count_mismatch",
+    ]
+    assert result.repair_diagnostic is not None
+    assert result.final_diagnostic.outcome == "completed"
+    assert result.final_diagnostic.repair_count == 1
+    system_prompt, user_prompt = mock_claude.complete_json.await_args_list[0].args[:2]
     combined = system_prompt + user_prompt
     assert '"prompt_id": "question_generation"' in combined
     assert "Do not imply that the candidate has experience" in combined
+
+
+@pytest.mark.asyncio
+async def test_question_generation_performs_at_most_one_repair() -> None:
+    requirement_id = _build_requirements("Cloud architecture")[0]["requirement_id"]
+    invalid = {
+        "questions": [
+            {
+                "text": "How would you design it?",
+                "category": "Technical",
+                "difficulty": "medium",
+                "requirement_id": "unknown",
+            }
+        ]
+    }
+    client = MagicMock()
+    client.complete_json = AsyncMock(side_effect=[invalid, invalid])
+
+    with pytest.raises(QuestionGenerationContractError) as caught:
+        await QuestionGeneratorService(client).generate(
+            config=SessionConfig(question_count=1),
+            company_name="Example",
+            role_title="Architect",
+            jd_text="Cloud architecture",
+        )
+
+    assert client.complete_json.await_count == 2
+    assert caught.value.result.questions == []
+    assert caught.value.result.final_diagnostic.outcome == "invalid_output"
+    assert "coach_question_repair_exhausted" in (
+        caught.value.result.final_diagnostic.gate_codes
+    )
+    assert requirement_id not in [
+        question.requirement_id for question in caught.value.result.questions
+    ]
+
+
+@pytest.mark.asyncio
+async def test_question_generation_cannot_activate_partial_repaired_set() -> None:
+    requirement_id = _build_requirements("Cloud architecture")[0]["requirement_id"]
+    one_valid = {
+        "questions": [
+            {
+                "text": "How would you design a cloud platform?",
+                "category": "Technical",
+                "difficulty": "medium",
+                "requirement_id": requirement_id,
+            }
+        ]
+    }
+    client = MagicMock()
+    client.complete_json = AsyncMock(side_effect=[one_valid, {"questions": []}])
+
+    with pytest.raises(QuestionGenerationContractError) as caught:
+        await QuestionGeneratorService(client).generate(
+            config=SessionConfig(question_count=2),
+            company_name="Example",
+            role_title="Architect",
+            jd_text="Cloud architecture",
+        )
+
+    assert caught.value.result.questions == []
+    assert client.complete_json.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_question_generation_timeout_does_not_run_repair(monkeypatch) -> None:
+    client = MagicMock()
+    client.complete_json = AsyncMock(side_effect=TimeoutError)
+    monkeypatch.setattr(
+        "app.services.question_generator.settings.HATCH_COACH_TIMEOUT_QUESTION_GENERATION_SECONDS",
+        10,
+    )
+
+    with pytest.raises(QuestionGenerationContractError) as caught:
+        await QuestionGeneratorService(client).generate(
+            config=SessionConfig(question_count=1),
+            company_name="Example",
+            role_title="Architect",
+        )
+
+    assert client.complete_json.await_count == 1
+    assert caught.value.result.final_diagnostic.outcome == "unavailable"
+    assert caught.value.result.final_diagnostic.gate_codes == ["coach_stage_timeout"]

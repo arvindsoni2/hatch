@@ -34,10 +34,15 @@ class PromptContract:
     numeric_fidelity_risk: Risk
 
 
-def _metadata(prompt_id: str, task_name: str | None = None) -> PromptMetadata:
+def _metadata(
+    prompt_id: str,
+    task_name: str | None = None,
+    *,
+    prompt_version: str = "1.0.0",
+) -> PromptMetadata:
     return PromptMetadata(
         prompt_id=prompt_id,
-        prompt_version="1.0.0",
+        prompt_version=prompt_version,
         schema_version="1.0.0",
         task_name=task_name or prompt_id,
     )
@@ -149,8 +154,17 @@ _CONTRACT_LIST = (
         numeric="high",
     ),
     _contract(
-        _metadata("question_generation"),
+        _metadata("question_generation", prompt_version="2.0.0"),
         "backend/app/prompts/question_generation.j2",
+        "interview_questions",
+        "QuestionPresentationList",
+        candidate="high",
+        employer="high",
+        numeric="low",
+    ),
+    _contract(
+        _metadata("question_generation_repair"),
+        "backend/app/prompts/question_generation_repair.j2",
         "interview_questions",
         "QuestionPresentationList",
         candidate="high",

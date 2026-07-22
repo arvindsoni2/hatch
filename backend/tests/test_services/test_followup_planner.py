@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from unittest.mock import MagicMock
-
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -93,6 +91,7 @@ async def test_plan_creates_child_session(db_session: AsyncSession) -> None:
             text=f"Question {i + 1}",
             category="Behavioural",
             difficulty="medium",
+            requirement_id=f"requirement-{i}",
             order_in_session=i + 1,
         )
         db_session.add(q)
@@ -133,6 +132,7 @@ async def test_plan_creates_child_with_questions(db_session: AsyncSession) -> No
             text=f"Question {i + 1}",
             category="Technical",
             difficulty="medium",
+            requirement_id=f"requirement-{i}",
             order_in_session=i + 1,
         )
         db_session.add(q)
@@ -148,6 +148,12 @@ async def test_plan_creates_child_with_questions(db_session: AsyncSession) -> No
     )
     child_questions = list(result.scalars().all())
     assert len(child_questions) == 4
+    assert [q.requirement_id for q in child_questions] == [
+        "requirement-0",
+        "requirement-1",
+        "requirement-2",
+        "requirement-3",
+    ]
 
 
 # ---------------------------------------------------------------------------

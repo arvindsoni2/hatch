@@ -5,6 +5,30 @@ from app.prompts import render_prompt
 from app.services.prompt_catalog import prompt_contract_block
 
 
+def test_question_repair_template_renders_targeted_contract_metadata() -> None:
+    rendered = render_prompt(
+        "question_generation_repair.j2",
+        prompt_contract=prompt_contract_block("question_generation_repair"),
+        additional_count=2,
+        allowed_categories=["Technical", "Behavioural"],
+        allowed_requirement_ids=["requirement-123"],
+        findings=["coach_question_count_mismatch"],
+        retained_question_hashes=["abc123"],
+        role_title="Engineer",
+        company_name="Example",
+        company_research={},
+        jd_text="Build systems",
+        candidate_summary="Candidate",
+        difficulty="medium",
+    )
+
+    assert '"prompt_id": "question_generation_repair"' in rendered
+    assert '"prompt_version": "1.0.0"' in rendered
+    assert "exactly 2 additional" in rendered
+    assert "requirement-123" in rendered
+    assert "abc123" in rendered
+
+
 def test_all_coach_templates_render_metadata_and_claim_layers() -> None:
     cases = {
         "answer_evaluation.j2": {

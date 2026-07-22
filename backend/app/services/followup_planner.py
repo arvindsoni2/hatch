@@ -86,6 +86,8 @@ class FollowUpPlannerService:
                 difficulty=pq.difficulty,
                 context=pq.context,
                 model_answer=pq.model_answer,
+                requirement_id=pq.requirement_id,
+                model_answer_diagnostics=pq.model_answer_diagnostics,
                 order_in_session=pq.order_in_session,
             )
             db.add(new_q)

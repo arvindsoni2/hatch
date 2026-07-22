@@ -1,20 +1,28 @@
-"""Question Generator Service — generates weighted interview questions via Claude."""
+"""Strict, bounded interview-question generation for Coach sessions."""
 from __future__ import annotations
 
 import hashlib
 import logging
 import re
 import time
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Iterator
 
-from ..prompts import render_prompt
-from ..observability import get_telemetry, trace_stage
-from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, SessionConfig
-from .llm_client import LLMClient
 from ..agents.tools.context_budgets import QUESTION_GEN
+from ..config import settings
+from ..observability import get_telemetry, trace_stage
+from ..prompts import render_prompt
+from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, SessionConfig
+from .coach_contracts import (
+    CoachDiagnostic,
+    CoachGateCode,
+    configured_model_id,
+    run_with_stage_deadline,
+)
 from .jd_analyser import _split_jinja_output
+from .llm_client import LLMClient
 from .master_cv_store import load_master_cv
-from .prompt_catalog import prompt_contract_block
+from .prompt_catalog import prompt_contract_block, prompt_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +34,17 @@ _CATEGORY_WEIGHTS = {
     "Culture": 0.10,
     "Commercial": 0.10,
 }
+_ALLOWED_DIFFICULTIES = {"easy", "medium", "hard"}
+_PROMPT_INJECTION_RE = re.compile(
+    r"\b(?:ignore|disregard|override)\b.{0,40}\b(?:instruction|prompt|system|previous)\b",
+    re.IGNORECASE,
+)
+_CANDIDATE_ASSERTION_RE = re.compile(
+    r"\b(?:given|based on)\s+your\b|"
+    r"\byour\s+\d+(?:\.\d+)?\b|"
+    r"\byour\s+(?:experience|achievement|role|work)\s+(?:at|with)\b",
+    re.IGNORECASE,
+)
 
 
 def _load_candidate_summary() -> str:
@@ -51,11 +70,208 @@ def _load_candidate_summary() -> str:
         return "Candidate"
 
 
+@dataclass(frozen=True)
+class QuestionGenerationResult:
+    """Validated questions plus initial, optional repair, and final diagnostics."""
+
+    questions: list[QuestionPresentation]
+    initial_diagnostic: CoachDiagnostic
+    repair_diagnostic: CoachDiagnostic | None
+    final_diagnostic: CoachDiagnostic
+
+    def __iter__(self) -> Iterator[QuestionPresentation]:
+        return iter(self.questions)
+
+    def __len__(self) -> int:
+        return len(self.questions)
+
+    def __getitem__(self, index: int) -> QuestionPresentation:
+        return self.questions[index]
+
+
+class QuestionGenerationContractError(ValueError):
+    """Raised when no exact, fully validated question set can be activated."""
+
+    def __init__(self, result: QuestionGenerationResult) -> None:
+        self.result = result
+        super().__init__("Coach question generation contract was not satisfied")
+
+
+@dataclass(frozen=True)
+class _Validation:
+    accepted: list[QuestionPresentation]
+    gate_codes: list[CoachGateCode]
+
+
+def _unique_gates(gates: list[CoachGateCode]) -> list[CoachGateCode]:
+    return list(dict.fromkeys(gates))
+
+
+def _normalise_question(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+
+def _extract_question_items(raw: Any) -> list[Any] | None:
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, dict):
+        return None
+    for key in ("questions", "items", "data", "interview_questions"):
+        if key in raw:
+            return raw[key] if isinstance(raw[key], list) else None
+    list_values = [value for value in raw.values() if isinstance(value, list)]
+    return list_values[0] if len(list_values) == 1 else None
+
+
+def _validate_questions(
+    raw: Any,
+    expected_count: int,
+    requirement_ids: tuple[str, ...],
+) -> _Validation:
+    items = _extract_question_items(raw)
+    if items is None:
+        return _Validation([], ["coach_question_parse_invalid"])
+
+    accepted: list[QuestionPresentation] = []
+    gates: list[CoachGateCode] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            gates.append("coach_question_parse_invalid")
+            continue
+
+        item_gates: list[CoachGateCode] = []
+        text = item.get("text")
+        text = text.strip() if isinstance(text, str) else ""
+        normalized = _normalise_question(text)
+        if not normalized:
+            item_gates.append("coach_question_parse_invalid")
+        elif normalized in seen:
+            item_gates.append("coach_question_duplicate")
+        else:
+            seen.add(normalized)
+
+        category = item.get("category")
+        if category not in _CATEGORY_WEIGHTS:
+            item_gates.append("coach_question_category_invalid")
+
+        difficulty = item.get("difficulty")
+        if difficulty not in _ALLOWED_DIFFICULTIES:
+            item_gates.append("coach_question_difficulty_invalid")
+
+        requirement_id = item.get("requirement_id")
+        if not isinstance(requirement_id, str) or requirement_id not in requirement_ids:
+            item_gates.append("coach_question_requirement_unknown")
+
+        if _PROMPT_INJECTION_RE.search(text):
+            item_gates.append("coach_question_prompt_injection_followed")
+        if _CANDIDATE_ASSERTION_RE.search(text):
+            item_gates.append("coach_question_candidate_claim")
+        if item.get("model_answer") not in (None, ""):
+            item_gates.append("coach_question_parse_invalid")
+
+        if item_gates:
+            gates.extend(item_gates)
+            continue
+
+        context = item.get("context")
+        accepted.append(
+            QuestionPresentation(
+                id=f"q_{len(accepted) + 1}",
+                text=text,
+                category=category,
+                difficulty=difficulty,
+                context=context if isinstance(context, str) else None,
+                requirement_id=requirement_id,
+                num=len(accepted) + 1,
+                total=expected_count,
+            )
+        )
+
+    if len(items) != expected_count or len(accepted) != expected_count:
+        gates.append("coach_question_count_mismatch")
+    return _Validation(accepted, _unique_gates(gates))
+
+
+def _diagnostic(
+    *,
+    stage: str,
+    prompt_id: str,
+    outcome: str,
+    gate_codes: list[CoachGateCode],
+    duration_ms: int,
+    model_id: str,
+) -> CoachDiagnostic:
+    metadata = prompt_metadata(prompt_id)
+    return CoachDiagnostic(
+        stage=stage,
+        outcome=outcome,
+        execution_mode="llm",
+        prompt_id=metadata.prompt_id,
+        prompt_version=metadata.prompt_version,
+        output_schema_version=metadata.schema_version,
+        model_id=model_id,
+        attempt_count=1,
+        repair_count=0,
+        gate_codes=gate_codes,
+        duration_ms=duration_ms,
+    )
+
+
+def _final_diagnostic(
+    *, outcome: str, attempts: int, repair_count: int, gates: list[CoachGateCode]
+) -> CoachDiagnostic:
+    return CoachDiagnostic(
+        stage="question_generation",
+        outcome=outcome,
+        execution_mode="deterministic",
+        attempt_count=attempts,
+        repair_count=repair_count,
+        gate_codes=_unique_gates(gates),
+        duration_ms=0,
+    )
+
+
 class QuestionGeneratorService:
-    """Generates weighted interview questions tailored to company and role."""
+    """Generate an exact question set with at most one targeted repair."""
 
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
+
+    async def _invoke(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        timeout_seconds: int,
+    ) -> tuple[Any, int]:
+        started = time.monotonic()
+        try:
+            raw = await run_with_stage_deadline(
+                self._client.complete_json(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=QUESTION_GEN.max_output,
+                ),
+                timeout_seconds,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=configured_model_id(self._client),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
+        duration_ms = int((time.monotonic() - started) * 1000)
+        get_telemetry().record_model_call(
+            workflow="coach_generation",
+            provider=type(self._client).__name__,
+            model_id=configured_model_id(self._client),
+            duration_ms=duration_ms,
+        )
+        return raw, duration_ms
 
     @trace_stage("coach_generation", "generate_initial")
     async def generate(
@@ -65,28 +281,15 @@ class QuestionGeneratorService:
         role_title: str,
         company_research: CompanyResearchResponse | None = None,
         jd_text: str | None = None,
-    ) -> list[QuestionPresentation]:
-        """Generate interview questions for a session.
-
-        Args:
-            config: Session configuration (question count, difficulty, etc.).
-            company_name: Company name for context.
-            role_title: Role being interviewed for.
-            company_research: Optional pre-fetched company research.
-            jd_text: Optional job description text for context.
-
-        Returns:
-            List of QuestionPresentation objects ordered for the session.
-        """
+    ) -> QuestionGenerationResult:
         candidate_summary = _load_candidate_summary()
         research_dict = (
             company_research.model_dump(mode="json")
-            if company_research
-            and company_research.verification_state != "not_verified"
+            if company_research and company_research.verification_state != "not_verified"
             else {}
         )
         requirements = _build_requirements(jd_text or role_title)
-
+        requirement_ids = tuple(item["requirement_id"] for item in requirements)
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
                 "question_generation.j2",
@@ -102,59 +305,179 @@ class QuestionGeneratorService:
             )
         )
 
-        started = time.monotonic()
         try:
-            raw = await self._client.complete_json(
+            raw, duration_ms = await self._invoke(
                 system_prompt,
                 user_prompt,
-                max_tokens=QUESTION_GEN.max_output,
+                timeout_seconds=settings.HATCH_COACH_TIMEOUT_QUESTION_GENERATION_SECONDS,
             )
+        except TimeoutError:
+            initial = _diagnostic(
+                stage="question_generation",
+                prompt_id="question_generation",
+                outcome="unavailable",
+                gate_codes=["coach_stage_timeout"],
+                duration_ms=0,
+                model_id=configured_model_id(self._client),
+            )
+            result = QuestionGenerationResult(
+                [], initial, None,
+                _final_diagnostic(
+                    outcome="unavailable", attempts=1, repair_count=0,
+                    gates=["coach_stage_timeout"],
+                ),
+            )
+            raise QuestionGenerationContractError(result) from None
         except Exception:
-            get_telemetry().record_model_call(
-                workflow="coach_generation",
-                provider=type(self._client).__name__,
-                model_id=str(getattr(self._client, "model", "configured")),
-                duration_ms=(time.monotonic() - started) * 1000,
-                outcome="failed",
+            initial = _diagnostic(
+                stage="question_generation",
+                prompt_id="question_generation",
+                outcome="unavailable",
+                gate_codes=["coach_stage_failed"],
+                duration_ms=0,
+                model_id=configured_model_id(self._client),
             )
-            raise
-        get_telemetry().record_model_call(
-            workflow="coach_generation",
-            provider=type(self._client).__name__,
-            model_id=str(getattr(self._client, "model", "configured")),
-            duration_ms=(time.monotonic() - started) * 1000,
+            result = QuestionGenerationResult(
+                [], initial, None,
+                _final_diagnostic(
+                    outcome="unavailable", attempts=1, repair_count=0,
+                    gates=["coach_stage_failed"],
+                ),
+            )
+            raise QuestionGenerationContractError(result) from None
+
+        initial_validation = _validate_questions(
+            raw, config.question_count, requirement_ids
         )
-
-        # Handle both bare array and {"questions": [...]} wrapper
-        if isinstance(raw, list):
-            questions_raw: list[dict[str, Any]] = raw
-        elif isinstance(raw, dict):
-            # Try common wrapper keys
-            for key in ("questions", "items", "data", "interview_questions"):
-                if key in raw and isinstance(raw[key], list):
-                    questions_raw = raw[key]
-                    break
-            else:
-                # Last resort: take the first list value found
-                questions_raw = next((v for v in raw.values() if isinstance(v, list)), [])
-        else:
-            questions_raw = []
-
-        if not questions_raw:
-            logger.error(
-                "No questions extracted for %s/%s — raw response keys: %s",
-                company_name, role_title,
-                list(raw.keys()) if isinstance(raw, dict) else type(raw).__name__,
-            )
-            raise ValueError(
-                f"LLM returned no questions for {company_name}/{role_title}. "
-                "The model may be unavailable or returned an unexpected JSON structure."
+        initial = _diagnostic(
+            stage="question_generation",
+            prompt_id="question_generation",
+            outcome=("completed" if not initial_validation.gate_codes else "invalid_output"),
+            gate_codes=initial_validation.gate_codes,
+            duration_ms=duration_ms,
+            model_id=configured_model_id(self._client),
+        )
+        for gate in initial_validation.gate_codes:
+            get_telemetry().record_validation_failure("coach_generation", gate)
+        if not initial_validation.gate_codes:
+            return QuestionGenerationResult(
+                initial_validation.accepted,
+                initial,
+                None,
+                _final_diagnostic(
+                    outcome="completed", attempts=1, repair_count=0, gates=[]
+                ),
             )
 
-        return _parse_questions(
-            questions_raw,
-            config.question_count,
-            tuple(requirement["requirement_id"] for requirement in requirements),
+        retained = initial_validation.accepted
+        if len(retained) >= config.question_count:
+            retained = []
+        retained_hashes = [
+            hashlib.sha256(_normalise_question(question.text).encode()).hexdigest()[:12]
+            for question in retained
+        ]
+        repair_system, repair_user = _split_jinja_output(
+            render_prompt(
+                "question_generation_repair.j2",
+                prompt_contract=prompt_contract_block("question_generation_repair"),
+                additional_count=config.question_count - len(retained),
+                allowed_categories=list(_CATEGORY_WEIGHTS),
+                allowed_requirement_ids=list(requirement_ids),
+                findings=initial_validation.gate_codes,
+                retained_question_hashes=retained_hashes,
+                role_title=role_title,
+                company_name=company_name,
+                company_research=research_dict,
+                jd_text=jd_text or "",
+                candidate_summary=candidate_summary,
+                difficulty=config.difficulty,
+            )
+        )
+        try:
+            repair_raw, repair_duration = await self._invoke(
+                repair_system,
+                repair_user,
+                timeout_seconds=settings.HATCH_COACH_TIMEOUT_QUESTION_REPAIR_SECONDS,
+            )
+        except TimeoutError:
+            repair = _diagnostic(
+                stage="question_generation_repair",
+                prompt_id="question_generation_repair",
+                outcome="unavailable",
+                gate_codes=["coach_stage_timeout"],
+                duration_ms=0,
+                model_id=configured_model_id(self._client),
+            )
+            result = QuestionGenerationResult(
+                [], initial, repair,
+                _final_diagnostic(
+                    outcome="unavailable", attempts=2, repair_count=1,
+                    gates=["coach_stage_timeout"],
+                ),
+            )
+            raise QuestionGenerationContractError(result) from None
+        except Exception:
+            repair = _diagnostic(
+                stage="question_generation_repair",
+                prompt_id="question_generation_repair",
+                outcome="unavailable",
+                gate_codes=["coach_stage_failed"],
+                duration_ms=0,
+                model_id=configured_model_id(self._client),
+            )
+            result = QuestionGenerationResult(
+                [], initial, repair,
+                _final_diagnostic(
+                    outcome="unavailable", attempts=2, repair_count=1,
+                    gates=["coach_stage_failed"],
+                ),
+            )
+            raise QuestionGenerationContractError(result) from None
+
+        repair_items = _extract_question_items(repair_raw)
+        retained_payload = [
+            {
+                "text": question.text,
+                "category": question.category,
+                "difficulty": question.difficulty,
+                "context": question.context,
+                "requirement_id": question.requirement_id,
+            }
+            for question in retained
+        ]
+        assembled_raw = retained_payload + (repair_items or [])
+        final_validation = _validate_questions(
+            assembled_raw, config.question_count, requirement_ids
+        )
+        repair_gates = list(final_validation.gate_codes)
+        repair = _diagnostic(
+            stage="question_generation_repair",
+            prompt_id="question_generation_repair",
+            outcome=("completed" if not repair_gates else "invalid_output"),
+            gate_codes=repair_gates,
+            duration_ms=repair_duration,
+            model_id=configured_model_id(self._client),
+        )
+        for gate in repair_gates:
+            get_telemetry().record_validation_failure("coach_generation", gate)
+        if final_validation.gate_codes:
+            final_gates = [*final_validation.gate_codes, "coach_question_repair_exhausted"]
+            result = QuestionGenerationResult(
+                [], initial, repair,
+                _final_diagnostic(
+                    outcome="invalid_output", attempts=2, repair_count=1,
+                    gates=final_gates,
+                ),
+            )
+            raise QuestionGenerationContractError(result)
+
+        return QuestionGenerationResult(
+            final_validation.accepted,
+            initial,
+            repair,
+            _final_diagnostic(
+                outcome="completed", attempts=2, repair_count=1, gates=[]
+            ),
         )
 
 
@@ -184,41 +507,6 @@ def _parse_questions(
     expected_count: int,
     requirement_ids: tuple[str, ...],
 ) -> list[QuestionPresentation]:
-    """Parse and validate raw question list from Claude."""
-    questions: list[QuestionPresentation] = []
-    seen_questions: set[str] = set()
-    allowed_categories = set(_CATEGORY_WEIGHTS)
-
-    for i, q in enumerate(raw_list):
-        if not isinstance(q, dict):
-            continue
-        text = str(q.get("text") or "").strip()
-        normalized_text = " ".join(
-            re.findall(r"[a-z0-9]+", text.casefold())
-        )
-        if not normalized_text or normalized_text in seen_questions:
-            continue
-        seen_questions.add(normalized_text)
-        requirement_id = q.get("requirement_id")
-        if requirement_id not in requirement_ids:
-            requirement_id = requirement_ids[i % len(requirement_ids)]
-        category = q.get("category", "Technical")
-        if category not in allowed_categories:
-            category = "Technical"
-        try:
-            questions.append(
-                QuestionPresentation(
-                    id=f"q_{len(questions) + 1}",
-                    text=text,
-                    category=category,
-                    difficulty=q.get("difficulty", "medium"),
-                    context=q.get("context"),
-                    requirement_id=requirement_id,
-                    num=len(questions) + 1,
-                    total=expected_count,
-                )
-            )
-        except Exception as exc:
-            logger.warning("Failed to parse question %d: %s", i, exc)
-
-    return questions
+    """Compatibility wrapper returning only a fully valid exact question set."""
+    validation = _validate_questions(raw_list, expected_count, requirement_ids)
+    return validation.accepted if not validation.gate_codes else []

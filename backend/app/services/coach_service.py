@@ -26,7 +26,12 @@ from .feedback_generator import FeedbackGeneratorService
 from .followup_planner import FollowUpPlannerService
 from .mock_interviewer import MockInterviewerService
 from .model_answer_gen import ModelAnswerGeneratorService
-from .question_generator import QuestionGeneratorService, _load_candidate_summary
+from .question_generator import (
+    QuestionGenerationContractError,
+    QuestionGenerationResult,
+    QuestionGeneratorService,
+    _load_candidate_summary,
+)
 from .rubric_synthesiser import RubricSynthesiserService
 from .speech_analyser import SpeechAnalyserService
 from .technical_drills import TechnicalDrillsService
@@ -116,6 +121,22 @@ class CoachService:
         from ..repositories.session_repository import SessionRepository
         session_repo = SessionRepository(db)
 
+        # Resolve the visible stub before model work so a terminal question
+        # diagnostic can always be persisted when setup fails.
+        if session_id:
+            session = await session_repo.get_session(session_id)
+            if not session:
+                raise ValueError(
+                    f"Stub session {session_id} not found — cannot populate questions"
+                )
+        else:
+            session = await session_repo.create_session(
+                application_id=request.application_id,
+                company_name=request.company_name,
+                role_title=request.role_title,
+                config=request.config.model_dump(),
+            )
+
         # Optionally fetch company research for richer questions
         company_research: CompanyResearchResponse | None = None
         try:
@@ -126,26 +147,50 @@ class CoachService:
             logger.warning("Company research failed — proceeding without: %s", exc)
 
         # Generate questions
-        questions = await self._question_gen.generate(
-            config=request.config,
-            company_name=request.company_name,
-            role_title=request.role_title,
-            company_research=company_research,
-            jd_text=request.jd_text,
-        )
-
-        # Use the stub session created upfront by the router, or create fresh
-        if session_id:
-            session = await session_repo.get_session(session_id)
-            if not session:
-                raise ValueError(f"Stub session {session_id} not found — cannot populate questions")
-        else:
-            session = await session_repo.create_session(
-                application_id=request.application_id,
+        try:
+            generated_questions = await self._question_gen.generate(
+                config=request.config,
                 company_name=request.company_name,
                 role_title=request.role_title,
-                config=request.config.model_dump(),
+                company_research=company_research,
+                jd_text=request.jd_text,
             )
+        except QuestionGenerationContractError as exc:
+            await session_repo.update_stage_diagnostics(
+                session.id,
+                "question_generation",
+                {
+                    "initial": exc.result.initial_diagnostic.model_dump(mode="json"),
+                    "repair": (
+                        exc.result.repair_diagnostic.model_dump(mode="json")
+                        if exc.result.repair_diagnostic
+                        else None
+                    ),
+                    "final": exc.result.final_diagnostic.model_dump(mode="json"),
+                },
+            )
+            await db.commit()
+            raise
+
+        # A list result is accepted only for compatibility with injected test
+        # doubles. The production generator always returns the diagnostic result.
+        if isinstance(generated_questions, QuestionGenerationResult):
+            questions = generated_questions.questions
+            await session_repo.update_stage_diagnostics(
+                session.id,
+                "question_generation",
+                {
+                    "initial": generated_questions.initial_diagnostic.model_dump(mode="json"),
+                    "repair": (
+                        generated_questions.repair_diagnostic.model_dump(mode="json")
+                        if generated_questions.repair_diagnostic
+                        else None
+                    ),
+                    "final": generated_questions.final_diagnostic.model_dump(mode="json"),
+                },
+            )
+        else:
+            questions = generated_questions
 
         # Generate model answers and persist questions
         candidate_summary = _load_candidate_summary()
@@ -168,6 +213,7 @@ class CoachService:
                 "difficulty": q.difficulty,
                 "context": q.context,
                 "model_answer": model_answer,
+                "requirement_id": q.requirement_id,
                 "order_in_session": i + 1,
             })
 
@@ -184,6 +230,7 @@ class CoachService:
                 category=sq.category,
                 difficulty=sq.difficulty,
                 context=sq.context,
+                requirement_id=sq.requirement_id,
                 num=sq.order_in_session,
                 total=total,
             )
@@ -510,6 +557,7 @@ class CoachService:
             QuestionPresentation(
                 id=q.id, text=q.text, category=q.category,
                 difficulty=q.difficulty, context=q.context,
+                requirement_id=q.requirement_id,
                 num=q.order_in_session, total=total,
             )
             for q in questions
