@@ -39,6 +39,7 @@ from .contracts import (
 )
 from .production_adapter import (
     CoachProductionAdapter,
+    DeterministicCoachClient,
     HarnessFailureClient,
     ScenarioContext,
 )
@@ -374,7 +375,10 @@ def _state(
         return "invalid_harness_integrity"
     harness_failed = any(
         item.attempt.qualification_scope == "harness_contract"
-        and any(gate.blocking for gate in item.gates)
+        and (
+            item.status in {"timeout", "failed", "interrupted", "not_applicable"}
+            or any(gate.blocking for gate in item.gates)
+        )
         for item in results
     )
     if harness_failed:
@@ -528,6 +532,12 @@ async def _execute_run(
                     if scenario.forced_failure:
                         client_context = _single_client(
                             HarnessFailureClient(scenario.forced_failure)
+                        )
+                    elif profile.name == "contract-smoke":
+                        client_context = _single_client(
+                            DeterministicCoachClient(
+                                scenario, context, attempt.model_id
+                            )
                         )
                     else:
                         client_context = dependencies.adapter_factory(

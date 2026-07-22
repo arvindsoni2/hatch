@@ -62,6 +62,7 @@ def test_parser_exposes_only_coach_commands_and_bounded_timeout_flags() -> None:
     smoke_args = parser.parse_args(["smoke", "--suite", str(SUITE_PATH)])
     assert smoke_args.models is None
     assert smoke_args.profile == "contract-smoke"
+    assert smoke_args.output_root == Path("../data/benchmarks/coach/results")
 
 
 def test_existing_writing_parser_is_unchanged() -> None:

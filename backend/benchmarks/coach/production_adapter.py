@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import patch
@@ -17,6 +19,7 @@ from app.schemas.coach import (
     ResearchSource,
     SessionConfig,
     SessionFeedbackReport,
+    SessionRubric,
     SpeechMetrics,
 )
 from app.services.answer_evaluator import AnswerEvaluatorService
@@ -32,6 +35,7 @@ from app.services.question_generator import (
     QuestionGeneratorService,
 )
 from app.services.rubric_synthesiser import RubricSynthesiserService
+from app.services.rubric_builder import score_to_band
 from app.services.technical_drills import TechnicalDrillsService
 from benchmarks.adapters import BenchmarkModelUnavailableError
 
@@ -183,6 +187,202 @@ class HarnessFailureClient:
         return {}
 
 
+class DeterministicCoachClient:
+    """Scenario-aware fake model used only by the bounded contract-smoke profile."""
+
+    def __init__(
+        self,
+        scenario: CoachScenario,
+        context: ScenarioContext,
+        model_id: str,
+    ) -> None:
+        self.scenario = scenario
+        self.context = context
+        self.model = model_id
+        self.spec = SimpleNamespace(id=model_id)
+        self.last_json_attempt_count = 1
+        self.observations: list[dict[str, Any]] = []
+
+    async def complete_json(
+        self,
+        system: str,
+        user: str,
+        max_tokens: int = 4096,
+        schema: type[BaseModel] | None = None,
+    ) -> dict[str, Any]:
+        del system, user, max_tokens, schema
+        self.observations.append({"attempt": 1, "outcome": "completed"})
+        handler = getattr(self, f"_response_{self.scenario.stage}", None)
+        if handler is None:
+            raise ValueError(
+                f"no deterministic response for stage {self.scenario.stage}"
+            )
+        return handler()
+
+    def _response_company_research(self) -> dict[str, Any]:
+        sources = self.scenario.scoring.expected_source_ids or list(
+            self.scenario.scoring.allowed_source_ids
+        )
+        source_id = sources[0] if sources else "SRC-OFFICIAL-01"
+        return {
+            "description": {
+                "text": "Atlas Example Cloud provides workflow software for regulated service teams.",
+                "source_ids": [source_id],
+            },
+            "sector": {"text": "workflow software", "source_ids": [source_id]},
+            "website": None,
+            "recent_news": [],
+            "key_products": [
+                {"text": "Atlas Flow", "source_ids": [source_id]}
+            ],
+            "tech_stack_signals": [
+                {"text": "event-driven integration", "source_ids": [source_id]}
+            ],
+        }
+
+    def _response_question_generation(self) -> dict[str, Any]:
+        count = int(self.scenario.input["question_count"])
+        requirements = list(self.scenario.scoring.required_requirement_ids)
+        if not requirements:
+            requirements = list(self.scenario.scoring.accepted_requirement_ids)
+        requirements = requirements or [f"REQ-{index:02d}" for index in range(1, count + 1)]
+        categories: list[str] = []
+        for category, category_count in self.scenario.scoring.expected_category_counts.items():
+            categories.extend([category] * category_count)
+        fallback = ["Technical", "Behavioural", "Situational", "Commercial"]
+        while len(categories) < count:
+            categories.append(fallback[len(categories) % len(fallback)])
+        return {
+            "questions": [
+                {
+                    "text": (
+                        f"How would you manage delivery risk and technical trade-offs "
+                        f"for service metrics in scenario {index + 1}?"
+                    ),
+                    "category": categories[index],
+                    "difficulty": self.scenario.input["difficulty"],
+                    "requirement_id": requirements[index % len(requirements)],
+                    "model_answer": None,
+                }
+                for index in range(count)
+            ]
+        }
+
+    def _response_model_answer(self) -> dict[str, Any]:
+        evidence = self.context.evidence_items(
+            list(self.scenario.input.get("evidence_ids", []))
+        )
+        if not evidence:
+            return {
+                "model_answer": "",
+                "star_breakdown": {
+                    "situation": "",
+                    "task": "",
+                    "action": "",
+                    "result": "",
+                },
+                "evidence_references": [],
+            }
+        by_part = {item.get("star_part"): item for item in evidence}
+        star = {
+            part: str(by_part[part]["text"])
+            for part in ("situation", "task", "action", "result")
+        }
+        return {
+            "model_answer": ". ".join(star.values()) + ".",
+            "star_breakdown": star,
+            "evidence_references": [item["evidence_id"] for item in evidence],
+        }
+
+    def _response_answer_evaluation(self) -> dict[str, Any]:
+        dimensions = (
+            "relevance",
+            "star_structure",
+            "technical_depth",
+            "conciseness",
+            "communication",
+            "impact_metrics",
+        )
+        scores = {
+            name: int(sum(self.scenario.expected.score_ranges[name]) // 2)
+            for name in dimensions
+        }
+        overall = round(sum(scores.values()) / len(scores), 1)
+        transcript = str(self.scenario.input["transcript"])
+        evidence = [transcript.rstrip(".")]
+        return {
+            "scores": scores,
+            "overall": overall,
+            "feedback": "The answer was assessed against structure, specificity, and impact.",
+            "evidence_references": evidence,
+            "follow_up_question": (
+                "What specific action did you take and what result followed?"
+                if self.scenario.expected.follow_up_required
+                else None
+            ),
+        }
+
+    def _response_rubric_synthesis(self) -> dict[str, Any]:
+        transcript = str(self.scenario.input["transcript"])
+        evidence = transcript.rstrip(".")
+        dimensions = {}
+        for name, score in self.scenario.input["baseline_scores"].items():
+            dimensions[name] = {
+                "score": score,
+                "score_band": score_to_band(score),
+                "evidence": [evidence],
+                "drill": f"Practise a concise {name.replace('_', ' ')} example.",
+            }
+        focus = " and ".join(self.scenario.input["focus_dimensions"])
+        return {
+            "dimensions": dimensions,
+            "focus_for_next_session": f"Focus next session on {focus}.",
+        }
+
+    def _response_session_report(self) -> dict[str, Any]:
+        improvements = list(
+            self.scenario.input.get("authoritative_report", {}).get(
+                "improvement_areas",
+                self.scenario.expected.expected_priority_dimensions,
+            )
+        )
+        return {
+            "executive_summary": (
+                "Delivery evidence is structured; practise specific technical impact next."
+            ),
+            "strengths": ["Clear delivery structure"],
+            "improvement_areas": improvements,
+            "coaching_points": [
+                "Rehearse a technical example with a measurable result."
+            ],
+            "practice_plan": [
+                {
+                    "day": 1,
+                    "focus": "technical delivery",
+                    "activity": "Record one bounded practice answer",
+                    "resource": None,
+                }
+            ],
+        }
+
+    def _response_technical_drill(self) -> dict[str, Any]:
+        return {
+            "question_id": self.scenario.input["question_id"],
+            "question_text": self.scenario.input["question"],
+            "walkthrough": (
+                "Define the service objective, compare speed with safety and control, "
+                "set rollback or escalation thresholds, then verify leading and lagging "
+                "measures across availability and consistency."
+            ),
+            "drill_prompt": (
+                "Explain the API rollback or service-measures decision and its trade-offs."
+            ),
+        }
+
+    def _response_end_to_end(self) -> dict[str, Any]:
+        return self._response_session_report()
+
+
 class _ServiceClient:
     """Expose benchmark model identity and per-call attempt counts to services."""
 
@@ -315,10 +515,27 @@ class CoachProductionAdapter:
             question_count=scenario.input["question_count"],
             difficulty=scenario.input["difficulty"],
         )
+        requirement_ids = (
+            scenario.scoring.accepted_requirement_ids
+            or scenario.scoring.required_requirement_ids
+        )
+        requirements = [
+            {
+                "requirement_id": requirement_id,
+                "text": f"Synthetic benchmark requirement {requirement_id}",
+            }
+            for requirement_id in requirement_ids
+        ]
         try:
-            with patch(
-                "app.services.question_generator._load_candidate_summary",
-                return_value=context.question_candidate_summary(),
+            with (
+                patch(
+                    "app.services.question_generator._load_candidate_summary",
+                    return_value=context.question_candidate_summary(),
+                ),
+                patch(
+                    "app.services.question_generator._build_requirements",
+                    return_value=requirements,
+                ),
             ):
                 result = await service.generate(
                     config,
@@ -460,3 +677,151 @@ class CoachProductionAdapter:
             result.summary_diagnostic,
             client,
         )
+
+    async def _execute_end_to_end(
+        self, scenario: CoachScenario, client: _ServiceClient, context: ScenarioContext
+    ) -> StageExecution:
+        """Run E2E-01 against a disposable SQLite database and production services."""
+        del context
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from app.database import Base
+        from app.models import Application, JobPosting
+        from app.models.coach_session import (
+            InterviewSession,
+            SessionQuestion,
+            SessionRecording,
+        )
+        from app.repositories.session_repository import SessionRepository
+        from app.schemas.coach import RubricDimension
+        from app.services.coach_service import CoachService
+        from app.services.followup_planner import FollowUpPlannerService
+
+        temporary = tempfile.TemporaryDirectory(prefix="coach-e2e-")
+        database = Path(temporary.name) / "coach-e2e.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+        tables = [
+            JobPosting.__table__,
+            Application.__table__,
+            InterviewSession.__table__,
+            SessionQuestion.__table__,
+            SessionRecording.__table__,
+        ]
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(
+                    lambda sync_connection: Base.metadata.create_all(
+                        sync_connection, tables=tables
+                    )
+                )
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            async with sessions() as database_session:
+                repository = SessionRepository(database_session)
+                interview = await repository.create_session(
+                    company_name=str(scenario.input["company_name"]),
+                    role_title=str(scenario.input["role_title"]),
+                    config={"question_count": scenario.input["question_count"]},
+                )
+                questions = await repository.add_questions(
+                    interview.id,
+                    [
+                        {
+                            "question_num": index,
+                            "text": f"Synthetic interview question {index}",
+                            "category": "Behavioural" if index < 3 else "Technical",
+                            "difficulty": "medium",
+                            "order_in_session": index,
+                        }
+                        for index in range(1, 4)
+                    ],
+                )
+                await repository.update_session_status(interview.id, "active")
+
+                answer_specs = (
+                    (scenario.input["answers"][0], 8, 8, 8.0),
+                    (scenario.input["answers"][1], 2, 3, 4.0),
+                )
+                for index, (answer, specificity, impact, overall) in enumerate(
+                    answer_specs
+                ):
+                    rubric = SessionRubric(
+                        dimensions={
+                            "specificity": RubricDimension(
+                                score=specificity,
+                                score_band=score_to_band(specificity),
+                                evidence=[str(answer["transcript"])],
+                                drill="Add a concrete action.",
+                            ),
+                            "impact": RubricDimension(
+                                score=impact,
+                                score_band=score_to_band(impact),
+                                evidence=[str(answer["transcript"])],
+                                drill="Add a measurable outcome.",
+                            ),
+                        }
+                    )
+                    evaluation = AnswerEvaluation(
+                        scores={
+                            "relevance": int(overall),
+                            "star_structure": specificity,
+                            "technical_depth": impact,
+                            "conciseness": int(overall),
+                            "communication": int(overall),
+                            "impact_metrics": impact,
+                        },
+                        overall=overall,
+                        evidence_references=[str(answer["transcript"])],
+                        rubric=rubric,
+                    )
+                    await repository.save_recording(
+                        session_id=interview.id,
+                        question_id=questions[index].id,
+                        recording_type="text",
+                        transcript=str(answer["transcript"]),
+                        speech_metrics=None,
+                        video_metrics=None,
+                        evaluation_json=json.dumps(
+                            evaluation.model_dump(mode="json")
+                        ),
+                        evaluation_state="completed",
+                    )
+                await repository.record_skip(
+                    session_id=interview.id,
+                    question_id=questions[2].id,
+                )
+                await database_session.commit()
+
+                service = CoachService.__new__(CoachService)
+                service._feedback_gen = FeedbackGeneratorService(client)  # type: ignore[attr-defined]
+                service._followup_planner = FollowUpPlannerService()  # type: ignore[attr-defined]
+                with patch(
+                    "app.services.feedback_generator._load_candidate_name",
+                    return_value="Candidate",
+                ):
+                    report = await service.end_session(
+                        interview.id, database_session
+                    )
+                follow_up = await service.plan_followup_session(
+                    interview.id, database_session
+                )
+                persisted = await SessionRepository(database_session).get_session(
+                    interview.id
+                )
+                if persisted is None or report.diagnostic is None:
+                    raise RuntimeError("E2E-01 did not persist terminal report evidence")
+                output = report.model_dump(mode="json")
+                output.update(
+                    {
+                        "persistence": {
+                            "session_status": persisted.status,
+                            "report_snapshot": persisted.report_json is not None,
+                            "rubric_snapshot": persisted.rubric is not None,
+                        },
+                        "persisted_rubric": persisted.rubric,
+                        "follow_up_focus": follow_up.focus_areas,
+                    }
+                )
+                return _execution(output, report.diagnostic, client)
+        finally:
+            await engine.dispose()
+            temporary.cleanup()

@@ -62,7 +62,7 @@ def _add_run_arguments(
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("data/benchmarks/coach/results"),
+        default=Path("../data/benchmarks/coach/results"),
     )
 
 

@@ -473,29 +473,29 @@ Commit: `feat(coach-benchmark): add reports and Coach CLI`
 - Consumes: all prior C2 components and production `CoachService`/repositories.
 - Produces: deterministic contract-smoke execution and E2E-01 terminal report evidence.
 
-- [ ] **Step 1: Write failing contract-smoke coverage tests**
+- [x] **Step 1: Write failing contract-smoke coverage tests**
 
 Assert every committed scenario reaches its validator with deterministic adapters; all harness expectations pass; contract smoke emits no model classification/recommendation; and the test command is bounded by the 90-second product requirement.
 
-- [ ] **Step 2: Write failing E2E-01 and integrity tests**
+- [x] **Step 2: Write failing E2E-01 and integrity tests**
 
 Create a temporary database/data directory, run a three-question session with strong, weak, and skipped answers, assert persisted rubric/report/counts/follow-up focus, and verify protected production hashes before/after. Prove terminal SR-02/AE-H expectation failure invalidates the harness while an unstarted harness attempt selects incomplete state.
 
-- [ ] **Step 3: Run tests and verify incomplete integration failures**
+- [x] **Step 3: Run tests and verify incomplete integration failures**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_contract_smoke.py tests/benchmarks/coach/test_e2e_session.py tests/benchmarks/coach/test_harness_integrity.py`
 
-- [ ] **Step 4: Implement contract-smoke and isolated E2E execution**
+- [x] **Step 4: Implement contract-smoke and isolated E2E execution**
 
 Use the same adapter/validator path as live runs. For E2E-01, override database and data roots before importing/constructing database-bound services, migrate/create schema in the temporary database, and restore environment/config state in `finally`. E2E contributes a session-report model attempt only after terminal report persistence.
 
-- [ ] **Step 5: Run contract/E2E plus focused benchmark suite**
+- [x] **Step 5: Run contract/E2E plus focused benchmark suite**
 
 Run: `cd backend && pytest -q tests/benchmarks tests/benchmarks/coach`
 
 Expected: existing writing and new Coach benchmark tests all pass.
 
-- [ ] **Step 6: Commit checkpoint C2.8**
+- [x] **Step 6: Commit checkpoint C2.8**
 
 Commit: `test(coach-benchmark): prove contract and E2E smoke`
 
@@ -575,5 +575,5 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 - [x] C2.5 Runner and resume
 - [x] C2.6 Capability and ranking
 - [x] C2.7 Reporting and CLI
-- [ ] C2.8 Contract/E2E smoke
+- [x] C2.8 Contract/E2E smoke
 - [ ] C2.9 Documentation and verification

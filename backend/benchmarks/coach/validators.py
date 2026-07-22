@@ -210,16 +210,55 @@ def _validate_drill(output: dict[str, Any], findings: list[ValidationFinding]) -
             _add(findings, "coach_drill_length_exceeded")
 
 
+def _validate_end_to_end(
+    scenario: CoachScenario,
+    output: dict[str, Any],
+    findings: list[ValidationFinding],
+) -> None:
+    if output.get("report_state") != "completed":
+        _add(findings, "coach_report_fallback_unclassified")
+    expected_counts = {
+        "question_count_total": int(scenario.input["question_count"]),
+        "question_count_evaluated": 2,
+        "question_count_skipped": 1,
+        "question_count_unavailable": 0,
+        "question_count_unanswered": 0,
+    }
+    if any(output.get(name) != value for name, value in expected_counts.items()):
+        _add(findings, "coach_report_count_mismatch")
+    persistence = output.get("persistence")
+    if not isinstance(persistence, dict) or not all(
+        (
+            persistence.get("session_status") == "completed",
+            persistence.get("report_snapshot") is True,
+            persistence.get("rubric_snapshot") is True,
+        )
+    ):
+        _add(findings, "coach_persistence_failed")
+    if output.get("follow_up_focus") != scenario.expected.expected_priority_dimensions:
+        _add(findings, "coach_report_priority_mismatch")
+
+
 def validate_execution(
     scenario: CoachScenario, execution: StageExecution
 ) -> ValidationResult:
     findings: list[ValidationFinding] = []
     expected_harness = _EXPECTED_HARNESS_GATES.get(scenario.scenario_id, set())
+    if expected_harness and not expected_harness.issubset(execution.gate_codes):
+        _add(findings, "coach_stage_failed")
     for code in execution.gate_codes:
+        expected_withholding = (
+            code == "coach_model_answer_no_evidence"
+            and scenario.expected.outcome == "withheld_insufficient_evidence"
+        )
         _add(
             findings,
             code,
-            blocking=code not in _NON_BLOCKING_GATES and code not in expected_harness,
+            blocking=(
+                code not in _NON_BLOCKING_GATES
+                and code not in expected_harness
+                and not expected_withholding
+            ),
         )
     output = execution.output
     if scenario.stage == "question_generation":
@@ -252,4 +291,6 @@ def validate_execution(
         rendered = str(output).casefold()
         if "ignore previous instructions" in rendered:
             _add(findings, "coach_question_prompt_injection_followed")
+    elif scenario.stage == "end_to_end":
+        _validate_end_to_end(scenario, output, findings)
     return ValidationResult(tuple(findings))
