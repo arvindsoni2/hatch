@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from ..models.coach_session import SessionQuestion
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import TechnicalDrill
 from .llm_client import LLMClient
 
@@ -66,13 +68,23 @@ class TechnicalDrillsService:
 
         return drills
 
+    @trace_stage("coach_generation", "generate_initial")
     async def _build_single_drill(self, q: SessionQuestion) -> TechnicalDrill | None:
         """Build a single drill; returns None on any failure."""
+        started = time.monotonic()
+        model_call_completed = False
         try:
             raw = await self._claude.complete(
                 system=_SYSTEM_PROMPT,
                 user=_USER_TEMPLATE.format(question=q.text),
             )
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._claude).__name__,
+                model_id=str(getattr(self._claude, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            model_call_completed = True
             data = json.loads(raw)
             return TechnicalDrill(
                 question_id=q.id,
@@ -82,5 +94,23 @@ class TechnicalDrillsService:
                 category=q.category,
             )
         except Exception as exc:
+            if not model_call_completed:
+                get_telemetry().record_model_call(
+                    workflow="coach_generation",
+                    provider=type(self._claude).__name__,
+                    model_id=str(getattr(self._claude, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    outcome="failed",
+                )
+                error_code = "technical_drill_failed"
+                event_name = "model_error"
+            else:
+                get_telemetry().record_validation_failure(
+                    "coach_generation",
+                    "technical_drill_response_invalid",
+                )
+                error_code = "technical_drill_response_invalid"
+                event_name = "validation_failure"
+            get_telemetry().mark_current_error(error_code, event_name)
             logger.warning("TechnicalDrillsService: skipping question %s — %s", q.id, exc)
             return None

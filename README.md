@@ -190,6 +190,12 @@ Linux/macOS advanced capability example:
 
 For manual Docker setup, capability profiles, troubleshooting, reset commands, and development checks, read the [Hatch operations guide](docs/operations/OPERATIONS.md).
 
+Optional, privacy-safe OpenTelemetry traces and metrics are available through
+the local `observability` Compose profile. They are disabled in the default
+backend and never include prompt, response, CV, or job-description content.
+See [Local AI observability](docs/operations/OBSERVABILITY.md) for enablement,
+health states, inspection, and cleanup.
+
 ## AI and capability choices
 
 AI routing and Hatch capabilities are separate choices. Choose **None**, **Local**, or **Cloud** for AI. Choose **Standard Hatch** (the default), Core + browser, Core + local embeddings, or Full capabilities independently. Hatch can start with AI configuration deferred; profile editing, manual application tracking, settings, and job entry remain available.

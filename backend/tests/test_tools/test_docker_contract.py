@@ -36,7 +36,7 @@ def test_backend_dockerfile_exposes_expected_runtime_targets() -> None:
     """Future compose files should be able to select explicit backend targets."""
     text = _dockerfile_text()
 
-    for target in ("core", "browser", "local-ai", "full"):
+    for target in ("core", "browser", "local-ai", "observability", "full"):
         assert re.search(rf"^FROM .* AS {target}\b", text, re.MULTILINE), target
 
 
@@ -83,6 +83,10 @@ def test_optional_backend_override_files_select_non_default_targets() -> None:
     expected = {
         "docker-compose.browser.yml": ("hatch-backend:browser", "browser"),
         "docker-compose.local-embeddings.yml": ("hatch-backend:local-ai", "local-ai"),
+        "docker-compose.observability.yml": (
+            "hatch-backend:observability",
+            "observability",
+        ),
         "docker-compose.full.yml": ("hatch-backend:full", "full"),
     }
 

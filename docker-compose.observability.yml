@@ -1,0 +1,27 @@
+services:
+  backend:
+    image: hatch-backend:observability
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: observability
+    environment:
+      HATCH_BACKEND_PROFILE: observability
+      HATCH_OBSERVABILITY_ENABLED: "1"
+      HATCH_OTLP_ENDPOINT: http://otel-collector:4317
+      HATCH_OBSERVABILITY_CONSOLE: "0"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    profiles: ["observability"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./infrastructure/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro,z
+    ports:
+      - "127.0.0.1:8889:8889"
+    restart: unless-stopped
+    networks:
+      - hatch

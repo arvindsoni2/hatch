@@ -19,6 +19,7 @@ from typing import Any, Protocol
 from app.services.cl_generator import CoverLetterGenerator, select_tone_variant
 from app.services.cv_tailor import CVTailor
 from app.services.profile_service import current_profile_hash
+from app.observability import get_telemetry
 from app.services.writing_contracts import (
     EVIDENCE_SCHEMA_VERSION,
     VALIDATION_SCHEMA_VERSION,
@@ -922,7 +923,7 @@ async def run_benchmark(
                     continue
                 by_model[model_id].append(result)
 
-    async def execute_repetition(
+    async def _execute_repetition_inner(
         spec: ModelSpec, repetition: int, seed: int, client: Adapter
     ) -> RepetitionResult:
         started = time.monotonic()
@@ -1034,6 +1035,57 @@ async def run_benchmark(
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
+            return result
+
+    async def execute_repetition(
+        spec: ModelSpec, repetition: int, seed: int, client: Adapter
+    ) -> RepetitionResult:
+        attributes = {
+            "hatch.ai.benchmark.run_id": run_id,
+            "hatch.ai.benchmark.case_id": case.case_id,
+            "hatch.ai.benchmark.seed": seed,
+            "hatch.ai.model.id": spec.id,
+            "hatch.ai.prompt.version": active_prompt_metadata[
+                "cv_tailoring"
+            ]["prompt_version"],
+        }
+        with get_telemetry().workflow_span(
+            "benchmark_pair",
+            attributes,
+        ) as span:
+            result = await _execute_repetition_inner(
+                spec,
+                repetition,
+                seed,
+                client,
+            )
+            validation_state = (
+                "passed"
+                if result.status == "succeeded"
+                and result.eligible_for_ranking
+                else result.status
+            )
+            span.set_attribute(
+                "hatch.ai.validation.state",
+                validation_state,
+            )
+            span.set_attribute(
+                "hatch.ai.attempt.number",
+                repetition,
+            )
+            if validation_state != "passed":
+                span.add_event("workflow_error")
+                span.set_error(
+                    result.error_type
+                    or result.execution_status
+                    or result.status
+                )
+            if result.cover_letter_repair_count is not None:
+                for _ in range(result.cover_letter_repair_count):
+                    get_telemetry().record_repair(
+                        "benchmark_pair",
+                        "cover_letter",
+                    )
             return result
 
     def persist_result(client: Adapter, result: RepetitionResult) -> None:

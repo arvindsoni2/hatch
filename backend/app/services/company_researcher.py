@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -10,6 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import CompanyResearchResponse, ResearchSource
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import COMPANY_RESEARCH
@@ -37,6 +39,7 @@ class CompanyResearchService:
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
+    @trace_stage("coach_generation", "prepare_input")
     async def research(self, company_name: str, sector: str | None = None) -> CompanyResearchResponse:
         """Research a company by name and synthesise with Claude.
 
@@ -60,13 +63,46 @@ class CompanyResearchService:
                 research_contract=research_claim_contract("company_research"),
             )
         )
+        started = time.monotonic()
+        model_call_completed = False
         try:
-            raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=COMPANY_RESEARCH.max_output)
+            raw = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=COMPANY_RESEARCH.max_output,
+            )
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            model_call_completed = True
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            get_telemetry().mark_current_error(
+                "company_research_failed",
+                "model_error",
+            )
             logger.warning("Company research synthesis failed for %s: %s", company_name, exc)
             return _not_verified_response(company_name, sector, bundle)
 
         if not isinstance(raw, dict):
+            if model_call_completed:
+                get_telemetry().record_validation_failure(
+                    "coach_generation",
+                    "company_research_response_invalid",
+                )
+                get_telemetry().mark_current_error(
+                    "company_research_response_invalid",
+                    "validation_failure",
+                )
             return _not_verified_response(company_name, sector, bundle)
         source_ids = {source.source_id for source in bundle.sources}
         description = _sourced_text(raw.get("description"), source_ids)

@@ -135,6 +135,11 @@ def test_backend_capability_checks_do_not_import_optional_packages(monkeypatch: 
 
     backend_capabilities.build_backend_capability_status()
 
-    assert checked == ["playwright", "sentence_transformers", "faster_whisper"]
+    assert checked == [
+        "playwright",
+        "sentence_transformers",
+        "faster_whisper",
+        "opentelemetry.sdk",
+    ]
     for module_name in ("playwright", "sentence_transformers", "transformers", "faster_whisper"):
         assert module_name not in sys.modules
