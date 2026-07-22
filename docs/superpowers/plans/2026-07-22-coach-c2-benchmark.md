@@ -324,7 +324,7 @@ Commit: `feat(coach-benchmark): add deterministic gates and scoring`
 - Consumes: loaded suite, profile, production adapter, validators/scorer.
 - Produces: `build_schedule(suite: LoadedCoachSuite, profile: CoachProfile, model_ids: Sequence[str]) -> tuple[ScheduleEntry, ...]`, `run_benchmark(request: RunRequest, dependencies: RunnerDependencies | None = None) -> CoachRunSummary`, `resume_benchmark(run_dir: Path, retry_timeouts: bool = False, dependencies: RunnerDependencies | None = None) -> CoachRunSummary`, and atomic artifact files beneath the configured output root.
 
-- [ ] **Step 1: Write failing schedule/artifact tests**
+- [x] **Step 1: Write failing schedule/artifact tests**
 
 ```python
 def test_standard_two_repetitions_schedule_exact_direct_reports() -> None:
@@ -341,15 +341,15 @@ def test_atomic_json_never_exposes_partial_target(tmp_path: Path, monkeypatch: p
     assert json.loads(target.read_text()) == {"state": "old"}
 ```
 
-- [ ] **Step 2: Write failing timeout/resume tests with a controllable executor**
+- [x] **Step 2: Write failing timeout/resume tests with a controllable executor**
 
 Prove per-call, per-model, and whole-run deadline outcomes; later models continue after model timeout; interruption flushes; terminal attempts are skipped; timed-out attempts retry only with `retry_timeouts=True`; run identity mismatch is rejected.
 
-- [ ] **Step 3: Run tests and verify missing-runner failures**
+- [x] **Step 3: Run tests and verify missing-runner failures**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_artifacts.py tests/benchmarks/coach/test_schedule.py tests/benchmarks/coach/test_runner.py tests/benchmarks/coach/test_resume.py`
 
-- [ ] **Step 4: Implement manifest/protected-state and atomic persistence**
+- [x] **Step 4: Implement manifest/protected-state and atomic persistence**
 
 Hash fixture inputs, relevant prompts/skills, profile/configuration, protected database including SQLite WAL/SHM, git state, and sanitized endpoint metadata. Write manifest, run manifest, progress, scenario result, summary, aggregate, and report through sibling temporary files and `os.replace`.
 
@@ -370,15 +370,15 @@ class RunRequest(StrictModel):
     command: str
 ```
 
-- [ ] **Step 5: Implement sequential execution and deterministic state precedence**
+- [x] **Step 5: Implement sequential execution and deterministic state precedence**
 
 Persist the full schedule before model calls. Execute model groups sequentially. Record all typed failures as attempt results. On model/run deadline, mark affected scheduled work incomplete without manufacturing harness failure. On cancellation/interrupt, shield the final flush and re-raise after persistence.
 
-- [ ] **Step 6: Run focused runner tests**
+- [x] **Step 6: Run focused runner tests**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_artifacts.py tests/benchmarks/coach/test_schedule.py tests/benchmarks/coach/test_runner.py tests/benchmarks/coach/test_resume.py`
 
-- [ ] **Step 7: Commit checkpoint C2.5**
+- [x] **Step 7: Commit checkpoint C2.5**
 
 Commit: `feat(coach-benchmark): add resumable benchmark runner`
 
@@ -572,7 +572,7 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 - [x] C2.2 Synthetic suite and loader
 - [x] C2.3 Production adapter
 - [x] C2.4 Gates and scoring
-- [ ] C2.5 Runner and resume
+- [x] C2.5 Runner and resume
 - [ ] C2.6 Capability and ranking
 - [ ] C2.7 Reporting and CLI
 - [ ] C2.8 Contract/E2E smoke
