@@ -46,7 +46,7 @@ def _upgrade(tmp_path: Path, profile: dict | None) -> sqlite3.Connection:
         text=True,
     )
     subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "o2p3q4r5s6t7"],
         cwd=BACKEND_DIR,
         env=env,
         check=True,
