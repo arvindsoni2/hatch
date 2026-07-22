@@ -28,7 +28,7 @@ Job requirements (use only these IDs):
 {{ requirements | tojson }}
 
 Category distribution ({{ question_count }} total):
-- Behavioural: {{ (question_count * 0.25) | round | int }} questions ("Tell me about a time..." or "Describe a situation where...")
+- Behavioural: {{ (question_count * 0.25) | round | int }} questions (use non-presupposing wording such as "What example, if any, could demonstrate...")
 - Technical: {{ (question_count * 0.3) | round | int }} questions (probe depth of expertise)
 - Situational: {{ (question_count * 0.15) | round | int }} questions (hypothetical scenarios)
 - Domain/Culture/Commercial: remaining questions
