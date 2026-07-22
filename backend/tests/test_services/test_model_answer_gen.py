@@ -556,6 +556,57 @@ async def test_model_answer_accepts_common_star_role_wording() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_answer_accepts_temporal_phrase_inside_action() -> None:
+    candidate_summary = (
+        "We inherited legacy systems. My objective was to improve reliability. "
+        "I implemented monitoring when incidents occurred. Latency dropped by 25%."
+    )
+    client = _client(candidate_summary, "Latency dropped by 25%.", candidate_summary)
+    client.complete_json.return_value["star_breakdown"] = {
+        "situation": "We inherited legacy systems.",
+        "task": "My objective was to improve reliability.",
+        "action": "I implemented monitoring when incidents occurred.",
+        "result": "Latency dropped by 25%.",
+    }
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.diagnostic.outcome == "completed"
+
+
+@pytest.mark.asyncio
+async def test_model_answer_rejects_objective_object_and_inherited_action_swap() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I coordinated the objective review. "
+        "We inherited legacy systems. Latency dropped by 25%."
+    )
+    client = _client(candidate_summary, "Latency dropped by 25%.", candidate_summary)
+    client.complete_json.return_value["star_breakdown"] = {
+        "situation": "A service had recurring incidents.",
+        "task": "I coordinated the objective review.",
+        "action": "We inherited legacy systems.",
+        "result": "Latency dropped by 25%.",
+    }
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_star_incomplete"]
+
+
+@pytest.mark.asyncio
 async def test_model_answer_accepts_explicit_truthful_withholding() -> None:
     candidate_summary = "AWS. Terraform. Python. SQL."
     client = MagicMock()

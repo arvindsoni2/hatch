@@ -301,10 +301,12 @@ def contains_candidate_history_claim(
     return any(
         re.search(
             rf"\b{re.escape(candidate_name.strip())}\b"
-            rf"\s+(?:(?:is|was|are|were)\s+(?:\w+ly\s+)?[a-z]{{3,}}ing|"
-            rf"(?:has|had)\s+(?:been\s+[a-z]{{3,}}ing|"
+            rf"\s+(?:(?:is|was|are|were)\s+(?:[a-z]+ly\s+)?[a-z]{{3,}}ing|"
+            rf"(?:has|had)\s+(?:[a-z]+ly\s+)?(?:"
+            rf"been\s+(?:[a-z]+ly\s+)?[a-z]{{3,}}ing|"
             rf"(?:{_CANDIDATE_HISTORY_VERBS}|[a-z]{{3,}}ed|set|cut))|"
-            rf"(?:{_CANDIDATE_HISTORY_VERBS}|[a-z]{{3,}}ed|[a-z]{{3,}}s|set|cut))\b",
+            rf"(?:[a-z]+ly\s+)?(?:{_CANDIDATE_HISTORY_VERBS}|"
+            rf"[a-z]{{3,}}ed|[a-z]{{3,}}s|set|cut))\b",
             candidate_text,
             flags=re.IGNORECASE,
         )

@@ -56,6 +56,9 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
     for progressive_claim in (
         "Alex is leading the Acme migration.",
         "Alex has been leading the Acme migration.",
+        "Alex successfully refactored cloud migration workflows.",
+        "Alex has successfully written the migration plan.",
+        "Alex has been actively leading the migration.",
     ):
         assert contains_candidate_history_claim(
             progressive_claim, candidate_names=("Alex Smith", "Alex")

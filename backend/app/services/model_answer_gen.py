@@ -33,12 +33,15 @@ logger = logging.getLogger(__name__)
 _STAR_KEYS = ("situation", "task", "action", "result")
 _STAR_ROLE_PATTERNS = {
     "situation": re.compile(
-        r"\b(?:was|were|had|faced|suffered|during|when|context|environment)\b",
+        r"(?:^\s*(?:during|when|while|at the time)\b|"
+        r"\b(?:i|we|[a-z]+(?:\s+[a-z]+){0,3})\s+"
+        r"(?:was|were|had|faced|suffered|inherited|encountered)\b)",
         re.IGNORECASE,
     ),
     "task": re.compile(
-        r"(?:\b(?:needed|required|responsible|tasked|had to|aimed)\b|"
-        r"\b(?:my|our|the)\s+(?:goal|objective)\b)",
+        r"(?:\b(?:i|we)\s+(?:needed|required|aimed|had to)\b|"
+        r"\b(?:i|we)\s+(?:was|were)\s+(?:responsible|tasked)\b|"
+        r"\b(?:my|our)\s+(?:goal|objective)\s+(?:was|became|involved)\b)",
         re.IGNORECASE,
     ),
     "action": re.compile(
