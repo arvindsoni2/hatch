@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Self
 
 from ..services.coach_contracts import CoachDiagnostic
@@ -97,6 +97,14 @@ class SubmitAnswerRequest(BaseModel):
     duration_ms: int = 0
     audio_uri: str | None = None  # server-populated for audio submissions; not user-provided
 
+    @field_validator("transcript")
+    @classmethod
+    def require_non_empty_transcript(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("transcript must contain a non-whitespace character")
+        return stripped
+
 
 # ---------------------------------------------------------------------------
 # Evaluation
@@ -152,6 +160,7 @@ class AnswerEvaluation(BaseModel):
     follow_up_question: str | None = None
     speech_coaching: list[str] = Field(default_factory=list)
     rubric: SessionRubric | None = None
+    retryable: bool = False
 
     @model_validator(mode="after")
     def validate_score_state(self) -> Self:

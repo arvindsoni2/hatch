@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from ..schemas.coach import SessionListItem
-from ..services.coach_contracts import merge_stage_diagnostic
+from ..services.coach_contracts import CoachConflictError, merge_stage_diagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +272,125 @@ class SessionRepository:
         await self._session.flush()
         await self._session.refresh(recording)
         return recording
+
+    async def reserve_answer_attempt(
+        self,
+        *,
+        session_id: str,
+        question_id: str,
+        async_job_id: str,
+        recording_type: str,
+        transcript: str | None,
+        audio_uri: str | None = None,
+    ) -> SessionRecording:
+        """Atomically reserve one immutable pending answer attempt."""
+        question = await self.get_question(question_id)
+        if question is None or question.session_id != session_id:
+            raise LookupError("Question not found in this session")
+        session = await self.get_session(session_id)
+        if session is None:
+            raise LookupError("Session not found")
+
+        claimed = await self._session.execute(
+            update(InterviewSession)
+            .where(
+                InterviewSession.id == session_id,
+                InterviewSession.status == "active",
+                InterviewSession.report_state.in_(("not_started", "failed")),
+            )
+            .values(activity_version=InterviewSession.activity_version + 1)
+        )
+        if claimed.rowcount != 1:
+            raise CoachConflictError(
+                "coach_session_closed",
+                "This Coach session no longer accepts answers.",
+            )
+
+        recording = SessionRecording(
+            session_id=session_id,
+            question_id=question_id,
+            recording_type=recording_type,
+            transcript=transcript,
+            audio_uri=audio_uri,
+            evaluation_state="pending",
+            async_job_id=async_job_id,
+        )
+        self._session.add(recording)
+        await self._session.flush()
+        await self._session.refresh(recording)
+        return recording
+
+    async def record_skip(self, *, session_id: str, question_id: str) -> SessionRecording:
+        """Create a terminal explicit skip under the same session guard."""
+        question = await self.get_question(question_id)
+        if question is None or question.session_id != session_id:
+            raise LookupError("Question not found in this session")
+        session = await self.get_session(session_id)
+        if session is None:
+            raise LookupError("Session not found")
+        claimed = await self._session.execute(
+            update(InterviewSession)
+            .where(
+                InterviewSession.id == session_id,
+                InterviewSession.status == "active",
+                InterviewSession.report_state.in_(("not_started", "failed")),
+            )
+            .values(activity_version=InterviewSession.activity_version + 1)
+        )
+        if claimed.rowcount != 1:
+            raise CoachConflictError(
+                "coach_session_closed",
+                "This Coach session no longer accepts skipped answers.",
+            )
+        recording = SessionRecording(
+            session_id=session_id,
+            question_id=question_id,
+            recording_type="text",
+            transcript="[SKIPPED]",
+            evaluation_json=None,
+            evaluation_state="skipped",
+            async_job_id=None,
+        )
+        self._session.add(recording)
+        await self._session.flush()
+        await self._session.refresh(recording)
+        return recording
+
+    async def finalize_answer_attempt(
+        self,
+        recording_id: str,
+        async_job_id: str,
+        *,
+        evaluation_state: str,
+        evaluation_json: str | None,
+        transcript: str | None = None,
+        speech_metrics: dict | None = None,
+        video_metrics: dict | None = None,
+        audio_uri: str | None = None,
+    ) -> bool:
+        """Persist all answer output iff the immutable pending claim still owns it."""
+        values: dict = {
+            "evaluation_state": evaluation_state,
+            "evaluation_json": evaluation_json,
+        }
+        if transcript is not None:
+            values["transcript"] = transcript
+        if speech_metrics is not None:
+            values["speech_metrics"] = speech_metrics
+        if video_metrics is not None:
+            values["video_metrics"] = video_metrics
+        if audio_uri is not None:
+            values["audio_uri"] = audio_uri
+        result = await self._session.execute(
+            update(SessionRecording)
+            .where(
+                SessionRecording.id == recording_id,
+                SessionRecording.async_job_id == async_job_id,
+                SessionRecording.evaluation_state == "pending",
+            )
+            .values(**values)
+        )
+        return result.rowcount == 1
 
     async def get_recordings(self, session_id: str) -> list[SessionRecording]:
         """Fetch all recordings for a session, oldest first.

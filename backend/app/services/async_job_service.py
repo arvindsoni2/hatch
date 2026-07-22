@@ -49,7 +49,7 @@ class AsyncJobService:
                 async with AsyncSessionLocal() as db:
                     await db.execute(
                         update(AsyncJob)
-                        .where(AsyncJob.id == job_id)
+                        .where(AsyncJob.id == job_id, AsyncJob.status == "pending")
                         .values(status="running", updated_at=datetime.utcnow())
                     )
                     await db.commit()
@@ -70,7 +70,7 @@ class AsyncJobService:
         result_json: str | None,
         error: str | None,
         db: AsyncSession | None = None,
-    ) -> None:
+    ) -> bool:
         """Persist the final status of a background job.
 
         When *db* is provided the update runs inside the caller's session
@@ -81,10 +81,13 @@ class AsyncJobService:
         """
         status = "done" if result_json is not None else "failed"
 
-        async def _apply(session: AsyncSession) -> None:
-            await session.execute(
+        async def _apply(session: AsyncSession) -> bool:
+            result = await session.execute(
                 update(AsyncJob)
-                .where(AsyncJob.id == job_id)
+                .where(
+                    AsyncJob.id == job_id,
+                    AsyncJob.status.in_(("pending", "running")),
+                )
                 .values(
                     status=status,
                     result_json=result_json,
@@ -92,17 +95,19 @@ class AsyncJobService:
                     updated_at=datetime.utcnow(),
                 )
             )
+            return result.rowcount == 1
 
         if db is not None:
-            await _apply(db)
+            changed = await _apply(db)
             await db.commit()
         else:
             from ..database import AsyncSessionLocal  # noqa: PLC0415
             async with AsyncSessionLocal() as session:
-                await _apply(session)
+                changed = await _apply(session)
                 await session.commit()
 
         logger.info("AsyncJob %s → %s", job_id, status)
+        return changed
 
     @staticmethod
     async def get(db: AsyncSession, job_id: str) -> AsyncJob | None:

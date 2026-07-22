@@ -269,6 +269,9 @@ class CoachService:
         question_id: str,
         request: SubmitAnswerRequest,
         db: AsyncSession,
+        *,
+        recording_id: str | None = None,
+        async_job_id: str | None = None,
     ) -> AnswerEvaluation:
         """Submit an answer for evaluation and persist the recording.
 
@@ -313,37 +316,56 @@ class CoachService:
             model_answer=question.model_answer,
         )
 
-        # Fuse: LLM-as-judge enrichment of the rubric (falls back silently on failure)
-        try:
-            evaluation.rubric = await self._rubric_synthesiser.synthesise(
-                transcript=request.transcript,
-                evaluation=evaluation,
-                speech_metrics=speech_metrics,
-            )
-            if video_metrics and evaluation.rubric:
-                from .rubric_builder import build_presence_dimension
-                evaluation.rubric.dimensions["presence"] = build_presence_dimension({
-                    "eye_contact_pct": video_metrics.eye_contact_pct / 100.0,
-                    "head_stability": video_metrics.head_stability,
-                })
-        except Exception as exc:
-            logger.warning("Rubric synthesis skipped: %s", exc)
+        if evaluation.evaluation_state == "completed":
+            try:
+                evaluation.rubric = await self._rubric_synthesiser.synthesise(
+                    transcript=request.transcript,
+                    evaluation=evaluation,
+                    speech_metrics=speech_metrics,
+                )
+                if video_metrics and evaluation.rubric:
+                    from .rubric_builder import build_presence_dimension
+                    evaluation.rubric.dimensions["presence"] = build_presence_dimension({
+                        "eye_contact_pct": video_metrics.eye_contact_pct / 100.0,
+                        "head_stability": video_metrics.head_stability,
+                    })
+            except Exception as exc:
+                logger.warning("Rubric synthesis skipped: %s", exc)
 
         # Persist recording + evaluation
         recording_type = (
             "audio" if request.audio_uri
             else ("audio" if request.speech_metrics else "text")
         )
-        await session_repo.save_recording(
-            session_id=session_id,
-            question_id=question_id,
-            recording_type=recording_type,
-            transcript=request.transcript,
-            speech_metrics=speech_metrics.model_dump() if speech_metrics else None,
-            video_metrics=video_metrics.model_dump() if video_metrics else None,
-            evaluation_json=json.dumps(evaluation.model_dump()),
-            audio_uri=request.audio_uri,
-        )
+        evaluation_json = json.dumps(evaluation.model_dump(mode="json"))
+        if recording_id and async_job_id:
+            changed = await session_repo.finalize_answer_attempt(
+                recording_id,
+                async_job_id,
+                evaluation_state=evaluation.evaluation_state,
+                evaluation_json=evaluation_json,
+                transcript=request.transcript,
+                speech_metrics=speech_metrics.model_dump() if speech_metrics else None,
+                video_metrics=video_metrics.model_dump() if video_metrics else None,
+                audio_uri=request.audio_uri,
+            )
+            if not changed:
+                from .coach_contracts import StaleWorkerFencedError
+
+                await db.rollback()
+                raise StaleWorkerFencedError("stale_worker_fenced")
+        else:
+            await session_repo.save_recording(
+                session_id=session_id,
+                question_id=question_id,
+                recording_type=recording_type,
+                transcript=request.transcript,
+                speech_metrics=speech_metrics.model_dump() if speech_metrics else None,
+                video_metrics=video_metrics.model_dump() if video_metrics else None,
+                evaluation_json=evaluation_json,
+                audio_uri=request.audio_uri,
+                evaluation_state=evaluation.evaluation_state,
+            )
         await db.commit()
 
         return evaluation

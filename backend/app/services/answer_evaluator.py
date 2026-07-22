@@ -92,6 +92,7 @@ def _no_score(
         follow_up_question=None,
         speech_coaching=[],
         rubric=None,
+        retryable=True,
     )
 
 

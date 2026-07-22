@@ -17,6 +17,59 @@ from typing_extensions import Self
 
 COACH_VALIDATION_SCHEMA_VERSION = "1.0.0"
 
+
+class CoachConflictError(RuntimeError):
+    """A Coach database state rejected a requested transition."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
+
+class StaleWorkerFencedError(RuntimeError):
+    """A reconciled or superseded worker attempted a terminal write."""
+
+
+def failed_answer_payload(
+    *,
+    gate_code: str = "coach_async_job_failed",
+    reason_code: str | None = None,
+    retryable: bool = True,
+) -> dict[str, object]:
+    """Build the persisted no-score payload for an operationally failed attempt."""
+    diagnostic: dict[str, object] = {
+        "validation_schema_version": COACH_VALIDATION_SCHEMA_VERSION,
+        "stage": "answer_evaluation",
+        "outcome": "failed",
+        "execution_mode": "deterministic",
+        "prompt_id": None,
+        "prompt_version": None,
+        "output_schema_version": None,
+        "model_id": None,
+        "attempt_count": 0,
+        "repair_count": 0,
+        "gate_codes": [gate_code],
+        "duration_ms": 0,
+    }
+    payload: dict[str, object] = {
+        "evaluation_state": "failed",
+        "diagnostic": diagnostic,
+        "scores": {},
+        "overall": None,
+        "feedback": "Evaluation could not be completed. Please try again.",
+        "strengths": [],
+        "improvements": [],
+        "evidence_references": [],
+        "follow_up_question": None,
+        "speech_coaching": [],
+        "rubric": None,
+        "retryable": retryable,
+    }
+    if reason_code:
+        payload["reason_code"] = reason_code
+    return payload
+
 CoachStage = Literal[
     "company_research",
     "question_generation",
@@ -169,4 +222,3 @@ async def run_with_stage_deadline(
 def configured_model_id(client: object) -> str:
     """Return the configured model identifier without inspecting model output."""
     return str(getattr(client, "model", None) or "configured")
-

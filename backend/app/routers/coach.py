@@ -1,6 +1,7 @@
 """FastAPI router for the Coach module — mock interview practice sessions."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Optional
@@ -29,6 +30,7 @@ from ..schemas.coach import (
 from ..services.async_job_service import AsyncJobService
 from ..services.coach_session_queue import queue_coach_session
 from ..services.coach_service import CoachService
+from ..services.coach_contracts import CoachConflictError, failed_answer_payload
 
 logger = logging.getLogger(__name__)
 
@@ -238,18 +240,15 @@ async def skip_question(
     """Skip a question by recording an empty answer (so it counts as answered)."""
     from ..repositories.session_repository import SessionRepository
     repo = SessionRepository(db)
-    question = await repo.get_question(question_id)
-    if not question or question.session_id != session_id:
+    try:
+        await repo.record_skip(session_id=session_id, question_id=question_id)
+    except LookupError:
         raise HTTPException(status_code=404, detail="Question not found in this session")
-    await repo.save_recording(
-        session_id=session_id,
-        question_id=question_id,
-        recording_type="text",
-        transcript="[SKIPPED]",
-        speech_metrics=None,
-        video_metrics=None,
-        evaluation_json=None,
-    )
+    except CoachConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
     await db.commit()
     return Response(status_code=204)
 
@@ -268,19 +267,62 @@ async def submit_answer(
     svc: CoachService = Depends(get_coach_service),
 ) -> dict:
     """Kick off answer evaluation. Poll /api/async-jobs/{job_id} for scores + feedback."""
+    from ..repositories.session_repository import SessionRepository
+
     async_job = await AsyncJobService.create(db, "submit_answer")
-    await db.commit()
+    try:
+        recording = await SessionRepository(db).reserve_answer_attempt(
+            session_id=session_id,
+            question_id=question_id,
+            async_job_id=async_job.id,
+            recording_type="text",
+            transcript=request.transcript,
+        )
+        await db.commit()
+    except LookupError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CoachConflictError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+    request_data = request.model_dump(mode="json")
+    recording_id = recording.id
+    job_id = async_job.id
 
     async def _work() -> None:
-        try:
-            result = await svc.submit_answer(session_id, question_id, request, db)
-            await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
-        except Exception as exc:
-            logger.error("submit_answer job %s failed: %s", async_job.id, exc)
-            await AsyncJobService._finish(async_job.id, None, str(exc))
+        from ..database import AsyncSessionLocal
 
-    AsyncJobService.run(async_job.id, _work())
-    return {"job_id": async_job.id, "status": "pending", "type": "submit_answer"}
+        async with AsyncSessionLocal() as job_db:
+            try:
+                reconstructed = SubmitAnswerRequest.model_validate(request_data)
+                result = await CoachService().submit_answer(
+                    session_id,
+                    question_id,
+                    reconstructed,
+                    job_db,
+                    recording_id=recording_id,
+                    async_job_id=job_id,
+                )
+                await AsyncJobService._finish(
+                    job_id, result.model_dump_json(), None, db=job_db
+                )
+            except Exception as exc:
+                logger.error("submit_answer job %s failed: %s", job_id, exc)
+                await SessionRepository(job_db).finalize_answer_attempt(
+                    recording_id,
+                    job_id,
+                    evaluation_state="failed",
+                    evaluation_json=json.dumps(failed_answer_payload()),
+                )
+                await job_db.commit()
+                await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
+
+    AsyncJobService.run(job_id, _work())
+    return {"job_id": job_id, "status": "pending", "type": "submit_answer"}
 
 
 _MAX_AUDIO_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -315,16 +357,6 @@ async def submit_audio(
     if len(audio_bytes) > _MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio file exceeds 50 MB limit")
 
-    suffix = _AUDIO_CT_TO_EXT.get(ct, ".audio")
-    recordings_dir = Path(os.getenv("DATA_DIR", "./data")) / "recordings" / session_id
-    recordings_dir.mkdir(parents=True, exist_ok=True)
-    audio_path = recordings_dir / f"{question_id}{suffix}"
-    resolved = audio_path.resolve()
-    if not resolved.is_relative_to(recordings_dir.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid audio path")
-    audio_path.write_bytes(audio_bytes)
-    audio_path_str = str(audio_path)
-
     # Parse face_summary JSON if provided (Phase D)
     face_summary_dict: dict | None = None
     if face_summary:
@@ -334,8 +366,41 @@ async def submit_audio(
         except Exception:
             logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
 
+    from ..repositories.session_repository import SessionRepository
+
     async_job = await AsyncJobService.create(db, "submit_audio")
-    await db.commit()
+    job_id = async_job.id
+    suffix = _AUDIO_CT_TO_EXT.get(ct, ".audio")
+    recordings_dir = Path(os.getenv("DATA_DIR", "./data")) / "recordings" / session_id
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = recordings_dir / f"{question_id}-{job_id}{suffix}"
+    resolved = audio_path.resolve()
+    if not resolved.is_relative_to(recordings_dir.resolve()):
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Invalid audio path")
+    audio_path_str = str(audio_path)
+    try:
+        recording = await SessionRepository(db).reserve_answer_attempt(
+            session_id=session_id,
+            question_id=question_id,
+            async_job_id=job_id,
+            recording_type="audio",
+            transcript=None,
+            audio_uri=audio_path_str,
+        )
+        audio_path.write_bytes(audio_bytes)
+        await db.commit()
+    except LookupError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CoachConflictError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+    recording_id = recording.id
 
     async def _work() -> None:
         from ..database import AsyncSessionLocal  # noqa: PLC0415
@@ -374,21 +439,42 @@ async def submit_audio(
                         gesture_freq=0.0,
                     )
 
-                req = SubmitAnswerRequest(
-                    transcript=result.text,
-                    speech_metrics=speech_metrics,
-                    video_metrics=video_metrics_obj,
-                    duration_ms=speech_metrics.duration_ms,
-                    audio_uri=audio_path_str,
+                request_data = {
+                    "transcript": result.text,
+                    "speech_metrics": speech_metrics,
+                    "video_metrics": video_metrics_obj,
+                    "duration_ms": speech_metrics.duration_ms,
+                    "audio_uri": audio_path_str,
+                }
+                req = (
+                    SubmitAnswerRequest(**request_data)
+                    if result.text.strip()
+                    else SubmitAnswerRequest.model_construct(**request_data)
                 )
-                evaluation = await svc.submit_answer(session_id, question_id, req, job_db)
-                await AsyncJobService._finish(async_job.id, evaluation.model_dump_json(), None)
+                evaluation = await CoachService().submit_answer(
+                    session_id,
+                    question_id,
+                    req,
+                    job_db,
+                    recording_id=recording_id,
+                    async_job_id=job_id,
+                )
+                await AsyncJobService._finish(
+                    job_id, evaluation.model_dump_json(), None, db=job_db
+                )
             except Exception as exc:
-                logger.error("submit_audio job %s failed: %s", async_job.id, exc)
-                await AsyncJobService._finish(async_job.id, None, str(exc))
+                logger.error("submit_audio job %s failed: %s", job_id, exc)
+                await SessionRepository(job_db).finalize_answer_attempt(
+                    recording_id,
+                    job_id,
+                    evaluation_state="failed",
+                    evaluation_json=json.dumps(failed_answer_payload()),
+                )
+                await job_db.commit()
+                await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
 
-    AsyncJobService.run(async_job.id, _work())
-    return {"job_id": async_job.id, "status": "pending", "type": "submit_audio"}
+    AsyncJobService.run(job_id, _work())
+    return {"job_id": job_id, "status": "pending", "type": "submit_audio"}
 
 
 # ---------------------------------------------------------------------------

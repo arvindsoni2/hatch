@@ -97,17 +97,14 @@ async def test_create_session_returns_202(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_answer_returns_202(client) -> None:
-    """POST /api/coach/sessions/{id}/submit-answer returns 202 with job_id (async pattern)."""
+async def test_submit_answer_unknown_session_does_not_queue_work(client) -> None:
+    """Unknown submissions fail synchronously instead of queuing doomed work."""
     response = await client.post(
         "/api/coach/sessions/session-uuid-001/submit-answer",
         params={"question_id": "q-uuid-001"},
         json={"transcript": "In my previous role at a FTSE 100 company...", "duration_ms": 60000},
     )
-    assert response.status_code == 202
-    data = response.json()
-    assert "job_id" in data
-    assert data["type"] == "submit_answer"
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -222,8 +219,8 @@ async def test_submit_audio_accepts_valid_ids(client: AsyncClient, tmp_path, mon
         data={"question_id": str(_uuid.uuid4())},
         files={"audio": ("answer.webm", audio_bytes, "audio/webm")},
     )
-    # 202 (queued) or 400 (content-type validation) but NOT 500 from path ops
-    assert response.status_code in (202, 400, 422)
+    # Unknown-but-safe IDs are rejected synchronously, never a path-operation 500.
+    assert response.status_code in (400, 404, 422)
 
 
 @pytest.mark.asyncio
