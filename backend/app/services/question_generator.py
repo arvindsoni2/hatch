@@ -16,6 +16,7 @@ from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, Sessi
 from .coach_contracts import (
     CoachDiagnostic,
     CoachGateCode,
+    configured_attempt_count,
     configured_model_id,
     run_with_stage_deadline,
 )
@@ -201,6 +202,7 @@ def _diagnostic(
     gate_codes: list[CoachGateCode],
     duration_ms: int,
     model_id: str,
+    attempt_count: int = 1,
 ) -> CoachDiagnostic:
     metadata = prompt_metadata(prompt_id)
     return CoachDiagnostic(
@@ -211,7 +213,7 @@ def _diagnostic(
         prompt_version=metadata.prompt_version,
         output_schema_version=metadata.schema_version,
         model_id=model_id,
-        attempt_count=1,
+        attempt_count=attempt_count,
         repair_count=0,
         gate_codes=gate_codes,
         duration_ms=duration_ms,
@@ -319,11 +321,12 @@ class QuestionGeneratorService:
                 gate_codes=["coach_stage_timeout"],
                 duration_ms=0,
                 model_id=configured_model_id(self._client),
+                attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
                 [], initial, None,
                 _final_diagnostic(
-                    outcome="unavailable", attempts=1, repair_count=0,
+                    outcome="unavailable", attempts=initial.attempt_count, repair_count=0,
                     gates=["coach_stage_timeout"],
                 ),
             )
@@ -336,11 +339,12 @@ class QuestionGeneratorService:
                 gate_codes=["coach_stage_failed"],
                 duration_ms=0,
                 model_id=configured_model_id(self._client),
+                attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
                 [], initial, None,
                 _final_diagnostic(
-                    outcome="unavailable", attempts=1, repair_count=0,
+                    outcome="unavailable", attempts=initial.attempt_count, repair_count=0,
                     gates=["coach_stage_failed"],
                 ),
             )
@@ -356,6 +360,7 @@ class QuestionGeneratorService:
             gate_codes=initial_validation.gate_codes,
             duration_ms=duration_ms,
             model_id=configured_model_id(self._client),
+            attempt_count=configured_attempt_count(self._client),
         )
         for gate in initial_validation.gate_codes:
             get_telemetry().record_validation_failure("coach_generation", gate)
@@ -365,7 +370,8 @@ class QuestionGeneratorService:
                 initial,
                 None,
                 _final_diagnostic(
-                    outcome="completed", attempts=1, repair_count=0, gates=[]
+                    outcome="completed", attempts=initial.attempt_count,
+                    repair_count=0, gates=[]
                 ),
             )
 
@@ -407,11 +413,14 @@ class QuestionGeneratorService:
                 gate_codes=["coach_stage_timeout"],
                 duration_ms=0,
                 model_id=configured_model_id(self._client),
+                attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
                 [], initial, repair,
                 _final_diagnostic(
-                    outcome="unavailable", attempts=2, repair_count=1,
+                    outcome="unavailable",
+                    attempts=initial.attempt_count + repair.attempt_count,
+                    repair_count=1,
                     gates=["coach_stage_timeout"],
                 ),
             )
@@ -424,11 +433,14 @@ class QuestionGeneratorService:
                 gate_codes=["coach_stage_failed"],
                 duration_ms=0,
                 model_id=configured_model_id(self._client),
+                attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
                 [], initial, repair,
                 _final_diagnostic(
-                    outcome="unavailable", attempts=2, repair_count=1,
+                    outcome="unavailable",
+                    attempts=initial.attempt_count + repair.attempt_count,
+                    repair_count=1,
                     gates=["coach_stage_failed"],
                 ),
             )
@@ -457,6 +469,7 @@ class QuestionGeneratorService:
             gate_codes=repair_gates,
             duration_ms=repair_duration,
             model_id=configured_model_id(self._client),
+            attempt_count=configured_attempt_count(self._client),
         )
         for gate in repair_gates:
             get_telemetry().record_validation_failure("coach_generation", gate)
@@ -465,7 +478,9 @@ class QuestionGeneratorService:
             result = QuestionGenerationResult(
                 [], initial, repair,
                 _final_diagnostic(
-                    outcome="invalid_output", attempts=2, repair_count=1,
+                    outcome="invalid_output",
+                    attempts=initial.attempt_count + repair.attempt_count,
+                    repair_count=1,
                     gates=final_gates,
                 ),
             )
@@ -476,7 +491,10 @@ class QuestionGeneratorService:
             initial,
             repair,
             _final_diagnostic(
-                outcome="completed", attempts=2, repair_count=1, gates=[]
+                outcome="completed",
+                attempts=initial.attempt_count + repair.attempt_count,
+                repair_count=1,
+                gates=[],
             ),
         )
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+from contextvars import ContextVar
 import json
 import logging
 import re
@@ -30,6 +31,19 @@ _JSON_INSTRUCTION = (
 )
 
 
+def _is_timeout_error(exc: BaseException) -> bool:
+    """Recognise asyncio and provider transport timeout wrappers."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        name = type(current).__name__.casefold()
+        if isinstance(current, TimeoutError) or "timeout" in name or "timedout" in name:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 class LLMClient:
     """Provider-agnostic LLM client using the LLM factory.
 
@@ -45,6 +59,14 @@ class LLMClient:
         temperature: float = 0.3,
     ) -> None:
         self._temperature = temperature
+        self._json_attempt_count: ContextVar[int] = ContextVar(
+            f"llm_json_attempt_count_{id(self)}", default=0
+        )
+
+    @property
+    def last_json_attempt_count(self) -> int:
+        """Provider attempts used by the latest JSON call in this async context."""
+        return self._json_attempt_count.get()
 
     async def complete(
         self,
@@ -92,8 +114,10 @@ class LLMClient:
         no_think = "/no_think\n" if "qwen" in model_name.lower() else ""
         last_error: Exception | None = None
         cleaned = ""
+        self._json_attempt_count.set(0)
         for attempt in range(3):
             try:
+                self._json_attempt_count.set(attempt + 1)
                 llm = get_json_model(schema=schema)
                 messages = [SystemMessage(content=no_think + system + _JSON_INSTRUCTION), HumanMessage(content=user)]
                 t0 = time.monotonic()
@@ -140,6 +164,8 @@ class LLMClient:
                                     pass
                     raise
             except Exception as exc:
+                if _is_timeout_error(exc):
+                    raise
                 last_error = exc
                 logger.warning("JSON parse failed (attempt %d/3): %s", attempt + 1, exc)
                 if attempt == 0:

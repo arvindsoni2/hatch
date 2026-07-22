@@ -11,7 +11,12 @@ from ..config import settings
 from ..observability import get_telemetry, trace_stage
 from ..prompts import render_prompt
 from ..schemas.coach import AnswerEvaluation, SpeechMetrics, VoiceToneResult
-from .coach_contracts import CoachDiagnostic, configured_model_id, run_with_stage_deadline
+from .coach_contracts import (
+    CoachDiagnostic,
+    configured_attempt_count,
+    configured_model_id,
+    run_with_stage_deadline,
+)
 from .jd_analyser import _split_jinja_output
 from .llm_client import LLMClient
 from .prompt_catalog import prompt_contract_block, prompt_metadata, source_contains
@@ -57,7 +62,7 @@ def _diagnostic(
         prompt_version=metadata.prompt_version,
         output_schema_version=metadata.schema_version,
         model_id=configured_model_id(client),
-        attempt_count=1,
+        attempt_count=configured_attempt_count(client),
         repair_count=0,
         gate_codes=gates,
         duration_ms=duration_ms,

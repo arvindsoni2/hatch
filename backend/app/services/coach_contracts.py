@@ -222,3 +222,9 @@ async def run_with_stage_deadline(
 def configured_model_id(client: object) -> str:
     """Return the configured model identifier without inspecting model output."""
     return str(getattr(client, "model", None) or "configured")
+
+
+def configured_attempt_count(client: object) -> int:
+    """Return a task-local provider-attempt count when the client exposes one."""
+    value = getattr(client, "last_json_attempt_count", 1)
+    return value if isinstance(value, int) and value >= 1 else 1

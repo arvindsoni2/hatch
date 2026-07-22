@@ -72,6 +72,28 @@ class TestLLMClient:
             with pytest.raises(ValueError, match="3 attempts"):
                 await client.complete_json("sys", "user")
 
+    @pytest.mark.asyncio
+    async def test_complete_json_does_not_retry_provider_timeout(self):
+        """A provider timeout is terminal; only parse failures are retryable."""
+        from app.services.llm_client import LLMClient
+
+        mock_llm = MagicMock()
+        mock_llm.bind.return_value.ainvoke = AsyncMock(
+            side_effect=TimeoutError("provider timed out")
+        )
+
+        with (
+            patch("app.services.llm_client.get_json_model", return_value=mock_llm),
+            patch("app.services.llm_client.load_profile") as profile,
+        ):
+            profile.return_value.llm.primary_model = "test-model"
+            client = LLMClient()
+            with pytest.raises(TimeoutError, match="provider timed out"):
+                await client.complete_json("sys", "user")
+
+        assert mock_llm.bind.return_value.ainvoke.await_count == 1
+        assert client.last_json_attempt_count == 1
+
     async def test_complete_strips_markdown_fences(self):
         """complete_json() strips ```json ... ``` code fences before parsing."""
         mock_llm = MagicMock()

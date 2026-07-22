@@ -21,7 +21,12 @@ from .llm_client import LLMClient
 from ..agents.tools.context_budgets import FEEDBACK
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import load_master_cv
-from .coach_contracts import CoachDiagnostic, configured_model_id, run_with_stage_deadline
+from .coach_contracts import (
+    CoachDiagnostic,
+    configured_attempt_count,
+    configured_model_id,
+    run_with_stage_deadline,
+)
 from .prompt_catalog import prompt_contract_block, prompt_metadata
 
 logger = logging.getLogger(__name__)
@@ -205,7 +210,7 @@ class FeedbackGeneratorService:
             prompt_version=metadata.prompt_version,
             output_schema_version=metadata.schema_version,
             model_id=configured_model_id(self._client),
-            attempt_count=1,
+            attempt_count=configured_attempt_count(self._client),
             repair_count=0,
             gate_codes=gates,
             duration_ms=int((time.monotonic() - started) * 1000),

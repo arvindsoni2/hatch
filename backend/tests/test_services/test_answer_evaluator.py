@@ -197,6 +197,22 @@ async def test_evaluation_keeps_only_transcript_or_metric_evidence(good_answer) 
 
 
 @pytest.mark.asyncio
+async def test_evaluation_records_provider_parse_attempts(good_answer) -> None:
+    client = MagicMock(model="configured-model")
+    client.last_json_attempt_count = 3
+    client.complete_json = AsyncMock(return_value=GOOD_EVAL_RESPONSE)
+
+    result = await AnswerEvaluatorService(client).evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+    )
+
+    assert result.diagnostic is not None
+    assert result.diagnostic.attempt_count == 3
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_is_unavailable_without_neutral_score(good_answer) -> None:
     client = MagicMock()
     client.complete_json = AsyncMock(side_effect=RuntimeError("offline"))
