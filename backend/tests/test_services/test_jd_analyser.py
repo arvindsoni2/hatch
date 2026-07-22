@@ -100,6 +100,70 @@ async def test_analyse_returns_jd_analysis_result():
 
 
 @pytest.mark.asyncio
+async def test_analyse_clears_sensitive_fields_absent_from_job_text():
+    client = make_mock_client(
+        {
+            **MOCK_JD_ANALYSIS_RESPONSE,
+            "contract_details": {
+                "rate_range": "£900/day",
+                "ir35_status": "Outside IR35",
+                "duration": "12 months",
+                "location": "Manchester",
+            },
+        }
+    )
+    analyser = JDAnalyser(client)
+
+    result = await analyser.analyse(
+        "Senior architect role. Competitive rate. Flexible working."
+    )
+
+    assert result.contract_details.rate_range is None
+    assert result.contract_details.ir35_status is None
+    assert result.contract_details.duration is None
+    assert result.contract_details.location is None
+
+
+@pytest.mark.asyncio
+async def test_analyse_preserves_explicit_sensitive_job_fields():
+    client = make_mock_client(
+        {
+            **MOCK_JD_ANALYSIS_RESPONSE,
+            "contract_details": {
+                "rate_range": "£650/day",
+                "ir35_status": "Outside IR35",
+                "duration": "6 months",
+                "location": "London",
+            },
+        }
+    )
+    analyser = JDAnalyser(client)
+
+    result = await analyser.analyse(
+        "London contract for 6 months, Outside IR35, paying £650/day."
+    )
+
+    assert result.contract_details.rate_range == "£650/day"
+    assert result.contract_details.ir35_status == "Outside IR35"
+    assert result.contract_details.duration == "6 months"
+    assert result.contract_details.location == "London"
+
+
+@pytest.mark.asyncio
+async def test_analyse_prompt_declares_extraction_states_and_version():
+    client = make_mock_client({"role_title": "Engineer"})
+    analyser = JDAnalyser(client)
+
+    await analyser.analyse("Engineer role")
+
+    system, user = client.complete_json.await_args.args[:2]
+    rendered = f"{system}\n{user}"
+    assert "explicit, inferred, or absent" in rendered
+    assert "never infer salary" in rendered.lower()
+    assert '"prompt_id": "jd_analysis"' in rendered
+
+
+@pytest.mark.asyncio
 async def test_analyse_cloud_architect_jd():
     client = make_mock_client({
         **MOCK_JD_ANALYSIS_RESPONSE,

@@ -7,13 +7,22 @@ import json
 import re
 import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
+from app.config import settings
+from app.observability import initialize_telemetry, shutdown_telemetry
+
 from .adapters import BenchmarkLLMClient
-from .case_loader import CaseValidationError, load_case
+from .case_loader import CaseValidationError, load_case, load_suite
 from .contracts import BenchmarkSummary
-from .reporting import write_report
-from .runner import run_benchmark
+from .reporting import write_report, write_staged_report
+from .runner import benchmark_profile, run_benchmark
+from .staged_runner import (
+    ProtectedStateChangedError,
+    run_stage_suite,
+    stage_metrics_from_progress,
+)
 
 _DEFAULT_MODELS = [
     {
@@ -61,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="Validate a benchmark case without inference")
     validate.add_argument("--case", required=True, type=Path)
 
+    validate_suite = commands.add_parser(
+        "validate-suite",
+        help="Validate the synthetic representative suite without inference",
+    )
+    validate_suite.add_argument("--suite", required=True, type=Path)
+
     initialise = commands.add_parser("init-case", help="Create a private benchmark case")
     initialise.add_argument("--case-id", required=True)
     initialise.add_argument("--destination", required=True, type=Path)
@@ -80,7 +95,34 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--case", required=True, type=Path)
     run.add_argument("--models", required=True)
     run.add_argument("--repetitions", type=int, default=3)
+    run.add_argument("--profile", choices=["acceptance-smoke", "extended"], default="extended")
+    run.add_argument("--resume", help="Resume an existing benchmark run ID")
+    run.add_argument(
+        "--retry-timeouts",
+        action="store_true",
+        help="Retry timed-out/interrupted repetitions when resuming",
+    )
     run.add_argument("--output-root", type=Path, default=Path("../data/benchmarks/results"))
+
+    staged = commands.add_parser(
+        "staged-run",
+        help="Run or resume the representative staged model selection",
+    )
+    staged.add_argument("--suite", required=True, type=Path)
+    staged.add_argument("--output-root", type=Path, default=Path("data/benchmarks/results"))
+    staged.add_argument("--resume", help="Resume an existing staged run ID")
+    staged.add_argument(
+        "--defer-stage-c",
+        action="store_true",
+        help="Record benchmark_deferred instead of starting Stage C",
+    )
+    staged.add_argument(
+        "--restart-evidence",
+        action="append",
+        default=[],
+        type=Path,
+        help="Fresh service-restart evidence; provide once per official run",
+    )
 
     report = commands.add_parser("report", help="Regenerate Markdown from summary JSON")
     report.add_argument("--run", required=True, type=Path)
@@ -157,6 +199,22 @@ def _derive_expected_facts(master: dict) -> dict:
     }
 
 
+def _run_command_text(args: argparse.Namespace) -> str:
+    parts = [
+        "python -m benchmarks run",
+        f"--case {args.case}",
+        f"--models {args.models}",
+        f"--repetitions {args.repetitions}",
+        f"--profile {args.profile}",
+    ]
+    if args.resume:
+        parts.append(f"--resume {args.resume}")
+    if args.retry_timeouts:
+        parts.append("--retry-timeouts")
+    parts.append(f"--output-root {args.output_root}")
+    return " ".join(parts)
+
+
 async def _smoke(case_path: Path) -> int:
     case = load_case(case_path)
     failures = 0
@@ -180,6 +238,7 @@ async def _smoke(case_path: Path) -> int:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    started_at = datetime.now(UTC).isoformat()
     case = load_case(args.case)
     model_ids = [item.strip() for item in args.models.split(",") if item.strip()]
     output_root = args.output_root.expanduser().resolve()
@@ -189,15 +248,72 @@ async def _run(args: argparse.Namespace) -> int:
             f"WARNING: output path {output_root} is outside ignored {private_root}",
             file=sys.stderr,
         )
+    profile = benchmark_profile(args.profile)
     summary = await run_benchmark(
         case,
         model_ids=model_ids,
         repetitions=args.repetitions,
         output_root=output_root,
+        profile=profile,
+        resume_run_id=args.resume,
+        retry_timeouts=args.retry_timeouts,
     )
     run_dir = output_root / summary.run_id
     write_report(summary, run_dir / "report.md")
+    ended_at = datetime.now(UTC).isoformat()
+    manifest_path = run_dir / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    commands = list(manifest.get("commands") or [])
+    commands.append(
+        {
+            "command": _run_command_text(args),
+            "exit_code": _exit_code_for_summary(summary, manifest),
+            "started_at": started_at,
+            "ended_at": ended_at,
+        }
+    )
+    manifest["commands"] = commands
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     print(f"Benchmark complete: {run_dir}")
+    return _exit_code_for_summary(summary, manifest)
+
+
+async def _staged_run(args: argparse.Namespace) -> int:
+    suite = load_suite(args.suite)
+    output_root = args.output_root.expanduser().resolve()
+    result = await run_stage_suite(
+        suite,
+        output_root=output_root,
+        resume_run_id=args.resume,
+        defer_stage_c=args.defer_stage_c,
+        restart_evidence=args.restart_evidence,
+    )
+    run_dir = output_root / result.run_id
+    write_staged_report(
+        result,
+        stage_metrics_from_progress(run_dir),
+        run_dir / "report.md",
+        protected_hashes_unchanged=True,
+    )
+    print(
+        f"Staged benchmark {result.run_id}: {result.state}; "
+        f"decision={result.decision.decision}"
+    )
+    return 4 if result.state == "incomplete_interrupted" else 0
+
+
+def _exit_code_for_summary(summary: BenchmarkSummary, manifest: dict | None = None) -> int:
+    if manifest and manifest.get("protected_hashes", {}).get("unchanged") is False:
+        return 5
+    if summary.completion_state == "incomplete_deadline":
+        return 4
+    if summary.completion_state == "incomplete_interrupted":
+        return 4
+    if any(model.failed or model.unavailable or model.timeout or model.interrupted for model in summary.models):
+        return 3
     return 0
 
 
@@ -221,17 +337,43 @@ def main(argv: list[str] | None = None) -> int:
             case = load_case(args.case)
             print(f"Valid case {case.case_id}: {', '.join(item.id for item in case.models)}")
             return 0
+        if args.command == "validate-suite":
+            suite = load_suite(args.suite)
+            print(
+                f"Valid suite {suite.suite_id}: {len(suite.cases)} cases, "
+                f"{len(suite.models)} models"
+            )
+            return 0
         if args.command == "smoke":
-            return asyncio.run(_smoke(args.case))
+            return _run_with_telemetry(_smoke(args.case))
         if args.command == "run":
-            return asyncio.run(_run(args))
+            return _run_with_telemetry(_run(args))
+        if args.command == "staged-run":
+            return _run_with_telemetry(_staged_run(args))
         if args.command == "report":
             return _report(args.run)
-    except (CaseValidationError, OSError, ValueError) as exc:
+    except CaseValidationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    except ProtectedStateChangedError as exc:
+        print(str(exc), file=sys.stderr)
+        return 5
     parser.error(f"unknown command: {args.command}")
     return 2
+
+
+def _run_with_telemetry(operation) -> int:
+    initialize_telemetry(settings)
+    try:
+        return asyncio.run(operation)
+    finally:
+        shutdown_telemetry(deadline_seconds=5.0)
 
 
 if __name__ == "__main__":

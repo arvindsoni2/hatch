@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.job_score import JobScore
 from ..models.job import JobPosting
 from ..models.cost_tracking import CostTracking
+from ..observability import get_telemetry, trace_workflow
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
 from langchain_core.exceptions import OutputParserException
@@ -34,6 +35,10 @@ from .tools.local_scorer import score_locally, LocalScoreResult
 from .tools.profile_loader import load_profile
 from .tools.rate_limiter import get_limiter
 from ..services import resume_store as _resume_store_module
+from ..services.prompt_catalog import (
+    prompt_contract_block,
+    source_contains,
+)
 
 _semantic_module = None
 try:
@@ -64,6 +69,45 @@ class _ScoreResult(BaseModel):
     fit_reasoning: str | None = None
     strengths: list[str] = []
     score_gaps: list[str] = []
+
+
+def _normalise_score_result(
+    result: _ScoreResult,
+    weights: Any,
+    *,
+    candidate_text: str,
+    job_text: str,
+) -> _ScoreResult:
+    """Clamp model components and derive the total deterministically."""
+    values = {
+        field: max(0.0, min(1.0, float(getattr(result, field))))
+        for field in (
+            "skill_match",
+            "experience_match",
+            "rate_match",
+            "location_match",
+        )
+    }
+    overall = sum(
+        values[field] * float(getattr(weights, field))
+        for field in values
+    )
+    keyword_matches = [
+        keyword
+        for keyword in list(getattr(result, "keyword_matches", []))
+        if source_contains(str(keyword), candidate_text)
+        and source_contains(str(keyword), job_text)
+    ]
+    return _ScoreResult(
+        **values,
+        overall_score=round(overall, 4),
+        reasoning=str(getattr(result, "reasoning", "")),
+        keyword_matches=keyword_matches,
+        keyword_misses=list(getattr(result, "keyword_misses", [])),
+        fit_reasoning=getattr(result, "fit_reasoning", None),
+        strengths=list(getattr(result, "strengths", [])),
+        score_gaps=list(getattr(result, "score_gaps", [])),
+    )
 
 
 class ScorerAgent(BaseAgent):
@@ -341,6 +385,7 @@ class ScorerAgent(BaseAgent):
 
     # ── Per-job helpers ───────────────────────────────────────────────
 
+    @trace_workflow("job_scoring")
     async def _score_with_llm_judge(
         self,
         event: dict[str, Any],
@@ -361,16 +406,33 @@ class ScorerAgent(BaseAgent):
         # Triage pre-filter
         await limiter.acquire()
         triage_prompt = self._build_triage_prompt(job, profile)
+        triage_started = time.monotonic()
         try:
             triage: _TriageResult = await asyncio.wait_for(
                 triage_llm.ainvoke(triage_prompt), timeout=120
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(triage_model_name),
+                duration_ms=(time.monotonic() - triage_started) * 1000,
+                input_tokens=estimate_tokens(triage_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise
         triage_tok_in = estimate_tokens(triage_prompt)
         triage_tok_out = estimate_tokens(triage.reason)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(triage_model_name),
+            duration_ms=(time.monotonic() - triage_started) * 1000,
+            input_tokens=triage_tok_in,
+            output_tokens=triage_tok_out,
+        )
         db.add(CostTracking(
             agent_name="scorer",
             job_id=job_id,
@@ -393,12 +455,34 @@ class ScorerAgent(BaseAgent):
                 primary_llm.ainvoke(scoring_prompt), timeout=600
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(primary_model_name),
+                duration_ms=(time.monotonic() - t1) * 1000,
+                input_tokens=estimate_tokens(scoring_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise
+        score = _normalise_score_result(
+            score,
+            profile.scoring.weights,
+            candidate_text=resume_text,
+            job_text=self._job_evidence_text(job),
+        )
         score_ms = int((time.monotonic() - t1) * 1000)
         score_tok_in = estimate_tokens(scoring_prompt)
         score_tok_out = estimate_tokens(score.reasoning)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(primary_model_name),
+            duration_ms=score_ms,
+            input_tokens=score_tok_in,
+            output_tokens=score_tok_out,
+        )
         cost = estimate_cost(primary_model_name, score_tok_in, score_tok_out)
         db.add(CostTracking(
             agent_name="scorer",
@@ -434,6 +518,7 @@ class ScorerAgent(BaseAgent):
         self._log.info("Job %s scored %.2f (LLM-judge) — %s", job_id, score.overall_score, score.reasoning[:80])
         return "scored"
 
+    @trace_workflow("job_scoring")
     async def _score_with_llm(
         self,
         event: dict[str, Any],
@@ -453,16 +538,33 @@ class ScorerAgent(BaseAgent):
         # Triage pre-filter
         await limiter.acquire()
         triage_prompt = self._build_triage_prompt(job, profile)
+        triage_started = time.monotonic()
         try:
             triage: _TriageResult = await asyncio.wait_for(
                 triage_llm.ainvoke(triage_prompt), timeout=120
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(triage_model_name),
+                duration_ms=(time.monotonic() - triage_started) * 1000,
+                input_tokens=estimate_tokens(triage_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise
         triage_tok_in = estimate_tokens(triage_prompt)
         triage_tok_out = estimate_tokens(triage.reason)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(triage_model_name),
+            duration_ms=(time.monotonic() - triage_started) * 1000,
+            input_tokens=triage_tok_in,
+            output_tokens=triage_tok_out,
+        )
         db.add(CostTracking(
             agent_name="scorer",
             job_id=job_id,
@@ -485,12 +587,34 @@ class ScorerAgent(BaseAgent):
                 primary_llm.ainvoke(scoring_prompt), timeout=600
             )
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="job_scoring",
+                provider=str(getattr(profile_cfg, "provider", "configured")),
+                model_id=str(primary_model_name),
+                duration_ms=(time.monotonic() - t1) * 1000,
+                input_tokens=estimate_tokens(scoring_prompt),
+                outcome="failed",
+            )
             if "429" in str(exc) or "rate" in str(exc).lower():
                 limiter.record_429()
             raise
+        score = _normalise_score_result(
+            score,
+            profile.scoring.weights,
+            candidate_text=self._profile_evidence_text(profile),
+            job_text=self._job_evidence_text(job),
+        )
         score_ms = int((time.monotonic() - t1) * 1000)
         score_tok_in = estimate_tokens(scoring_prompt)
         score_tok_out = estimate_tokens(score.reasoning)
+        get_telemetry().record_model_call(
+            workflow="job_scoring",
+            provider=str(getattr(profile_cfg, "provider", "configured")),
+            model_id=str(primary_model_name),
+            duration_ms=score_ms,
+            input_tokens=score_tok_in,
+            output_tokens=score_tok_out,
+        )
         cost = estimate_cost(primary_model_name, score_tok_in, score_tok_out)
         db.add(CostTracking(
             agent_name="scorer",
@@ -611,6 +735,7 @@ class ScorerAgent(BaseAgent):
             f"{loc.city}, {loc.country}" for loc in profile.search.locations
         )
         return (
+            f"{prompt_contract_block('job_scoring_triage')}\n\n"
             f"You are a job relevance filter for a {profile.candidate.title} "
             f"with {profile.candidate.years_experience} years experience.\n\n"
             f"Target roles: {roles}\n"
@@ -620,7 +745,9 @@ class ScorerAgent(BaseAgent):
             f"Location: {job.location or 'unknown'}\n"
             f"Description (first 500 chars): {(job.description or '')[:500]}\n\n"
             "Is this job relevant? Reject: junior roles, unrelated domains, locations "
-            "clearly outside target. Pass: anything plausibly matching the profile."
+            "clearly outside target. Pass: anything plausibly matching the profile. "
+            "Map the reason only to supplied profile or job fields; use unknown rather "
+            "than assuming eligibility, sponsorship, clearance, or working pattern."
         )
 
     def _build_scoring_prompt(self, job: JobPosting, profile: Any) -> str:
@@ -637,6 +764,7 @@ class ScorerAgent(BaseAgent):
         locale_context = self._get_locale_scoring_context(profile)
 
         return (
+            f"{prompt_contract_block('job_scoring_detailed')}\n\n"
             f"Score this job for a candidate with the following profile:\n\n"
             f"Title: {profile.candidate.title}, {profile.candidate.years_experience} years experience\n"
             f"Primary skills: {primary_skills}\n"
@@ -658,7 +786,10 @@ class ScorerAgent(BaseAgent):
             f"overall_score = weighted sum using the weights above.\n\n"
             f"Also return two keyword lists:\n"
             f"- keyword_matches: skills/tools mentioned in the job that the candidate clearly has (max 15)\n"
-            f"- keyword_misses: skills/tools required by the job that the candidate lacks (max 10)"
+            f"- keyword_misses: skills/tools required by the job that the candidate lacks (max 10)\n"
+            f"Every rationale claim must map to a supplied profile or job field. "
+            f"Do not invent candidate metrics or justification. Component scores are "
+            f"validated and the weighted total is recomputed by the application."
         )
 
     def _build_llm_judge_prompt(self, job: JobPosting, profile: Any, resume_text: str) -> str:
@@ -673,6 +804,7 @@ class ScorerAgent(BaseAgent):
         comp = profile.compensation
 
         return (
+            f"{prompt_contract_block('job_scoring_judge')}\n\n"
             f"You are an experienced recruiter assessing candidate-job fit.\n\n"
             f"Here is a candidate's full resume:\n{resume_text}\n\n"
             f"Here is a job description:\nTitle: {job.title}\n"
@@ -694,7 +826,39 @@ class ScorerAgent(BaseAgent):
             f"- strengths: 2-3 specific, concrete strengths this candidate brings\n"
             f"- score_gaps: genuine gaps or risks (empty list if none)\n"
             f"- keyword_matches: skills/tools the candidate clearly has (max 15)\n"
-            f"- keyword_misses: required skills the candidate lacks (max 10)"
+            f"- keyword_misses: required skills the candidate lacks (max 10)\n"
+            f"Every rationale claim must map to resume or job evidence. Do not add "
+            f"candidate metrics or fabricate justification after selecting a score. "
+            f"Component scores are validated and the weighted total is recomputed "
+            f"by the application."
+        )
+
+    @staticmethod
+    def _job_evidence_text(job: JobPosting) -> str:
+        return " ".join(
+            str(value or "")
+            for value in (
+                job.title,
+                job.company,
+                job.location,
+                job.rate_text,
+                job.description,
+            )
+        )
+
+    @staticmethod
+    def _profile_evidence_text(profile: Any) -> str:
+        return " ".join(
+            (
+                str(profile.candidate.title),
+                str(profile.candidate.years_experience),
+                *map(str, profile.skills.primary),
+                *map(str, profile.skills.secondary),
+                *(
+                    str(proof.summary)
+                    for proof in profile.proof_points
+                ),
+            )
         )
 
     def _get_locale_scoring_context(self, profile: Any) -> str:

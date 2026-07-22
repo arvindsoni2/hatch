@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from ..services.resume_design_settings import ResumeDesignSettings
+from ..services.writing_contracts import GenerationProvenance
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +108,10 @@ class TailoredCVResult(BaseModel):
     validation_status: Literal["passed", "repaired", "failed"] = "passed"
     blocking_issues: list[str] = Field(default_factory=list)
     fabrication_warnings: list[str] = Field(default_factory=list)
+    generation_provenance: GenerationProvenance | None = Field(
+        default=None,
+        exclude=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +127,15 @@ class CoverLetterResult(BaseModel):
     word_count: int
     key_keywords_used: list[str] = Field(default_factory=list)
     grounding_issues: list[str] = Field(default_factory=list)
+    generation_provenance: GenerationProvenance | None = Field(
+        default=None,
+        exclude=True,
+    )
+    validation_status: Literal["passed", "repaired", "review_required"] = "passed"
+    validation_issues: list[str] = Field(default_factory=list)
+    attempt_count: int = 1
+    repair_count: int = 0
+    first_pass_word_count: int | None = None
 
 
 # ---------------------------------------------------------------------------

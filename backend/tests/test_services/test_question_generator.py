@@ -140,3 +140,41 @@ async def test_generate_with_jd_text(generator: QuestionGeneratorService) -> Non
         jd_text="Senior Solutions Architect, AWS, Terraform, £700/day, Outside IR35.",
     )
     assert len(result) == 5
+    assert all(question.requirement_id for question in result)
+
+
+@pytest.mark.asyncio
+async def test_questions_are_mapped_deduplicated_and_versioned(mock_claude) -> None:
+    mock_claude.complete_json = AsyncMock(
+        return_value={
+            "questions": [
+                {
+                    "text": "How do you design secure AWS platforms?",
+                    "category": "Technical",
+                    "difficulty": "hard",
+                    "requirement_id": "unknown",
+                },
+                {
+                    "text": " How do you design secure AWS platforms? ",
+                    "category": "General",
+                    "difficulty": "hard",
+                    "requirement_id": "unknown",
+                },
+            ]
+        }
+    )
+    generator = QuestionGeneratorService(mock_claude)
+    result = await generator.generate(
+        config=SessionConfig(question_count=2),
+        company_name="Example",
+        role_title="Cloud Architect",
+        jd_text="Design secure AWS platforms.\nLead architecture reviews.",
+    )
+
+    assert len(result) == 1
+    assert result[0].requirement_id.startswith("requirement-")
+    assert result[0].category == "Technical"
+    system_prompt, user_prompt = mock_claude.complete_json.await_args.args[:2]
+    combined = system_prompt + user_prompt
+    assert '"prompt_id": "question_generation"' in combined
+    assert "Do not imply that the candidate has experience" in combined

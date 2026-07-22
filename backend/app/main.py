@@ -54,6 +54,11 @@ from .services.job_service import JobService
 from .services.email_generator import EmailGenerator
 from .services.reminder_service import ReminderService
 from .services.ai_setup import feature_enabled, load_runtime
+from .observability import (
+    initialize_telemetry,
+    instrument_fastapi_app,
+    shutdown_telemetry,
+)
 
 # ──────────────────────── Logging Setup ────────────────────────
 
@@ -158,15 +163,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.debug("Context budget check skipped (profile not loaded or non-llamacpp).")
 
-    yield  # Application running
-
-    # Shutdown
-    logger.info("JobPilot shutting down...")
-    if orchestrator is not None:
-        orchestrator.stop()
-    scheduler.shutdown(wait=False)
-    await scheduler_session.close()
-    logger.info("Scheduler stopped. Goodbye.")
+    try:
+        yield  # Application running
+    finally:
+        # Shutdown
+        logger.info("JobPilot shutting down...")
+        if orchestrator is not None:
+            orchestrator.stop()
+        scheduler.shutdown(wait=False)
+        await scheduler_session.close()
+        shutdown_telemetry(deadline_seconds=5.0)
+        logger.info("Scheduler stopped. Goodbye.")
 
 
 # ──────────────────────── App Factory ────────────────────────
@@ -380,6 +387,7 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI instance.
     """
+    telemetry = initialize_telemetry(settings)
     _debug = settings.LOG_LEVEL.upper() == "DEBUG"
     app = FastAPI(
         title="Hatch API",
@@ -389,6 +397,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if _debug else None,
         lifespan=lifespan,
     )
+    instrument_fastapi_app(app, telemetry)
     app.state.app_lock_session_factory = AsyncSessionLocal
 
     # CORS — origins from ALLOWED_ORIGINS env var (comma-separated), defaults to localhost

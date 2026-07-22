@@ -1,15 +1,20 @@
 """Question Generator Service — generates weighted interview questions via Claude."""
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
+import time
 from typing import Any
 
 from ..prompts import render_prompt
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import CompanyResearchResponse, QuestionPresentation, SessionConfig
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import QUESTION_GEN
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import load_master_cv
+from .prompt_catalog import prompt_contract_block
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,7 @@ class QuestionGeneratorService:
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
 
+    @trace_stage("coach_generation", "generate_initial")
     async def generate(
         self,
         config: SessionConfig,
@@ -73,7 +79,13 @@ class QuestionGeneratorService:
             List of QuestionPresentation objects ordered for the session.
         """
         candidate_summary = _load_candidate_summary()
-        research_dict = company_research.model_dump() if company_research else {}
+        research_dict = (
+            company_research.model_dump(mode="json")
+            if company_research
+            and company_research.verification_state != "not_verified"
+            else {}
+        )
+        requirements = _build_requirements(jd_text or role_title)
 
         system_prompt, user_prompt = _split_jinja_output(
             render_prompt(
@@ -85,10 +97,33 @@ class QuestionGeneratorService:
                 jd_text=jd_text or "",
                 candidate_summary=candidate_summary,
                 difficulty=config.difficulty,
+                requirements=requirements,
+                prompt_contract=prompt_contract_block("question_generation"),
             )
         )
 
-        raw = await self._client.complete_json(system_prompt, user_prompt, max_tokens=QUESTION_GEN.max_output)
+        started = time.monotonic()
+        try:
+            raw = await self._client.complete_json(
+                system_prompt,
+                user_prompt,
+                max_tokens=QUESTION_GEN.max_output,
+            )
+        except Exception:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            raise
+        get_telemetry().record_model_call(
+            workflow="coach_generation",
+            provider=type(self._client).__name__,
+            model_id=str(getattr(self._client, "model", "configured")),
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
 
         # Handle both bare array and {"questions": [...]} wrapper
         if isinstance(raw, list):
@@ -116,28 +151,71 @@ class QuestionGeneratorService:
                 "The model may be unavailable or returned an unexpected JSON structure."
             )
 
-        return _parse_questions(questions_raw, config.question_count)
+        return _parse_questions(
+            questions_raw,
+            config.question_count,
+            tuple(requirement["requirement_id"] for requirement in requirements),
+        )
+
+
+def _build_requirements(source: str) -> list[dict[str, str]]:
+    """Build stable requirement IDs from source JD lines or sentences."""
+    candidates = [
+        value.strip(" \t-*•")
+        for value in re.split(r"[\n.!?]+", source)
+        if value.strip(" \t-*•")
+    ][:12]
+    if not candidates:
+        candidates = ["Role requirements"]
+    return [
+        {
+            "requirement_id": (
+                "requirement-"
+                + hashlib.sha256(text.casefold().encode("utf-8")).hexdigest()[:12]
+            ),
+            "text": text,
+        }
+        for text in candidates
+    ]
 
 
 def _parse_questions(
     raw_list: list[dict[str, Any]],
     expected_count: int,
+    requirement_ids: tuple[str, ...],
 ) -> list[QuestionPresentation]:
     """Parse and validate raw question list from Claude."""
     questions: list[QuestionPresentation] = []
-    total = max(len(raw_list), expected_count)
+    seen_questions: set[str] = set()
+    allowed_categories = set(_CATEGORY_WEIGHTS)
 
     for i, q in enumerate(raw_list):
+        if not isinstance(q, dict):
+            continue
+        text = str(q.get("text") or "").strip()
+        normalized_text = " ".join(
+            re.findall(r"[a-z0-9]+", text.casefold())
+        )
+        if not normalized_text or normalized_text in seen_questions:
+            continue
+        seen_questions.add(normalized_text)
+        requirement_id = q.get("requirement_id")
+        if requirement_id not in requirement_ids:
+            requirement_id = requirement_ids[i % len(requirement_ids)]
+        category = q.get("category", "Technical")
+        if category not in allowed_categories:
+            category = "Technical"
         try:
             questions.append(
                 QuestionPresentation(
-                    id=f"q_{i + 1}",  # temporary ID — replaced by DB ID after persistence
-                    text=q.get("text", ""),
-                    category=q.get("category", "General"),
+                    id=f"q_{len(questions) + 1}",
+                    text=text,
+                    category=category,
                     difficulty=q.get("difficulty", "medium"),
                     context=q.get("context"),
-                    num=i + 1,
-                    total=total,
+                    requirement_id=requirement_id,
+                    num=len(questions) + 1,
+                    total=expected_count,
                 )
             )
         except Exception as exc:

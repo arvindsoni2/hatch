@@ -1,7 +1,7 @@
 """G-2 tests — cv_parser grounding checks drop hallucinated content."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -31,6 +31,16 @@ class TestSubstringPresent:
 
 
 class TestParseCVText:
+    @pytest.mark.asyncio
+    async def test_malformed_top_level_shape_falls_back_safely(self):
+        mock_client = AsyncMock()
+        mock_client.complete_json = AsyncMock(return_value=["not", "a", "mapping"])
+
+        result = await parse_cv_text("Jane Smith", mock_client)
+
+        assert result.parsed["experience"] == []
+        assert any("top-level" in warning for warning in result.warnings)
+
     @pytest.mark.asyncio
     async def test_drops_company_not_in_source(self):
         """Grounding check clears company name not present in source text."""
@@ -114,3 +124,83 @@ class TestParseCVText:
         assert isinstance(result, CVParseResult)
         assert isinstance(result.parsed, dict)
         assert any("failed" in w.lower() for w in result.warnings)
+
+    @pytest.mark.asyncio
+    async def test_clears_every_unsupported_imported_fact(self):
+        source_text = (
+            "Jane Smith\njane@example.com\nProgramme Manager at Utility Corp\n"
+            "2018–2024\nDelivered AWS migration reducing incidents by 25%.\n"
+            "PMP\nUniversity of Leeds"
+        )
+        raw = {
+            "personal": {
+                "full_name": "Jane Smith",
+                "email": "jane@example.com",
+                "phone": "01234 567890",
+                "location": "London",
+                "linkedin": "linkedin.com/in/invented",
+                "title": "Director",
+            },
+            "summary_variants": {
+                "default": "Director with 30 years of global leadership."
+            },
+            "experience": [
+                {
+                    "role": "Programme Manager",
+                    "company": "Utility Corp",
+                    "period": "2019–2025",
+                    "location": "Manchester",
+                    "achievements": [
+                        {"text": "Reduced incidents by 40%."},
+                        {"text": "Delivered AWS migration reducing incidents by 25%."},
+                    ],
+                }
+            ],
+            "skills": [
+                {"category": "Cloud", "items": ["AWS", "Azure"]}
+            ],
+            "certifications": ["PMP", "CISSP"],
+            "education": [
+                {
+                    "qualification": "MBA",
+                    "institution": "University of Leeds",
+                    "year": "2017",
+                }
+            ],
+        }
+        mock_client = AsyncMock()
+        mock_client.complete_json = AsyncMock(return_value=raw)
+
+        result = await parse_cv_text(source_text, mock_client)
+
+        assert result.parsed["personal"]["phone"] == ""
+        assert result.parsed["personal"]["linkedin"] == ""
+        assert result.parsed["personal"]["title"] == ""
+        assert result.parsed["summary_variants"]["default"] == ""
+        assert result.parsed["experience"][0]["period"] == ""
+        assert result.parsed["experience"][0]["location"] == ""
+        assert result.parsed["experience"][0]["achievements"] == [
+            {"text": "Delivered AWS migration reducing incidents by 25%."}
+        ]
+        assert result.parsed["skills"] == [
+            {"category": "", "items": ["AWS"]}
+        ]
+        assert result.parsed["certifications"] == ["PMP"]
+        assert result.parsed["education"] == [
+            {"qualification": "", "institution": "University of Leeds", "year": ""}
+        ]
+        assert len(result.warnings) >= 8
+
+    @pytest.mark.asyncio
+    async def test_prompt_includes_version_and_extract_vs_normalize_rules(self):
+        source_text = "Jane Smith"
+        mock_client = AsyncMock()
+        mock_client.complete_json = AsyncMock(return_value={})
+
+        await parse_cv_text(source_text, mock_client)
+
+        system_prompt, user_prompt = mock_client.complete_json.await_args.args[:2]
+        combined = system_prompt + user_prompt
+        assert '"prompt_id": "cv_parsing"' in combined
+        assert "extract; do not infer or normalise" in combined.lower()
+        assert source_text in combined

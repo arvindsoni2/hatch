@@ -4,6 +4,8 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
+import time
+from copy import deepcopy
 from typing import Any
 from urllib.parse import urlparse
 
@@ -12,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..agents.tools.context_budgets import JD_ANALYSIS
 from ..prompts import render_prompt
+from ..observability import get_telemetry
 from ..schemas.tailor import ATSKeywords, JDAnalysisResult, SkillMatchResult
 from .llm_client import LLMClient
+from .prompt_catalog import prompt_contract_block, source_contains
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +86,41 @@ class JDAnalyser:
             job_description = await self._fetch_jd(job_url)
 
         system_prompt, user_prompt = _split_jinja_output(
-            render_prompt("jd_analysis.j2", job_description=job_description)
+            render_prompt(
+                "jd_analysis.j2",
+                job_description=job_description,
+                prompt_contract=prompt_contract_block("jd_analysis"),
+            )
         )
-        raw: dict[str, Any] = await self._client.complete_json(
-            system_prompt,
-            user_prompt,
-            max_tokens=JD_ANALYSIS.max_output,
+        telemetry = get_telemetry()
+        workflow = telemetry.current_workflow("job_discovery_import")
+        started = time.monotonic()
+        with telemetry.stage_span(workflow, "prepare_input"):
+            try:
+                raw: dict[str, Any] = await self._client.complete_json(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=JD_ANALYSIS.max_output,
+                )
+            except Exception:
+                telemetry.record_model_call(
+                    workflow=workflow,
+                    provider=type(self._client).__name__,
+                    model_id=str(getattr(self._client, "model", "configured")),
+                    duration_ms=(time.monotonic() - started) * 1000,
+                    outcome="failed",
+                )
+                raise
+            telemetry.record_model_call(
+                workflow=workflow,
+                provider=type(self._client).__name__,
+                model_id=str(getattr(self._client, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+        return _parse_jd_analysis(
+            _ground_jd_analysis(raw, job_description),
+            len(job_description),
         )
-        return _parse_jd_analysis(raw, len(job_description))
 
     async def analyse_from_job_posting(self, job_id: str, db: AsyncSession) -> JDAnalysisResult:
         """Load a JobPosting from DB and analyse its description.
@@ -301,3 +332,48 @@ def _parse_jd_analysis(raw: dict[str, Any], text_length: int) -> JDAnalysisResul
         tone_analysis=tone,
         raw_text_length=text_length,
     )
+
+
+def _ground_jd_analysis(
+    raw: dict[str, Any],
+    job_description: str,
+) -> dict[str, Any]:
+    """Clear sensitive scalar fields that are not explicit in the JD."""
+    grounded = deepcopy(raw)
+    contract = grounded.get("contract_details")
+    if isinstance(contract, dict):
+        for field in (
+            "contract_type",
+            "rate_range",
+            "ir35_status",
+            "duration",
+            "location",
+            "remote_policy",
+            "start_date",
+        ):
+            value = contract.get(field)
+            if value is not None and not source_contains(
+                str(value),
+                job_description,
+            ):
+                contract[field] = None
+
+    company = grounded.get("company_context")
+    if isinstance(company, dict):
+        for field in ("company_name", "size"):
+            value = company.get(field)
+            if value is not None and not source_contains(
+                str(value),
+                job_description,
+            ):
+                company[field] = None
+
+    requirements = grounded.get("requirements")
+    if isinstance(requirements, dict):
+        years = requirements.get("years_experience")
+        if years is not None and not source_contains(
+            str(years),
+            job_description,
+        ):
+            requirements["years_experience"] = None
+    return grounded

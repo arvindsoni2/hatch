@@ -1,0 +1,26 @@
+{
+  "skill_id": "cover-letter",
+  "skill_version": "1.0.0",
+  "input_schema": "CoverLetterWorkflowInput",
+  "output_schema": "CoverLetterResult",
+  "preconditions": [
+    "approved_evidence_available",
+    "job_analysis_available"
+  ],
+  "validators": [
+    "content_plan_ids",
+    "required_fields",
+    "placeholder",
+    "numeric_fidelity",
+    "body_length"
+  ],
+  "allowed_repair_actions": [
+    "unsupported_numeric_token",
+    "mutated_numeric_token",
+    "missing_required_fields",
+    "under_length",
+    "over_length"
+  ],
+  "maximum_attempts": 3,
+  "safe_failure_state": "review_required"
+}

@@ -77,6 +77,7 @@ class QuestionPresentation(BaseModel):
     category: str
     difficulty: str
     context: str | None = None
+    requirement_id: str | None = None
     num: int
     total: int
 
@@ -132,6 +133,7 @@ class AnswerEvaluation(BaseModel):
     feedback: str = ""
     strengths: list[str] = Field(default_factory=list)
     improvements: list[str] = Field(default_factory=list)
+    evidence_references: list[str] = Field(default_factory=list)
     follow_up_question: str | None = None
     speech_coaching: list[str] = Field(default_factory=list)
     rubric: SessionRubric | None = None
@@ -218,6 +220,15 @@ class SessionListItem(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class ResearchSource(BaseModel):
+    """A retrieved public source used to support company research facts."""
+
+    source_id: str
+    title: str
+    url: str
+    retrieved_at: datetime
+
+
 class CompanyResearchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -228,6 +239,13 @@ class CompanyResearchResponse(BaseModel):
     recent_news: list[str] = Field(default_factory=list)
     key_products: list[str] = Field(default_factory=list)
     tech_stack_signals: list[str] = Field(default_factory=list)
+    sources: list[ResearchSource] = Field(default_factory=list)
+    retrieved_at: datetime | None = None
+    verification_state: Literal[
+        "verified",
+        "partially_verified",
+        "not_verified",
+    ] = "not_verified"
 
 
 # ---------------------------------------------------------------------------

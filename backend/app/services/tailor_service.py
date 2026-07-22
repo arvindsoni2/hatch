@@ -14,11 +14,13 @@ from ..repositories.document_repository import DocumentRepository
 from ..schemas.document import GeneratedDocumentRead
 from ..schemas.tailor import (
     ATSScoreResult,
+    CoverLetterResult,
     JDAnalysisResult,
     JDAnalysisResponse,
     TailoredCVResult,
     TailorResultBundle,
 )
+from ..observability import get_telemetry, trace_workflow
 from .ats_optimiser import ATSOptimiser
 from .cl_generator import CoverLetterGenerator, select_tone_variant
 from .llm_client import LLMClient
@@ -27,6 +29,7 @@ from .docx_cl_builder import DocxCLBuilder
 from .docx_cv_builder import DocxCVBuilder
 from .jd_analyser import JDAnalyser
 from .master_cv_store import load_master_cv
+from .writing_contracts import GenerationProvenance
 from ..agents.tools.profile_loader import load_profile
 
 logger = logging.getLogger(__name__)
@@ -41,6 +44,35 @@ def _load_master_cv() -> dict[str, Any]:
 
 def _load_personal() -> dict[str, Any]:
     return load_master_cv().get("personal", {})
+
+
+def _tailoring_params(
+    values: dict[str, Any],
+    generated: Any,
+) -> str:
+    """Serialize existing tailoring parameters with optional internal provenance."""
+    provenance = getattr(generated, "generation_provenance", None)
+    if isinstance(provenance, GenerationProvenance):
+        values = {
+            **values,
+            "generation_provenance": provenance.to_dict(),
+        }
+    return json.dumps(values)
+
+
+def _cover_letter_failure_detail(
+    result: CoverLetterResult,
+) -> dict[str, Any] | None:
+    """Return safe validation metadata when a draft must be withheld."""
+    ready = result.validation_status in {"passed", "repaired"}
+    if ready and not result.grounding_issues:
+        return None
+    return {
+        "error": "Cover letter failed validation — document withheld.",
+        "final_state": result.validation_status,
+        "attempt_count": result.attempt_count,
+        "issues": result.validation_issues or result.grounding_issues,
+    }
 
 
 def _master_cv_text(master: dict[str, Any]) -> str:
@@ -275,6 +307,7 @@ class TailorService:
             skill_match=skill_match,
         )
 
+    @trace_workflow("cv_tailoring")
     async def generate_cv(
         self,
         application_id: str,
@@ -319,30 +352,46 @@ class TailorService:
 
         personal = _load_personal()
         version = await doc_repo.get_latest_version(application_id, "cv") + 1
-        file_path, file_size = self._cv_builder.build(
-            tailored_cv, analysis, personal, application_id, version, variant, template_id
-        )
+        with get_telemetry().stage_span("cv_tailoring", "render_document"):
+            file_path, file_size = self._cv_builder.build(
+                tailored_cv,
+                analysis,
+                personal,
+                application_id,
+                version,
+                variant,
+                template_id,
+            )
 
-        doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cv",
-            version=version,
-            file_path=file_path,
-            file_size_bytes=file_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({
-                "variant": variant,
-                "custom_instructions": custom_instructions,
-                "template_id": template_id or "ats_classic",
-            }),
-            ats_score=ats_result.overall_score,
-            ats_details=json.dumps(ats_result.model_dump()),
-            variant_label=variant,
-            status="generated",
-        )
-        await db.commit()
+        with get_telemetry().stage_span(
+            "cv_tailoring",
+            "persist_document",
+        ) as span:
+            doc = await doc_repo.create(
+                application_id=application_id,
+                document_type="cv",
+                version=version,
+                file_path=file_path,
+                file_size_bytes=file_size,
+                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                tailoring_params=_tailoring_params(
+                    {
+                        "variant": variant,
+                        "custom_instructions": custom_instructions,
+                        "template_id": template_id or "ats_classic",
+                    },
+                    tailored_cv,
+                ),
+                ats_score=ats_result.overall_score,
+                ats_details=json.dumps(ats_result.model_dump()),
+                variant_label=variant,
+                status="generated",
+            )
+            await db.commit()
+            span.set_attribute("hatch.ai.document.id", str(doc.id))
         return doc
 
+    @trace_workflow("cover_letter_generation")
     async def generate_cover_letter(
         self,
         application_id: str,
@@ -367,34 +416,53 @@ class TailorService:
 
         personal = _load_personal()
         cl_variant = select_tone_variant(analysis)
-        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
-        if cover_letter.grounding_issues:
+        cover_letter = await self._cl_generator.generate(
+            analysis, tailored_cv, personal, cl_variant, jd_text=jd_text
+        )
+        failure_detail = _cover_letter_failure_detail(cover_letter)
+        if failure_detail:
             raise HTTPException(
                 status_code=422,
-                detail={
-                    "error": "Cover letter failed grounding checks — document withheld.",
-                    "issues": cover_letter.grounding_issues,
-                    "hint": "Regenerate with grounded evidence or edit the master CV.",
-                },
+                detail=failure_detail,
             )
 
         version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
-        file_path, file_size = self._cl_builder.build(
-            cover_letter, analysis, personal, application_id, version, variant
-        )
+        with get_telemetry().stage_span(
+            "cover_letter_generation",
+            "render_document",
+        ):
+            file_path, file_size = self._cl_generator.render_document(
+                cover_letter,
+                lambda: self._cl_builder.build(
+                    cover_letter,
+                    analysis,
+                    personal,
+                    application_id,
+                    version,
+                    variant,
+                ),
+            )
 
-        doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cover_letter",
-            version=version,
-            file_path=file_path,
-            file_size_bytes=file_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
-            variant_label=variant,
-            status="generated",
-        )
-        await db.commit()
+        with get_telemetry().stage_span(
+            "cover_letter_generation",
+            "persist_document",
+        ) as span:
+            doc = await doc_repo.create(
+                application_id=application_id,
+                document_type="cover_letter",
+                version=version,
+                file_path=file_path,
+                file_size_bytes=file_size,
+                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                tailoring_params=_tailoring_params(
+                    {"variant": variant},
+                    cover_letter,
+                ),
+                variant_label=variant,
+                status="generated",
+            )
+            await db.commit()
+            span.set_attribute("hatch.ai.document.id", str(doc.id))
         return doc
 
     async def _create_manual_application(
@@ -515,103 +583,190 @@ class TailorService:
                     jd_text = _job.description or _job.title or ""
                     if not job_url:
                         job_url = _job.url
-        analysis = await self._jd_analyser.analyse(jd_text, job_url)
-        logger.info("Tailor package %s: JD analysis complete", application_id)
-        master_cv = _load_master_cv()
-        skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
-
+        telemetry = get_telemetry()
         doc_repo = DocumentRepository(db)
-        tailored_cv, ats_result = await self._tailor_and_score(
-            analysis, variant, custom_instructions
-        )
-        logger.info(
-            "Tailor package %s: CV content and ATS score complete (%d)",
-            application_id,
-            ats_result.overall_score,
-        )
-        personal = _load_personal()
+        with telemetry.workflow_span("cv_tailoring") as cv_workflow_span:
+            analysis = await self._jd_analyser.analyse(jd_text, job_url)
+            logger.info("Tailor package %s: JD analysis complete", application_id)
+            master_cv = _load_master_cv()
+            skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
 
-        cv_version = await doc_repo.get_latest_version(application_id, "cv") + 1
-        cv_path, cv_size = self._cv_builder.build(
-            tailored_cv, analysis, personal, application_id, cv_version, variant, template_id,
-            design_settings,
-        )
-        cv_doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cv",
-            version=cv_version,
-            file_path=cv_path,
-            file_size_bytes=cv_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({
-                "variant": variant,
-                "custom_instructions": custom_instructions,
-                "template_id": template_id or "ats_classic",
-                "design_settings": design_settings,
-            }),
-            ats_score=ats_result.overall_score,
-            ats_details=json.dumps(ats_result.model_dump()),
-            variant_label=variant,
-            status="generated",
-        )
-        logger.info("Tailor package %s: CV document created", application_id)
-
-        cl_variant = select_tone_variant(analysis)
-        cover_letter = await self._cl_generator.generate(
-            analysis, tailored_cv, personal, cl_variant
-        )
-        if cover_letter.grounding_issues:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error": "Cover letter failed grounding checks — document withheld.",
-                    "issues": cover_letter.grounding_issues,
-                    "hint": "Regenerate with grounded evidence or edit the master CV.",
-                },
+            tailored_cv, ats_result = await self._tailor_and_score(
+                analysis, variant, custom_instructions
             )
-        logger.info("Tailor package %s: cover letter content complete", application_id)
-        cl_version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
-        cl_path, cl_size = self._cl_builder.build(
-            cover_letter, analysis, personal, application_id, cl_version, variant,
-            design_settings,
-        )
-        cl_doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cover_letter",
-            version=cl_version,
-            file_path=cl_path,
-            file_size_bytes=cl_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({
-                "variant": variant,
-                "template_id": template_id,
-                "design_settings": design_settings,
-                "regeneration_instruction": custom_instructions,
-            }),
-            variant_label=variant,
-            status="generated",
-        )
-        from .tailoring_review import build_review, save_review  # noqa: PLC0415
-        review = build_review(
-            application_id=application_id,
-            analysis=analysis,
-            skill_match=skill_match,
-            ats=ats_result,
-            tailored=tailored_cv,
-            cv_document_id=cv_doc.id,
-            cl_document_id=cl_doc.id,
-            template_id=template_id,
-            variant=variant,
-        )
-        from .cv_quality_gate import pre_generation_quality, post_generation_quality  # noqa: PLC0415
-        review["quality_gate"] = {
-            "pre_generation": pre_generation_quality(analysis, master_cv, template_id),
-            "post_generation": post_generation_quality(cv_path, tailored_cv, analysis, master_cv),
-            "document_id": cv_doc.id,
-            "pack_version": cv_version,
-        }
-        await save_review(db, review)
-        await db.commit()
+            logger.info(
+                "Tailor package %s: CV content and ATS score complete (%d)",
+                application_id,
+                ats_result.overall_score,
+            )
+            personal = _load_personal()
+
+            cv_version = await doc_repo.get_latest_version(application_id, "cv") + 1
+            with telemetry.stage_span("cv_tailoring", "render_document"):
+                cv_path, cv_size = self._cv_builder.build(
+                    tailored_cv,
+                    analysis,
+                    personal,
+                    application_id,
+                    cv_version,
+                    variant,
+                    template_id,
+                    design_settings,
+                )
+            cv_doc = await doc_repo.create(
+                application_id=application_id,
+                document_type="cv",
+                version=cv_version,
+                file_path=cv_path,
+                file_size_bytes=cv_size,
+                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                tailoring_params=_tailoring_params(
+                    {
+                        "variant": variant,
+                        "custom_instructions": custom_instructions,
+                        "template_id": template_id or "ats_classic",
+                        "design_settings": design_settings,
+                    },
+                    tailored_cv,
+                ),
+                ats_score=ats_result.overall_score,
+                ats_details=json.dumps(ats_result.model_dump()),
+                variant_label=variant,
+                status="generated",
+            )
+            logger.info(
+                "Tailor package %s: CV document created",
+                application_id,
+            )
+            with telemetry.workflow_span(
+                "cover_letter_generation"
+            ) as cl_workflow_span:
+                cl_variant = select_tone_variant(analysis)
+                cover_letter = await self._cl_generator.generate(
+                    analysis,
+                    tailored_cv,
+                    personal,
+                    cl_variant,
+                    jd_text=jd_text,
+                )
+                failure_detail = _cover_letter_failure_detail(cover_letter)
+                if failure_detail:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=failure_detail,
+                    )
+                logger.info(
+                    "Tailor package %s: cover letter content complete",
+                    application_id,
+                )
+                cl_version = (
+                    await doc_repo.get_latest_version(
+                        application_id,
+                        "cover_letter",
+                    )
+                    + 1
+                )
+                with telemetry.stage_span(
+                    "cover_letter_generation",
+                    "render_document",
+                ):
+                    cl_path, cl_size = self._cl_generator.render_document(
+                        cover_letter,
+                        lambda: self._cl_builder.build(
+                            cover_letter,
+                            analysis,
+                            personal,
+                            application_id,
+                            cl_version,
+                            variant,
+                            design_settings,
+                        ),
+                    )
+                with telemetry.stage_span(
+                    "cv_tailoring",
+                    "persist_document",
+                ) as cv_persist_span:
+                    with telemetry.stage_span(
+                        "cover_letter_generation",
+                        "persist_document",
+                    ) as cl_persist_span:
+                        cl_doc = await doc_repo.create(
+                            application_id=application_id,
+                            document_type="cover_letter",
+                            version=cl_version,
+                            file_path=cl_path,
+                            file_size_bytes=cl_size,
+                            jd_analysis_snapshot=json.dumps(
+                                analysis.model_dump()
+                            ),
+                            tailoring_params=_tailoring_params(
+                                {
+                                    "variant": variant,
+                                    "template_id": template_id,
+                                    "design_settings": design_settings,
+                                    "regeneration_instruction": (
+                                        custom_instructions
+                                    ),
+                                },
+                                cover_letter,
+                            ),
+                            variant_label=variant,
+                            status="generated",
+                        )
+                        from .tailoring_review import (  # noqa: PLC0415
+                            build_review,
+                            save_review,
+                        )
+
+                        review = build_review(
+                            application_id=application_id,
+                            analysis=analysis,
+                            skill_match=skill_match,
+                            ats=ats_result,
+                            tailored=tailored_cv,
+                            cv_document_id=cv_doc.id,
+                            cl_document_id=cl_doc.id,
+                            template_id=template_id,
+                            variant=variant,
+                        )
+                        from .cv_quality_gate import (  # noqa: PLC0415
+                            post_generation_quality,
+                            pre_generation_quality,
+                        )
+
+                        review["quality_gate"] = {
+                            "pre_generation": pre_generation_quality(
+                                analysis,
+                                master_cv,
+                                template_id,
+                            ),
+                            "post_generation": post_generation_quality(
+                                cv_path,
+                                tailored_cv,
+                                analysis,
+                                master_cv,
+                            ),
+                            "document_id": cv_doc.id,
+                            "pack_version": cv_version,
+                        }
+                        await save_review(db, review)
+                        await db.commit()
+                        cv_workflow_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cv_doc.id),
+                        )
+                        cl_workflow_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cl_doc.id),
+                        )
+                        cv_persist_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cv_doc.id),
+                        )
+                        cl_persist_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cl_doc.id),
+                        )
         logger.info("Tailor package %s: package committed", application_id)
 
         return TailorResultBundle(
@@ -641,73 +796,154 @@ class TailorService:
             payload = json.dumps({"stage": stage, "pct": pct, "message": message})
             return f"data: {payload}\n\n"
 
-        yield sse("analysing_jd", 10, "Analysing job description...")
-        analysis = await self._jd_analyser.analyse(jd_text)
-
-        yield sse("skill_match", 25, "Computing skill match...")
-        master_cv = _load_master_cv()
-        self._jd_analyser.compute_skill_match(analysis, master_cv)
-
-        yield sse("tailoring_cv", 40, "Tailoring CV with Claude...")
-        try:
-            tailored_cv, ats_result = await self._tailor_and_score(analysis, variant)
-        except HTTPException as exc:
-            yield sse("error", 0, json.dumps(exc.detail))
-            return
-
-        yield sse("scoring_ats", 55, "Running ATS scoring and grounded improvements...")
-
-        yield sse("generating_cl", 70, "Generating cover letter...")
-        personal = _load_personal()
-        cl_variant = select_tone_variant(analysis)
-        cover_letter = await self._cl_generator.generate(analysis, tailored_cv, personal, cl_variant)
-        if cover_letter.grounding_issues:
-            yield sse(
-                "error",
-                0,
-                json.dumps({
-                    "error": "Cover letter failed grounding checks — document withheld.",
-                    "issues": cover_letter.grounding_issues,
-                }),
-            )
-            return
-
-        yield sse("building_docx", 85, "Building .docx documents...")
+        telemetry = get_telemetry()
         doc_repo = DocumentRepository(db)
+        yield sse("analysing_jd", 10, "Analysing job description...")
+        with telemetry.workflow_span("cv_tailoring") as cv_workflow_span:
+            analysis = await self._jd_analyser.analyse(jd_text)
 
-        cv_version = await doc_repo.get_latest_version(application_id, "cv") + 1
-        cv_path, cv_size = self._cv_builder.build(
-            tailored_cv, analysis, personal, application_id, cv_version, variant
-        )
-        cv_doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cv",
-            version=cv_version,
-            file_path=cv_path,
-            file_size_bytes=cv_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
-            ats_score=ats_result.overall_score,
-            ats_details=json.dumps(ats_result.model_dump()),
-            variant_label=variant,
-        )
+            yield sse("skill_match", 25, "Computing skill match...")
+            master_cv = _load_master_cv()
+            self._jd_analyser.compute_skill_match(analysis, master_cv)
 
-        cl_version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
-        cl_path, cl_size = self._cl_builder.build(
-            cover_letter, analysis, personal, application_id, cl_version, variant
-        )
-        cl_doc = await doc_repo.create(
-            application_id=application_id,
-            document_type="cover_letter",
-            version=cl_version,
-            file_path=cl_path,
-            file_size_bytes=cl_size,
-            jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-            tailoring_params=json.dumps({"variant": variant}),
-            variant_label=variant,
-        )
+            yield sse("tailoring_cv", 40, "Tailoring CV with Claude...")
+            try:
+                tailored_cv, ats_result = await self._tailor_and_score(
+                    analysis,
+                    variant,
+                )
+            except HTTPException as exc:
+                telemetry.mark_current_error(
+                    "cv_tailoring_failed",
+                    "workflow_error",
+                )
+                yield sse("error", 0, json.dumps(exc.detail))
+                return
 
-        await db.commit()
+            yield sse(
+                "scoring_ats",
+                55,
+                "Running ATS scoring and grounded improvements...",
+            )
+            personal = _load_personal()
+            yield sse("generating_cl", 70, "Generating cover letter...")
+            with telemetry.workflow_span(
+                "cover_letter_generation"
+            ) as cl_workflow_span:
+                cl_variant = select_tone_variant(analysis)
+                cover_letter = await self._cl_generator.generate(
+                    analysis,
+                    tailored_cv,
+                    personal,
+                    cl_variant,
+                    jd_text=jd_text,
+                )
+                failure_detail = _cover_letter_failure_detail(cover_letter)
+                if failure_detail:
+                    telemetry.mark_current_error(
+                        "cover_letter_validation_failed",
+                        "validation_failure",
+                    )
+                    yield sse(
+                        "error",
+                        0,
+                        json.dumps(failure_detail),
+                    )
+                    return
+
+                yield sse("building_docx", 85, "Building .docx documents...")
+                cv_version = (
+                    await doc_repo.get_latest_version(application_id, "cv")
+                    + 1
+                )
+                with telemetry.stage_span("cv_tailoring", "render_document"):
+                    cv_path, cv_size = self._cv_builder.build(
+                        tailored_cv,
+                        analysis,
+                        personal,
+                        application_id,
+                        cv_version,
+                        variant,
+                    )
+                cl_version = (
+                    await doc_repo.get_latest_version(
+                        application_id,
+                        "cover_letter",
+                    )
+                    + 1
+                )
+                with telemetry.stage_span(
+                    "cover_letter_generation",
+                    "render_document",
+                ):
+                    cl_path, cl_size = self._cl_generator.render_document(
+                        cover_letter,
+                        lambda: self._cl_builder.build(
+                            cover_letter,
+                            analysis,
+                            personal,
+                            application_id,
+                            cl_version,
+                            variant,
+                        ),
+                    )
+                with telemetry.stage_span(
+                    "cv_tailoring",
+                    "persist_document",
+                ) as cv_persist_span:
+                    cv_doc = await doc_repo.create(
+                        application_id=application_id,
+                        document_type="cv",
+                        version=cv_version,
+                        file_path=cv_path,
+                        file_size_bytes=cv_size,
+                        jd_analysis_snapshot=json.dumps(
+                            analysis.model_dump()
+                        ),
+                        tailoring_params=_tailoring_params(
+                            {"variant": variant},
+                            tailored_cv,
+                        ),
+                        ats_score=ats_result.overall_score,
+                        ats_details=json.dumps(ats_result.model_dump()),
+                        variant_label=variant,
+                    )
+                    with telemetry.stage_span(
+                        "cover_letter_generation",
+                        "persist_document",
+                    ) as cl_persist_span:
+                        cl_doc = await doc_repo.create(
+                            application_id=application_id,
+                            document_type="cover_letter",
+                            version=cl_version,
+                            file_path=cl_path,
+                            file_size_bytes=cl_size,
+                            jd_analysis_snapshot=json.dumps(
+                                analysis.model_dump()
+                            ),
+                            tailoring_params=_tailoring_params(
+                                {"variant": variant},
+                                cover_letter,
+                            ),
+                            variant_label=variant,
+                        )
+                        await db.commit()
+                        cv_workflow_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cv_doc.id),
+                        )
+                        cl_workflow_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cl_doc.id),
+                        )
+                        cv_persist_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cv_doc.id),
+                        )
+                        cl_persist_span.set_attribute(
+                            "hatch.ai.document.id",
+                            str(cl_doc.id),
+                        )
 
         yield sse(
             "complete",

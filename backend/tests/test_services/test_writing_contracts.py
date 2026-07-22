@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+import pytest
+
+from app.schemas.tailor import CoverLetterResult, TailoredCVResult
+from app.services.writing_contracts import (
+    COVER_LETTER_GENERATION_PROMPT,
+    EVIDENCE_SCHEMA_VERSION,
+    GenerationProvenance,
+    ValidationResult,
+    build_evidence_ledger,
+    extract_numeric_tokens,
+    normalize_evidence_text,
+    stable_evidence_id,
+    validate_numeric_fidelity,
+)
+
+
+def test_evidence_ids_are_stable_and_duplicates_keep_first_source() -> None:
+    master = {
+        "summary_variants": {
+            "a": "Delivered across 120+ locations",
+            "b": " Delivered  across  120+ locations ",
+        },
+    }
+
+    ledger = build_evidence_ledger(master)
+
+    assert EVIDENCE_SCHEMA_VERSION == "1.0.0"
+    assert len(ledger) == 1
+    assert ledger[0].source_path == "summary_variants.a"
+    assert ledger[0].id == "0516177ba0bd38d2800c3398"
+    assert ledger[0].id == stable_evidence_id(
+        "summary_variants.a",
+        "Delivered across 120+ locations",
+    )
+
+
+def test_evidence_normalization_preserves_case_punctuation_and_numeric_formatting() -> None:
+    decomposed = "Cafe\u0301\r\n  delivery\tacross  £2.5m."
+
+    assert normalize_evidence_text(decomposed) == "Café delivery across £2.5m."
+
+
+def test_evidence_ledger_preserves_source_order_and_types() -> None:
+    master = {
+        "summary_variants": {"delivery": "Delivery leader"},
+        "experience": [
+            {
+                "role": "Delivery Manager",
+                "company": "Example Ltd",
+                "period": "2018–2022",
+                "achievements": [
+                    {"text": "Improved throughput by 15%"},
+                    "Managed 120+ locations",
+                ],
+            }
+        ],
+        "skills": {
+            "delivery": {
+                "category": "Delivery",
+                "items": ["Scrum"],
+            }
+        },
+        "education": [{"qualification": "BSc Computer Science"}],
+        "certifications": ["PSM I"],
+    }
+
+    ledger = build_evidence_ledger(master)
+
+    assert [(item.source_path, item.evidence_type) for item in ledger] == [
+        ("summary_variants.delivery", "profile_summary"),
+        ("experience.0.achievements.0", "achievement"),
+        ("experience.0.achievements.1", "achievement"),
+        ("skills.delivery.items.0", "skill"),
+        ("education.0.qualification", "education"),
+        ("certifications.0", "certification"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Managed 120+ locations", ("120+ locations",)),
+        ("Owned a £2.5m budget", ("£2.5m budget",)),
+        ("Improved throughput by 15%", ("15%",)),
+        ("Served from 2018–2022", ("2018–2022",)),
+        ("Supported +25 sites", ("+25 sites",)),
+        ("Saved £2 million", ("£2 million",)),
+        ("Reached maturity level 5 with a 4.7 score", ("5", "4.7")),
+    ],
+)
+def test_extract_numeric_tokens_preserves_immutable_expression(
+    text: str,
+    expected: tuple[str, ...],
+) -> None:
+    assert tuple(item.raw for item in extract_numeric_tokens(text)) == expected
+
+
+def test_numeric_validation_blocks_mutated_and_unsupported_tokens() -> None:
+    ledger = build_evidence_ledger(
+        {
+            "experience": [
+                {
+                    "achievements": [
+                        {"text": "Managed delivery across 120+ locations"},
+                    ]
+                }
+            ]
+        }
+    )
+
+    result = validate_numeric_fidelity(
+        ["Managed delivery across 120 locations and improved throughput by 97%."],
+        ledger,
+    )
+
+    assert not result.passed
+    assert [issue.code for issue in result.issues] == [
+        "unsupported_numeric_token",
+        "unsupported_numeric_token",
+    ]
+    assert [issue.observed for issue in result.issues] == ["120 locations", "97%"]
+
+
+def test_numeric_validation_blocks_unsupported_plain_number() -> None:
+    result = validate_numeric_fidelity(
+        ["Reached maturity level 5."],
+        build_evidence_ledger({"summary": "Improved delivery maturity."}),
+    )
+
+    assert not result.passed
+    assert result.issues[0].observed == "5"
+
+
+def test_numeric_dates_and_metadata_outside_candidate_prose_are_not_false_positives() -> None:
+    ledger = build_evidence_ledger(
+        {
+            "experience": [
+                {
+                    "role": "Delivery Manager",
+                    "period": "2018–2022",
+                    "achievements": [{"text": "Delivered the migration safely"}],
+                }
+            ]
+        }
+    )
+
+    result = validate_numeric_fidelity(
+        ["Delivered the migration safely."],
+        ledger,
+    )
+
+    assert result.passed
+    assert result.issues == ()
+
+
+def test_old_generated_records_without_prompt_metadata_remain_readable() -> None:
+    cv = TailoredCVResult.model_validate({"summary": "Grounded"})
+    letter = CoverLetterResult.model_validate(
+        {
+            "subject_line": "Application",
+            "greeting": "Dear Hiring Manager,",
+            "body_paragraphs": [],
+            "sign_off": "Kind regards,",
+            "word_count": 0,
+        }
+    )
+
+    assert cv.generation_provenance is None
+    assert letter.generation_provenance is None
+    assert "generation_provenance" not in cv.model_dump()
+    assert "generation_provenance" not in letter.model_dump()
+
+
+def test_generation_provenance_accepts_optional_id_only_workflow_metadata() -> None:
+    provenance = GenerationProvenance(
+        prompt_metadata=COVER_LETTER_GENERATION_PROMPT,
+        evidence_schema_version=EVIDENCE_SCHEMA_VERSION,
+        source_evidence_ids=("evidence-1",),
+        validation=ValidationResult(passed=True, issues=(), metrics={}),
+        content_plan={
+            "opening_evidence_ids": ["evidence-1"],
+            "primary_evidence_ids": [],
+            "secondary_evidence_ids": [],
+            "alignment_job_requirement_ids": ["requirement-1"],
+        },
+        workflow={
+            "run_id": "run-1",
+            "skill_id": "cover-letter",
+            "final_state": "passed",
+        },
+    )
+
+    payload = provenance.to_dict()
+
+    assert payload["content_plan"]["opening_evidence_ids"] == ["evidence-1"]
+    assert payload["workflow"]["final_state"] == "passed"

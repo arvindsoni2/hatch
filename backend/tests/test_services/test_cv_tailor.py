@@ -174,6 +174,52 @@ async def test_fabrication_detected_for_invented_text():
     assert len(result.fabrication_warnings) > 0
 
 
+@pytest.mark.asyncio
+async def test_tailor_blocks_mutated_immutable_numeric_token():
+    master = {
+        "summary_variants": {"delivery": "Delivery Manager"},
+        "skills": {},
+        "experience": [
+            {
+                "role": "Delivery Manager",
+                "company": "Example Ltd",
+                "period": "2020 - Present",
+                "achievements": [{"text": "Managed 120+ locations"}],
+            }
+        ],
+        "education": [],
+        "certifications": [],
+    }
+    response = {
+        "summary": "Delivery Manager",
+        "skills": [],
+        "experience": [
+            {
+                "role": "Delivery Manager",
+                "company": "Example Ltd",
+                "period": "2020 - Present",
+                "achievements": ["Managed 120 locations"],
+            }
+        ],
+        "education": [],
+        "certifications": [],
+    }
+    tailor = CVTailor(make_mock_client(response), master_cv_loader=lambda: master)
+
+    result = await tailor.tailor(
+        JDAnalysisResult(role_title="Delivery Manager")
+    )
+
+    assert any("120 locations" in issue for issue in result.blocking_issues)
+    assert result.generation_provenance is not None
+    assert result.generation_provenance.prompt_metadata.prompt_version == "2.0.0"
+    assert result.generation_provenance.claims[0].text == "Managed 120 locations"
+    assert result.generation_provenance.claims[0].change_type == "rephrased"
+    assert len(result.generation_provenance.claims[0].source_evidence_ids) == 1
+    assert result.generation_provenance.claims[0].new_claims == ()
+    assert "generation_provenance" not in result.model_dump()
+
+
 def test_select_best_summary_variant_solutions_architect():
     tailor = CVTailor(MagicMock())
     with patch.object(tailor, "_load_master_cv", return_value=MOCK_MASTER_CV):

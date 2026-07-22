@@ -81,6 +81,9 @@ class Settings(BaseSettings):
 
     # Logging
     LOG_LEVEL: str = "INFO"
+    HATCH_OBSERVABILITY_ENABLED: bool = False
+    HATCH_OTLP_ENDPOINT: str = "http://127.0.0.1:4317"
+    HATCH_OBSERVABILITY_CONSOLE: bool = False
 
     # Optional bearer-token auth for non-localhost deploys.
     # When empty (default) auth is disabled — localhost use is frictionless.

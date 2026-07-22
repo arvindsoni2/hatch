@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -20,13 +21,17 @@ from ..models.follow_up_email import FollowUpEmail
 from ..models.job import JobPosting
 from ..schemas.email import GeneratedEmail
 from .llm_client import LLMClient
+from .master_cv_store import load_master_cv
+from .prompt_catalog import candidate_claim_contract, validate_candidate_output
+from .writing_contracts import (
+    EvidenceItem,
+    build_evidence_ledger,
+    evidence_records,
+)
 
 logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates" / "emails"
-
-# Candidate details loaded from profile
-_CANDIDATE_PROFILE_PATH = Path(__file__).parent.parent / "templates" / "candidate_profile.json"
 
 _BANNED_PHRASES = (
     "I hope this email finds you well",
@@ -41,9 +46,10 @@ _BANNED_PHRASES = (
 
 
 def _load_profile() -> dict:
-    if _CANDIDATE_PROFILE_PATH.exists():
-        return json.loads(_CANDIDATE_PROFILE_PATH.read_text())
-    return {}
+    try:
+        return load_master_cv()
+    except Exception:
+        return {}
 
 
 class EmailGenerator:
@@ -80,8 +86,16 @@ class EmailGenerator:
         recruiter = application.recruiter_name or "Hiring Manager"
         top_skills = self._extract_top_skills(job, 3)
         agency = application.agency_name or ""
+        ledger = build_evidence_ledger(self._profile)
+        contract = candidate_claim_contract("email_post_application")
+        approved_evidence = json.dumps(evidence_records(ledger), ensure_ascii=False)
 
         prompt = f"""Write a follow-up email for a job application.
+
+{contract}
+
+APPROVED_EVIDENCE:
+{approved_evidence}
 
 CONTEXT:
 - Role: {job.title}
@@ -89,14 +103,13 @@ CONTEXT:
 - Applied: {days_since_applied} days ago
 - Recruiter/Contact: {recruiter}
 - Agency: {agency or 'N/A'}
-- Candidate: Arvind Soni, 20+ years Solutions Architect / Product Owner
-- Candidate skills matching this role: {top_skills}
+- Job skills to address if supported by candidate evidence: {top_skills or 'N/A'}
 - Application source: {job.source or 'direct'}
 
 RULES:
 - Under 120 words total for the body
 - Open with a specific reference to the role title and company (not 'I recently applied to a position')
-- Include ONE specific achievement that maps to their likely requirements
+- Include ONE specific achievement only when APPROVED_EVIDENCE supports it
 - Close with a soft call-to-action (available for a call, happy to provide more info)
 - Do NOT use any of these phrases: {', '.join(f'"{p}"' for p in _BANNED_PHRASES)}
 - Sound like a senior professional, not a graduate
@@ -117,12 +130,18 @@ Return valid JSON only:
             user=prompt,
         )
 
-        email = GeneratedEmail(
+        email = self._validated_email(
+            result,
+            ledger,
+            employer_context=[
+                str(job.title),
+                str(job.company or ""),
+                f"{days_since_applied} days",
+                top_skills,
+            ],
             email_type="post_application",
-            subject=result.get("subject", f"Following up — {job.title}"),
-            greeting=result.get("greeting", f"Dear {recruiter},"),
-            body=result.get("body", ""),
-            sign_off=result.get("sign_off", "Kind regards,"),
+            subject_fallback=f"Following up — {job.title}",
+            greeting_fallback=f"Dear {recruiter},",
         )
         logger.info("Generated post_application email for job %s", job.id)
         return email
@@ -152,8 +171,18 @@ Return valid JSON only:
             if isinstance(qs, list):
                 questions_context = "; ".join(str(q) for q in qs[:3])
         feedback_context = (interview.feedback or "")[:200]
+        ledger = build_evidence_ledger(self._profile)
+        contract = candidate_claim_contract(
+            "email_post_interview_thankyou"
+        )
+        approved_evidence = json.dumps(evidence_records(ledger), ensure_ascii=False)
 
         prompt = f"""Write a post-interview thank-you email.
+
+{contract}
+
+APPROVED_EVIDENCE:
+{approved_evidence}
 
 CONTEXT:
 - Role: {job.title} at {job.company or 'the company'}
@@ -168,7 +197,7 @@ RULES:
 - Under 100 words total for the body
 - Reference something specific from the interview context if available
   (if no context, keep general but specific to the role)
-- Reinforce ONE key strength relevant to the role
+- Reinforce ONE key strength only when APPROVED_EVIDENCE supports it
 - Express genuine interest in next steps without being sycophantic
 - Professional but warm tone — senior consultant, not eager graduate
 - Do NOT use: {', '.join(f'"{p}"' for p in _BANNED_PHRASES)}
@@ -186,12 +215,21 @@ Return valid JSON only:
             user=prompt,
         )
 
-        email = GeneratedEmail(
+        email = self._validated_email(
+            result,
+            ledger,
+            employer_context=[
+                str(job.title),
+                str(job.company or ""),
+                str(interview.type),
+                f"round {interview.round_number}",
+                prep_context,
+                questions_context,
+                feedback_context,
+            ],
             email_type="post_interview_thankyou",
-            subject=result.get("subject", f"Thank you — {job.title} interview"),
-            greeting=result.get("greeting", f"Dear {recruiter},"),
-            body=result.get("body", ""),
-            sign_off=result.get("sign_off", "Kind regards,"),
+            subject_fallback=f"Thank you — {job.title} interview",
+            greeting_fallback=f"Dear {recruiter},",
         )
         logger.info("Generated post_interview_thankyou email for job %s", job.id)
         return email
@@ -213,20 +251,27 @@ Return valid JSON only:
             GeneratedEmail with subject, greeting, body, sign_off.
         """
         recruiter = application.recruiter_name or "Hiring Manager"
+        ledger = build_evidence_ledger(self._profile)
+        contract = candidate_claim_contract("email_warm_reengagement")
+        approved_evidence = json.dumps(evidence_records(ledger), ensure_ascii=False)
 
         prompt = f"""Write a warm re-engagement email for a job application with no response.
+
+{contract}
+
+APPROVED_EVIDENCE:
+{approved_evidence}
 
 CONTEXT:
 - Role: {job.title} at {job.company or 'the company'}
 - Applied {days_since_last_contact} days ago with no response
 - Recruiter/Contact: {recruiter}
-- Candidate value: 20+ years Solutions Architect / Product Owner, Energy, Financial Services, Aviation
 
 RULES:
 - Under 80 words total for the body
 - NOT pushy or passive-aggressive
 - Acknowledge they may be busy or the role may have moved on
-- Brief restatement of fit (one sentence)
+- Brief restatement of fit only from APPROVED_EVIDENCE (one sentence)
 - Offer graceful out: if the role is filled, are there other opportunities?
 - End with a clear but soft CTA
 - Do NOT use: {', '.join(f'"{p}"' for p in _BANNED_PHRASES)}
@@ -244,12 +289,17 @@ Return valid JSON only:
             user=prompt,
         )
 
-        email = GeneratedEmail(
+        email = self._validated_email(
+            result,
+            ledger,
+            employer_context=[
+                str(job.title),
+                str(job.company or ""),
+                f"{days_since_last_contact} days",
+            ],
             email_type="warm_reengagement",
-            subject=result.get("subject", f"Re: {job.title} application"),
-            greeting=result.get("greeting", f"Dear {recruiter},"),
-            body=result.get("body", ""),
-            sign_off=result.get("sign_off", "Kind regards,"),
+            subject_fallback=f"Re: {job.title} application",
+            greeting_fallback=f"Dear {recruiter},",
         )
         logger.info("Generated warm_reengagement email for job %s", job.id)
         return email
@@ -273,7 +323,7 @@ Return valid JSON only:
             greeting=email.greeting,
             body=email.body,
             sign_off=email.sign_off,
-            candidate_name=personal.get("full_name", "Arvind Soni"),
+            candidate_name=personal.get("full_name", "Candidate"),
             candidate_email=personal.get("email", ""),
             candidate_phone=personal.get("phone", ""),
             linkedin_url=links.get("linkedin_url", ""),
@@ -298,7 +348,7 @@ Return valid JSON only:
             greeting=email.greeting,
             body=email.body,
             sign_off=email.sign_off,
-            candidate_name=personal.get("full_name", "Arvind Soni"),
+            candidate_name=personal.get("full_name", "Candidate"),
             candidate_email=personal.get("email", ""),
             candidate_phone=personal.get("phone", ""),
             linkedin_url=links.get("linkedin_url", ""),
@@ -356,4 +406,33 @@ Return valid JSON only:
         if job.skills:
             skills = job.skills if isinstance(job.skills, list) else []
             return ", ".join(str(s) for s in skills[:count])
-        return "cloud architecture, agile delivery, stakeholder management"
+        return ""
+
+    @staticmethod
+    def _validated_email(
+        result: Any,
+        ledger: tuple[EvidenceItem, ...],
+        employer_context: list[str],
+        *,
+        email_type: str,
+        subject_fallback: str,
+        greeting_fallback: str,
+    ) -> GeneratedEmail:
+        """Construct an email and withhold an unsupported candidate body."""
+        raw = result if isinstance(result, dict) else {}
+        body = raw.get("body", "")
+        if not isinstance(body, str):
+            body = ""
+        if not ledger or not validate_candidate_output(
+            [body],
+            ledger,
+            employer_context,
+        ).passed:
+            body = ""
+        return GeneratedEmail(
+            email_type=email_type,
+            subject=raw.get("subject", subject_fallback),
+            greeting=raw.get("greeting", greeting_fallback),
+            body=body,
+            sign_off=raw.get("sign_off", "Kind regards,"),
+        )

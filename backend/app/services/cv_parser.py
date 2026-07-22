@@ -1,9 +1,8 @@
 """CV Parser — extracts structured MasterCV data from raw CV text using the primary LLM.
 
-The parser is grounded by a post-parse verbatim check: every company name, role, certification,
-and numeric/currency token extracted by the LLM must appear as a substring of the raw CV text.
-Violations are dropped to empty string and added to parse_warnings, making the parser itself
-hallucination-proof regardless of model quality.
+The parser is grounded by a post-parse verbatim check: every imported scalar
+fact must appear as a substring of the raw CV text. Violations are cleared or
+dropped and added to parse warnings.
 """
 from __future__ import annotations
 
@@ -16,15 +15,9 @@ from ..prompts import render_prompt
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import CV_PARSE
 from .jd_analyser import _split_jinja_output
+from .prompt_catalog import prompt_contract_block
 
 logger = logging.getLogger(__name__)
-
-# Matches £1M, $500K, 99.9%, 2,000+, 10M+, £3.2bn etc.
-_NUMERIC_TOKEN_RE = re.compile(
-    r"(?:[£$€¥][\d,]+(?:\.\d+)?(?:[KMBkm+]*)|\d[\d,]*(?:\.\d+)?(?:[KMBkm%+]+))",
-    re.IGNORECASE,
-)
-
 
 def _normalise(text: str) -> str:
     """Lower-case, collapse whitespace, strip accents for substring matching."""
@@ -59,11 +52,15 @@ async def parse_cv_text(text: str, claude_client: LLMClient) -> CVParseResult:
         CVParseResult with parsed dict and any grounding warnings.
     """
     system_prompt, user_prompt = _split_jinja_output(
-        render_prompt("cv_parsing.j2", cv_text=text)
+        render_prompt(
+            "cv_parsing.j2",
+            cv_text=text,
+            prompt_contract=prompt_contract_block("cv_parsing"),
+        )
     )
 
     try:
-        raw: dict[str, Any] = await claude_client.complete_json(
+        raw: Any = await claude_client.complete_json(
             system_prompt, user_prompt, max_tokens=CV_PARSE.max_output
         )
     except Exception as exc:
@@ -71,64 +68,91 @@ async def parse_cv_text(text: str, claude_client: LLMClient) -> CVParseResult:
         # Return empty structure rather than crashing — user will see empty review form
         return CVParseResult(parsed=_empty_cv(), warnings=[f"LLM parse failed: {exc}"])
 
+    if not isinstance(raw, dict):
+        return CVParseResult(
+            parsed=_empty_cv(),
+            warnings=["Invalid top-level CV parse shape — expected an object"],
+        )
+
     warnings: list[str] = []
     source_norm = _normalise(text)
 
     # ── Grounding checks ──────────────────────────────────────────────────────
 
     # personal fields — light check (just verify they're substrings if non-empty)
-    personal = raw.get("personal", {})
-    if isinstance(personal, dict):
-        for field in ("full_name", "email", "phone", "location"):
-            val = personal.get(field, "")
-            if val and not _substring_present(val, source_norm):
-                warnings.append(
-                    f"personal.{field}: '{val}' not found in source CV — cleared"
-                )
-                personal[field] = ""
+    personal = raw.get("personal")
+    if not isinstance(personal, dict):
+        personal = {}
+    for field in (
+        "full_name",
+        "email",
+        "phone",
+        "location",
+        "linkedin",
+        "title",
+    ):
+        personal[field] = _ground_string(
+            personal.get(field),
+            source_norm,
+            f"personal.{field}",
+            warnings,
+        )
+    raw["personal"] = personal
+
+    summaries = raw.get("summary_variants")
+    if not isinstance(summaries, dict):
+        summaries = {}
+    for key, value in tuple(summaries.items()):
+        summaries[key] = _ground_string(
+            value,
+            source_norm,
+            f"summary_variants.{key}",
+            warnings,
+        )
+    summaries.setdefault("default", "")
+    raw["summary_variants"] = summaries
 
     # experience — company, role verbatim; numeric tokens in each achievement
     experience = raw.get("experience", [])
+    if not isinstance(experience, list):
+        experience = []
     cleaned_experience: list[dict[str, Any]] = []
-    for exp in experience:
+    for exp_index, exp in enumerate(experience):
         if not isinstance(exp, dict):
             continue
-        company = exp.get("company", "")
-        role = exp.get("role", "")
-
-        if company and not _substring_present(company, source_norm):
-            warnings.append(
-                f"experience.company: '{company}' not found verbatim in source CV — cleared"
-            )
-            exp["company"] = ""
-
-        if role and not _substring_present(role, source_norm):
-            warnings.append(
-                f"experience.role: '{role}' not found verbatim in source CV — cleared"
-            )
-            exp["role"] = ""
-
-        # Check numeric tokens in achievements
-        clean_achievements: list[dict[str, str]] = []
-        for ach in exp.get("achievements", []):
-            ach_text = ach.get("text", "") if isinstance(ach, dict) else str(ach)
-            bad_tokens = [
-                tok for tok in _NUMERIC_TOKEN_RE.findall(ach_text)
-                if not _substring_present(tok, source_norm)
-            ]
-            if bad_tokens:
-                warnings.append(
-                    f"achievement numeric token(s) {bad_tokens!r} not in source — bullet cleared"
+        for field in ("company", "role", "period", "location"):
+            if field in exp or field != "location":
+                exp[field] = _ground_string(
+                    exp.get(field),
+                    source_norm,
+                    f"experience.{exp_index}.{field}",
+                    warnings,
                 )
-            else:
-                clean_achievements.append({"text": ach_text} if isinstance(ach, str) else ach)
+
+        clean_achievements: list[dict[str, str]] = []
+        achievements = exp.get("achievements", [])
+        if not isinstance(achievements, list):
+            achievements = []
+        for ach_index, ach in enumerate(achievements):
+            ach_text = ach.get("text", "") if isinstance(ach, dict) else str(ach)
+            grounded = _ground_string(
+                ach_text,
+                source_norm,
+                f"experience.{exp_index}.achievements.{ach_index}",
+                warnings,
+            )
+            if grounded:
+                clean_achievements.append({"text": grounded})
         exp["achievements"] = clean_achievements
         cleaned_experience.append(exp)
     raw["experience"] = cleaned_experience
 
     # certifications — each string must appear verbatim
     certs: list[str] = []
-    for cert in raw.get("certifications", []):
+    raw_certifications = raw.get("certifications", [])
+    if not isinstance(raw_certifications, list):
+        raw_certifications = []
+    for cert in raw_certifications:
         if isinstance(cert, str) and cert.strip():
             if not _substring_present(cert, source_norm):
                 warnings.append(
@@ -138,16 +162,73 @@ async def parse_cv_text(text: str, claude_client: LLMClient) -> CVParseResult:
                 certs.append(cert)
     raw["certifications"] = certs
 
-    # skills — only check items are non-empty; category names are low-risk
     skills_out: list[dict[str, Any]] = []
-    for grp in raw.get("skills", []):
+    raw_skills = raw.get("skills", [])
+    if not isinstance(raw_skills, list):
+        raw_skills = []
+    for group_index, grp in enumerate(raw_skills):
         if isinstance(grp, dict):
-            grp["items"] = [it for it in grp.get("items", []) if isinstance(it, str) and it.strip()]
+            grp["category"] = _ground_string(
+                grp.get("category"),
+                source_norm,
+                f"skills.{group_index}.category",
+                warnings,
+            )
+            items = grp.get("items", [])
+            if not isinstance(items, list):
+                items = []
+            grp["items"] = [
+                grounded
+                for item_index, item in enumerate(items)
+                if (
+                    grounded := _ground_string(
+                        item,
+                        source_norm,
+                        f"skills.{group_index}.items.{item_index}",
+                        warnings,
+                    )
+                )
+            ]
             if grp["items"] or grp.get("category"):
                 skills_out.append(grp)
     raw["skills"] = skills_out
 
+    education_out: list[dict[str, str]] = []
+    raw_education = raw.get("education", [])
+    if not isinstance(raw_education, list):
+        raw_education = []
+    for education_index, education in enumerate(raw_education):
+        if not isinstance(education, dict):
+            continue
+        education_out.append(
+            {
+                field: _ground_string(
+                    education.get(field),
+                    source_norm,
+                    f"education.{education_index}.{field}",
+                    warnings,
+                )
+                for field in ("qualification", "institution", "year")
+            }
+        )
+    raw["education"] = education_out
+
     return CVParseResult(parsed=raw, warnings=warnings)
+
+
+def _ground_string(
+    value: Any,
+    source_norm: str,
+    path: str,
+    warnings: list[str],
+) -> str:
+    """Keep a scalar only when it is present verbatim in source evidence."""
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    if _substring_present(value, source_norm):
+        return value
+    warnings.append(f"{path}: '{value}' not found in source CV — cleared")
+    return ""
 
 
 def _empty_cv() -> dict[str, Any]:

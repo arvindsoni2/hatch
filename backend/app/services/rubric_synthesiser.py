@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..agents.tools.llm_factory import get_json_model
+from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import (
     AnswerEvaluation,
     RubricDimension,
@@ -21,13 +24,18 @@ from ..schemas.coach import (
     VoiceToneResult,
 )
 from .rubric_builder import build_rubric, score_to_band
+from .prompt_catalog import prompt_contract_block, source_contains
 
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are an expert interview coach. Given a candidate's answer transcript, their content scores, and delivery signals, produce an enriched rubric.
 
-For each dimension provided, write 1-2 pieces of concrete evidence by QUOTING SHORT PHRASES from the transcript (or citing specific metrics) that justify the score. Keep each evidence string under 100 characters.
+Label claims as OBSERVATION, INTERPRETATION, or RECOMMENDATION. For each
+dimension, write 1-2 OBSERVATION evidence items by QUOTING SHORT PHRASES from
+the transcript or citing exact deterministic metrics. Interpretations must be
+framed as interpretations. Drills are RECOMMENDATIONS, not candidate facts.
+Keep each evidence string under 100 characters.
 
 Also write a 'focus_for_next_session' sentence identifying the 1-2 weakest dimensions.
 
@@ -78,7 +86,12 @@ def _build_user_prompt(
     return "\n".join(parts)
 
 
-def _parse_llm_rubric(raw: dict, baseline: SessionRubric) -> SessionRubric:
+def _parse_llm_rubric(
+    raw: dict,
+    baseline: SessionRubric,
+    transcript: str,
+    metric_context: str,
+) -> SessionRubric:
     """Merge LLM output into the baseline rubric; fall back per-dim on parse error."""
     merged: dict[str, RubricDimension] = dict(baseline.dimensions)
 
@@ -89,13 +102,17 @@ def _parse_llm_rubric(raw: dict, baseline: SessionRubric) -> SessionRubric:
         try:
             score = max(0, min(10, int(dim_data.get("score", baseline.dimensions.get(dim_name, RubricDimension()).score))))
             band = dim_data.get("score_band") or score_to_band(score)
-            evidence = dim_data.get("evidence") or []
+            evidence = [
+                str(item)
+                for item in (dim_data.get("evidence") or [])[:2]
+                if _evidence_is_grounded(str(item), transcript, metric_context)
+            ]
             drill = dim_data.get("drill") or ""
             if isinstance(evidence, list) and evidence:
                 merged[dim_name] = RubricDimension(
                     score=score,
                     score_band=band,
-                    evidence=[str(e) for e in evidence[:2]],
+                    evidence=evidence,
                     drill=str(drill) if drill else (merged.get(dim_name, RubricDimension()).drill),
                 )
         except Exception as exc:
@@ -103,6 +120,23 @@ def _parse_llm_rubric(raw: dict, baseline: SessionRubric) -> SessionRubric:
 
     focus = raw.get("focus_for_next_session") or baseline.focus_for_next_session
     return SessionRubric(dimensions=merged, focus_for_next_session=str(focus))
+
+
+def _evidence_is_grounded(
+    evidence: str,
+    transcript: str,
+    metric_context: str,
+) -> bool:
+    """Accept a transcript quote or an exact deterministic metric citation."""
+    if source_contains(evidence, transcript) or source_contains(evidence, metric_context):
+        return True
+    quoted = re.findall(r"['\"]([^'\"]+)['\"]", evidence)
+    if any(source_contains(quote, transcript) for quote in quoted):
+        return True
+    return any(
+        source_contains(token, metric_context)
+        for token in re.findall(r"\b\d+(?:\.\d+)?%?\b", evidence)
+    )
 
 
 class RubricSynthesiserService:
@@ -121,6 +155,7 @@ class RubricSynthesiserService:
             self._llm = get_json_model()
         return self._llm
 
+    @trace_stage("coach_generation", "validate_output")
     async def synthesise(
         self,
         transcript: str,
@@ -146,16 +181,57 @@ class RubricSynthesiserService:
             transcript, evaluation, speech_metrics, tone_result, baseline
         )
         messages = [
-            SystemMessage(content=_SYSTEM_PROMPT),
+            SystemMessage(
+                content=(
+                    _SYSTEM_PROMPT
+                    + "\n\n"
+                    + prompt_contract_block("rubric_synthesis")
+                )
+            ),
             HumanMessage(content=user_prompt),
         ]
 
+        model = None
+        started = time.monotonic()
         try:
-            response = await self._get_llm().ainvoke(messages)
-            raw = json.loads(response.content)
-            return _parse_llm_rubric(raw, baseline)
+            model = self._get_llm()
+            response = await model.ainvoke(messages)
         except Exception as exc:
+            get_telemetry().record_model_call(
+                workflow="coach_generation",
+                provider=type(model).__name__ if model is not None else "configured",
+                model_id=str(getattr(model, "model", "configured")),
+                duration_ms=(time.monotonic() - started) * 1000,
+                outcome="failed",
+            )
+            get_telemetry().mark_current_error(
+                "rubric_synthesis_failed",
+                "model_error",
+            )
             logger.warning(
                 "RubricSynthesiser LLM call failed (%s) — using deterministic rubric.", exc
+            )
+            return baseline
+        get_telemetry().record_model_call(
+            workflow="coach_generation",
+            provider=type(model).__name__,
+            model_id=str(getattr(model, "model", "configured")),
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
+        try:
+            raw = json.loads(response.content)
+            return _parse_llm_rubric(raw, baseline, transcript, user_prompt)
+        except Exception as exc:
+            get_telemetry().record_validation_failure(
+                "coach_generation",
+                "rubric_response_invalid",
+            )
+            get_telemetry().mark_current_error(
+                "rubric_response_invalid",
+                "validation_failure",
+            )
+            logger.warning(
+                "RubricSynthesiser response was invalid (%s) — using deterministic rubric.",
+                exc,
             )
             return baseline

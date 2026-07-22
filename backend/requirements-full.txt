@@ -7,4 +7,5 @@
 -r requirements-core.txt
 -r requirements-browser.txt
 -r requirements-local-ai.txt
+-r requirements-observability.txt
 -r requirements-perception.txt

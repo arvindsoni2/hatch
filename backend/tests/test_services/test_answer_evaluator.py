@@ -163,3 +163,32 @@ async def test_evaluate_returns_all_six_dimensions(mock_claude_good, good_answer
 async def test_follow_up_threshold_constant() -> None:
     """_FOLLOW_UP_THRESHOLD is 6.0 as specified."""
     assert _FOLLOW_UP_THRESHOLD == 6.0
+
+
+@pytest.mark.asyncio
+async def test_evaluation_keeps_only_transcript_or_metric_evidence(good_answer) -> None:
+    raw = {
+        **GOOD_EVAL_RESPONSE,
+        "evidence_references": [
+            good_answer["transcript"][:30],
+            "145 WPM",
+            "Candidate led a team of 500",
+        ],
+    }
+    client = MagicMock()
+    client.complete_json = AsyncMock(return_value=raw)
+    evaluator = AnswerEvaluatorService(client)
+
+    result = await evaluator.evaluate(
+        question=good_answer["question"],
+        category=good_answer["category"],
+        transcript=good_answer["transcript"],
+        speech_metrics=SpeechMetrics(wpm=145),
+    )
+
+    assert good_answer["transcript"][:30] in result.evidence_references
+    assert "145 WPM" in result.evidence_references
+    assert "Candidate led a team of 500" not in result.evidence_references
+    combined = "".join(client.complete_json.await_args.args[:2])
+    assert '"prompt_id": "answer_evaluation"' in combined
+    assert "OBSERVATION" in combined

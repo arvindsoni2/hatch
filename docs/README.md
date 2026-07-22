@@ -6,7 +6,7 @@ Use this index to find the current product, operations, architecture, developmen
 
 - New user: [Installation](getting-started/INSTALLATION.md), [Windows install](getting-started/WINDOWS_INSTALL.md), [First run](getting-started/FIRST_RUN.md)
 - Existing user: [User guide](user-guide/USER_GUIDE.md), [Troubleshooting](getting-started/TROUBLESHOOTING.md)
-- Operator: [Operations guide](operations/OPERATIONS.md), [CLI reference](operations/CLI_REFERENCE.md), [Backup and recovery](operations/BACKUP_AND_RECOVERY.md)
+- Operator: [Operations guide](operations/OPERATIONS.md), [Local AI observability](operations/OBSERVABILITY.md), [CLI reference](operations/CLI_REFERENCE.md), [Representative local-model selection](operations/REPRESENTATIVE_LOCAL_MODEL_BENCHMARK.md), [Backup and recovery](operations/BACKUP_AND_RECOVERY.md)
 - Contributor: [Development setup](development/DEVELOPMENT_SETUP.md), [Repository structure](development/REPOSITORY_STRUCTURE.md), [Testing](development/TESTING.md)
 - Maintainer: [Architecture overview](architecture/OVERVIEW.md), [Release checklist](operations/RELEASE_CHECKLIST.md), [Archive](archive/)
 
@@ -14,6 +14,7 @@ Use this index to find the current product, operations, architecture, developmen
 
 - [Coach model quality, benchmark, and observability specification v5](implementation-specs/active/Hatch_Coach_Model_Quality_Benchmark_Observability_Codex_Spec_v5.md)
 - [Local writing model benchmark — 15 July 2026](benchmarks/LOCAL_WRITING_MODEL_BENCHMARK_2026-07-15.md)
+- [Representative local-model selection — 18 July 2026](benchmarks/LOCAL_WRITING_MODEL_SELECTION_2026-07-18.md)
 
 ## Documentation Map
 
