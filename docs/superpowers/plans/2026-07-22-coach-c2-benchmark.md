@@ -56,7 +56,7 @@
 - Consumes: `benchmarks.contracts.StrictModel`, `benchmarks.contracts.ModelSpec`.
 - Produces: `CoachSuite`, `CoachScenario`, `ScheduleEntry`, `ScenarioResult`, `FractionMetric`, `CapabilityResult`, `CoachRunSummary`, `profile_for(name)`.
 
-- [ ] **Step 1: Write failing contract/profile tests**
+- [x] **Step 1: Write failing contract/profile tests**
 
 ```python
 def test_scenario_rejects_unknown_fields() -> None:
@@ -76,13 +76,13 @@ def test_acceptance_profile_has_exact_core_scenarios() -> None:
     )
 ```
 
-- [ ] **Step 2: Run tests and verify import/contract failures**
+- [x] **Step 2: Run tests and verify import/contract failures**
 
-Run: `cd backend && pytest -q tests/benchmarks/coach/test_contracts.py tests/benchmarks/coach/test_profiles.py`
+Run: `cd backend && pytest --no-cov -q tests/benchmarks/coach/test_contracts.py tests/benchmarks/coach/test_profiles.py`
 
 Expected: collection fails because `benchmarks.coach.contracts` and `profiles` do not exist.
 
-- [ ] **Step 3: Implement strict types and profiles**
+- [x] **Step 3: Implement strict types and profiles**
 
 Use explicit literals for stages, scopes, terminal statuses, completion states, and capability classifications. Represent every percentage as numerator, denominator, exact decimal string, and one-decimal display:
 
@@ -117,13 +117,13 @@ class CoachProfile(StrictModel):
 
 Bound CLI overrides to positive values no greater than the profile defaults unless a named extended profile is selected.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
-Run: `cd backend && pytest -q tests/benchmarks/coach/test_contracts.py tests/benchmarks/coach/test_profiles.py`
+Run: `cd backend && pytest --no-cov -q tests/benchmarks/coach/test_contracts.py tests/benchmarks/coach/test_profiles.py`
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit checkpoint C2.1**
+- [x] **Step 5: Commit checkpoint C2.1**
 
 Commit: `feat(coach-benchmark): add strict contracts and profiles`
 
@@ -568,7 +568,7 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 ## Checkpoint Ledger
 
 - [x] C2.0 Design approved and committed: `036cd8d`
-- [ ] C2.1 Strict contracts and profiles
+- [x] C2.1 Strict contracts and profiles
 - [ ] C2.2 Synthetic suite and loader
 - [ ] C2.3 Production adapter
 - [ ] C2.4 Gates and scoring
