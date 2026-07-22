@@ -41,6 +41,14 @@ _DRILL_MAP: dict[str, str] = {
 }
 
 
+def drill_for_dimension(dimension: str) -> str:
+    """Return the stable deterministic practice drill for a rubric dimension."""
+    return _DRILL_MAP.get(
+        dimension,
+        f"Practise {dimension.replace('_', ' ')} in mock answers.",
+    )
+
+
 def score_to_band(score: int) -> ScoreBand:
     """Map a 0–10 score to a human label."""
     if score >= 8:

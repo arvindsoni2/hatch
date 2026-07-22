@@ -4,8 +4,10 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
+from ..config import settings
 from ..prompts import render_prompt
 from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import (
@@ -18,7 +20,8 @@ from .llm_client import LLMClient
 from ..agents.tools.context_budgets import FEEDBACK
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import load_master_cv
-from .prompt_catalog import prompt_contract_block
+from .coach_contracts import CoachDiagnostic, configured_model_id, run_with_stage_deadline
+from .prompt_catalog import prompt_contract_block, prompt_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,7 @@ class FeedbackGeneratorService:
         company_name: str,
         question_evaluations: list[tuple[str, str, str, AnswerEvaluation]],
         speech_summaries: list[dict[str, Any]] | None = None,
+        deterministic_report: SessionFeedbackReport | None = None,
     ) -> SessionFeedbackReport:
         """Generate a full session feedback report.
 
@@ -58,32 +62,12 @@ class FeedbackGeneratorService:
         Returns:
             SessionFeedbackReport with scores, narrative, and practice plan.
         """
-        if not question_evaluations:
-            return SessionFeedbackReport(
-                session_id=session_id,
-                overall_score=0.0,
-                executive_summary="No answers were recorded in this session.",
+        if deterministic_report is None:
+            deterministic_report = _legacy_deterministic_report(
+                session_id, question_evaluations
             )
-
-        # Compute category scores (mean per category)
-        category_scores: dict[str, list[float]] = {}
-        all_scores: list[float] = []
-        q_summaries: list[dict] = []
-
-        for q_id, q_text, category, eval_ in question_evaluations:
-            category_scores.setdefault(category, []).append(eval_.overall)
-            all_scores.append(eval_.overall)
-            q_summaries.append({
-                "question_id": q_id,
-                "question_text": q_text,
-                "category": category,
-                "overall_score": eval_.overall,
-                "strengths": eval_.strengths,
-                "improvements": eval_.improvements,
-            })
-
-        overall = sum(all_scores) / len(all_scores) if all_scores else 0.0
-        cat_avg = {cat: sum(scores) / len(scores) for cat, scores in category_scores.items()}
+        base = deterministic_report.model_copy(deep=True)
+        q_summaries = [item.model_dump(mode="json") for item in base.question_evaluations]
 
         # Speech summary stats
         speech_summary: dict[str, float] | None = None
@@ -103,10 +87,10 @@ class FeedbackGeneratorService:
                 role_title=role_title,
                 company_name=company_name,
                 session_date=datetime.utcnow().strftime("%d %B %Y"),
-                answered_count=len(question_evaluations),
-                total_questions=len(question_evaluations),
-                overall_score=overall,
-                category_scores=cat_avg,
+                answered_count=base.question_count_evaluated,
+                total_questions=base.question_count_total,
+                overall_score=base.overall_score,
+                category_scores=base.category_scores,
                 question_summaries=q_summaries,
                 speech_summary=speech_summary,
                 prompt_contract=prompt_contract_block("session_report"),
@@ -115,10 +99,13 @@ class FeedbackGeneratorService:
 
         started = time.monotonic()
         try:
-            raw = await self._client.complete_json(
-                system_prompt,
-                user_prompt,
-                max_tokens=FEEDBACK.max_output,
+            raw = await run_with_stage_deadline(
+                self._client.complete_json(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=FEEDBACK.max_output,
+                ),
+                settings.HATCH_COACH_TIMEOUT_SESSION_REPORT_SECONDS,
             )
             get_telemetry().record_model_call(
                 workflow="coach_generation",
@@ -139,7 +126,22 @@ class FeedbackGeneratorService:
                 "model_error",
             )
             logger.warning("Session report generation failed: %s — using fallback", exc)
-            raw = {}
+            gate = (
+                "coach_stage_timeout"
+                if isinstance(exc, TimeoutError)
+                else "coach_report_provider_unavailable"
+            )
+            return _as_fallback(base, self._diagnostic("fallback_deterministic", [gate], started))
+
+        if not isinstance(raw, dict):
+            return _as_fallback(
+                base,
+                self._diagnostic(
+                    "fallback_deterministic", ["coach_report_schema_invalid"], started
+                ),
+            )
+
+        gates = _immutable_report_gates(raw, base)
 
         # Build practice plan
         practice_plan: list[PracticePlanDay] = []
@@ -149,28 +151,124 @@ class FeedbackGeneratorService:
             except Exception:
                 pass
 
-        # Build question evaluation summaries
-        q_eval_summaries = [
-            QuestionEvaluationSummary(
-                question_id=q["question_id"],
-                question_text=q["question_text"],
-                category=q["category"],
-                overall_score=q["overall_score"],
-                scores={},
-                strengths=q["strengths"],
-                improvements=q["improvements"],
-            )
-            for q in q_summaries
-        ]
-
-        return SessionFeedbackReport(
-            session_id=session_id,
-            overall_score=round(overall, 1),
-            category_scores={k: round(v, 1) for k, v in cat_avg.items()},
-            executive_summary=raw.get("executive_summary", f"Session completed with an overall score of {overall:.1f}/10."),
-            strengths=raw.get("strengths", []),
-            improvement_areas=raw.get("improvement_areas", []),
-            coaching_points=raw.get("coaching_points", []),
-            practice_plan=practice_plan,
-            question_evaluations=q_eval_summaries,
+        base.executive_summary = str(raw.get("executive_summary") or base.executive_summary)
+        for field in ("strengths", "coaching_points"):
+            value = raw.get(field)
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                setattr(base, field, value)
+        if raw.get("improvement_areas") == base.improvement_areas:
+            base.improvement_areas = raw["improvement_areas"]
+        base.practice_plan = practice_plan
+        base.report_state = "fallback" if gates else "completed"
+        base.diagnostic = self._diagnostic(
+            "fallback_deterministic" if gates else "completed",
+            gates,
+            started,
         )
+        return base
+
+    def _diagnostic(
+        self, outcome: str, gates: list[str], started: float
+    ) -> CoachDiagnostic:
+        metadata = prompt_metadata("session_report")
+        return CoachDiagnostic(
+            stage="session_report",
+            outcome=outcome,
+            execution_mode="llm",
+            prompt_id=metadata.prompt_id,
+            prompt_version=metadata.prompt_version,
+            output_schema_version=metadata.schema_version,
+            model_id=configured_model_id(self._client),
+            attempt_count=1,
+            repair_count=0,
+            gate_codes=gates,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+
+def _as_fallback(
+    report: SessionFeedbackReport, diagnostic: CoachDiagnostic
+) -> SessionFeedbackReport:
+    fallback = report.model_copy(deep=True)
+    fallback.report_state = "fallback"
+    fallback.diagnostic = diagnostic
+    return fallback
+
+
+def _immutable_report_gates(
+    raw: dict[str, Any], base: SessionFeedbackReport
+) -> list[str]:
+    gates: list[str] = []
+    count_fields = (
+        "question_count_total",
+        "question_count_evaluated",
+        "question_count_skipped",
+        "question_count_unavailable",
+        "question_count_unanswered",
+    )
+    if any(field in raw and raw[field] != getattr(base, field) for field in count_fields):
+        gates.append("coach_report_count_mismatch")
+    score_fields = ("overall_score", "category_scores", "question_evaluations")
+    if any(field in raw and raw[field] != getattr(base, field) for field in score_fields):
+        gates.append("coach_report_score_mutation")
+    if (
+        "improvement_areas" in raw
+        and raw["improvement_areas"] != base.improvement_areas
+    ):
+        gates.append("coach_report_priority_mismatch")
+    return gates
+
+
+def _legacy_deterministic_report(
+    session_id: str,
+    question_evaluations: list[tuple[str, str, str, AnswerEvaluation]],
+) -> SessionFeedbackReport:
+    """Compatibility builder for callers not yet supplying persisted attempts."""
+    valid = [item for item in question_evaluations if item[3].overall is not None]
+    values = [Decimal(str(item[3].overall)) for item in valid]
+    overall = (
+        float(
+            (sum(values) / Decimal(len(values))).quantize(
+                Decimal("0.1"), rounding=ROUND_HALF_UP
+            )
+        )
+        if values
+        else None
+    )
+    categories: dict[str, list[Decimal]] = {}
+    for _, _, category, evaluation in valid:
+        categories.setdefault(category, []).append(Decimal(str(evaluation.overall)))
+    category_scores = {
+        category: float(
+            (sum(scores) / Decimal(len(scores))).quantize(
+                Decimal("0.1"), rounding=ROUND_HALF_UP
+            )
+        )
+        for category, scores in categories.items()
+    }
+    summaries = [
+        QuestionEvaluationSummary(
+            question_id=question_id,
+            question_text=question_text,
+            category=category,
+            overall_score=evaluation.overall,
+            scores=evaluation.scores,
+            strengths=evaluation.strengths,
+            improvements=evaluation.improvements,
+        )
+        for question_id, question_text, category, evaluation in valid
+    ]
+    return SessionFeedbackReport(
+        session_id=session_id,
+        overall_score=overall,
+        question_count_total=len(question_evaluations),
+        question_count_evaluated=len(valid),
+        question_count_unanswered=len(question_evaluations) - len(valid),
+        category_scores=category_scores,
+        executive_summary=(
+            f"{len(valid)} questions received a completed evaluation."
+            if valid
+            else "No answers received a completed evaluation."
+        ),
+        question_evaluations=summaries,
+    )

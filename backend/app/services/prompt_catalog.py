@@ -172,7 +172,7 @@ _CONTRACT_LIST = (
         numeric="low",
     ),
     _contract(
-        _metadata("session_report"),
+        _metadata("session_report", prompt_version="2.0.0"),
         "backend/app/prompts/session_report.j2",
         "coach_recommendations",
         "SessionFeedbackReport",

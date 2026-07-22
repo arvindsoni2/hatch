@@ -15,7 +15,7 @@ Role Applied For: {{ role_title }}
 Company: {{ company_name }}
 Session Date: {{ session_date }}
 Questions Answered: {{ answered_count }} of {{ total_questions }}
-Overall Score: {{ overall_score | round(1) }}/10
+Overall Score: {% if overall_score is not none %}{{ overall_score | round(1) }}/10{% else %}not available{% endif %}
 
 Score Breakdown by Category:
 {% for category, score in category_scores.items() %}
