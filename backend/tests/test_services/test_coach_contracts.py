@@ -59,6 +59,10 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Alex successfully refactored cloud migration workflows.",
         "Alex has successfully written the migration plan.",
         "Alex has been actively leading the migration.",
+        "Alex often refactored the API.",
+        "Alex never refactored the API.",
+        "Alex has just written the migration.",
+        "Alex is still leading the rollout.",
     ):
         assert contains_candidate_history_claim(
             progressive_claim, candidate_names=("Alex Smith", "Alex")
