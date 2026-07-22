@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
@@ -84,6 +85,22 @@ class Settings(BaseSettings):
     HATCH_OBSERVABILITY_ENABLED: bool = False
     HATCH_OTLP_ENDPOINT: str = "http://127.0.0.1:4317"
     HATCH_OBSERVABILITY_CONSOLE: bool = False
+
+    # Coach C1 stage deadlines. A value covers one complete logical stage,
+    # including any bounded JSON parse/schema retry performed by the client.
+    HATCH_COACH_TIMEOUT_COMPANY_RESEARCH_SECONDS: int = Field(default=180, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_QUESTION_GENERATION_SECONDS: int = Field(default=300, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_QUESTION_REPAIR_SECONDS: int = Field(default=180, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_MODEL_ANSWER_SECONDS: int = Field(default=180, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_ANSWER_EVALUATION_SECONDS: int = Field(default=300, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_RUBRIC_ENRICHMENT_SECONDS: int = Field(default=120, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_TECHNICAL_DRILL_SECONDS: int = Field(default=120, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_SESSION_REPORT_SECONDS: int = Field(default=300, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_SESSION_CREATE_JOB_SECONDS: int = Field(default=2400, ge=60, le=7200)
+    HATCH_COACH_TIMEOUT_ANSWER_SUBMIT_JOB_SECONDS: int = Field(default=600, ge=60, le=7200)
+    HATCH_COACH_TIMEOUT_SESSION_END_JOB_SECONDS: int = Field(default=600, ge=60, le=7200)
+    HATCH_COACH_TIMEOUT_FOLLOWUP_SECONDS: int = Field(default=60, ge=60, le=7200)
+    HATCH_COACH_STALE_JOB_GRACE_SECONDS: int = Field(default=120, ge=30, le=900)
 
     # Optional bearer-token auth for non-localhost deploys.
     # When empty (default) auth is disabled — localhost use is frictionless.

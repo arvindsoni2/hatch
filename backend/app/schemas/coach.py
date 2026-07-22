@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..services.coach_contracts import CoachDiagnostic
+
 
 # ---------------------------------------------------------------------------
 # Metrics
@@ -122,14 +124,26 @@ class SessionRubric(BaseModel):
     """
     dimensions: dict[str, RubricDimension] = Field(default_factory=dict)
     focus_for_next_session: str = ""
+    diagnostic: CoachDiagnostic | None = None
+
+
+class ModelAnswerResult(BaseModel):
+    """Internal model-answer result; the public question keeps text only."""
+
+    model_answer: str = ""
+    star_breakdown: dict[str, str] = Field(default_factory=dict)
+    evidence_references: list[str] = Field(default_factory=list)
+    diagnostic: CoachDiagnostic
 
 
 class AnswerEvaluation(BaseModel):
+    evaluation_state: Literal["completed", "unavailable", "invalid"] = "completed"
+    diagnostic: CoachDiagnostic | None = None
     scores: dict[str, int] = Field(
         default_factory=dict,
         description="6 dimensions: relevance, star_structure, technical_depth, conciseness, communication, impact_metrics (0-10)",
     )
-    overall: float = 0.0
+    overall: float | None = 0.0
     feedback: str = ""
     strengths: list[str] = Field(default_factory=list)
     improvements: list[str] = Field(default_factory=list)
@@ -154,6 +168,8 @@ class SessionQuestionRead(BaseModel):
     difficulty: str
     context: str | None = None
     model_answer: str | None = None
+    requirement_id: str | None = None
+    model_answer_diagnostics: CoachDiagnostic | None = None
     order_in_session: int
 
 
@@ -272,7 +288,14 @@ class QuestionEvaluationSummary(BaseModel):
 
 class SessionFeedbackReport(BaseModel):
     session_id: str
-    overall_score: float
+    report_state: Literal["completed", "fallback"] = "completed"
+    diagnostic: CoachDiagnostic | None = None
+    overall_score: float | None
+    question_count_total: int = 0
+    question_count_evaluated: int = 0
+    question_count_skipped: int = 0
+    question_count_unavailable: int = 0
+    question_count_unanswered: int = 0
     category_scores: dict[str, float] = Field(default_factory=dict)
     executive_summary: str = ""
     strengths: list[str] = Field(default_factory=list)

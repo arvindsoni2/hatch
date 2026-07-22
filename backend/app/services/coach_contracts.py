@@ -1,0 +1,172 @@
+"""Stable Coach stage outcomes, diagnostics, and deadline helpers.
+
+The types in this module are shared by production persistence and later
+benchmark adapters.  They intentionally contain metadata only: prompt and
+response content, candidate data, transcripts, URLs, and paths do not belong
+in a :class:`CoachDiagnostic`.
+"""
+from __future__ import annotations
+
+import asyncio
+import copy
+from collections.abc import Awaitable
+from typing import Any, Literal, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from typing_extensions import Self
+
+COACH_VALIDATION_SCHEMA_VERSION = "1.0.0"
+
+CoachStage = Literal[
+    "company_research",
+    "question_generation",
+    "question_generation_repair",
+    "model_answer",
+    "answer_evaluation",
+    "rubric_build",
+    "rubric_synthesis",
+    "technical_drill",
+    "session_report",
+    "session_rubric_aggregation",
+    "followup_plan",
+]
+CoachOutcome = Literal[
+    "completed",
+    "withheld_insufficient_evidence",
+    "fallback_deterministic",
+    "invalid_output",
+    "unavailable",
+    "failed",
+]
+CoachExecutionMode = Literal["llm", "deterministic", "cache", "not_run"]
+EvaluationState = Literal[
+    "pending", "completed", "unavailable", "invalid", "skipped", "failed"
+]
+ReportState = Literal["not_started", "building", "completed", "fallback", "failed"]
+
+CoachGateCode = Literal[
+    "coach_question_parse_invalid",
+    "coach_question_count_mismatch",
+    "coach_question_duplicate",
+    "coach_question_category_invalid",
+    "coach_question_difficulty_invalid",
+    "coach_question_requirement_unknown",
+    "coach_question_candidate_claim",
+    "coach_question_prompt_injection_followed",
+    "coach_question_repair_exhausted",
+    "coach_model_answer_no_evidence",
+    "coach_model_answer_empty",
+    "coach_model_answer_schema_invalid",
+    "coach_model_answer_unknown_evidence_id",
+    "coach_model_answer_unsupported_claim",
+    "coach_model_answer_numeric_fidelity",
+    "coach_model_answer_star_incomplete",
+    "coach_model_answer_provider_unavailable",
+    "coach_answer_empty_transcript",
+    "coach_evaluation_schema_invalid",
+    "coach_evaluation_dimension_missing",
+    "coach_evaluation_score_out_of_range",
+    "coach_evaluation_overall_inconsistent",
+    "coach_evaluation_evidence_ungrounded",
+    "coach_evaluation_followup_missing",
+    "coach_evaluation_followup_unexpected",
+    "coach_evaluation_provider_unavailable",
+    "coach_evaluation_fallback_unclassified",
+    "coach_rubric_dimension_missing",
+    "coach_rubric_score_mutation",
+    "coach_rubric_evidence_ungrounded",
+    "coach_rubric_optional_dimension_unexpected",
+    "coach_rubric_provider_unavailable",
+    "coach_report_count_mismatch",
+    "coach_report_score_mutation",
+    "coach_report_unsupported_claim",
+    "coach_report_priority_mismatch",
+    "coach_report_schema_invalid",
+    "coach_report_provider_unavailable",
+    "coach_report_fallback_unclassified",
+    "coach_drill_schema_invalid",
+    "coach_drill_question_mismatch",
+    "coach_drill_candidate_claim",
+    "coach_drill_length_exceeded",
+    "coach_drill_provider_unavailable",
+    "coach_stage_timeout",
+    "coach_job_timeout",
+    "coach_stage_failed",
+    "coach_async_job_failed",
+    "coach_persistence_failed",
+]
+
+
+class CoachDiagnostic(BaseModel):
+    """Privacy-safe metadata describing one terminal Coach stage attempt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    validation_schema_version: Literal["1.0.0"] = COACH_VALIDATION_SCHEMA_VERSION
+    stage: CoachStage
+    outcome: CoachOutcome
+    execution_mode: CoachExecutionMode
+    prompt_id: str | None = None
+    prompt_version: str | None = None
+    output_schema_version: str | None = None
+    model_id: str | None = None
+    attempt_count: int = Field(ge=0)
+    repair_count: int = Field(ge=0)
+    gate_codes: list[CoachGateCode]
+    duration_ms: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_execution_metadata(self) -> Self:
+        prompt_metadata = (
+            self.prompt_id,
+            self.prompt_version,
+            self.output_schema_version,
+            self.model_id,
+        )
+        if self.execution_mode == "llm":
+            if (
+                not self.prompt_id
+                or not self.prompt_version
+                or not self.model_id
+                or self.attempt_count < 1
+            ):
+                raise ValueError(
+                    "LLM diagnostics require prompt/model metadata and at least one attempt"
+                )
+        elif any(value is not None for value in prompt_metadata):
+            raise ValueError("non-LLM diagnostics cannot contain prompt/model metadata")
+        return self
+
+
+def merge_stage_diagnostic(
+    existing: dict[str, Any] | None,
+    stage: CoachStage | str,
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a copy with one stage replaced without dropping other stages."""
+    merged: dict[str, Any] = copy.deepcopy(existing or {})
+    merged["schema_version"] = COACH_VALIDATION_SCHEMA_VERSION
+    stages = merged.get("stages")
+    if not isinstance(stages, dict):
+        stages = {}
+        merged["stages"] = stages
+    stages[str(stage)] = copy.deepcopy(value)
+    return merged
+
+
+_T = TypeVar("_T")
+
+
+async def run_with_stage_deadline(
+    awaitable: Awaitable[_T],
+    seconds: float,
+) -> _T:
+    """Run one logical stage under a single non-renewable outer deadline."""
+    async with asyncio.timeout(seconds):
+        return await awaitable
+
+
+def configured_model_id(client: object) -> str:
+    """Return the configured model identifier without inspecting model output."""
+    return str(getattr(client, "model", None) or "configured")
+

@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,6 +52,10 @@ class InterviewSession(Base):
         Index("idx_interview_sessions_status", "status"),
         Index("idx_interview_sessions_application_id", "application_id"),
         Index("idx_interview_sessions_created_at", "created_at"),
+        CheckConstraint(
+            "report_state IN ('not_started', 'building', 'completed', 'fallback', 'failed')",
+            name="ck_interview_sessions_report_state",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
@@ -77,6 +81,18 @@ class InterviewSession(Base):
         String(36), ForeignKey("interview_sessions.id", ondelete="SET NULL"), nullable=True
     )
     focus_areas: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # Coach C1 contract, snapshot, and database-claim fields.
+    diagnostics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    report_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    report_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="not_started", server_default=text("'not_started'")
+    )
+    report_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    report_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    activity_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
 
     questions: Mapped[list[SessionQuestion]] = relationship(
         "SessionQuestion", back_populates="session", cascade="all, delete-orphan",
@@ -117,6 +133,8 @@ class SessionQuestion(Base):
     difficulty: Mapped[str] = mapped_column(String(32), default="medium")  # easy|medium|hard
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requirement_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_answer_diagnostics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     order_in_session: Mapped[int] = mapped_column(Integer, nullable=False)
 
     session: Mapped[InterviewSession] = relationship("InterviewSession", back_populates="questions")
@@ -132,6 +150,11 @@ class SessionRecording(Base):
     __table_args__ = (
         Index("idx_session_recordings_session_id", "session_id"),
         Index("idx_session_recordings_question_id", "question_id"),
+        CheckConstraint(
+            "evaluation_state IS NULL OR evaluation_state IN "
+            "('pending', 'completed', 'unavailable', 'invalid', 'skipped', 'failed')",
+            name="ck_session_recordings_evaluation_state",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
@@ -150,6 +173,8 @@ class SessionRecording(Base):
     # video_metrics: {eye_contact_pct, head_stability, expression, gesture_freq}
     video_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     evaluation_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON of AnswerEvaluation
+    evaluation_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    async_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     session: Mapped[InterviewSession] = relationship("InterviewSession", back_populates="recordings")

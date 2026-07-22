@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from ..schemas.coach import SessionListItem
+from ..services.coach_contracts import merge_stage_diagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,23 @@ class SessionRepository:
             .values(overall_score=overall_score, feedback_summary=feedback_summary)
         )
 
+    async def update_stage_diagnostics(
+        self,
+        session_id: str,
+        stage: str,
+        value: dict,
+    ) -> None:
+        """Merge one Coach stage diagnostic without dropping other stages."""
+        session = await self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} not found")
+        merged = merge_stage_diagnostic(session.diagnostics, stage, value)
+        await self._session.execute(
+            update(InterviewSession)
+            .where(InterviewSession.id == session_id)
+            .values(diagnostics=merged)
+        )
+
     # ──────────────────────── Questions ────────────────────────
 
     async def add_questions(
@@ -163,6 +181,8 @@ class SessionRepository:
                 difficulty=q.get("difficulty", "medium"),
                 context=q.get("context"),
                 model_answer=q.get("model_answer"),
+                requirement_id=q.get("requirement_id"),
+                model_answer_diagnostics=q.get("model_answer_diagnostics"),
                 order_in_session=q["order_in_session"],
             )
             self._session.add(sq)
@@ -216,6 +236,8 @@ class SessionRepository:
         evaluation_json: str | None,
         audio_uri: str | None = None,
         video_uri: str | None = None,
+        evaluation_state: str | None = None,
+        async_job_id: str | None = None,
     ) -> SessionRecording:
         """Persist a recording (transcript + optional media URIs + evaluation).
 
@@ -243,6 +265,8 @@ class SessionRepository:
             speech_metrics=speech_metrics,
             video_metrics=video_metrics,
             evaluation_json=evaluation_json,
+            evaluation_state=evaluation_state,
+            async_job_id=async_job_id,
         )
         self._session.add(recording)
         await self._session.flush()
