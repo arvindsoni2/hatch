@@ -393,27 +393,27 @@ Commit: `feat(coach-benchmark): add resumable benchmark runner`
 - Consumes: terminal `ScenarioResult` records.
 - Produces: `classify_model(model_id, results, run_state) -> CapabilityResult` and `rank_models(capabilities) -> list[CapabilityResult]`.
 
-- [ ] **Step 1: Write failing denominator/minimum-evidence tests**
+- [x] **Step 1: Write failing denominator/minimum-evidence tests**
 
 Cover exact model/harness separation, 80% core validity, four core attempts, eight answer-evaluation calibration attempts, two SR-01 attempts, two terminal SR-02 attempts, four optional attempts, expected withholding, successful repair, reached E2E reports, and inconclusive evidence.
 
-- [ ] **Step 2: Write failing threshold/ranking tests**
+- [x] **Step 2: Write failing threshold/ranking tests**
 
 Test exact fractions at 95%, 90%, 80%, MAE 1.5, timeout 5%, optional 90%, safety failure, model/fallback report fidelity, median core quality, calibration, population variance, repair rate, latency, and model-ID tie-break. Prove optional judge fields cannot change classification or order.
 
-- [ ] **Step 3: Run tests and verify failures**
+- [x] **Step 3: Run tests and verify failures**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_capability.py tests/benchmarks/coach/test_ranking.py`
 
-- [ ] **Step 4: Implement exact aggregation and classification**
+- [x] **Step 4: Implement exact aggregation and classification**
 
 Use raw `Decimal` numerator/denominator values for every threshold. Invalid/incomplete runs produce no model classification. Rank only `coach_capable` then `coach_capable_with_optional_degradation` using the exact eight-key lexicographic order in v5 section 14.4.
 
-- [ ] **Step 5: Run capability/ranking tests**
+- [x] **Step 5: Run capability/ranking tests**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_capability.py tests/benchmarks/coach/test_ranking.py`
 
-- [ ] **Step 6: Commit checkpoint C2.6**
+- [x] **Step 6: Commit checkpoint C2.6**
 
 Commit: `feat(coach-benchmark): classify and rank model capability`
 
@@ -573,7 +573,7 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 - [x] C2.3 Production adapter
 - [x] C2.4 Gates and scoring
 - [x] C2.5 Runner and resume
-- [ ] C2.6 Capability and ranking
+- [x] C2.6 Capability and ranking
 - [ ] C2.7 Reporting and CLI
 - [ ] C2.8 Contract/E2E smoke
 - [ ] C2.9 Documentation and verification

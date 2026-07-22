@@ -19,12 +19,15 @@
     "scenarios/ae_01_strong_answer.json",
     "scenarios/ae_02_weak_answer.json",
     "scenarios/ae_03_metric_grounding.json",
+    "scenarios/ae_04_technical_structure.json",
     "scenarios/ae_h01_provider_unavailable.json",
     "scenarios/ae_h02_malformed_output.json",
     "scenarios/rb_01_score_immutability.json",
+    "scenarios/rb_02_focus_alignment.json",
     "scenarios/sr_01_mixed_session_report.json",
     "scenarios/sr_02_provider_fallback.json",
     "scenarios/td_01_technical_drill.json",
+    "scenarios/td_02_domain_drill.json",
     "scenarios/e2e_01_three_question_session.json"
   ]
 }

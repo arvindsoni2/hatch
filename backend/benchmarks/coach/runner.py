@@ -9,6 +9,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse
@@ -42,7 +43,7 @@ from .production_adapter import (
     ScenarioContext,
 )
 from .profiles import profile_for
-from .scoring import score_execution
+from .scoring import classify_model, rank_models, score_execution
 from .suite_loader import LoadedCoachSuite, load_suite
 from .validators import validate_execution
 
@@ -279,6 +280,30 @@ def _scenario_result(
     stage_execution = execution[1]
     validation = validate_execution(scenario, stage_execution)
     score = score_execution(scenario, stage_execution, validation)
+    calibration_in_range: int | None = None
+    calibration_applicable: int | None = None
+    calibration_error: str | None = None
+    if scenario.stage == "answer_evaluation" and stage_execution.output.get(
+        "evaluation_state"
+    ) == "completed":
+        ranges = {
+            key: value
+            for key, value in scenario.expected.score_ranges.items()
+            if key != "overall"
+        }
+        observed_scores = stage_execution.output.get("scores", {})
+        calibration_applicable = len(ranges)
+        calibration_in_range = sum(
+            key in observed_scores and low <= observed_scores[key] <= high
+            for key, (low, high) in ranges.items()
+        )
+        overall_range = scenario.expected.score_ranges.get("overall")
+        overall = stage_execution.output.get("overall")
+        if overall_range and isinstance(overall, int | float):
+            centre = (
+                Decimal(str(overall_range[0])) + Decimal(str(overall_range[1]))
+            ) / Decimal(2)
+            calibration_error = str(abs(Decimal(str(overall)) - centre))
     return ScenarioResult(
         attempt=attempt,
         status=_status(stage_execution.diagnostic.outcome),
@@ -300,6 +325,9 @@ def _scenario_result(
             for name, value in score.dimensions.items()
         },
         quality_score=score.quality_score,
+        calibration_in_range=calibration_in_range,
+        calibration_applicable=calibration_applicable,
+        calibration_error=calibration_error,
         output_excerpt=_bounded_value(stage_execution.output),
     )
 
@@ -392,21 +420,41 @@ def _write_summary(
     interrupted: bool,
     protected_changed: bool,
 ) -> CoachRunSummary:
+    state = _state(
+        schedule,
+        results,
+        deadline=deadline,
+        interrupted=interrupted,
+        protected_changed=protected_changed,
+    )
+    capabilities = []
+    ranking = []
+    if profile.allow_ranking and state in {
+        "completed",
+        "completed_with_model_outcomes",
+    }:
+        model_ids = list(dict.fromkeys(item.model_id for item in schedule))
+        capabilities = [
+            classify_model(model_id, results, state) for model_id in model_ids
+        ]
+        ranked = rank_models(capabilities)
+        ranks = {item.model_id: item.rank for item in ranked}
+        capabilities = [
+            item.model_copy(update={"rank": ranks.get(item.model_id)})
+            for item in capabilities
+        ]
+        ranking = [item.model_id for item in ranked]
     summary = CoachRunSummary(
         run_id=run_id,
         suite_id=suite.suite_id,
         suite_version=suite.version,
         profile=profile.name,
-        state=_state(
-            schedule,
-            results,
-            deadline=deadline,
-            interrupted=interrupted,
-            protected_changed=protected_changed,
-        ),
+        state=state,
         scheduled=len(schedule),
         terminal=len(results),
         results=results,
+        capabilities=capabilities,
+        ranking=ranking,
     )
     atomic_write_json(run_dir / "summary.json", summary.model_dump(mode="json"))
     atomic_write_json(

@@ -28,3 +28,26 @@ def test_schedule_rejects_unknown_model() -> None:
     with pytest.raises(ValueError, match="unknown Coach model"):
         build_schedule(SUITE, profile_for("standard"), ["missing"])
 
+
+def test_standard_schedule_can_meet_v5_stage_evidence_minima() -> None:
+    schedule = build_schedule(SUITE, profile_for("standard"), ["qwen35-4b"])
+    model_attempts = [
+        item for item in schedule if item.qualification_scope == "model_capability"
+    ]
+    counts = {
+        stage: sum(item.stage == stage for item in model_attempts)
+        for stage in {
+            "question_generation",
+            "model_answer",
+            "answer_evaluation",
+            "company_research",
+            "rubric_synthesis",
+            "technical_drill",
+        }
+    }
+    assert counts["question_generation"] >= 4
+    assert counts["model_answer"] >= 4
+    assert counts["answer_evaluation"] >= 8
+    assert counts["company_research"] >= 4
+    assert counts["rubric_synthesis"] >= 4
+    assert counts["technical_drill"] >= 4

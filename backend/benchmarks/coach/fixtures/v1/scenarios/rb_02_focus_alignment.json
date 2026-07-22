@@ -1,0 +1,11 @@
+{
+  "scenario_id": "rb_02_focus_alignment",
+  "stage": "rubric_synthesis",
+  "description": "Rubric narrative keeps deterministic scores while prioritising the two weakest dimensions in order.",
+  "qualification_scope": "model_capability",
+  "input": {"transcript": "I worked with teams and things improved.", "baseline_scores": {"relevance": 5, "star_structure": 3, "technical_depth": 4, "conciseness": 6, "communication": 6, "impact_metrics": 2}, "focus_dimensions": ["impact_metrics", "star_structure"]},
+  "expected": {"outcome": "completed", "required_term_groups": [], "expected_priority_dimensions": ["impact_metrics", "star_structure"]},
+  "scoring": {"min_words": 4, "target_max_words": 80, "hard_max_words": 120},
+  "quality_dimensions": ["score_immutability", "evidence_grounding", "drill_specificity", "focus_alignment"],
+  "acceptance_smoke": false
+}

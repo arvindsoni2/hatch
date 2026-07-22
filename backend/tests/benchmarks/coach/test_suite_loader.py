@@ -27,12 +27,15 @@ EXPECTED_SCENARIOS = {
     "ae_01_strong_answer",
     "ae_02_weak_answer",
     "ae_03_metric_grounding",
+    "ae_04_technical_structure",
     "ae_h01_provider_unavailable",
     "ae_h02_malformed_output",
     "rb_01_score_immutability",
+    "rb_02_focus_alignment",
     "sr_01_mixed_session_report",
     "sr_02_provider_fallback",
     "td_01_technical_drill",
+    "td_02_domain_drill",
     "e2e_01_three_question_session",
 }
 

@@ -191,6 +191,9 @@ class ScenarioResult(StrictModel):
     gates: list[GateFinding] = Field(default_factory=list)
     dimensions: dict[str, DimensionResult] = Field(default_factory=dict)
     quality_score: str | None = None
+    calibration_in_range: int | None = Field(default=None, ge=0)
+    calibration_applicable: int | None = Field(default=None, ge=0)
+    calibration_error: str | None = None
     exclusion_reason: str | None = None
     output_excerpt: dict[str, Any] | str | None = None
     optional_judge_score: str | None = None
