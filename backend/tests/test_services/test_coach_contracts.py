@@ -70,6 +70,8 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
     for recommendation in (
         "Alex should provide improved examples.",
         "Alex can use structured examples.",
+        "Alex shall set priorities for the rollout.",
+        "Alex shall cut costs during the rollout.",
     ):
         assert not contains_candidate_history_claim(
             recommendation, candidate_names=("Alex Smith", "Alex")

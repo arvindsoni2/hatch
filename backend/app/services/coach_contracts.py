@@ -302,13 +302,13 @@ def contains_candidate_history_claim(
         re.search(
             rf"\b{re.escape(candidate_name.strip())}\b"
             rf"\s+(?:(?:is|was|are|were)\s+"
-            rf"(?:(?!(?:should|can|could|may|might|must|would|will)\b)[a-z]+\s+)?"
+            rf"(?:(?!(?:should|shall|can|could|may|might|must|would|will)\b)[a-z]+\s+)?"
             rf"[a-z]{{3,}}ing|(?:has|had)\s+"
-            rf"(?:(?!(?:should|can|could|may|might|must|would|will)\b)[a-z]+\s+)?(?:"
-            rf"been\s+(?:(?!(?:should|can|could|may|might|must|would|will)\b)"
+            rf"(?:(?!(?:should|shall|can|could|may|might|must|would|will)\b)[a-z]+\s+)?(?:"
+            rf"been\s+(?:(?!(?:should|shall|can|could|may|might|must|would|will)\b)"
             rf"[a-z]+\s+)?[a-z]{{3,}}ing|"
             rf"(?:{_CANDIDATE_HISTORY_VERBS}|[a-z]{{3,}}ed|set|cut))|"
-            rf"(?:(?!(?:should|can|could|may|might|must|would|will)\b)[a-z]+\s+)?"
+            rf"(?:(?!(?:should|shall|can|could|may|might|must|would|will)\b)[a-z]+\s+)?"
             rf"(?:{_CANDIDATE_HISTORY_VERBS}|"
             rf"[a-z]{{3,}}ed|[a-z]{{3,}}s|set|cut))\b",
             candidate_text,

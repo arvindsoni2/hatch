@@ -352,17 +352,12 @@ def _atomic_claim_tokens(prose: str) -> list[tuple[str, ...]]:
 def _star_sections_follow_answer_order(
     model_answer: str, star_breakdown: dict[str, str]
 ) -> bool:
-    """Require grounded STAR section clauses to occur in declared order."""
+    """Require the full answer to equal the declared grounded STAR sequence."""
     answer_claims = _atomic_claim_tokens(model_answer)
-    cursor = 0
+    section_claims: list[tuple[str, ...]] = []
     for key in _STAR_KEYS:
-        for section_claim in _atomic_claim_tokens(star_breakdown[key]):
-            try:
-                position = answer_claims.index(section_claim, cursor)
-            except ValueError:
-                return False
-            cursor = position + 1
-    return True
+        section_claims.extend(_atomic_claim_tokens(star_breakdown[key]))
+    return answer_claims == section_claims
 
 
 def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:

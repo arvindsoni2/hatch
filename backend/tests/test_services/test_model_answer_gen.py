@@ -633,6 +633,31 @@ async def test_model_answer_rejects_action_result_breakdown_reordering() -> None
 
 
 @pytest.mark.asyncio
+async def test_model_answer_rejects_repeated_out_of_order_section_clause() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. Latency dropped by 25%."
+    )
+    answer = (
+        "A service had recurring incidents. I automated the recurring remediation. "
+        "I needed to improve reliability. I automated the recurring remediation. "
+        "Latency dropped by 25%."
+    )
+    client = _client(answer, "Latency dropped by 25%.", candidate_summary)
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_star_incomplete"]
+
+
+@pytest.mark.asyncio
 async def test_model_answer_accepts_explicit_truthful_withholding() -> None:
     candidate_summary = "AWS. Terraform. Python. SQL."
     client = MagicMock()
