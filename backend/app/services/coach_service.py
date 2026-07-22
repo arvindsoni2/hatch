@@ -250,7 +250,6 @@ class CoachService:
 
         saved_questions = await session_repo.add_questions(session.id, db_questions)
         await session_repo.update_session_status(session.id, "active")
-        await db.commit()
 
         # Map saved DB questions to QuestionPresentation
         total = len(saved_questions)
@@ -281,9 +280,9 @@ class CoachService:
                     "items": drill_result.items_diagnostics,
                 },
             )
-            await db.commit()
         except Exception as exc:
             logger.warning("TechnicalDrillsService failed — proceeding without drills: %s", exc)
+        await db.commit()
 
         from ..schemas.coach import SessionQuestionRead
         cfg = session.config or {}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,8 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.async_job import AsyncJob
-from app.models.coach_session import InterviewSession
-from app.schemas.coach import CreateSessionRequest
+from app.models.coach_session import InterviewSession, SessionQuestion
+from app.schemas.coach import CreateSessionRequest, ModelAnswerResult, QuestionPresentation
+from app.services.coach_contracts import CoachDiagnostic
+from app.services.coach_service import CoachService
 from app.services.coach_session_queue import queue_coach_session
 
 
@@ -134,3 +137,74 @@ async def test_create_job_timeout_fails_stub_with_diagnostic(db_session):
         "gate_codes"
     ] == ["coach_job_timeout"]
     assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_create_cancellation_during_drills_rolls_back_questions_and_activation(
+    db_session,
+):
+    stub = InterviewSession(
+        company_name="Timeout Ltd",
+        role_title="Engineer",
+        config={"question_count": 1},
+        status="setup",
+    )
+    db_session.add(stub)
+    await db_session.commit()
+    stub_id = stub.id
+
+    diagnostic = CoachDiagnostic(
+        stage="model_answer",
+        outcome="completed",
+        execution_mode="llm",
+        prompt_id="model_answer",
+        prompt_version="2.0.0",
+        output_schema_version="1.0.0",
+        model_id="test-model",
+        attempt_count=1,
+        repair_count=0,
+        gate_codes=[],
+        duration_ms=1,
+    )
+    service = CoachService.__new__(CoachService)
+    service.research_company = AsyncMock(return_value=None)
+    service._researcher = MagicMock(last_diagnostic=None)
+    service._question_gen = MagicMock()
+    service._question_gen.generate = AsyncMock(return_value=[QuestionPresentation(
+        id="generated-1",
+        text="Explain a migration.",
+        category="Technical",
+        difficulty="medium",
+        requirement_id="requirement-1",
+        num=1,
+        total=1,
+    )])
+    service._model_answer_gen = MagicMock()
+    service._model_answer_gen.generate = AsyncMock(return_value=ModelAnswerResult(
+        model_answer="",
+        star_breakdown={},
+        evidence_references=[],
+        diagnostic=diagnostic,
+    ))
+
+    service._drills = MagicMock()
+    service._drills.build_drills = AsyncMock(
+        side_effect=asyncio.CancelledError("cancelled")
+    )
+
+    request = CreateSessionRequest(
+        company_name="Timeout Ltd",
+        role_title="Engineer",
+        config={"question_count": 1},
+    )
+    with patch("app.services.coach_service._load_candidate_summary", return_value="Evidence"):
+        with pytest.raises(asyncio.CancelledError, match="cancelled"):
+            await service.create_session(request, db_session, session_id=stub_id)
+    await db_session.rollback()
+
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, stub_id)
+    questions = (await db_session.execute(select(SessionQuestion))).scalars().all()
+    assert persisted is not None
+    assert persisted.status == "setup"
+    assert questions == []
