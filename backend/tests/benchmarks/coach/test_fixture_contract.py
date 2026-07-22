@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from benchmarks.coach.suite_loader import load_suite
+from app.services.writing_contracts import stable_evidence_id
 
 ROOT = Path(__file__).resolve().parents[4]
 V1_SUITE = ROOT / "backend" / "benchmarks" / "coach" / "fixtures" / "v1"
@@ -15,6 +16,14 @@ def test_candidate_is_fictional_and_has_grounded_star_evidence() -> None:
     assert len({item["evidence_id"] for item in evidence["evidence"]}) >= 6
     assert {"18%", "12", "240", "2023"} <= set(evidence["immutable_numeric_tokens"])
     assert evidence["unsupported_competency"] == "quantum cryptography"
+
+
+def test_every_candidate_evidence_id_uses_existing_stable_rule() -> None:
+    evidence = load_suite(V1_SUITE).candidate_evidence
+    for item in evidence["evidence"]:
+        assert item["evidence_id"] == stable_evidence_id(
+            item["source_path"], item["text"]
+        )
 
 
 def test_job_description_contains_requirements_number_and_attack_fixture() -> None:

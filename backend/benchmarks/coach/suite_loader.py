@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import Field, ValidationError, model_validator
 
+from app.services.writing_contracts import stable_evidence_id
 from benchmarks.contracts import ModelSpec, StrictModel
 
 from .contracts import CoachScenario
@@ -286,6 +287,32 @@ def load_suite(path: Path | str) -> LoadedCoachSuite:
     research_sources = raw_values[manifest.company_research_sources_file]
     if not all(isinstance(item, dict) for item in (candidate, research, research_sources)):
         raise SuiteValidationError("Coach evidence and research fixtures must be objects")
+    evidence = candidate.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        raise SuiteValidationError("candidate evidence must contain evidence items")
+    for item in evidence:
+        if not isinstance(item, dict) or not all(
+            isinstance(item.get(field), str)
+            for field in ("evidence_id", "source_path", "text")
+        ):
+            raise SuiteValidationError("candidate evidence items require stable evidence fields")
+        if item["evidence_id"] != stable_evidence_id(item["source_path"], item["text"]):
+            raise SuiteValidationError("candidate evidence item has an invalid stable evidence id")
+    evidence_ids = {item["evidence_id"] for item in evidence}
+    for scenario in parsed_scenarios:
+        references = (
+            scenario.expected.allowed_evidence_ids
+            + scenario.expected.required_evidence_ids
+        )
+        for field in ("evidence_ids", "model_answer_evidence_ids"):
+            value = scenario.input.get(field, [])
+            if isinstance(value, list):
+                references.extend(item for item in value if isinstance(item, str))
+        unknown = set(references) - evidence_ids
+        if unknown:
+            raise SuiteValidationError(
+                f"{scenario.scenario_id} references an unknown evidence id"
+            )
 
     return LoadedCoachSuite(
         suite_id=manifest.suite_id,

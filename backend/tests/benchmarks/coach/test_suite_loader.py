@@ -135,6 +135,35 @@ def test_personal_email_is_rejected_without_echoing_value(tmp_path: Path) -> Non
     assert "person@gmail.com" not in str(exc_info.value)
 
 
+def test_candidate_evidence_id_must_match_existing_stable_rule(tmp_path: Path) -> None:
+    suite_dir = _copy_suite(tmp_path)
+    path = suite_dir / "candidate_evidence.json"
+
+    def replace_id(value: dict[str, object]) -> None:
+        evidence = value["evidence"]
+        assert isinstance(evidence, list)
+        assert isinstance(evidence[0], dict)
+        evidence[0]["evidence_id"] = "readable-but-not-stable"
+
+    _rewrite(path, replace_id)
+    with pytest.raises(SuiteValidationError, match="stable evidence id"):
+        load_suite(suite_dir)
+
+
+def test_scenario_evidence_references_must_exist(tmp_path: Path) -> None:
+    suite_dir = _copy_suite(tmp_path)
+    path = suite_dir / "scenarios" / "ma_01_supported_star.json"
+
+    def replace_reference(value: dict[str, object]) -> None:
+        expected = value["expected"]
+        assert isinstance(expected, dict)
+        expected["required_evidence_ids"] = ["unknown-evidence-id"]
+
+    _rewrite(path, replace_reference)
+    with pytest.raises(SuiteValidationError, match="unknown evidence id"):
+        load_suite(suite_dir)
+
+
 def test_absolute_protected_path_is_rejected(tmp_path: Path) -> None:
     suite_dir = _copy_suite(tmp_path)
     path = suite_dir / "company_research.json"
