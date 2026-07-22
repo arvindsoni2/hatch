@@ -31,6 +31,26 @@ from .writing_contracts import build_evidence_ledger, evidence_records
 logger = logging.getLogger(__name__)
 
 _STAR_KEYS = ("situation", "task", "action", "result")
+_STAR_ROLE_PATTERNS = {
+    "situation": re.compile(
+        r"\b(?:was|were|had|faced|during|when|context|environment|project|service|team)\b",
+        re.IGNORECASE,
+    ),
+    "task": re.compile(
+        r"\b(?:needed|required|responsible|tasked|goal|objective|challenge|had to|aimed)\b",
+        re.IGNORECASE,
+    ),
+    "action": re.compile(
+        r"\b(?:i|we)\s+(?:(?:personally|then|also)\s+){0,2}"
+        r"(?:[a-z]{3,}ed|built|chose|drove|led|made|ran|took|wrote)\b",
+        re.IGNORECASE,
+    ),
+    "result": re.compile(
+        r"(?:\b\d+(?:\.\d+)?%?\b|\b(?:achieved|grew|improved|increased|"
+        r"decreased|reduced|saved|fell|resulted|outcome|delivered)\b)",
+        re.IGNORECASE,
+    ),
+}
 
 
 def _diagnostic(
@@ -169,6 +189,15 @@ class ModelAnswerGeneratorService:
             )
 
         model_answer = raw.get("model_answer")
+        if _is_explicit_withholding(raw):
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="withheld_insufficient_evidence",
+                    gates=["coach_model_answer_no_evidence"],
+                    duration_ms=duration_ms,
+                )
+            )
         if not isinstance(model_answer, str) or not model_answer.strip():
             return _empty_result(
                 _diagnostic(
@@ -265,6 +294,19 @@ class ModelAnswerGeneratorService:
                 )
             )
 
+        if any(
+            not _STAR_ROLE_PATTERNS[key].search(star_breakdown[key])
+            for key in _STAR_KEYS
+        ):
+            return _empty_result(
+                _diagnostic(
+                    self._client,
+                    outcome="invalid_output",
+                    gates=["coach_model_answer_star_incomplete"],
+                    duration_ms=duration_ms,
+                )
+            )
+
         return ModelAnswerResult(
             model_answer=model_answer.strip(),
             star_breakdown=star_breakdown,
@@ -287,6 +329,20 @@ def _string_values(value: Any) -> list[str]:
     if isinstance(value, list):
         return [text for nested in value for text in _string_values(nested)]
     return []
+
+
+def _is_explicit_withholding(raw: dict[str, Any]) -> bool:
+    star = raw.get("star_breakdown")
+    return (
+        isinstance(raw.get("model_answer"), str)
+        and not raw["model_answer"].strip()
+        and isinstance(star, dict)
+        and all(
+            isinstance(star.get(key), str) and not star[key].strip()
+            for key in _STAR_KEYS
+        )
+        and raw.get("evidence_references") == []
+    )
 
 
 def _content_tokens(text: str) -> list[str]:

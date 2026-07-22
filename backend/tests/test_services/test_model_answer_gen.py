@@ -406,6 +406,63 @@ async def test_model_answer_rejects_duplicate_star_sections() -> None:
     assert result.diagnostic.gate_codes == ["coach_model_answer_star_incomplete"]
 
 
+@pytest.mark.asyncio
+async def test_model_answer_rejects_star_sections_assigned_to_wrong_roles() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. Incident volume fell by 25%."
+    )
+    client = _client(
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. Incident volume fell by 25%.",
+        "Incident volume fell by 25%.",
+        candidate_summary,
+    )
+    client.complete_json.return_value["star_breakdown"] = {
+        "situation": "Incident volume fell by 25%.",
+        "task": "I automated the recurring remediation.",
+        "action": "A service had recurring incidents.",
+        "result": "I needed to improve reliability.",
+    }
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_star_incomplete"]
+
+
+@pytest.mark.asyncio
+async def test_model_answer_accepts_explicit_truthful_withholding() -> None:
+    candidate_summary = "AWS. Terraform. Python. SQL."
+    client = MagicMock()
+    client.complete_json = AsyncMock(
+        return_value={
+            "model_answer": "",
+            "star_breakdown": {key: "" for key in ("situation", "task", "action", "result")},
+            "evidence_references": [],
+        }
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about a migration result.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.outcome == "withheld_insufficient_evidence"
+    assert result.diagnostic.execution_mode == "llm"
+    assert result.diagnostic.gate_codes == ["coach_model_answer_no_evidence"]
+
+
 def test_candidate_evidence_removes_display_labels_from_atomic_claims() -> None:
     evidence = _build_candidate_evidence(
         "Summary: Led a platform migration.\nKey Skills: AWS; Terraform"

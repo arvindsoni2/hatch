@@ -25,7 +25,7 @@ _CANDIDATE_HISTORY_VERBS = (
     r"orchestrated|facilitated|supported|contributed|directed|transformed|"
     r"improved|resolved|negotiated|mentored|advised|established|introduced|"
     r"optimized|optimised|streamlined|scaled|modernized|modernised"
-    r"|own|owns|wrote|written|chose|chosen|spearheaded"
+    r"|owns|leads|wrote|written|chose|chosen|spearheaded"
 )
 _CANDIDATE_HISTORY_CLAIM = re.compile(
     rf"\b(?:i|we|you|he|she|they|the candidate|candidate)\b"
@@ -52,7 +52,14 @@ _EMBEDDED_NAMED_PAST_CLAIM = re.compile(
     r"(?:(?!(?:need|seed|feed|speed)\b)[a-z]{3,}ed|wrote|made|took|gave|"
     r"came|saw|found|thought|told|became|showed|left|felt|put|brought|began|"
     r"kept|held|stood|heard|meant|met|set|learnt|grew|won|lost|paid|sent|"
-    r"sat|spoke|lay|ran|drove|led|built|chose)\b"
+    r"sat|spoke|lay|ran|drove|led|built|chose)\b(?!\s+its\b)"
+)
+_SENTENCE_OPENING_NAMED_ACTION_CLAIM = re.compile(
+    r"(?:^|[.!?]\s+)"
+    r"[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?\s+"
+    r"(?:has\s+|had\s+)?(?:[a-z]{3,}ed|[a-z]{3,}s|wrote|made|took|gave|"
+    r"ran|drove|led|built|chose)\s+"
+    r"(?:the|a|an|this|that|these|those|my|our|his|her|their)\b"
 )
 _NAMED_RESPONSIBILITY_CLAIM = re.compile(
     r"\b(?:[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?|[Tt]he candidate|[Cc]andidate)\s+"
@@ -281,6 +288,7 @@ def contains_candidate_history_claim(text: str) -> bool:
             _NAMED_CANDIDATE_HISTORY_CLAIM,
             _GENERIC_PAST_CANDIDATE_CLAIM,
             _EMBEDDED_NAMED_PAST_CLAIM,
+            _SENTENCE_OPENING_NAMED_ACTION_CLAIM,
             _NAMED_RESPONSIBILITY_CLAIM,
         )
     )
