@@ -152,16 +152,7 @@ def aggregate_session_rubric(
             drill=drill_for_dimension(dimension),
         )
 
-    priority = {name: position for position, name in enumerate(_DIMENSION_PRIORITY)}
-    ranked = sorted(
-        dimensions,
-        key=lambda name: (dimensions[name].score, priority.get(name, 999), name),
-    )
-    selected = ranked[:1]
-    if len(ranked) > 1:
-        lowest, second = dimensions[ranked[0]].score, dimensions[ranked[1]].score
-        if second <= 6 or (lowest < 8 and second - lowest <= 1):
-            selected.append(ranked[1])
+    selected = select_focus_dimensions(dimensions)
     focus = (
         "Focus next session on: "
         + " and ".join(name.replace("_", " ") for name in selected)
@@ -174,6 +165,23 @@ def aggregate_session_rubric(
         focus_for_next_session=focus,
         diagnostic=_aggregation_diagnostic(),
     )
+
+
+def select_focus_dimensions(
+    dimensions: dict[str, RubricDimension],
+) -> list[str]:
+    """Select the exact one-or-two weakest dimensions using the C1 tie rules."""
+    priority = {name: position for position, name in enumerate(_DIMENSION_PRIORITY)}
+    ranked = sorted(
+        dimensions,
+        key=lambda name: (dimensions[name].score, priority.get(name, 999), name),
+    )
+    selected = ranked[:1]
+    if len(ranked) > 1:
+        lowest, second = dimensions[ranked[0]].score, dimensions[ranked[1]].score
+        if second <= 6 or (lowest < 8 and second - lowest <= 1):
+            selected.append(ranked[1])
+    return selected
 
 
 def _one_decimal(values: Sequence[float]) -> float:

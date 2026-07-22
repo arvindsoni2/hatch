@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.coach_session import InterviewSession, SessionQuestion
 from ..schemas.coach import SessionRubric
+from .coach_aggregation import select_focus_dimensions
+from .coach_contracts import CoachDiagnostic, merge_stage_diagnostic
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +43,16 @@ class FollowUpPlannerService:
             (new_session_id, focus_areas) tuple.
         """
         # Identify 1-2 weakest dimensions
-        if rubric.dimensions:
-            sorted_dims = sorted(
-                rubric.dimensions.items(), key=lambda kv: kv[1].score
-            )
-            focus_areas = [name for name, _ in sorted_dims[:2]]
-        else:
-            focus_areas = []
+        focus_areas = select_focus_dimensions(rubric.dimensions)
+        diagnostic = CoachDiagnostic(
+            stage="followup_plan",
+            outcome="completed",
+            execution_mode="deterministic",
+            attempt_count=0,
+            repair_count=0,
+            gate_codes=[],
+            duration_ms=0,
+        )
 
         # Create a new child session
         new_session = InterviewSession(
@@ -62,6 +67,11 @@ class FollowUpPlannerService:
             coach_mode=parent_session.coach_mode,
             started_at=_utcnow(),
             created_at=_utcnow(),
+            diagnostics=merge_stage_diagnostic(
+                None,
+                "followup_plan",
+                {"final": diagnostic.model_dump(mode="json")},
+            ),
         )
         db.add(new_session)
         await db.flush()

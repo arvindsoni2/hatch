@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -12,6 +14,7 @@ from app.database import Base
 from app.models.coach_session import InterviewSession, SessionQuestion
 from app.schemas.coach import RubricDimension, SessionRubric
 from app.services.followup_planner import FollowUpPlannerService
+from app.services.coach_service import CoachService
 
 
 # ──────────────────────── Test DB setup ──────────────────────────
@@ -195,3 +198,31 @@ async def test_plan_empty_rubric_produces_empty_focus(db_session: AsyncSession) 
     _, focus_areas = await svc.plan(parent, rubric, db_session)
 
     assert focus_areas == []
+
+
+@pytest.mark.asyncio
+async def test_followup_timeout_rolls_back_without_child(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = _make_session()
+    parent.rubric = _make_rubric({"relevance": 5}).model_dump(mode="json")
+    db_session.add(parent)
+    parent_id = parent.id
+    await db_session.commit()
+    service = CoachService.__new__(CoachService)
+    service._followup_planner = FollowUpPlannerService()
+
+    async def timeout(awaitable, _seconds):
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr("app.services.coach_service.run_with_stage_deadline", timeout)
+
+    with pytest.raises(HTTPException) as raised:
+        await service.plan_followup_session(parent_id, db_session)
+
+    assert raised.value.status_code == 504
+    children = list((await db_session.execute(
+        select(InterviewSession).where(InterviewSession.parent_session_id == parent_id)
+    )).scalars())
+    assert children == []

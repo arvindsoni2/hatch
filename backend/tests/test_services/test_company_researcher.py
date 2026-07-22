@@ -108,6 +108,21 @@ async def test_claude_synthesis_failure_fallback(researcher: CompanyResearchServ
         result = await researcher.research("Accenture")
     assert isinstance(result, CompanyResearchResponse)
     assert result.company_name == "Accenture"
+
+
+@pytest.mark.asyncio
+async def test_company_research_timeout_is_explicit(
+    researcher: CompanyResearchService, mock_claude
+) -> None:
+    mock_claude.complete_json.side_effect = TimeoutError
+
+    result = await researcher.research("Accenture", "Consulting")
+
+    assert result.verification_state == "not_verified"
+    assert researcher.last_diagnostic is not None
+    assert researcher.last_diagnostic.outcome == "unavailable"
+    assert researcher.last_diagnostic.gate_codes == ["coach_stage_timeout"]
+    mock_claude.complete_json.assert_awaited_once()
     assert result.verification_state == "not_verified"
     assert result.description is None
     assert result.recent_news == []

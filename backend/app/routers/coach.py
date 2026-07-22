@@ -1,6 +1,7 @@
 """FastAPI router for the Coach module — mock interview practice sessions."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -13,8 +14,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..database import get_db
 from ..schemas.coach import (
+    AnswerEvaluation,
     CompanyResearchResponse,
     CreateSessionRequest,
     SessionConfig,
@@ -24,13 +27,18 @@ from ..schemas.coach import (
     SessionFeedbackReport,
     SessionListItem,
     SessionResponse,
-    SpeechMetrics,
     SubmitAnswerRequest,
+    VideoMetrics,
 )
 from ..services.async_job_service import AsyncJobService
 from ..services.coach_session_queue import queue_coach_session
 from ..services.coach_service import CoachService
-from ..services.coach_contracts import CoachConflictError, failed_answer_payload
+from ..services.coach_contracts import (
+    CoachConflictError,
+    CoachDiagnostic,
+    failed_answer_payload,
+    run_with_stage_deadline,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +67,81 @@ def _require_safe_id(value: str, field: str) -> None:
 def get_coach_service() -> CoachService:
     """Dependency factory for CoachService (stateless, re-created per request)."""
     return CoachService()
+
+
+def _answer_job_timeout_result() -> AnswerEvaluation:
+    return AnswerEvaluation(
+        evaluation_state="unavailable",
+        diagnostic=CoachDiagnostic(
+            stage="answer_evaluation",
+            outcome="unavailable",
+            execution_mode="deterministic",
+            attempt_count=0,
+            repair_count=0,
+            gate_codes=["coach_job_timeout"],
+            duration_ms=settings.HATCH_COACH_TIMEOUT_ANSWER_SUBMIT_JOB_SECONDS * 1000,
+        ),
+        scores={},
+        overall=None,
+        feedback="Evaluation timed out. Please try again.",
+        rubric=None,
+        retryable=True,
+    )
+
+
+async def _evaluate_audio_attempt(
+    *,
+    session_id: str,
+    question_id: str,
+    recording_id: str,
+    job_id: str,
+    audio_path: str,
+    face_summary: dict | None,
+    job_db: AsyncSession,
+) -> AnswerEvaluation:
+    """Transcribe and evaluate one reserved audio attempt inside its job budget."""
+    from ..agents.tools.perception_factory import get_transcriber
+    from ..agents.tools.profile_loader import load_profile
+    from ..services.locale_service import get_coach_fillers
+    from ..services.speech_analyser import SpeechAnalyserService
+
+    result = await asyncio.to_thread(get_transcriber().transcribe, audio_path)
+    try:
+        fillers: list[str] | None = get_coach_fillers(load_profile().locale)
+    except Exception:
+        fillers = None
+    words = [{"w": word.w, "start": word.start, "end": word.end} for word in result.words]
+    speech_metrics = SpeechAnalyserService().analyse_from_timestamps(
+        result.text, words, locale_fillers=fillers
+    )
+    video_metrics = None
+    if face_summary:
+        video_metrics = VideoMetrics(
+            eye_contact_pct=face_summary.get("eye_contact_pct", 0.0) * 100,
+            head_stability=min(1.0, face_summary.get("head_stability", 0.0)),
+            expression="neutral",
+            gesture_freq=0.0,
+        )
+    request_data = {
+        "transcript": result.text,
+        "speech_metrics": speech_metrics,
+        "video_metrics": video_metrics,
+        "duration_ms": speech_metrics.duration_ms,
+        "audio_uri": audio_path,
+    }
+    request = (
+        SubmitAnswerRequest(**request_data)
+        if result.text.strip()
+        else SubmitAnswerRequest.model_construct(**request_data)
+    )
+    return await CoachService().submit_answer(
+        session_id,
+        question_id,
+        request,
+        job_db,
+        recording_id=recording_id,
+        async_job_id=job_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -304,17 +387,39 @@ async def submit_answer(
         async with AsyncSessionLocal() as job_db:
             try:
                 reconstructed = SubmitAnswerRequest.model_validate(request_data)
-                result = await CoachService().submit_answer(
-                    session_id,
-                    question_id,
-                    reconstructed,
-                    job_db,
-                    recording_id=recording_id,
-                    async_job_id=job_id,
+                result = await run_with_stage_deadline(
+                    CoachService().submit_answer(
+                        session_id,
+                        question_id,
+                        reconstructed,
+                        job_db,
+                        recording_id=recording_id,
+                        async_job_id=job_id,
+                    ),
+                    settings.HATCH_COACH_TIMEOUT_ANSWER_SUBMIT_JOB_SECONDS,
                 )
                 await AsyncJobService._finish(
                     job_id, result.model_dump_json(), None, db=job_db
                 )
+            except TimeoutError:
+                await job_db.rollback()
+                result = _answer_job_timeout_result()
+                changed = await SessionRepository(job_db).finalize_answer_attempt(
+                    recording_id,
+                    job_id,
+                    evaluation_state="unavailable",
+                    evaluation_json=result.model_dump_json(),
+                    transcript=request_data["transcript"],
+                )
+                await job_db.commit()
+                if changed:
+                    await AsyncJobService._finish(
+                        job_id, result.model_dump_json(), None, db=job_db
+                    )
+                else:
+                    await AsyncJobService._finish(
+                        job_id, None, "stale_worker_fenced", db=job_db
+                    )
             except Exception as exc:
                 logger.error("submit_answer job %s failed: %s", job_id, exc)
                 await SessionRepository(job_db).finalize_answer_attempt(
@@ -413,62 +518,39 @@ async def submit_audio(
         from ..database import AsyncSessionLocal  # noqa: PLC0415
         async with AsyncSessionLocal() as job_db:
             try:
-                from ..agents.tools.perception_factory import get_transcriber  # noqa: PLC0415
-                from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
-                from ..services.locale_service import get_coach_fillers  # noqa: PLC0415
-                from ..services.speech_analyser import SpeechAnalyserService  # noqa: PLC0415
-
-                transcriber = get_transcriber()
-                result = transcriber.transcribe(audio_path_str)
-
-                try:
-                    locale_id = load_profile().locale
-                    fillers: list[str] | None = get_coach_fillers(locale_id)
-                except Exception:
-                    fillers = None
-
-                analyser = SpeechAnalyserService()
-                words_dicts = [
-                    {"w": w.w, "start": w.start, "end": w.end}
-                    for w in result.words
-                ]
-                speech_metrics: SpeechMetrics = analyser.analyse_from_timestamps(
-                    result.text, words_dicts, locale_fillers=fillers
-                )
-
-                from ..schemas.coach import VideoMetrics  # noqa: PLC0415
-                video_metrics_obj: VideoMetrics | None = None
-                if face_summary_dict:
-                    video_metrics_obj = VideoMetrics(
-                        eye_contact_pct=face_summary_dict.get("eye_contact_pct", 0.0) * 100,
-                        head_stability=min(1.0, face_summary_dict.get("head_stability", 0.0)),
-                        expression="neutral",
-                        gesture_freq=0.0,
-                    )
-
-                request_data = {
-                    "transcript": result.text,
-                    "speech_metrics": speech_metrics,
-                    "video_metrics": video_metrics_obj,
-                    "duration_ms": speech_metrics.duration_ms,
-                    "audio_uri": audio_path_str,
-                }
-                req = (
-                    SubmitAnswerRequest(**request_data)
-                    if result.text.strip()
-                    else SubmitAnswerRequest.model_construct(**request_data)
-                )
-                evaluation = await CoachService().submit_answer(
-                    session_id,
-                    question_id,
-                    req,
-                    job_db,
-                    recording_id=recording_id,
-                    async_job_id=job_id,
+                evaluation = await run_with_stage_deadline(
+                    _evaluate_audio_attempt(
+                        session_id=session_id,
+                        question_id=question_id,
+                        recording_id=recording_id,
+                        job_id=job_id,
+                        audio_path=audio_path_str,
+                        face_summary=face_summary_dict,
+                        job_db=job_db,
+                    ),
+                    settings.HATCH_COACH_TIMEOUT_ANSWER_SUBMIT_JOB_SECONDS,
                 )
                 await AsyncJobService._finish(
                     job_id, evaluation.model_dump_json(), None, db=job_db
                 )
+            except TimeoutError:
+                await job_db.rollback()
+                evaluation = _answer_job_timeout_result()
+                changed = await SessionRepository(job_db).finalize_answer_attempt(
+                    recording_id,
+                    job_id,
+                    evaluation_state="unavailable",
+                    evaluation_json=evaluation.model_dump_json(),
+                )
+                await job_db.commit()
+                if changed:
+                    await AsyncJobService._finish(
+                        job_id, evaluation.model_dump_json(), None, db=job_db
+                    )
+                else:
+                    await AsyncJobService._finish(
+                        job_id, None, "stale_worker_fenced", db=job_db
+                    )
             except Exception as exc:
                 logger.error("submit_audio job %s failed: %s", job_id, exc)
                 await SessionRepository(job_db).finalize_answer_attempt(
@@ -497,7 +579,6 @@ async def end_session(
 ) -> dict:
     """Kick off feedback report generation. Poll /api/async-jobs/{job_id} for report."""
     from ..repositories.session_repository import SessionRepository
-    from ..services.coach_contracts import CoachDiagnostic
     from ..services.coach_reconciliation import reconcile_session
 
     await reconcile_session(db, session_id)
@@ -553,12 +634,49 @@ async def end_session(
 
         async with AsyncSessionLocal() as job_db:
             try:
-                result = await CoachService().end_session(
-                    session_id, job_db, report_job_id=job_id
+                result = await run_with_stage_deadline(
+                    CoachService().end_session(
+                        session_id, job_db, report_job_id=job_id
+                    ),
+                    settings.HATCH_COACH_TIMEOUT_SESSION_END_JOB_SECONDS,
                 )
                 await AsyncJobService._finish(
                     job_id, result.model_dump_json(), None, db=job_db
                 )
+            except TimeoutError:
+                await job_db.rollback()
+                try:
+                    result = await CoachService().end_session(
+                        session_id,
+                        job_db,
+                        report_job_id=job_id,
+                        deterministic_only=True,
+                    )
+                    await AsyncJobService._finish(
+                        job_id, result.model_dump_json(), None, db=job_db
+                    )
+                except Exception as exc:
+                    logger.error("end_session timeout fallback %s failed: %s", job_id, exc)
+                    await job_db.rollback()
+                    diagnostic = CoachDiagnostic(
+                        stage="session_report",
+                        outcome="failed",
+                        execution_mode="deterministic",
+                        attempt_count=0,
+                        repair_count=0,
+                        gate_codes=["coach_job_timeout"],
+                        duration_ms=settings.HATCH_COACH_TIMEOUT_SESSION_END_JOB_SECONDS
+                        * 1000,
+                    )
+                    await SessionRepository(job_db).fail_report_claim(
+                        session_id,
+                        job_id,
+                        diagnostic.model_dump(mode="json"),
+                    )
+                    await job_db.commit()
+                    await AsyncJobService._finish(
+                        job_id, None, "coach_job_timeout", db=job_db
+                    )
             except Exception as exc:
                 logger.error("end_session job %s failed: %s", job_id, exc)
                 diagnostic = CoachDiagnostic(

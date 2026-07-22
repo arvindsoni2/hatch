@@ -6,11 +6,13 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..models.coach_session import InterviewSession
 from ..repositories.session_repository import SessionRepository
 from ..schemas.coach import CreateSessionRequest
 from .async_job_service import AsyncJobService
 from .coach_service import CoachService
+from .coach_contracts import CoachDiagnostic, run_with_stage_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -58,32 +60,64 @@ async def queue_coach_session(
     async_job = await AsyncJobService.create(db, "coach_session")
     await db.commit()
 
-    coach = service or CoachService()
+    request_data = request.model_dump(mode="json")
+    session_id = stub.id
+    job_id = async_job.id
 
     async def _work() -> None:
         from ..database import AsyncSessionLocal  # noqa: PLC0415
 
         async with AsyncSessionLocal() as job_db:
             try:
-                generated = await coach.create_session(request, job_db, session_id=stub.id)
+                reconstructed = CreateSessionRequest.model_validate(request_data)
+                generated = await run_with_stage_deadline(
+                    CoachService().create_session(
+                        reconstructed, job_db, session_id=session_id
+                    ),
+                    settings.HATCH_COACH_TIMEOUT_SESSION_CREATE_JOB_SECONDS,
+                )
                 await AsyncJobService._finish(
-                    async_job.id,
+                    job_id,
                     generated.model_dump_json(),
                     None,
+                    db=job_db,
+                )
+            except TimeoutError:
+                await job_db.rollback()
+                diagnostic = CoachDiagnostic(
+                    stage="question_generation",
+                    outcome="failed",
+                    execution_mode="deterministic",
+                    attempt_count=0,
+                    repair_count=0,
+                    gate_codes=["coach_job_timeout"],
+                    duration_ms=settings.HATCH_COACH_TIMEOUT_SESSION_CREATE_JOB_SECONDS
+                    * 1000,
+                )
+                repository = SessionRepository(job_db)
+                await repository.update_stage_diagnostics(
+                    session_id,
+                    "question_generation",
+                    {"initial": None, "repair": None, "final": diagnostic.model_dump(mode="json")},
+                )
+                await repository.update_session_status(session_id, "failed")
+                await job_db.commit()
+                await AsyncJobService._finish(
+                    job_id, None, "coach_job_timeout", db=job_db
                 )
             except Exception as exc:
-                logger.error("Coach session job %s failed: %s", async_job.id, exc)
+                logger.error("Coach session job %s failed: %s", job_id, exc)
                 try:
                     # Keep generation failures distinct from user deletion.
                     # The default session list hides only abandoned sessions,
                     # while failed sessions remain visible and retryable.
-                    await SessionRepository(job_db).update_session_status(stub.id, "failed")
+                    await SessionRepository(job_db).update_session_status(session_id, "failed")
                     await job_db.commit()
                 except Exception:
-                    logger.exception("Could not mark Coach session %s failed", stub.id)
-                await AsyncJobService._finish(async_job.id, None, str(exc))
+                    logger.exception("Could not mark Coach session %s failed", session_id)
+                await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
 
-    AsyncJobService.run(async_job.id, _work())
+    AsyncJobService.run(job_id, _work())
     return {
         "job_id": async_job.id,
         "status": "pending",

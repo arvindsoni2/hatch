@@ -181,6 +181,14 @@ _CONTRACT_LIST = (
         numeric="low",
     ),
     _contract(
+        _metadata("technical_drill"),
+        "backend/app/prompts/technical_drill.j2",
+        "coach_recommendations",
+        "TechnicalDrill",
+        candidate="high",
+        numeric="low",
+    ),
+    _contract(
         _metadata("speech_feedback"),
         "backend/app/prompts/speech_feedback.j2",
         "coach_recommendations",

@@ -18,6 +18,7 @@ from ..schemas.coach import (
     SessionResponse,
     SubmitAnswerRequest,
 )
+from ..config import settings
 from ..observability import trace_workflow
 from .answer_evaluator import AnswerEvaluatorService
 from .llm_client import LLMClient
@@ -36,6 +37,7 @@ from .rubric_synthesiser import RubricSynthesiserService
 from .speech_analyser import SpeechAnalyserService
 from .technical_drills import TechnicalDrillsService
 from .video_analyser import VideoAnalyserService
+from .coach_contracts import CoachDiagnostic, run_with_stage_deadline
 
 logger = logging.getLogger(__name__)
 
@@ -139,12 +141,38 @@ class CoachService:
 
         # Optionally fetch company research for richer questions
         company_research: CompanyResearchResponse | None = None
+        company_research_diagnostic = None
         try:
             company_research = await self.research_company(
                 request.company_name, None, db
             )
+            company_research_diagnostic = self._researcher.last_diagnostic
+            if not isinstance(company_research_diagnostic, CoachDiagnostic):
+                company_research_diagnostic = CoachDiagnostic(
+                    stage="company_research",
+                    outcome="completed",
+                    execution_mode="cache",
+                    attempt_count=0,
+                    repair_count=0,
+                    gate_codes=[],
+                    duration_ms=0,
+                )
         except Exception as exc:
             logger.warning("Company research failed — proceeding without: %s", exc)
+            company_research_diagnostic = CoachDiagnostic(
+                stage="company_research",
+                outcome="unavailable",
+                execution_mode="deterministic",
+                attempt_count=0,
+                repair_count=0,
+                gate_codes=["coach_stage_failed"],
+                duration_ms=0,
+            )
+        await session_repo.update_stage_diagnostics(
+            session.id,
+            "company_research",
+            {"final": company_research_diagnostic.model_dump(mode="json")},
+        )
 
         # Generate questions
         try:
@@ -243,7 +271,17 @@ class CoachService:
         # Build technical drills for any technical/domain questions
         drills = []
         try:
-            drills = await self._drills.build_drills(saved_questions)
+            drill_result = await self._drills.build_drills(saved_questions)
+            drills = list(drill_result)
+            await session_repo.update_stage_diagnostics(
+                session.id,
+                "technical_drills",
+                {
+                    "summary": drill_result.summary_diagnostic.model_dump(mode="json"),
+                    "items": drill_result.items_diagnostics,
+                },
+            )
+            await db.commit()
         except Exception as exc:
             logger.warning("TechnicalDrillsService failed — proceeding without drills: %s", exc)
 
@@ -377,6 +415,7 @@ class CoachService:
         db: AsyncSession,
         *,
         report_job_id: str | None = None,
+        deterministic_only: bool = False,
     ) -> SessionFeedbackReport:
         """End a session and generate the comprehensive feedback report.
 
@@ -424,15 +463,27 @@ class CoachService:
             if item.recording.speech_metrics:
                 speech_summaries.append(item.recording.speech_metrics)
 
-        # Generate report
-        report = await self._feedback_gen.generate_report(
-            session_id=session_id,
-            role_title=session.role_title,
-            company_name=session.company_name,
-            question_evaluations=question_evaluations,
-            speech_summaries=speech_summaries or None,
-            deterministic_report=deterministic_report,
-        )
+        if deterministic_only:
+            report = deterministic_report
+            report.report_state = "fallback"
+            report.diagnostic = CoachDiagnostic(
+                stage="session_report",
+                outcome="fallback_deterministic",
+                execution_mode="deterministic",
+                attempt_count=0,
+                repair_count=0,
+                gate_codes=["coach_job_timeout"],
+                duration_ms=0,
+            )
+        else:
+            report = await self._feedback_gen.generate_report(
+                session_id=session_id,
+                role_title=session.role_title,
+                company_name=session.company_name,
+                question_evaluations=question_evaluations,
+                speech_summaries=speech_summaries or None,
+                deterministic_report=deterministic_report,
+            )
 
         if report_job_id:
             report_diagnostic = report.diagnostic
@@ -503,8 +554,6 @@ class CoachService:
         # Legacy completed rows have no immutable snapshot. Build an in-memory
         # deterministic fallback without model work or persistence.
         from .coach_aggregation import build_deterministic_report
-        from .coach_contracts import CoachDiagnostic
-
         questions = await session_repo.get_questions(session_id)
         recordings = await session_repo.get_recordings(session_id)
         report = build_deterministic_report(session_id, questions, recordings)
@@ -609,11 +658,24 @@ class CoachService:
         if rubric is None:
             rubric = SessionRubric()  # empty — no focus areas
 
-        new_session_id, focus_areas = await self._followup_planner.plan(
-            parent_session=session,
-            rubric=rubric,
-            db=db,
-        )
+        try:
+            new_session_id, focus_areas = await run_with_stage_deadline(
+                self._followup_planner.plan(
+                    parent_session=session,
+                    rubric=rubric,
+                    db=db,
+                ),
+                settings.HATCH_COACH_TIMEOUT_FOLLOWUP_SECONDS,
+            )
+        except TimeoutError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "code": "coach_job_timeout",
+                    "message": "Follow-up planning timed out; no session was created.",
+                },
+            ) from exc
         await db.commit()
 
         focus_text = " and ".join(focus_areas) if focus_areas else "general practice"

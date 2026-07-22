@@ -1,7 +1,6 @@
 """Tests for TechnicalDrillsService — Phase C."""
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -31,11 +30,18 @@ def _make_question(
 async def test_build_drills_filters_technical_only() -> None:
     """Only Technical and Domain questions should receive drills."""
     mock_claude = MagicMock()
-    mock_claude.complete = AsyncMock(
-        return_value=json.dumps({
+    mock_claude.complete_json = AsyncMock(
+        side_effect=[{
+            "question_id": "q-2",
+            "question_text": "Design a distributed cache",
             "walkthrough": "Step 1: Hash the URL. Step 2: Store in Redis. Step 3: Return short code.",
             "drill_prompt": "Explain out loud how you would design this system from scratch.",
-        })
+        }, {
+            "question_id": "q-4",
+            "question_text": "Explain REST vs GraphQL",
+            "walkthrough": "Compare typed queries with resource endpoints and caching trade-offs.",
+            "drill_prompt": "Explain the trade-offs out loud.",
+        }]
     )
 
     svc = TechnicalDrillsService(mock_claude)
@@ -68,11 +74,18 @@ async def test_build_drills_filters_technical_only() -> None:
 async def test_build_drills_case_insensitive_category() -> None:
     """Category matching should be case-insensitive (e.g., 'technical', 'DOMAIN')."""
     mock_claude = MagicMock()
-    mock_claude.complete = AsyncMock(
-        return_value=json.dumps({
+    mock_claude.complete_json = AsyncMock(
+        side_effect=[{
+            "question_id": "q-a",
+            "question_text": "Describe microservices",
             "walkthrough": "Worked example here.",
             "drill_prompt": "Explain out loud.",
-        })
+        }, {
+            "question_id": "q-b",
+            "question_text": "Explain CQRS",
+            "walkthrough": "Worked example here.",
+            "drill_prompt": "Explain out loud.",
+        }]
     )
     svc = TechnicalDrillsService(mock_claude)
 
@@ -91,7 +104,7 @@ async def test_build_drills_case_insensitive_category() -> None:
 async def test_build_drills_empty_when_no_technical() -> None:
     """Returns empty list when there are no technical or domain questions."""
     mock_claude = MagicMock()
-    mock_claude.complete = AsyncMock()
+    mock_claude.complete_json = AsyncMock()
 
     svc = TechnicalDrillsService(mock_claude)
     questions = [
@@ -100,7 +113,7 @@ async def test_build_drills_empty_when_no_technical() -> None:
     ]
     drills = await svc.build_drills(questions)
     assert drills == []
-    mock_claude.complete.assert_not_called()
+    mock_claude.complete_json.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +124,7 @@ async def test_build_drills_empty_when_no_technical() -> None:
 async def test_build_drills_graceful_on_llm_failure() -> None:
     """When the LLM raises an exception, returns empty list (graceful degradation)."""
     mock_claude = MagicMock()
-    mock_claude.complete = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+    mock_claude.complete_json = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
 
     svc = TechnicalDrillsService(mock_claude)
     questions = [
@@ -126,7 +139,7 @@ async def test_build_drills_graceful_on_llm_failure() -> None:
 async def test_build_drills_skips_invalid_json() -> None:
     """Questions where LLM returns invalid JSON are silently skipped."""
     mock_claude = MagicMock()
-    mock_claude.complete = AsyncMock(return_value="not valid json at all")
+    mock_claude.complete_json = AsyncMock(return_value="not valid json at all")
 
     svc = TechnicalDrillsService(mock_claude)
     questions = [
@@ -147,13 +160,15 @@ async def test_build_drills_partial_failure() -> None:
         call_count += 1
         if call_count == 1:
             raise RuntimeError("LLM failure on first call")
-        return json.dumps({
+        return {
+            "question_id": "q-ok",
+            "question_text": "How does a B-tree index work?",
             "walkthrough": "Worked example.",
             "drill_prompt": "Explain out loud.",
-        })
+        }
 
     mock_claude = MagicMock()
-    mock_claude.complete = AsyncMock(side_effect=side_effect)
+    mock_claude.complete_json = AsyncMock(side_effect=side_effect)
 
     svc = TechnicalDrillsService(mock_claude)
     questions = [
@@ -164,3 +179,29 @@ async def test_build_drills_partial_failure() -> None:
     drills = await svc.build_drills(questions)
     assert len(drills) == 1
     assert drills[0].question_id == "q-ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "gate"),
+    [
+        ({"walkthrough": "word " * 201}, "coach_drill_length_exceeded"),
+        ({"question_id": "other"}, "coach_drill_question_mismatch"),
+        ({"walkthrough": "I led the migration."}, "coach_drill_candidate_claim"),
+    ],
+)
+async def test_invalid_drill_is_omitted_with_diagnostic(mutation, gate) -> None:
+    question = _make_question()
+    payload = {
+        "question_id": question.id,
+        "question_text": question.text,
+        "walkthrough": "Use a cache with an expiry policy.",
+        "drill_prompt": "Explain the approach aloud.",
+    } | mutation
+    client = MagicMock(model="configured-model")
+    client.complete_json = AsyncMock(return_value=payload)
+
+    result = await TechnicalDrillsService(client).build_drills([question])
+
+    assert result == []
+    assert gate in result.items_diagnostics[0]["diagnostic"]["gate_codes"]

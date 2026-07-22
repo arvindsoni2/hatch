@@ -11,12 +11,18 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..prompts import render_prompt
+from ..config import settings
 from ..observability import get_telemetry, trace_stage
 from ..schemas.coach import CompanyResearchResponse, ResearchSource
 from .llm_client import LLMClient
 from ..agents.tools.context_budgets import COMPANY_RESEARCH
 from .jd_analyser import _split_jinja_output
-from .prompt_catalog import prompt_contract_block, research_claim_contract
+from .coach_contracts import CoachDiagnostic, configured_model_id, run_with_stage_deadline
+from .prompt_catalog import (
+    prompt_contract_block,
+    prompt_metadata,
+    research_claim_contract,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,7 @@ class CompanyResearchService:
 
     def __init__(self, claude_client: LLMClient) -> None:
         self._client = claude_client
+        self.last_diagnostic: CoachDiagnostic | None = None
 
     @trace_stage("coach_generation", "prepare_input")
     async def research(self, company_name: str, sector: str | None = None) -> CompanyResearchResponse:
@@ -66,10 +73,13 @@ class CompanyResearchService:
         started = time.monotonic()
         model_call_completed = False
         try:
-            raw = await self._client.complete_json(
-                system_prompt,
-                user_prompt,
-                max_tokens=COMPANY_RESEARCH.max_output,
+            raw = await run_with_stage_deadline(
+                self._client.complete_json(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=COMPANY_RESEARCH.max_output,
+                ),
+                settings.HATCH_COACH_TIMEOUT_COMPANY_RESEARCH_SECONDS,
             )
             get_telemetry().record_model_call(
                 workflow="coach_generation",
@@ -91,6 +101,11 @@ class CompanyResearchService:
                 "model_error",
             )
             logger.warning("Company research synthesis failed for %s: %s", company_name, exc)
+            self.last_diagnostic = self._diagnostic(
+                "unavailable",
+                ["coach_stage_timeout" if isinstance(exc, TimeoutError) else "coach_stage_failed"],
+                started,
+            )
             return _not_verified_response(company_name, sector, bundle)
 
         if not isinstance(raw, dict):
@@ -103,6 +118,9 @@ class CompanyResearchService:
                     "company_research_response_invalid",
                     "validation_failure",
                 )
+            self.last_diagnostic = self._diagnostic(
+                "invalid_output", ["coach_stage_failed"], started
+            )
             return _not_verified_response(company_name, sector, bundle)
         source_ids = {source.source_id for source in bundle.sources}
         description = _sourced_text(raw.get("description"), source_ids)
@@ -123,6 +141,7 @@ class CompanyResearchService:
             *tech_stack_signals,
         ]
         verification_state = "verified" if any(supported_claims) else "not_verified"
+        self.last_diagnostic = self._diagnostic("completed", [], started)
         return CompanyResearchResponse(
             company_name=company_name,
             sector=resolved_sector or sector,
@@ -134,6 +153,24 @@ class CompanyResearchService:
             sources=list(bundle.sources),
             retrieved_at=bundle.retrieved_at,
             verification_state=verification_state,
+        )
+
+    def _diagnostic(
+        self, outcome: str, gates: list[str], started: float
+    ) -> CoachDiagnostic:
+        metadata = prompt_metadata("company_research")
+        return CoachDiagnostic(
+            stage="company_research",
+            outcome=outcome,
+            execution_mode="llm",
+            prompt_id=metadata.prompt_id,
+            prompt_version=metadata.prompt_version,
+            output_schema_version=metadata.schema_version,
+            model_id=configured_model_id(self._client),
+            attempt_count=1,
+            repair_count=0,
+            gate_codes=gates,
+            duration_ms=int((time.monotonic() - started) * 1000),
         )
 
     async def _scrape_company_info(self, company_name: str) -> ResearchBundle:

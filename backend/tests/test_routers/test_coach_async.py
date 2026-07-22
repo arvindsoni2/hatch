@@ -1,15 +1,22 @@
 """Tests that coach endpoints return 202 + job_id."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.async_job import AsyncJob
 from app.models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from app.repositories.session_repository import SessionRepository
+
+
+async def _timeout(awaitable, _seconds):
+    awaitable.close()
+    raise TimeoutError
 
 
 async def _seed_active_question(db_session, session_id: str, question_id: str) -> None:
@@ -257,6 +264,81 @@ async def test_end_rejects_pending_answers(client, db_session):
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "coach_answers_processing"
+
+
+@pytest.mark.asyncio
+async def test_answer_job_timeout_is_terminal_retryable_no_score(client, db_session):
+    session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    await _seed_active_question(db_session, "session-timeout", "question-timeout")
+    with (
+        patch("app.routers.coach.AsyncJobService.run") as run,
+        patch(
+            "app.routers.coach.run_with_stage_deadline",
+            side_effect=_timeout,
+        ),
+        patch("app.database.AsyncSessionLocal", session_factory),
+    ):
+        response = await client.post(
+            "/api/coach/sessions/session-timeout/submit-answer",
+            params={"question_id": "question-timeout"},
+            json={"transcript": "An answer"},
+        )
+        await run.call_args.args[1]
+
+    db_session.expire_all()
+    recording = (
+        await db_session.execute(
+            select(SessionRecording).where(
+                SessionRecording.async_job_id == response.json()["job_id"]
+            )
+        )
+    ).scalar_one()
+    job = (
+        await db_session.execute(
+            select(AsyncJob).where(AsyncJob.id == response.json()["job_id"])
+        )
+    ).scalar_one()
+    payload = json.loads(recording.evaluation_json)
+    assert recording.evaluation_state == "unavailable"
+    assert payload["scores"] == {}
+    assert payload["overall"] is None
+    assert payload["retryable"] is True
+    assert payload["diagnostic"]["gate_codes"] == ["coach_job_timeout"]
+    assert job.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_end_job_timeout_persists_deterministic_fallback(client, db_session):
+    session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    await _seed_active_question(db_session, "session-end-timeout", "question-end-timeout")
+    with (
+        patch("app.routers.coach.AsyncJobService.run") as run,
+        patch(
+            "app.routers.coach.run_with_stage_deadline",
+            side_effect=_timeout,
+        ),
+        patch("app.database.AsyncSessionLocal", session_factory),
+    ):
+        response = await client.post("/api/coach/sessions/session-end-timeout/end")
+        await run.call_args.args[1]
+
+    db_session.expire_all()
+    session = (
+        await db_session.execute(
+            select(InterviewSession).where(
+                InterviewSession.id == "session-end-timeout"
+            )
+        )
+    ).scalar_one()
+    job = (
+        await db_session.execute(
+            select(AsyncJob).where(AsyncJob.id == response.json()["job_id"])
+        )
+    ).scalar_one()
+    assert session.status == "completed"
+    assert session.report_state == "fallback"
+    assert session.report_json["diagnostic"]["gate_codes"] == ["coach_job_timeout"]
+    assert job.status == "done"
 
 
 # ---------------------------------------------------------------------------
