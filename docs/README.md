@@ -12,7 +12,7 @@ Use this index to find the current product, operations, architecture, developmen
 
 ## Active Implementation Work
 
-- [Prompt, skill, and local writing reliability specification v4](implementation-specs/active/Hatch_Prompt_Skill_Local_Writing_Reliability_Codex_Spec_v4.md)
+- [Coach model quality, benchmark, and observability specification v5](implementation-specs/active/Hatch_Coach_Model_Quality_Benchmark_Observability_Codex_Spec_v5.md)
 - [Local writing model benchmark — 15 July 2026](benchmarks/LOCAL_WRITING_MODEL_BENCHMARK_2026-07-15.md)
 - [Representative local-model selection — 18 July 2026](benchmarks/LOCAL_WRITING_MODEL_SELECTION_2026-07-18.md)
 
