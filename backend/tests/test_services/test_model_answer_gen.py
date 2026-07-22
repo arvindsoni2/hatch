@@ -323,3 +323,38 @@ async def test_model_answer_rejects_meaning_changing_deletions(
 
     assert result.model_answer == ""
     assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("evidence_claim", "unsupported_answer"),
+    [
+        ("We led the migration for Acme.", "I led the migration for Acme."),
+        ("I designed policy systems.", "I designed police systems."),
+    ],
+)
+async def test_model_answer_rejects_actor_and_lexeme_substitution(
+    evidence_claim: str,
+    unsupported_answer: str,
+) -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        f"I automated the recurring remediation. {evidence_claim} "
+        "Incident volume fell by 25%."
+    )
+    client = _client(
+        unsupported_answer,
+        "Incident volume fell by 25%.",
+        candidate_summary,
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about a migration.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]

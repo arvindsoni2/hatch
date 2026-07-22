@@ -30,34 +30,6 @@ from .writing_contracts import build_evidence_ledger, evidence_records
 logger = logging.getLogger(__name__)
 
 _STAR_KEYS = ("situation", "task", "action", "result")
-_GROUNDING_STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "as",
-    "be",
-    "because",
-    "had",
-    "has",
-    "have",
-    "i",
-    "in",
-    "it",
-    "my",
-    "of",
-    "our",
-    "so",
-    "that",
-    "the",
-    "their",
-    "then",
-    "this",
-    "was",
-    "were",
-    "we",
-    "when",
-    "while",
-}
 
 
 def _diagnostic(
@@ -306,25 +278,12 @@ def _string_values(value: Any) -> list[str]:
 
 
 def _content_tokens(text: str) -> list[str]:
-    return [
-        token
-        for token in re.findall(r"[a-z0-9]+", text.casefold())
-        if token not in _GROUNDING_STOPWORDS
-    ]
-
-
-def _same_lexeme(left: str, right: str) -> bool:
-    return left == right or (
-        len(left) >= 5 and len(right) >= 5 and left[:5] == right[:5]
-    )
+    return re.findall(r"[a-z0-9]+", text.casefold())
 
 
 def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:
-    """Require clause-level token equivalence while allowing morphology only."""
-    return len(observed) == len(supported) and all(
-        _same_lexeme(candidate, source)
-        for candidate, source in zip(observed, supported, strict=True)
-    )
+    """Require exact normalized clause tokens; semantic paraphrase is withheld."""
+    return observed == supported
 
 
 def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:

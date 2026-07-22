@@ -46,13 +46,18 @@ _GENERIC_PAST_CANDIDATE_CLAIM = re.compile(
 )
 _GENERIC_NAMED_PAST_CLAIM = re.compile(
     r"\b(?!(?:Compare|Explain|Describe|Design|Discuss|Outline|Practice|Practise|"
-    r"Keep|Focus|Identify|Evaluate|Analyse|Analyze|Review|Consider|Try|Step|Use)\b)"
+    r"Keep|Focus|Identify|Evaluate|Analyse|Analyze|Review|Consider|Try|Step|Use|"
+    r"Include|Record)\b)"
     r"[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?"
     r"(?:\s+(?:has|had))?(?:\s+\w+ly)?\s+"
     r"(?:(?!(?:need|seed|feed|speed)\b)[a-z]{3,}ed|wrote|made|took|gave|"
     r"came|saw|found|thought|told|became|showed|left|felt|put|brought|began|"
     r"kept|held|stood|heard|meant|met|set|learnt|grew|won|lost|paid|sent|"
-    r"sat|spoke|lay|ran|drove|led|built)\b"
+    r"sat|spoke|lay|ran|drove|led|built|chose)\b"
+)
+_NAMED_RESPONSIBILITY_CLAIM = re.compile(
+    r"\b[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?\s+"
+    r"(?:was|is|became)\s+responsible\s+for\b"
 )
 
 
@@ -277,5 +282,6 @@ def contains_candidate_history_claim(text: str) -> bool:
             _NAMED_CANDIDATE_HISTORY_CLAIM,
             _GENERIC_PAST_CANDIDATE_CLAIM,
             _GENERIC_NAMED_PAST_CLAIM,
+            _NAMED_RESPONSIBILITY_CLAIM,
         )
     )

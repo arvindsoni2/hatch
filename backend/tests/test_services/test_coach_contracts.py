@@ -20,10 +20,18 @@ Settings = type(settings)
 
 
 def test_candidate_history_detector_handles_irregular_name_without_imperative_false_positive() -> None:
-    assert contains_candidate_history_claim(
-        "Alex wrote the migration plan for Acme."
-    )
-    assert not contains_candidate_history_claim("Use examples tailored to the role.")
+    for claim in (
+        "Alex wrote the migration plan for Acme.",
+        "Alex chose the migration approach.",
+        "Alex was responsible for the Acme migration.",
+    ):
+        assert contains_candidate_history_claim(claim)
+    for recommendation in (
+        "Use examples tailored to the role.",
+        "Include tailored examples in the next answer.",
+        "Record completed answers for review.",
+    ):
+        assert not contains_candidate_history_claim(recommendation)
 
 
 def test_deterministic_diagnostic_allows_nullable_prompt_fields() -> None:
