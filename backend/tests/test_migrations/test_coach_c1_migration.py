@@ -41,7 +41,9 @@ def _upgrade(tmp_path: Path) -> sqlite3.Connection:
         INSERT INTO session_recordings(id, session_id, transcript, evaluation_json) VALUES
             ('skipped', 'active-session', '[SKIPPED]', NULL),
             ('evaluated', 'active-session', 'answer', '{"scores":{"relevance":7},"overall":7}'),
+            ('parseable-empty', 'active-session', 'answer', '{}'),
             ('embedded-invalid', 'active-session', '', '{"evaluation_state":"invalid","scores":{},"overall":null}'),
+            ('embedded-failed', 'active-session', '', '{"evaluation_state":"failed","scores":{},"overall":null}'),
             ('unknown', 'active-session', 'answer', 'not json');
         """
     )
@@ -98,7 +100,9 @@ def test_migration_adds_locked_fields_and_backfills_recording_states(tmp_path: P
     assert {"evaluation_state", "async_job_id"} <= set(recording_columns)
     assert states == {
         "embedded-invalid": "invalid",
+        "embedded-failed": "failed",
         "evaluated": "completed",
+        "parseable-empty": "completed",
         "skipped": "skipped",
         "unknown": None,
     }

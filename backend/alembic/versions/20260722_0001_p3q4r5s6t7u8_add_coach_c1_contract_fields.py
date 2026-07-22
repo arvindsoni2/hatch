@@ -49,9 +49,9 @@ def upgrade() -> None:
             "('pending', 'completed', 'unavailable', 'invalid', 'skipped', 'failed')",
         )
 
-    # Preserve explicit skips, completed historical numeric evaluations, and
-    # embedded C1 states. Malformed/absent historical data remains NULL and is
-    # interpreted as legacy/unknown rather than pending.
+    # Preserve explicit skips and embedded C1 states. Every other parseable
+    # historical evaluation is completed per the compatibility contract;
+    # malformed/absent data remains legacy/unknown rather than pending.
     op.execute(
         sa.text(
             """
@@ -61,11 +61,10 @@ def upgrade() -> None:
                 WHEN evaluation_json IS NOT NULL AND json_valid(evaluation_json) = 1 THEN
                     CASE
                         WHEN json_extract(evaluation_json, '$.evaluation_state') IN
-                            ('completed', 'unavailable', 'invalid')
+                            ('pending', 'completed', 'unavailable', 'invalid',
+                             'skipped', 'failed')
                         THEN json_extract(evaluation_json, '$.evaluation_state')
-                        WHEN json_type(evaluation_json, '$.overall') IN ('integer', 'real')
-                        THEN 'completed'
-                        ELSE NULL
+                        ELSE 'completed'
                     END
                 ELSE NULL
             END

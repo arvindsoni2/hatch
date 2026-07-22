@@ -105,7 +105,7 @@ def _parse_llm_rubric(
     if not isinstance(llm_dims, dict):
         return baseline, ["coach_rubric_dimension_missing"]
     if set(baseline.dimensions) - set(llm_dims):
-        gates.append("coach_rubric_dimension_missing")
+        return baseline, ["coach_rubric_dimension_missing"]
     for dim_name, dim_data in llm_dims.items():
         if dim_name not in baseline.dimensions:
             gates.append("coach_rubric_optional_dimension_unexpected")
@@ -139,10 +139,13 @@ def _parse_llm_rubric(
             logger.debug("Skipping malformed LLM rubric dim '%s': %s", dim_name, exc)
             gates.append("coach_rubric_dimension_missing")
 
+    gates = list(dict.fromkeys(gates))
+    if "coach_rubric_dimension_missing" in gates:
+        return baseline, gates
     focus = raw.get("focus_for_next_session") or baseline.focus_for_next_session
     return (
         SessionRubric(dimensions=merged, focus_for_next_session=str(focus)),
-        list(dict.fromkeys(gates)),
+        gates,
     )
 
 
@@ -289,7 +292,11 @@ class RubricSynthesiserService:
             )
             rubric.diagnostic = self._diagnostic(
                 model,
-                outcome="completed",
+                outcome=(
+                    "fallback_deterministic"
+                    if "coach_rubric_dimension_missing" in gates
+                    else "completed"
+                ),
                 gates=gates,
                 duration_ms=duration_ms,
             )

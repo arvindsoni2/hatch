@@ -70,6 +70,15 @@ class TestRubricSynthesiserService:
 
         response = {
             "dimensions": {
+                dimension: {
+                    "score": 7,
+                    "score_band": "good",
+                    "evidence": [],
+                    "drill": "Practise one answer.",
+                }
+                for dimension in CONTENT_DIMENSIONS
+            }
+            | {
                 "star_structure": {
                     "score": 8,
                     "score_band": "strong",
@@ -226,6 +235,15 @@ class TestRubricSynthesiserService:
 
         response = {
             "dimensions": {
+                dimension: {
+                    "score": 7,
+                    "score_band": "good",
+                    "evidence": [],
+                    "drill": "Practise.",
+                }
+                for dimension in CONTENT_DIMENSIONS
+            }
+            | {
                 "delivery": {
                     "score": 10,
                     "score_band": "strong",
@@ -249,3 +267,32 @@ class TestRubricSynthesiserService:
         assert "coach_rubric_optional_dimension_unexpected" in (
             rubric.diagnostic.gate_codes
         )
+
+    @pytest.mark.asyncio
+    async def test_missing_dimension_returns_deterministic_fallback(self) -> None:
+        from app.services.rubric_synthesiser import RubricSynthesiserService
+
+        response = {
+            "dimensions": {
+                "star_structure": {
+                    "score": 7,
+                    "score_band": "good",
+                    "evidence": [],
+                    "drill": "Practise one STAR answer.",
+                }
+            },
+            "focus_for_next_session": "Practise STAR structure.",
+        }
+        with patch(
+            "app.services.rubric_synthesiser.get_json_model",
+            return_value=_mock_llm(response),
+        ):
+            rubric = await RubricSynthesiserService().synthesise(
+                transcript="Answer",
+                evaluation=_make_evaluation(),
+            )
+
+        assert set(rubric.dimensions) == set(CONTENT_DIMENSIONS)
+        assert rubric.diagnostic is not None
+        assert rubric.diagnostic.outcome == "fallback_deterministic"
+        assert rubric.diagnostic.gate_codes == ["coach_rubric_dimension_missing"]
