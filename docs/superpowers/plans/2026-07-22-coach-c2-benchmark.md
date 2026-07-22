@@ -215,7 +215,7 @@ Commit: `feat(coach-benchmark): add synthetic v1 suite`
 - Consumes: `BenchmarkLLMClient`, loaded scenarios, `QuestionGeneratorService`, `ModelAnswerGeneratorService`, `AnswerEvaluatorService`, `CompanyResearchService`, `RubricSynthesiserService`, `FeedbackGeneratorService`, and `TechnicalDrillsService`.
 - Produces: `CoachProductionAdapter.execute(scenario: CoachScenario, client: object, context: ScenarioContext) -> StageExecution` and `HarnessFailureClient.complete_json(system: str, user: str, max_tokens: int = 4096, schema: type[BaseModel] | None = None) -> dict[str, Any]`.
 
-- [ ] **Step 1: Write failing adapter tests**
+- [x] **Step 1: Write failing adapter tests**
 
 ```python
 @pytest.mark.asyncio
@@ -235,15 +235,15 @@ async def test_ae_h02_exhausts_production_parse_path() -> None:
     assert "coach_evaluation_schema_invalid" in result.gate_codes
 ```
 
-- [ ] **Step 2: Run tests and verify missing-adapter failures**
+- [x] **Step 2: Run tests and verify missing-adapter failures**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_production_adapter.py tests/benchmarks/coach/test_harness_adapters.py`
 
-- [ ] **Step 3: Implement service-compatible live and forced-failure clients**
+- [x] **Step 3: Implement service-compatible live and forced-failure clients**
 
 `BenchmarkLLMClient` remains the live client. Add deterministic modes `provider_unavailable`, `timeout`, and `malformed_output`; do not add random behaviour. Patch fixed company-research retrieval at the `_scrape_company_info` boundary. Inject synthetic candidate summary at its production loader boundary rather than writing profile files. Adapt rubric synthesis through a small LangChain-compatible wrapper whose `ainvoke` delegates to the benchmark client.
 
-- [ ] **Step 4: Implement one dispatcher per production stage**
+- [x] **Step 4: Implement one dispatcher per production stage**
 
 ```python
 class CoachProductionAdapter:
@@ -254,11 +254,11 @@ class CoachProductionAdapter:
 
 Each handler returns the production output plus production `CoachDiagnostic`, prompt metadata, attempts, repairs, observations, and bounded synthetic output. It must not reinterpret a production failure as success.
 
-- [ ] **Step 5: Run adapter and existing Coach contract tests**
+- [x] **Step 5: Run adapter and existing Coach contract tests**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_production_adapter.py tests/benchmarks/coach/test_harness_adapters.py tests/test_services/test_coach_contracts.py tests/test_services/test_coach_prompt_contracts.py`
 
-- [ ] **Step 6: Commit checkpoint C2.3**
+- [x] **Step 6: Commit checkpoint C2.3**
 
 Commit: `feat(coach-benchmark): invoke production Coach stages`
 
@@ -570,7 +570,7 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 - [x] C2.0 Design approved and committed: `036cd8d`
 - [x] C2.1 Strict contracts and profiles
 - [x] C2.2 Synthetic suite and loader
-- [ ] C2.3 Production adapter
+- [x] C2.3 Production adapter
 - [ ] C2.4 Gates and scoring
 - [ ] C2.5 Runner and resume
 - [ ] C2.6 Capability and ranking

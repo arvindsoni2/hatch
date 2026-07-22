@@ -3,8 +3,8 @@
   "stage": "model_answer",
   "description": "Produce a supported STAR answer preserving the immutable 18% metric.",
   "qualification_scope": "model_capability",
-  "input": {"question": "Describe how you improved multi-team delivery.", "category": "Behavioural", "difficulty": "medium", "company_name": "Atlas Example Cloud", "evidence_ids": ["141be8e728a45bac9a2b853f"]},
-  "expected": {"outcome": "completed", "required_evidence_ids": ["141be8e728a45bac9a2b853f"], "required_term_groups": [["dependency reviews"], ["weekly risk decisions"], ["18%"]]},
+  "input": {"question": "Describe how you improved multi-team delivery.", "category": "Behavioural", "difficulty": "medium", "company_name": "Atlas Example Cloud", "evidence_ids": ["6b289717341e74bf3a321a3a", "7fec9863ef0f55d01506189d", "4a7894b7b17fca7d90cd72df", "1146636e2f9942eea612c97e"]},
+  "expected": {"outcome": "completed", "required_evidence_ids": ["6b289717341e74bf3a321a3a", "7fec9863ef0f55d01506189d", "4a7894b7b17fca7d90cd72df", "1146636e2f9942eea612c97e"], "required_term_groups": [["dependency reviews"], ["weekly risk decisions"], ["18%"]]},
   "scoring": {"min_words": 45, "target_max_words": 180, "hard_max_words": 260, "role_relevance_term_groups": [["delivery"], ["risk"]]},
   "quality_dimensions": ["evidence_grounding", "star_completeness", "relevance", "specificity", "conciseness"],
   "acceptance_smoke": true

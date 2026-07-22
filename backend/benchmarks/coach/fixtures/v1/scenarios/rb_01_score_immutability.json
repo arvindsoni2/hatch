@@ -4,7 +4,7 @@
   "description": "Narrative enrichment preserves authoritative baseline scores and grounded evidence.",
   "qualification_scope": "model_capability",
   "input": {"transcript": "I introduced dependency reviews and reduced lead time by 18% in 2023.", "baseline_scores": {"content": 8, "structure": 8, "relevance": 9, "specificity": 9, "delivery": 7}, "focus_dimensions": ["delivery", "structure"]},
-  "expected": {"outcome": "completed", "allowed_evidence_ids": ["141be8e728a45bac9a2b853f"], "required_term_groups": [], "expected_priority_dimensions": ["delivery", "structure"]},
+  "expected": {"outcome": "completed", "allowed_evidence_ids": ["6b289717341e74bf3a321a3a", "7fec9863ef0f55d01506189d", "4a7894b7b17fca7d90cd72df", "1146636e2f9942eea612c97e"], "required_term_groups": [], "expected_priority_dimensions": ["delivery", "structure"]},
   "scoring": {"min_words": 4, "target_max_words": 80, "hard_max_words": 120},
   "quality_dimensions": ["score_immutability", "evidence_grounding", "drill_specificity", "focus_alignment"],
   "acceptance_smoke": false
