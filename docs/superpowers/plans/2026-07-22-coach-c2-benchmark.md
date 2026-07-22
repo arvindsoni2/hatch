@@ -511,11 +511,11 @@ Commit: `test(coach-benchmark): prove contract and E2E smoke`
 - Consumes: completed C2 CLI and artifacts.
 - Produces: reproducible operator commands, final artifact paths, and merge-ready evidence.
 
-- [ ] **Step 1: Document validation, smoke, live profiles, resume, and reports**
+- [x] **Step 1: Document validation, smoke, live profiles, resume, and reports**
 
 Include exact commands, timeout semantics, explicit model outcomes, no-selection rule, private-suite location, protected-state rules, and the two-independent-standard-run decision boundary.
 
-- [ ] **Step 2: Run static and focused verification**
+- [x] **Step 2: Run static and focused verification**
 
 Run:
 
@@ -531,7 +531,7 @@ Expected: all commands exit zero; contract smoke produces a run directory and no
 
 Add a separate post-install CI step that runs the Coach contract smoke through `timeout 180s`, so dependency installation is outside the 180-second boundary while the harness enforces its own 90-second completion requirement.
 
-- [ ] **Step 3: Run full repository regression**
+- [x] **Step 3: Run full repository regression**
 
 Run:
 
@@ -542,7 +542,7 @@ cd ../frontend && npm run type-check
 
 Expected: backend suite and frontend type-check pass with no new failures.
 
-- [ ] **Step 4: Discover installed loopback models and run acceptance smoke**
+- [x] **Step 4: Discover installed loopback models and run acceptance smoke**
 
 Use the committed model manifest and local runtime health. Run one or more installed models sequentially:
 
@@ -553,13 +553,24 @@ python -m benchmarks.coach run --suite benchmarks/coach/fixtures/v1 --models qwe
 
 Expected: each selected model reaches a terminal success, timeout, unavailable, invalid, or failed outcome; later models are not stalled; protected hashes match; no recommendation/model mutation is emitted.
 
-- [ ] **Step 5: Audit artifacts and repository state**
+- [x] **Step 5: Audit artifacts and repository state**
 
 List changed files, behavioural changes, focused/full test outputs, run directories, completion states, exact hashes, and `git status`. Confirm no secrets, absolute protected paths, private data, generated run artifacts, or Graphify scratch outputs are staged.
 
-- [ ] **Step 6: Commit checkpoint C2.9**
+- [x] **Step 6: Commit checkpoint C2.9**
 
 Commit: `docs(coach-benchmark): document and verify C2 harness`
+
+**C2.9 verification evidence (2026-07-22):**
+
+- Documentation contract and documentation validation passed.
+- Coach Ruff checks passed; benchmark regression: 196 passed.
+- Deterministic all-model contract smoke run `fdd100afe83c470bbc2673627afd9bfb` completed with no classification, ranking, or recommendation.
+- Full backend regression: 1232 passed, 2 skipped, 71.67% coverage.
+- Frontend `npm run type-check` passed.
+- Manifest runtimes were healthy and all five manifest models were installed.
+- Live `qwen35-4b` acceptance run `e91d752ea84041a697ebe2e255336695` reached 6/6 terminal scenarios with state `completed_with_model_outcomes`; acceptance emitted no classification or ranking.
+- Live acceptance protected database hash remained `8b789e29d4e8d51307fe5f3d9b3ab6239a499f4969f9bff8eec7e3f299975a6e` and profile hash remained `1a347821d853d8f20b8a3b1e3e9d0ad66becb964fff1e0f5c16e3ce252e8ce81` before and after.
 
 - [ ] **Step 7: Request independent code review before merge**
 

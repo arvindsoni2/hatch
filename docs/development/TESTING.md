@@ -46,6 +46,19 @@ pytest -q --no-cov \
   tests/test_routers/test_coach_async.py
 ```
 
+Coach C2 benchmark checks:
+
+```bash
+cd backend
+ruff check benchmarks/coach tests/benchmarks/coach
+pytest -q --no-cov tests/benchmarks
+python -m benchmarks.coach validate --suite benchmarks/coach/fixtures/v1
+timeout 180s python -m benchmarks.coach smoke \
+  --suite benchmarks/coach/fixtures/v1
+```
+
+The smoke command is deterministic, exercises every committed Coach scenario through production adapters and validators, and enforces its own 90-second run bound. It does not need an installed model. Live acceptance, standard, resume, reporting, artifact, privacy, and classification instructions are in [the Coach model benchmark guide](../benchmarks/COACH_MODEL_BENCHMARK.md).
+
 Frontend Coach compatibility checks:
 
 ```bash
