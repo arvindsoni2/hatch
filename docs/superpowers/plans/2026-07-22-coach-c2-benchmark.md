@@ -275,7 +275,7 @@ Commit: `feat(coach-benchmark): invoke production Coach stages`
 - Consumes: Task 3 `StageExecution`, Task 1 scoring metadata.
 - Produces: `validate_execution(scenario: CoachScenario, execution: StageExecution) -> ValidationResult`, `score_execution(scenario: CoachScenario, execution: StageExecution, validation: ValidationResult) -> ScenarioScore`, `fraction_metric(numerator: int, denominator: int) -> FractionMetric`, and exact Decimal aggregate helpers.
 
-- [ ] **Step 1: Write table-driven failing tests for every hard gate and formula**
+- [x] **Step 1: Write table-driven failing tests for every hard gate and formula**
 
 Cover all seven stages, expected withholding, unexpected empty answers, prompt injection, immutable numbers, unknown evidence/source IDs, report/rubric score mutation, unavailable evaluation no-score state, N/A dimensions, word budgets, actionability, readability, calibration, and half-up rounding.
 
@@ -290,23 +290,23 @@ def test_na_dimension_is_excluded_from_weight_normalisation() -> None:
     assert score == Decimal("80.0")
 ```
 
-- [ ] **Step 2: Run tests and verify missing-validator/scorer failures**
+- [x] **Step 2: Run tests and verify missing-validator/scorer failures**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_validators.py tests/benchmarks/coach/test_scoring_primitives.py tests/benchmarks/coach/test_stage_scoring.py`
 
-- [ ] **Step 3: Implement shared deterministic primitives**
+- [x] **Step 3: Implement shared deterministic primitives**
 
 Use NFKC, lowercase, whitespace collapse, punctuation stripping with evidence-ID preservation, committed stopwords, exact term groups, Decimal precision/recall, word budget, actionability, readability, weighted normalisation, and one-decimal `ROUND_HALF_UP` output. No embeddings, judge model, or semantic heuristic may affect official scores.
 
-- [ ] **Step 4: Implement stage gates and formulas exactly from v5 sections 12 and 13**
+- [x] **Step 4: Implement stage gates and formulas exactly from v5 sections 12 and 13**
 
 Return `ScenarioScore(eligible=False, quality_score=None)` for a blocking gate. Correct expected withholding gets scenario quality 100 with prose dimensions absent. Deterministic fallback reports receive fidelity/prioritisation/actionability scores but not model narrative success.
 
-- [ ] **Step 5: Run all focused scoring tests**
+- [x] **Step 5: Run all focused scoring tests**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_validators.py tests/benchmarks/coach/test_scoring_primitives.py tests/benchmarks/coach/test_stage_scoring.py`
 
-- [ ] **Step 6: Commit checkpoint C2.4**
+- [x] **Step 6: Commit checkpoint C2.4**
 
 Commit: `feat(coach-benchmark): add deterministic gates and scoring`
 
@@ -571,7 +571,7 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 - [x] C2.1 Strict contracts and profiles
 - [x] C2.2 Synthetic suite and loader
 - [x] C2.3 Production adapter
-- [ ] C2.4 Gates and scoring
+- [x] C2.4 Gates and scoring
 - [ ] C2.5 Runner and resume
 - [ ] C2.6 Capability and ranking
 - [ ] C2.7 Reporting and CLI
