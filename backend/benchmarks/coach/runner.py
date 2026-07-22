@@ -43,6 +43,7 @@ from .production_adapter import (
     ScenarioContext,
 )
 from .profiles import profile_for
+from .reporting import write_report
 from .scoring import classify_model, rank_models, score_execution
 from .suite_loader import LoadedCoachSuite, load_suite
 from .validators import validate_execution
@@ -419,6 +420,8 @@ def _write_summary(
     deadline: bool,
     interrupted: bool,
     protected_changed: bool,
+    protected_hashes_before: dict[str, str] | None = None,
+    protected_hashes_after: dict[str, str] | None = None,
 ) -> CoachRunSummary:
     state = _state(
         schedule,
@@ -455,6 +458,8 @@ def _write_summary(
         results=results,
         capabilities=capabilities,
         ranking=ranking,
+        protected_hashes_before=protected_hashes_before or {},
+        protected_hashes_after=protected_hashes_after or {},
     )
     atomic_write_json(run_dir / "summary.json", summary.model_dump(mode="json"))
     atomic_write_json(
@@ -465,11 +470,7 @@ def _write_summary(
             "ranking": summary.ranking,
         },
     )
-    atomic_write_text(
-        run_dir / "report.md",
-        f"# Coach benchmark {run_id}\n\nState: `{summary.state}`\n\n"
-        f"Terminal attempts: {summary.terminal}/{summary.scheduled}.\n",
-    )
+    write_report(summary, run_dir / "report.md")
     _write_progress(run_dir, schedule, results)
     return summary
 
@@ -577,6 +578,8 @@ async def _execute_run(
             deadline=deadline,
             interrupted=True,
             protected_changed=False,
+            protected_hashes_before=manifest.get("protected_hashes_before", {}),
+            protected_hashes_after=manifest.get("protected_hashes_after", {}),
         )
         del summary
         raise
@@ -599,6 +602,8 @@ async def _execute_run(
         deadline=deadline,
         interrupted=interrupted,
         protected_changed=protected_changed,
+        protected_hashes_before=manifest.get("protected_hashes_before", {}),
+        protected_hashes_after=protected_after,
     )
 
 

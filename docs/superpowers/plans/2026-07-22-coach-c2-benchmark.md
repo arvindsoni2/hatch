@@ -430,7 +430,7 @@ Commit: `feat(coach-benchmark): classify and rank model capability`
 - Consumes: suite loader, runner/resume, summary/capability types.
 - Produces: `render_report(summary)`, `write_report(summary, path)`, `build_parser()`, and `main(argv) -> int`.
 
-- [ ] **Step 1: Write failing report/CLI tests**
+- [x] **Step 1: Write failing report/CLI tests**
 
 Cover `validate`, `smoke`, `run --profile`, `run --resume`, `--retry-timeouts`, `report`; invalid arguments; bounded timeout overrides; terminal exit codes; no secrets/absolute paths; exact counts/fractions/exclusions; and acceptance output without ranking/recommendation.
 
@@ -444,19 +444,19 @@ def test_existing_writing_parser_is_unchanged() -> None:
     assert benchmarks.cli.build_parser().parse_args(["smoke", "--case", "x"]).command == "smoke"
 ```
 
-- [ ] **Step 2: Run tests and verify missing-report/CLI failures**
+- [x] **Step 2: Run tests and verify missing-report/CLI failures**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_reporting.py tests/benchmarks/coach/test_cli.py tests/benchmarks/test_cli.py`
 
-- [ ] **Step 3: Implement bounded reports and CLI dispatch**
+- [x] **Step 3: Implement bounded reports and CLI dispatch**
 
 Reports include schedule/terminal counts, run state, harness validity, protected hashes, stage metrics, raw fractions plus display values, gates, exclusions, classifications, ranking when allowed, and artifact paths. Redact raw private payloads and never print auth headers or absolute protected paths.
 
-- [ ] **Step 4: Run report/CLI regressions**
+- [x] **Step 4: Run report/CLI regressions**
 
 Run: `cd backend && pytest -q tests/benchmarks/coach/test_reporting.py tests/benchmarks/coach/test_cli.py tests/benchmarks/test_cli.py`
 
-- [ ] **Step 5: Commit checkpoint C2.7**
+- [x] **Step 5: Commit checkpoint C2.7**
 
 Commit: `feat(coach-benchmark): add reports and Coach CLI`
 
@@ -574,6 +574,6 @@ Use the requesting-code-review workflow against the exact final C2 commit, addre
 - [x] C2.4 Gates and scoring
 - [x] C2.5 Runner and resume
 - [x] C2.6 Capability and ranking
-- [ ] C2.7 Reporting and CLI
+- [x] C2.7 Reporting and CLI
 - [ ] C2.8 Contract/E2E smoke
 - [ ] C2.9 Documentation and verification

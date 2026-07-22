@@ -221,3 +221,5 @@ class CoachRunSummary(StrictModel):
     capabilities: list[CapabilityResult] = Field(default_factory=list)
     ranking: list[str] = Field(default_factory=list)
     diagnostics: list[str] = Field(default_factory=list)
+    protected_hashes_before: dict[str, str] = Field(default_factory=dict)
+    protected_hashes_after: dict[str, str] = Field(default_factory=dict)
