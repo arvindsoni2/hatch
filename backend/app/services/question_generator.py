@@ -130,6 +130,7 @@ def _validate_questions(
     expected_count: int,
     requirement_ids: tuple[str, ...],
     allowed_entity_names: tuple[str, ...] = (),
+    candidate_names: tuple[str, ...] = (),
 ) -> _Validation:
     items = _extract_question_items(raw)
     if items is None:
@@ -169,7 +170,9 @@ def _validate_questions(
         if _PROMPT_INJECTION_RE.search(text):
             item_gates.append("coach_question_prompt_injection_followed")
         if _CANDIDATE_ASSERTION_RE.search(text) or contains_candidate_history_claim(
-            text, allowed_entity_names=allowed_entity_names
+            text,
+            allowed_entity_names=allowed_entity_names,
+            candidate_names=candidate_names,
         ):
             item_gates.append("coach_question_candidate_claim")
         if item.get("model_answer") not in (None, ""):
@@ -289,6 +292,8 @@ class QuestionGeneratorService:
         jd_text: str | None = None,
     ) -> QuestionGenerationResult:
         candidate_summary = _load_candidate_summary()
+        candidate_name = candidate_summary.splitlines()[0].strip()
+        candidate_names = (candidate_name,) if candidate_name else ()
         research_dict = (
             company_research.model_dump(mode="json")
             if company_research and company_research.verification_state != "not_verified"
@@ -359,6 +364,7 @@ class QuestionGeneratorService:
             config.question_count,
             requirement_ids,
             allowed_entity_names=(company_name,),
+            candidate_names=candidate_names,
         )
         initial = _diagnostic(
             stage="question_generation",
@@ -470,6 +476,7 @@ class QuestionGeneratorService:
             config.question_count,
             requirement_ids,
             allowed_entity_names=(company_name,),
+            candidate_names=candidate_names,
         )
         repair_gates = list(final_validation.gate_codes)
         repair = _diagnostic(

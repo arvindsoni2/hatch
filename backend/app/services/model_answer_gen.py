@@ -42,7 +42,8 @@ _STAR_ROLE_PATTERNS = {
     ),
     "action": re.compile(
         r"\b(?:i|we)\s+(?:(?:personally|then|also)\s+){0,2}"
-        r"(?!(?:needed|required|tasked|aimed)\b)"
+        r"(?!(?:needed|required|tasked|aimed|achieved|grew|improved|increased|"
+        r"decreased|reduced|saved|fell|resulted|delivered)\b)"
         r"(?:[a-z]{3,}ed|built|chose|drove|led|made|ran|took|wrote)\b",
         re.IGNORECASE,
     ),
@@ -295,10 +296,7 @@ class ModelAnswerGeneratorService:
                 )
             )
 
-        if any(
-            not _STAR_ROLE_PATTERNS[key].search(star_breakdown[key])
-            for key in _STAR_KEYS
-        ):
+        if any(_star_roles(value) != {key} for key, value in star_breakdown.items()):
             return _empty_result(
                 _diagnostic(
                     self._client,
@@ -363,6 +361,12 @@ def _content_tokens(text: str) -> list[str]:
 
 def _normalized_claim(text: str) -> tuple[str, ...]:
     return tuple(_content_tokens(text))
+
+
+def _star_roles(text: str) -> set[str]:
+    return {
+        role for role, pattern in _STAR_ROLE_PATTERNS.items() if pattern.search(text)
+    }
 
 
 def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:

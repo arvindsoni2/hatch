@@ -31,6 +31,8 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Alex leads the migration program at Acme.",
         "Alex pioneered cloud migration for Acme.",
         "Alex pioneered Project Phoenix.",
+        "Alex set priorities for the migration.",
+        "Alex cut costs at Acme.",
     ):
         assert contains_candidate_history_claim(claim)
     for recommendation in (
@@ -39,8 +41,15 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "Record completed answers for review.",
         "Add tailored examples to the next answer.",
         "Rehearse completed answers before the interview.",
+        "Provide tailored examples in the next answer.",
+        "Share completed examples during practice.",
     ):
         assert not contains_candidate_history_claim(recommendation)
+
+    assert contains_candidate_history_claim(
+        "Alex refactored cloud migration workflows.",
+        candidate_names=("Alex",),
+    )
 
 
 

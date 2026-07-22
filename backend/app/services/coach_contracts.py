@@ -25,7 +25,7 @@ _CANDIDATE_HISTORY_VERBS = (
     r"orchestrated|facilitated|supported|contributed|directed|transformed|"
     r"improved|resolved|negotiated|mentored|advised|established|introduced|"
     r"optimized|optimised|streamlined|scaled|modernized|modernised"
-    r"|owns|leads|wrote|written|chose|chosen|spearheaded"
+    r"|owns|leads|wrote|written|chose|chosen|spearheaded|pioneered|set|cut"
 )
 _CANDIDATE_HISTORY_CLAIM = re.compile(
     rf"\b(?:i|we|you|he|she|they|the candidate|candidate)\b"
@@ -53,15 +53,6 @@ _EMBEDDED_NAMED_PAST_CLAIM = re.compile(
     r"came|saw|found|thought|told|became|showed|left|felt|put|brought|began|"
     r"kept|held|stood|heard|meant|met|set|learnt|grew|won|lost|paid|sent|"
     r"sat|spoke|lay|ran|drove|led|built|chose)\b(?!\s+its\b)"
-)
-_SENTENCE_OPENING_NAMED_ACTION_CLAIM = re.compile(
-    r"(?:^|[.!?]\s+)"
-    r"(?!(?:Add|Analyse|Analyze|Compare|Consider|Create|Describe|Design|Discuss|"
-    r"Evaluate|Explain|Focus|How|Identify|Include|Keep|Outline|Practice|Practise|"
-    r"Record|Rehearse|Review|Step|Try|Use|What|When|Where|Who|Why)\b)"
-    r"[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?\s+"
-    r"(?:has\s+|had\s+)?(?:[a-z]{3,}ed|[a-z]{3,}s|wrote|made|took|gave|"
-    r"ran|drove|led|built|chose)\s+(?=\S)"
 )
 _NAMED_RESPONSIBILITY_CLAIM = re.compile(
     r"\b(?:[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?|[Tt]he candidate|[Cc]andidate)\s+"
@@ -282,7 +273,10 @@ def configured_attempt_count(client: object) -> int:
 
 
 def contains_candidate_history_claim(
-    text: str, *, allowed_entity_names: tuple[str, ...] = ()
+    text: str,
+    *,
+    allowed_entity_names: tuple[str, ...] = (),
+    candidate_names: tuple[str, ...] = (),
 ) -> bool:
     """Detect unsupported candidate-history assertions in narrative output."""
     candidate_text = text
@@ -294,14 +288,25 @@ def contains_candidate_history_claim(
                 candidate_text,
                 flags=re.IGNORECASE,
             )
-    return any(
+    if any(
         pattern.search(candidate_text)
         for pattern in (
             _CANDIDATE_HISTORY_CLAIM,
             _NAMED_CANDIDATE_HISTORY_CLAIM,
             _GENERIC_PAST_CANDIDATE_CLAIM,
             _EMBEDDED_NAMED_PAST_CLAIM,
-            _SENTENCE_OPENING_NAMED_ACTION_CLAIM,
             _NAMED_RESPONSIBILITY_CLAIM,
         )
+    ):
+        return True
+    return any(
+        re.search(
+            rf"\b{re.escape(candidate_name.strip())}\b"
+            rf"(?:\s+(?:has|had))?(?:\s+\w+){{0,2}}\s+"
+            rf"(?:{_CANDIDATE_HISTORY_VERBS}|[a-z]{{3,}}ed|[a-z]{{3,}}s|set|cut)\b",
+            candidate_text,
+            flags=re.IGNORECASE,
+        )
+        for candidate_name in candidate_names
+        if candidate_name.strip() and candidate_name.casefold() != "candidate"
     )

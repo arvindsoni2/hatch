@@ -468,6 +468,36 @@ async def test_model_answer_rejects_overlapping_star_role_keywords() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_answer_requires_exclusive_star_role_semantics() -> None:
+    candidate_summary = (
+        "I improved the service. We achieved the goal. "
+        "We faced a service challenge. I needed to deliver an improved outcome."
+    )
+    client = _client(
+        candidate_summary,
+        "I needed to deliver an improved outcome.",
+        candidate_summary,
+    )
+    client.complete_json.return_value["star_breakdown"] = {
+        "situation": "I improved the service.",
+        "task": "We achieved the goal.",
+        "action": "We faced a service challenge.",
+        "result": "I needed to deliver an improved outcome.",
+    }
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_star_incomplete"]
+
+
+@pytest.mark.asyncio
 async def test_model_answer_accepts_explicit_truthful_withholding() -> None:
     candidate_summary = "AWS. Terraform. Python. SQL."
     client = MagicMock()
