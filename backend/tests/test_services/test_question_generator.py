@@ -150,6 +150,30 @@ def test_question_rejects_unseen_named_candidate_action() -> None:
     assert "coach_question_candidate_claim" in result.gate_codes
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How has Acme improved its platform strategy?",
+        "How has Acme changed the platform strategy?",
+    ],
+)
+def test_question_allows_known_employer_history(question: str) -> None:
+    result = _validate_questions(
+        [{
+            "text": question,
+            "category": "Commercial",
+            "difficulty": "medium",
+            "requirement_id": "requirement-1",
+        }],
+        expected_count=1,
+        requirement_ids=("requirement-1",),
+        allowed_entity_names=("Acme",),
+    )
+
+    assert len(result.accepted) == 1
+    assert result.gate_codes == []
+
+
 @pytest.mark.asyncio
 async def test_generate_with_company_research(generator: QuestionGeneratorService) -> None:
     """generate() succeeds when company_research is provided."""

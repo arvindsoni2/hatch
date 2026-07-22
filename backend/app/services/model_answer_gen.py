@@ -42,12 +42,13 @@ _STAR_ROLE_PATTERNS = {
     ),
     "action": re.compile(
         r"\b(?:i|we)\s+(?:(?:personally|then|also)\s+){0,2}"
+        r"(?!(?:needed|required|tasked|aimed)\b)"
         r"(?:[a-z]{3,}ed|built|chose|drove|led|made|ran|took|wrote)\b",
         re.IGNORECASE,
     ),
     "result": re.compile(
-        r"(?:\b\d+(?:\.\d+)?%?\b|\b(?:achieved|grew|improved|increased|"
-        r"decreased|reduced|saved|fell|resulted|outcome|delivered)\b)",
+        r"\b(?:achieved|grew|improved|increased|decreased|reduced|saved|fell|"
+        r"resulted|outcome|delivered)\b",
         re.IGNORECASE,
     ),
 }

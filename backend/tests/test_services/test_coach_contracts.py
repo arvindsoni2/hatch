@@ -29,6 +29,8 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
         "The candidate was responsible for the migration.",
         "Alex pioneered the migration for Acme.",
         "Alex leads the migration program at Acme.",
+        "Alex pioneered cloud migration for Acme.",
+        "Alex pioneered Project Phoenix.",
     ):
         assert contains_candidate_history_claim(claim)
     for recommendation in (
@@ -40,9 +42,6 @@ def test_candidate_history_detector_handles_irregular_name_without_imperative_fa
     ):
         assert not contains_candidate_history_claim(recommendation)
 
-    assert not contains_candidate_history_claim(
-        "How has Acme changed its platform strategy?"
-    )
 
 
 def test_deterministic_diagnostic_allows_nullable_prompt_fields() -> None:

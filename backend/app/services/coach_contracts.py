@@ -56,10 +56,12 @@ _EMBEDDED_NAMED_PAST_CLAIM = re.compile(
 )
 _SENTENCE_OPENING_NAMED_ACTION_CLAIM = re.compile(
     r"(?:^|[.!?]\s+)"
+    r"(?!(?:Add|Analyse|Analyze|Compare|Consider|Create|Describe|Design|Discuss|"
+    r"Evaluate|Explain|Focus|How|Identify|Include|Keep|Outline|Practice|Practise|"
+    r"Record|Rehearse|Review|Step|Try|Use|What|When|Where|Who|Why)\b)"
     r"[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?\s+"
     r"(?:has\s+|had\s+)?(?:[a-z]{3,}ed|[a-z]{3,}s|wrote|made|took|gave|"
-    r"ran|drove|led|built|chose)\s+"
-    r"(?:the|a|an|this|that|these|those|my|our|his|her|their)\b"
+    r"ran|drove|led|built|chose)\s+(?=\S)"
 )
 _NAMED_RESPONSIBILITY_CLAIM = re.compile(
     r"\b(?:[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?|[Tt]he candidate|[Cc]andidate)\s+"
@@ -279,10 +281,21 @@ def configured_attempt_count(client: object) -> int:
     return value if isinstance(value, int) and value >= 1 else 1
 
 
-def contains_candidate_history_claim(text: str) -> bool:
+def contains_candidate_history_claim(
+    text: str, *, allowed_entity_names: tuple[str, ...] = ()
+) -> bool:
     """Detect unsupported candidate-history assertions in narrative output."""
+    candidate_text = text
+    for entity_name in allowed_entity_names:
+        if entity_name.strip():
+            candidate_text = re.sub(
+                rf"\b{re.escape(entity_name.strip())}\b",
+                "the employer",
+                candidate_text,
+                flags=re.IGNORECASE,
+            )
     return any(
-        pattern.search(text)
+        pattern.search(candidate_text)
         for pattern in (
             _CANDIDATE_HISTORY_CLAIM,
             _NAMED_CANDIDATE_HISTORY_CLAIM,

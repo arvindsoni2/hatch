@@ -129,6 +129,7 @@ def _validate_questions(
     raw: Any,
     expected_count: int,
     requirement_ids: tuple[str, ...],
+    allowed_entity_names: tuple[str, ...] = (),
 ) -> _Validation:
     items = _extract_question_items(raw)
     if items is None:
@@ -168,7 +169,7 @@ def _validate_questions(
         if _PROMPT_INJECTION_RE.search(text):
             item_gates.append("coach_question_prompt_injection_followed")
         if _CANDIDATE_ASSERTION_RE.search(text) or contains_candidate_history_claim(
-            text
+            text, allowed_entity_names=allowed_entity_names
         ):
             item_gates.append("coach_question_candidate_claim")
         if item.get("model_answer") not in (None, ""):
@@ -354,7 +355,10 @@ class QuestionGeneratorService:
             raise QuestionGenerationContractError(result) from None
 
         initial_validation = _validate_questions(
-            raw, config.question_count, requirement_ids
+            raw,
+            config.question_count,
+            requirement_ids,
+            allowed_entity_names=(company_name,),
         )
         initial = _diagnostic(
             stage="question_generation",
@@ -462,7 +466,10 @@ class QuestionGeneratorService:
         ]
         assembled_raw = retained_payload + (repair_items or [])
         final_validation = _validate_questions(
-            assembled_raw, config.question_count, requirement_ids
+            assembled_raw,
+            config.question_count,
+            requirement_ids,
+            allowed_entity_names=(company_name,),
         )
         repair_gates = list(final_validation.gate_codes)
         repair = _diagnostic(
