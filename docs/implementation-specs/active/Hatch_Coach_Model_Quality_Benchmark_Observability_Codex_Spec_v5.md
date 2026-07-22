@@ -16,7 +16,7 @@ superseded_by: []
 **Branching rule:** C1 must wait for PR42 to land on `main`; it must branch from updated `main`, not directly from `b1349f2` or the PR42 feature branch  
 **Primary goal:** make Coach model behaviour measurable, safe, reproducible, and observable without redesigning the Coach product  
 **Audience:** Codex implementation agent and human reviewer  
-**Delivery status:** PRs C1, C2, and C3 have not started. `implementation_status: partial` means the existing Coach and PR42 baseline already satisfies part of the target specification; it does not mean C1 implementation has begun.  
+**Delivery status:** PR C1 is implemented on `feat/coach-c1-contract-correctness` pending review; PRs C2 and C3 have not started. `implementation_status: partial` now reflects the C1 branch plus the existing Coach and PR42 baseline until C1 is merged.
 **Start gate:** before changing code, Codex must verify that `git merge-base --is-ancestor b1349f2 HEAD` succeeds or that the owner confirms PR42 was squash/rebase merged with equivalent content. Record the exact `HEAD` SHA in the C1 implementation summary. If PR42 is not present on `main`, stop without modifying files.
 
 
