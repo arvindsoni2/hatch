@@ -257,14 +257,23 @@ async def test_model_answer_rejects_cross_claim_word_recombination() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_answer_rejects_relational_inversion() -> None:
+@pytest.mark.parametrize(
+    "inverted_answer",
+    [
+        "I led the migration from Beta to Acme.",
+        "I led the migration to Acme from Beta.",
+    ],
+)
+async def test_model_answer_rejects_relational_inversion(
+    inverted_answer: str,
+) -> None:
     candidate_summary = (
         "A service had recurring incidents. I needed to improve reliability. "
         "I automated the recurring remediation. "
         "I led the migration from Acme to Beta. Incident volume fell by 25%."
     )
     client = _client(
-        "I led the migration from Beta to Acme.",
+        inverted_answer,
         "Incident volume fell by 25%.",
         candidate_summary,
     )
