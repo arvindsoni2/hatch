@@ -11,11 +11,19 @@ from app.schemas.coach import AnswerEvaluation, SessionFeedbackReport, SessionQu
 from app.services.coach_contracts import (
     COACH_VALIDATION_SCHEMA_VERSION,
     CoachDiagnostic,
+    contains_candidate_history_claim,
     merge_stage_diagnostic,
     run_with_stage_deadline,
 )
 
 Settings = type(settings)
+
+
+def test_candidate_history_detector_handles_irregular_name_without_imperative_false_positive() -> None:
+    assert contains_candidate_history_claim(
+        "Alex wrote the migration plan for Acme."
+    )
+    assert not contains_candidate_history_claim("Use examples tailored to the role.")
 
 
 def test_deterministic_diagnostic_allows_nullable_prompt_fields() -> None:

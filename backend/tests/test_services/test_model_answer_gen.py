@@ -38,7 +38,7 @@ async def test_model_answer_preserves_approved_metric_and_includes_evidence_ids(
     )
     client = _client(
         "I reduced incident volume by 25% through automation.",
-        "I reduced incident volume by 25%.",
+        "I reduced incident volume by 25% through automation.",
         candidate_summary,
     )
     service = ModelAnswerGeneratorService(client)
@@ -274,6 +274,41 @@ async def test_model_answer_rejects_relational_inversion(
     )
     client = _client(
         inverted_answer,
+        "Incident volume fell by 25%.",
+        candidate_summary,
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about a migration.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("evidence_claim", "unsupported_answer"),
+    [
+        ("I supported Alex managing the migration.", "I managed the migration."),
+        ("I did not lead the migration.", "I did lead the migration."),
+    ],
+)
+async def test_model_answer_rejects_meaning_changing_deletions(
+    evidence_claim: str,
+    unsupported_answer: str,
+) -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        f"I automated the recurring remediation. {evidence_claim} "
+        "Incident volume fell by 25%."
+    )
+    client = _client(
+        unsupported_answer,
         "Incident volume fell by 25%.",
         candidate_summary,
     )

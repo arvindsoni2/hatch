@@ -319,18 +319,12 @@ def _same_lexeme(left: str, right: str) -> bool:
     )
 
 
-def _tokens_are_ordered_subset(observed: list[str], supported: list[str]) -> bool:
-    """Match material tokens in order so directional relations cannot invert."""
-    source_index = 0
-    for token in observed:
-        while source_index < len(supported) and not _same_lexeme(
-            token, supported[source_index]
-        ):
-            source_index += 1
-        if source_index == len(supported):
-            return False
-        source_index += 1
-    return True
+def _tokens_match_claim(observed: list[str], supported: list[str]) -> bool:
+    """Require clause-level token equivalence while allowing morphology only."""
+    return len(observed) == len(supported) and all(
+        _same_lexeme(candidate, source)
+        for candidate, source in zip(observed, supported, strict=True)
+    )
 
 
 def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
@@ -344,7 +338,7 @@ def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
     return bool(claims) and all(
         bool(observed := _content_tokens(claim))
         and any(
-            _tokens_are_ordered_subset(observed, supported)
+            _tokens_match_claim(observed, supported)
             for supported in evidence_tokens
         )
         for claim in claims

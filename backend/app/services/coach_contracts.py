@@ -35,7 +35,8 @@ _CANDIDATE_HISTORY_CLAIM = re.compile(
     re.IGNORECASE,
 )
 _NAMED_CANDIDATE_HISTORY_CLAIM = re.compile(
-    rf"\b[A-Z][a-z]{{1,30}}\b(?:\s+\w+){{0,4}}\s+"
+    rf"\b[A-Z][a-z]{{1,30}}(?:\s+[A-Z][a-z]{{1,30}})?"
+    rf"(?:\s+(?:has|had))?(?:\s+\w+ly)?\s+"
     rf"(?:{_CANDIDATE_HISTORY_VERBS})\b"
 )
 _GENERIC_PAST_CANDIDATE_CLAIM = re.compile(
@@ -45,9 +46,13 @@ _GENERIC_PAST_CANDIDATE_CLAIM = re.compile(
 )
 _GENERIC_NAMED_PAST_CLAIM = re.compile(
     r"\b(?!(?:Compare|Explain|Describe|Design|Discuss|Outline|Practice|Practise|"
-    r"Keep|Focus|Identify|Evaluate|Analyse|Analyze|Review|Consider|Try|Step)\b)"
-    r"[A-Z][a-z]{1,30}\b(?:\s+\w+){0,4}\s+"
-    r"(?!(?:need|seed|feed|speed)\b)[a-z]{3,}ed\b"
+    r"Keep|Focus|Identify|Evaluate|Analyse|Analyze|Review|Consider|Try|Step|Use)\b)"
+    r"[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30})?"
+    r"(?:\s+(?:has|had))?(?:\s+\w+ly)?\s+"
+    r"(?:(?!(?:need|seed|feed|speed)\b)[a-z]{3,}ed|wrote|made|took|gave|"
+    r"came|saw|found|thought|told|became|showed|left|felt|put|brought|began|"
+    r"kept|held|stood|heard|meant|met|set|learnt|grew|won|lost|paid|sent|"
+    r"sat|spoke|lay|ran|drove|led|built)\b"
 )
 
 
