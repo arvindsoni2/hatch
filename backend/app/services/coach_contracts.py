@@ -21,14 +21,26 @@ COACH_VALIDATION_SCHEMA_VERSION = "1.0.0"
 _CANDIDATE_HISTORY_VERBS = (
     r"built|created|delivered|designed|implemented|led|managed|reduced|saved|"
     r"worked|achieved|increased|decreased|drove|owned|launched|migrated|"
-    r"developed|engineered|deployed|ran|oversaw|authored"
+    r"developed|engineered|deployed|ran|oversaw|authored|coordinated|"
+    r"orchestrated|facilitated|supported|contributed|directed|transformed|"
+    r"improved|resolved|negotiated|mentored|advised|established|introduced|"
+    r"optimized|optimised|streamlined|scaled|modernized|modernised"
 )
 _CANDIDATE_HISTORY_CLAIM = re.compile(
-    rf"(?:\b(?:i|we|you|he|she|they|the candidate|candidate)\b|"
-    rf"\b[A-Z][a-z]{{1,30}}\b)(?:\s+\w+){{0,4}}\s+"
+    rf"\b(?:i|we|you|he|she|they|the candidate|candidate)\b"
+    rf"(?:\s+\w+){{0,4}}\s+"
     rf"(?:{_CANDIDATE_HISTORY_VERBS})\b|"
     rf"\b(?:was|were)\s+(?:{_CANDIDATE_HISTORY_VERBS})\s+by\s+"
-    rf"(?:me|us|you|him|her|them|the candidate|[A-Z][a-z]{{1,30}})\b",
+    rf"(?:me|us|you|him|her|them|the candidate|[A-Za-z]{{2,30}})\b",
+    re.IGNORECASE,
+)
+_NAMED_CANDIDATE_HISTORY_CLAIM = re.compile(
+    rf"\b[A-Z][a-z]{{1,30}}\b(?:\s+\w+){{0,4}}\s+"
+    rf"(?:{_CANDIDATE_HISTORY_VERBS})\b"
+)
+_GENERIC_PAST_CANDIDATE_CLAIM = re.compile(
+    r"\b(?:i|we|you|he|she|they|the candidate|candidate)\b"
+    r"(?:\s+\w+){0,4}\s+(?!(?:need|seed|feed|speed)\b)[a-z]{3,}ed\b",
     re.IGNORECASE,
 )
 
@@ -247,4 +259,11 @@ def configured_attempt_count(client: object) -> int:
 
 def contains_candidate_history_claim(text: str) -> bool:
     """Detect unsupported candidate-history assertions in narrative output."""
-    return bool(_CANDIDATE_HISTORY_CLAIM.search(text))
+    return any(
+        pattern.search(text)
+        for pattern in (
+            _CANDIDATE_HISTORY_CLAIM,
+            _NAMED_CANDIDATE_HISTORY_CLAIM,
+            _GENERIC_PAST_CANDIDATE_CLAIM,
+        )
+    )

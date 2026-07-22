@@ -189,6 +189,8 @@ async def test_evaluation_keeps_only_transcript_or_metric_evidence(good_answer) 
     assert good_answer["transcript"][:30] in result.evidence_references
     assert "145 WPM" in result.evidence_references
     assert "Candidate led a team of 500" not in result.evidence_references
+    assert result.strengths == [good_answer["transcript"][:30], "145 WPM"]
+    assert all("500" not in item for item in result.improvements)
     combined = "".join(client.complete_json.await_args.args[:2])
     assert '"prompt_id": "answer_evaluation"' in combined
     assert "OBSERVATION" in combined

@@ -18,6 +18,7 @@ from .coach_contracts import (
     CoachGateCode,
     configured_attempt_count,
     configured_model_id,
+    contains_candidate_history_claim,
     run_with_stage_deadline,
 )
 from .jd_analyser import _split_jinja_output
@@ -166,7 +167,9 @@ def _validate_questions(
 
         if _PROMPT_INJECTION_RE.search(text):
             item_gates.append("coach_question_prompt_injection_followed")
-        if _CANDIDATE_ASSERTION_RE.search(text):
+        if _CANDIDATE_ASSERTION_RE.search(text) or contains_candidate_history_claim(
+            text
+        ):
             item_gates.append("coach_question_candidate_claim")
         if item.get("model_answer") not in (None, ""):
             item_gates.append("coach_question_parse_invalid")

@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.model_answer_gen import ModelAnswerGeneratorService
-from app.services.writing_contracts import build_evidence_ledger
+from app.services.model_answer_gen import (
+    ModelAnswerGeneratorService,
+    _build_candidate_evidence,
+)
 
 
 def _client(answer: str, result: str, candidate_summary: str) -> MagicMock:
-    evidence_id = build_evidence_ledger({"summary": candidate_summary})[0].id
+    evidence_ids = [item.id for item in _build_candidate_evidence(candidate_summary)]
     client = MagicMock()
     client.complete_json = AsyncMock(
         return_value={
@@ -21,7 +23,7 @@ def _client(answer: str, result: str, candidate_summary: str) -> MagicMock:
                 "action": "I automated the recurring remediation.",
                 "result": result,
             },
-            "evidence_references": [evidence_id],
+            "evidence_references": evidence_ids,
         }
     )
     return client
@@ -219,6 +221,31 @@ async def test_model_answer_requires_evidence_references() -> None:
 
     result = await ModelAnswerGeneratorService(client).generate(
         question="Tell me about an improvement.",
+        category="Behavioural",
+        difficulty="medium",
+        company_name="Example",
+        candidate_summary=candidate_summary,
+    )
+
+    assert result.model_answer == ""
+    assert result.diagnostic.gate_codes == ["coach_model_answer_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+async def test_model_answer_rejects_cross_claim_word_recombination() -> None:
+    candidate_summary = (
+        "A service had recurring incidents. I needed to improve reliability. "
+        "I automated the recurring remediation. I built a billing service at Acme. "
+        "I worked on a migration at Beta. Incident volume fell by 25%."
+    )
+    client = _client(
+        "I built the migration service at Acme.",
+        "Incident volume fell by 25%.",
+        candidate_summary,
+    )
+
+    result = await ModelAnswerGeneratorService(client).generate(
+        question="Tell me about a project.",
         category="Behavioural",
         difficulty="medium",
         company_name="Example",

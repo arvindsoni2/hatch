@@ -160,10 +160,7 @@ def _evidence_is_grounded(
     quoted = re.findall(r"['\"]([^'\"]+)['\"]", evidence)
     if any(source_contains(quote, transcript) for quote in quoted):
         return True
-    return any(
-        source_contains(token, metric_context)
-        for token in re.findall(r"\b\d+(?:\.\d+)?%?\b", evidence)
-    )
+    return False
 
 
 class RubricSynthesiserService:

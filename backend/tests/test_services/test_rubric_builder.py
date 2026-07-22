@@ -150,6 +150,17 @@ class TestBuildContentDimensions:
         for dim in dims.values():
             assert dim.score_band in ("weak", "needs_work")
 
+    def test_content_evidence_uses_only_grounded_references(self) -> None:
+        evaluation = self._make_eval(score=8)
+        evaluation.strengths = ["Led 500 engineers"]
+        evaluation.improvements = ["Invented improvement"]
+        evaluation.evidence_references = ["I implemented a blue-green deployment"]
+
+        dims = build_content_dimensions(evaluation)
+
+        for dimension in dims.values():
+            assert dimension.evidence == ["I implemented a blue-green deployment"]
+
 
 # ---------------------------------------------------------------------------
 # build_rubric (integration)

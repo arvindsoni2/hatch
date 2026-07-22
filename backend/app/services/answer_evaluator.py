@@ -345,6 +345,9 @@ def _parse_evaluation(
     overall_one_decimal = float(
         Decimal(str(overall)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
     )
+    weakest_dimensions = sorted(
+        scores, key=lambda dimension: (scores[dimension], dimension)
+    )[:2]
     return AnswerEvaluation(
         evaluation_state="completed",
         diagnostic=_diagnostic(
@@ -356,9 +359,10 @@ def _parse_evaluation(
         scores=scores,
         overall=overall_one_decimal,
         feedback=str(raw.get("feedback") or ""),
-        strengths=[str(item) for item in raw.get("strengths", []) if isinstance(item, str)],
+        strengths=evidence_references[:2],
         improvements=[
-            str(item) for item in raw.get("improvements", []) if isinstance(item, str)
+            f"Practise {dimension.replace('_', ' ')} in your next answer."
+            for dimension in weakest_dimensions
         ],
         evidence_references=evidence_references,
         follow_up_question=follow_up,

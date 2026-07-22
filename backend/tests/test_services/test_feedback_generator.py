@@ -15,6 +15,7 @@ from app.services.coach_aggregation import (
     resolve_canonical_attempts,
 )
 from app.services.feedback_generator import FeedbackGeneratorService
+from app.services.rubric_builder import drill_for_dimension
 
 
 def _question(question_id: str, order: int, category: str = "Technical"):
@@ -34,6 +35,7 @@ def _recording(
     score: float | None = None,
     *,
     dimension_score: int | None = None,
+    rubric_scores: dict[str, int] | None = None,
 ):
     payload = None
     if state == "completed" and score is not None:
@@ -48,12 +50,15 @@ def _recording(
             improvements=[f"Improve {recording_id}"],
             rubric=SessionRubric(
                 dimensions={
-                    "relevance": RubricDimension(
-                        score=dim_score,
-                        score_band="good",
-                        evidence=[f"Evidence {recording_id}"],
-                        drill="Practise relevance.",
+                    name: RubricDimension(
+                        score=value,
+                        score_band="good" if value >= 6 else "weak",
+                        evidence=[f"Evidence {name} {recording_id}"],
+                        drill=f"Practise {name}.",
                     )
+                    for name, value in (
+                        rubric_scores or {"relevance": dim_score}
+                    ).items()
                 }
             ),
         )
@@ -140,6 +145,51 @@ def test_completed_attempt_requires_all_six_valid_score_dimensions() -> None:
     assert report.question_count_evaluated == 0
     assert report.question_count_unanswered == 1
     assert report.overall_score is None
+
+
+def test_report_uses_locked_single_focus_selection() -> None:
+    now = datetime.utcnow()
+    report = build_deterministic_report(
+        "s1",
+        [_question("q1", 1)],
+        [_recording(
+            "r1",
+            "q1",
+            "completed",
+            now,
+            7.0,
+            rubric_scores={
+                "relevance": 3,
+                "star_structure": 9,
+                "technical_depth": 9,
+            },
+        )],
+    )
+
+    assert report.improvement_areas == ["relevance"]
+    assert report.coaching_points == [drill_for_dimension("relevance")]
+
+
+def test_report_focus_ties_use_fixed_dimension_priority() -> None:
+    now = datetime.utcnow()
+    report = build_deterministic_report(
+        "s1",
+        [_question("q1", 1)],
+        [_recording(
+            "r1",
+            "q1",
+            "completed",
+            now,
+            7.0,
+            rubric_scores={
+                "communication": 5,
+                "technical_depth": 5,
+                "relevance": 5,
+            },
+        )],
+    )
+
+    assert report.improvement_areas == ["relevance", "technical depth"]
 
 
 @pytest.mark.asyncio
@@ -247,6 +297,32 @@ async def test_report_named_candidate_claim_discards_model_narrative() -> None:
     client = MagicMock(model="configured-model")
     client.complete_json = AsyncMock(return_value={
         "executive_summary": "Alex drove the cloud migration.",
+        "strengths": [],
+        "improvement_areas": base.improvement_areas,
+        "coaching_points": [],
+        "practice_plan": [],
+    })
+
+    report = await FeedbackGeneratorService(client).generate_report(
+        session_id="s1",
+        role_title="Engineer",
+        company_name="Example",
+        question_evaluations=[],
+        deterministic_report=base,
+    )
+
+    assert report.report_state == "fallback"
+    assert report.executive_summary == base.executive_summary
+    assert report.diagnostic is not None
+    assert report.diagnostic.gate_codes == ["coach_report_unsupported_claim"]
+
+
+@pytest.mark.asyncio
+async def test_report_unseen_candidate_action_discards_model_narrative() -> None:
+    base = build_deterministic_report("s1", [_question("q1", 1)], [])
+    client = MagicMock(model="configured-model")
+    client.complete_json = AsyncMock(return_value={
+        "executive_summary": "Alex coordinated the migration for Acme.",
         "strengths": [],
         "improvement_areas": base.improvement_areas,
         "coaching_points": [],

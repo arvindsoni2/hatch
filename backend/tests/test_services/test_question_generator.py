@@ -14,17 +14,18 @@ from app.services.question_generator import (
     QuestionGeneratorService,
     _CATEGORY_WEIGHTS,
     _build_requirements,
+    _validate_questions,
 )
 
 MOCK_QUESTIONS_RESPONSE = [
     {
-        "text": "Tell me about a time you designed a cloud architecture for a large enterprise.",
+        "text": "How would you design a cloud architecture for a large enterprise?",
         "category": "Technical",
         "difficulty": "hard",
         "context": "Focus on AWS or Azure solutions architecture.",
     },
     {
-        "text": "Describe a situation where you had to manage conflicting stakeholder priorities.",
+        "text": "How would you manage conflicting stakeholder priorities?",
         "category": "Behavioural",
         "difficulty": "medium",
         "context": None,
@@ -115,6 +116,22 @@ async def test_category_weights_defined() -> None:
     """_CATEGORY_WEIGHTS sums to approximately 1.0."""
     total = sum(_CATEGORY_WEIGHTS.values())
     assert abs(total - 1.0) < 0.01
+
+
+def test_question_rejects_confirmed_second_person_history() -> None:
+    result = _validate_questions(
+        [{
+            "text": "Tell me how you led the Acme migration.",
+            "category": "Behavioural",
+            "difficulty": "medium",
+            "requirement_id": "requirement-1",
+        }],
+        expected_count=1,
+        requirement_ids=("requirement-1",),
+    )
+
+    assert result.accepted == []
+    assert "coach_question_candidate_claim" in result.gate_codes
 
 
 @pytest.mark.asyncio

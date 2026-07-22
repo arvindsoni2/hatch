@@ -236,8 +236,13 @@ def build_deterministic_report(
                 category=item.question.category,
                 overall_score=evaluation.overall,
                 scores=evaluation.scores,
-                strengths=evaluation.strengths,
-                improvements=evaluation.improvements,
+                strengths=evaluation.evidence_references[:2],
+                improvements=[
+                    f"{name.replace('_', ' ')} scored {score}/10."
+                    for name, score in sorted(
+                        evaluation.scores.items(), key=lambda item: (item[1], item[0])
+                    )[:2]
+                ],
             )
         )
 
@@ -249,7 +254,7 @@ def build_deterministic_report(
     ranked = sorted(
         rubric.dimensions.items(), key=lambda item: (-item[1].score, item[0])
     )
-    weak = sorted(rubric.dimensions.items(), key=lambda item: (item[1].score, item[0]))
+    focus_dimensions = select_focus_dimensions(rubric.dimensions)
     return SessionFeedbackReport(
         session_id=session_id,
         report_state="completed",
@@ -266,7 +271,11 @@ def build_deterministic_report(
             else "No answers received a completed evaluation."
         ),
         strengths=[dimension.evidence[0] for _, dimension in ranked if dimension.evidence][:2],
-        improvement_areas=[name.replace("_", " ") for name, _ in weak[:2]],
-        coaching_points=[dimension.drill for _, dimension in weak[:2] if dimension.drill],
+        improvement_areas=[name.replace("_", " ") for name in focus_dimensions],
+        coaching_points=[
+            rubric.dimensions[name].drill
+            for name in focus_dimensions
+            if rubric.dimensions[name].drill
+        ],
         question_evaluations=summaries,
     )

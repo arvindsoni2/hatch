@@ -128,7 +128,7 @@ class ModelAnswerGeneratorService:
         company_research: dict[str, Any] | None = None,
         candidate_summary: str = "",
     ) -> ModelAnswerResult:
-        ledger = build_evidence_ledger({"summary": candidate_summary})
+        ledger = _build_candidate_evidence(candidate_summary)
         if not ledger:
             return _empty_result(
                 _diagnostic(
@@ -329,10 +329,33 @@ def _same_lexeme(left: str, right: str) -> bool:
 
 
 def _prose_is_grounded(prose: str, evidence: tuple[Any, ...]) -> bool:
-    """Conservatively require every material token in referenced evidence."""
-    observed = _content_tokens(prose)
-    supported = _content_tokens(" ".join(item.text for item in evidence))
-    return bool(observed) and all(
-        any(_same_lexeme(token, source) for source in supported)
-        for token in observed
+    """Require each generated clause to match one atomic evidence record."""
+    claims = [
+        claim.strip(" \t-*•")
+        for claim in re.split(r"[.!?]+|\n+|\s+[–—]\s+|\s*;\s*", prose)
+        if claim.strip(" \t-*•")
+    ]
+    evidence_tokens = [_content_tokens(item.text) for item in evidence]
+    return bool(claims) and all(
+        bool(observed := _content_tokens(claim))
+        and any(
+            all(
+                any(_same_lexeme(token, source) for source in supported)
+                for token in observed
+            )
+            for supported in evidence_tokens
+        )
+        for claim in claims
+    )
+
+
+def _build_candidate_evidence(candidate_summary: str) -> tuple[Any, ...]:
+    """Split combined prompt context into atomic candidate evidence records."""
+    segments = [
+        segment.strip()
+        for segment in re.split(r"(?<=[.!?])\s+|\n+|\s*;\s*", candidate_summary)
+        if segment.strip()
+    ]
+    return build_evidence_ledger(
+        {"summary_variants": {f"claim_{index}": value for index, value in enumerate(segments)}}
     )

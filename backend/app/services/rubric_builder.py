@@ -2,7 +2,7 @@
 
 The rubric has two kinds of dimensions:
 - Content dimensions (relevance, star_structure, …): scores come from the LLM evaluator;
-  evidence is extracted from the eval's strengths/improvements lists.
+  evidence uses only transcript/metric references already accepted by its grounding gate.
 - Perception dimensions (delivery, vocal_confidence): fully deterministic from
   SpeechMetrics / VoiceToneResult — no LLM required.
 - presence: Phase D only; never added here (omit, don't zero).
@@ -150,23 +150,13 @@ def build_content_dimensions(evaluation: AnswerEvaluation) -> dict[str, RubricDi
     """Map LLM evaluation scores to RubricDimension entries for all content dimensions."""
     dims: dict[str, RubricDimension] = {}
 
-    # Use eval-level strengths/improvements as shared evidence pool
-    strengths = evaluation.strengths or []
-    improvements = evaluation.improvements or []
+    grounded_evidence = evaluation.evidence_references or []
 
     for dim_name in CONTENT_DIMENSIONS:
         score = evaluation.scores.get(dim_name, 5)
         band = score_to_band(score)
 
-        # Pick dimension-specific evidence from the shared pools
-        if band in ("strong", "good"):
-            evidence = strengths[:1] or [f"Score: {score}/10 — {band}."]
-        else:
-            evidence = improvements[:1] or [f"Score: {score}/10 — {band}."]
-
-        # Ensure at least one evidence entry
-        if not evidence:
-            evidence = [f"{dim_name.replace('_', ' ').title()}: {score}/10."]
+        evidence = grounded_evidence[:1] or [f"Score: {score}/10 — {band}."]
 
         dims[dim_name] = RubricDimension(
             score=score,

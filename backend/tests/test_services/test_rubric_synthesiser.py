@@ -296,3 +296,49 @@ class TestRubricSynthesiserService:
         assert rubric.diagnostic is not None
         assert rubric.diagnostic.outcome == "fallback_deterministic"
         assert rubric.diagnostic.gate_codes == ["coach_rubric_dimension_missing"]
+
+    @pytest.mark.asyncio
+    async def test_metric_match_does_not_ground_unsupported_evidence_sentence(self) -> None:
+        from app.services.rubric_synthesiser import RubricSynthesiserService
+
+        response = {
+            "dimensions": {
+                dimension: {
+                    "score": 7,
+                    "score_band": "good",
+                    "evidence": [],
+                    "drill": "Practise.",
+                }
+                for dimension in CONTENT_DIMENSIONS
+            }
+            | {
+                "delivery": {
+                    "score": 9,
+                    "score_band": "strong",
+                    "evidence": ["145 WPM while leading 500 engineers"],
+                    "drill": "Practise.",
+                }
+            },
+            "focus_for_next_session": "Delivery",
+        }
+        metrics = SpeechMetrics(
+            wpm=145.0,
+            filler_count=0,
+            pause_count=0,
+            duration_ms=60_000,
+        )
+        with patch(
+            "app.services.rubric_synthesiser.get_json_model",
+            return_value=_mock_llm(response),
+        ):
+            rubric = await RubricSynthesiserService().synthesise(
+                transcript="I described a deployment.",
+                evaluation=_make_evaluation(),
+                speech_metrics=metrics,
+            )
+
+        assert "145 WPM while leading 500 engineers" not in rubric.dimensions[
+            "delivery"
+        ].evidence
+        assert rubric.diagnostic is not None
+        assert "coach_rubric_evidence_ungrounded" in rubric.diagnostic.gate_codes
