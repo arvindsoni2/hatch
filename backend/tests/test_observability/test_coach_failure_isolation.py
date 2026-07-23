@@ -1,13 +1,9 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
 from sqlalchemy import select
 
 from app.models.coach_session import InterviewSession, SessionQuestion, SessionRecording
@@ -49,17 +45,60 @@ class _Meter:
         return self.instruments.setdefault(name, _Instrument())
 
 
-def _recording_runtime() -> tuple[TelemetryRuntime, InMemorySpanExporter, _Meter]:
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider(shutdown_on_exit=False)
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+class _RawSpan:
+    def __init__(self, name: str, attributes: dict[str, object]) -> None:
+        self.name = name
+        self.attributes = attributes
+        self.events: list[object] = []
+
+    def set_attribute(self, key, value) -> None:
+        self.attributes[key] = value
+
+    def add_event(self, name, attributes) -> None:
+        self.events.append(SimpleNamespace(name=name, attributes=attributes))
+
+    def set_status(self, *_args, **_kwargs) -> None:
+        return None
+
+
+class _SpanManager:
+    def __init__(self, span: _RawSpan) -> None:
+        self.span = span
+
+    def __enter__(self) -> _RawSpan:
+        return self.span
+
+    def __exit__(self, *_args) -> bool:
+        return False
+
+
+class _Tracer:
+    def __init__(self) -> None:
+        self.spans: list[_RawSpan] = []
+
+    def start_as_current_span(self, name, attributes=None, **_kwargs) -> _SpanManager:
+        span = _RawSpan(name, dict(attributes or {}))
+        self.spans.append(span)
+        return _SpanManager(span)
+
+
+class _Exporter:
+    def __init__(self, tracer: _Tracer) -> None:
+        self.tracer = tracer
+
+    def get_finished_spans(self) -> list[_RawSpan]:
+        return self.tracer.spans
+
+
+def _recording_runtime() -> tuple[TelemetryRuntime, _Exporter, _Meter]:
+    tracer = _Tracer()
+    exporter = _Exporter(tracer)
     meter = _Meter()
     return (
         TelemetryRuntime(
             status="active",
-            tracer=provider.get_tracer("hatch.tests.coach"),
+            tracer=tracer,
             meter=meter,
-            tracer_provider=provider,
         ),
         exporter,
         meter,

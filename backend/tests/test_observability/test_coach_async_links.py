@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from importlib.util import find_spec
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
 
 from app.observability.attributes import (
     ASYNC_JOB_ID,
@@ -17,7 +13,19 @@ from app.observability.attributes import (
 from app.observability.runtime import TelemetryRuntime
 
 
-def _runtime_with_exporter() -> tuple[TelemetryRuntime, InMemorySpanExporter]:
+try:
+    _HAS_OTEL_SDK = find_spec("opentelemetry.sdk.trace") is not None
+except ModuleNotFoundError:
+    _HAS_OTEL_SDK = False
+
+
+def _runtime_with_exporter():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
     exporter = InMemorySpanExporter()
     provider = TracerProvider(shutdown_on_exit=False)
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -29,6 +37,10 @@ def _runtime_with_exporter() -> tuple[TelemetryRuntime, InMemorySpanExporter]:
     return runtime, exporter
 
 
+@pytest.mark.skipif(
+    not _HAS_OTEL_SDK,
+    reason="optional OpenTelemetry SDK is not installed in the core profile",
+)
 def test_background_workflow_has_one_link_and_no_request_parent() -> None:
     runtime, exporter = _runtime_with_exporter()
 
