@@ -1,4 +1,5 @@
 """Queue Coach session generation while exposing a session stub immediately."""
+
 from __future__ import annotations
 
 import logging
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.coach_session import InterviewSession
+from ..observability import get_telemetry
+from ..observability.attributes import ASYNC_JOB_ID, COACH_SESSION_ID
 from ..repositories.session_repository import SessionRepository
 from ..schemas.coach import CreateSessionRequest
 from .async_job_service import AsyncJobService
@@ -58,6 +61,7 @@ async def queue_coach_session(
         config=config,
     )
     async_job = await AsyncJobService.create(db, "coach_session")
+    trace_context = get_telemetry().capture_trace_context()
     await db.commit()
 
     request_data = request.model_dump(mode="json")
@@ -98,7 +102,11 @@ async def queue_coach_session(
                 await repository.update_stage_diagnostics(
                     session_id,
                     "question_generation",
-                    {"initial": None, "repair": None, "final": diagnostic.model_dump(mode="json")},
+                    {
+                        "initial": None,
+                        "repair": None,
+                        "final": diagnostic.model_dump(mode="json"),
+                    },
                 )
                 await repository.update_session_status(session_id, "failed")
                 await job_db.commit()
@@ -111,13 +119,26 @@ async def queue_coach_session(
                     # Keep generation failures distinct from user deletion.
                     # The default session list hides only abandoned sessions,
                     # while failed sessions remain visible and retryable.
-                    await SessionRepository(job_db).update_session_status(session_id, "failed")
+                    await SessionRepository(job_db).update_session_status(
+                        session_id, "failed"
+                    )
                     await job_db.commit()
                 except Exception:
-                    logger.exception("Could not mark Coach session %s failed", session_id)
+                    logger.exception(
+                        "Could not mark Coach session %s failed", session_id
+                    )
                 await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
 
-    AsyncJobService.run(job_id, _work())
+    AsyncJobService.run(
+        job_id,
+        _work(),
+        trace_context=trace_context,
+        trace_attributes={
+            COACH_SESSION_ID: session_id,
+            ASYNC_JOB_ID: job_id,
+        },
+        telemetry_operation="session_create",
+    )
     return {
         "job_id": async_job.id,
         "status": "pending",

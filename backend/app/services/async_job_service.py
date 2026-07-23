@@ -1,8 +1,11 @@
 """AsyncJobService — create, run, and poll background LLM jobs."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Coroutine
 
@@ -10,8 +13,14 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.async_job import AsyncJob
+from ..observability import TraceContextToken, get_telemetry
+from ..observability.attributes import COACH_OPERATION
 
 logger = logging.getLogger(__name__)
+_telemetry_operation: ContextVar[str | None] = ContextVar(
+    "hatch_async_job_telemetry_operation",
+    default=None,
+)
 
 
 def _error_message(exc: BaseException) -> str:
@@ -40,27 +49,58 @@ class AsyncJobService:
         return job
 
     @staticmethod
-    def run(job_id: str, coro: Coroutine[Any, Any, None]) -> None:
+    def run(
+        job_id: str,
+        coro: Coroutine[Any, Any, None],
+        *,
+        trace_context: TraceContextToken | None = None,
+        trace_attributes: Mapping[str, Any] | None = None,
+        telemetry_operation: str | None = None,
+    ) -> None:
         """Fire-and-forget: set status=running then await the coroutine."""
 
         async def _run_and_track() -> None:
+            telemetry = get_telemetry()
+            operation_token = _telemetry_operation.set(telemetry_operation)
             try:
-                from ..database import AsyncSessionLocal  # noqa: PLC0415
-                async with AsyncSessionLocal() as db:
-                    await db.execute(
-                        update(AsyncJob)
-                        .where(AsyncJob.id == job_id, AsyncJob.status == "pending")
-                        .values(status="running", updated_at=datetime.utcnow())
-                    )
-                    await db.commit()
-                await coro
-            except BaseException as exc:
-                # Catch BaseException so asyncio.CancelledError and other non-Exception
-                # base classes don't leave jobs permanently stuck in "running".
-                logger.exception("Unhandled error in async job %s: %s", job_id, exc)
-                await AsyncJobService._finish(job_id, None, _error_message(exc))
-                if not isinstance(exc, Exception):
-                    raise  # re-raise CancelledError etc. so asyncio bookkeeping stays correct
+                with telemetry.use_background_trace_context(
+                    trace_context or TraceContextToken(),
+                    trace_attributes,
+                ):
+                    try:
+                        from ..database import AsyncSessionLocal  # noqa: PLC0415
+
+                        async with AsyncSessionLocal() as db:
+                            await db.execute(
+                                update(AsyncJob)
+                                .where(
+                                    AsyncJob.id == job_id,
+                                    AsyncJob.status == "pending",
+                                )
+                                .values(
+                                    status="running",
+                                    updated_at=datetime.utcnow(),
+                                )
+                            )
+                            await db.commit()
+                        await coro
+                    except BaseException as exc:
+                        # Catch BaseException so asyncio.CancelledError and other
+                        # non-Exception classes don't leave jobs stuck in running.
+                        logger.exception(
+                            "Unhandled error in async job %s: %s",
+                            job_id,
+                            exc,
+                        )
+                        await AsyncJobService._finish(
+                            job_id,
+                            None,
+                            _error_message(exc),
+                        )
+                        if not isinstance(exc, Exception):
+                            raise
+            finally:
+                _telemetry_operation.reset(operation_token)
 
         asyncio.create_task(_run_and_track())
 
@@ -102,19 +142,25 @@ class AsyncJobService:
             await db.commit()
         else:
             from ..database import AsyncSessionLocal  # noqa: PLC0415
+
             async with AsyncSessionLocal() as session:
                 changed = await _apply(session)
                 await session.commit()
 
         logger.info("AsyncJob %s → %s", job_id, status)
+        operation = _telemetry_operation.get()
+        if changed and operation:
+            get_telemetry().record_coach_outcome(
+                "async_job",
+                status,
+                {COACH_OPERATION: operation},
+            )
         return changed
 
     @staticmethod
     async def get(db: AsyncSession, job_id: str) -> AsyncJob | None:
         """Return a job by ID, or None if not found."""
-        result = await db.execute(
-            select(AsyncJob).where(AsyncJob.id == job_id)
-        )
+        result = await db.execute(select(AsyncJob).where(AsyncJob.id == job_id))
         return result.scalar_one_or_none()
 
     @staticmethod

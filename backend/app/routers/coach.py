@@ -1,4 +1,5 @@
 """FastAPI router for the Coach module — mock interview practice sessions."""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..database import get_db
+from ..observability import get_telemetry
+from ..observability.attributes import ASYNC_JOB_ID, COACH_SESSION_ID
 from ..schemas.coach import (
     AnswerEvaluation,
     CompanyResearchResponse,
@@ -61,7 +64,10 @@ _AUDIO_CT_TO_EXT: dict[str, str] = {
 
 def _require_safe_id(value: str, field: str) -> None:
     if not _SAFE_ID_RE.match(value):
-        raise HTTPException(status_code=400, detail=f"Invalid {field}: must be alphanumeric/dash/underscore only")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field}: must be alphanumeric/dash/underscore only",
+        )
 
 
 def get_coach_service() -> CoachService:
@@ -110,7 +116,9 @@ async def _evaluate_audio_attempt(
         fillers: list[str] | None = get_coach_fillers(load_profile().locale)
     except Exception:
         fillers = None
-    words = [{"w": word.w, "start": word.start, "end": word.end} for word in result.words]
+    words = [
+        {"w": word.w, "start": word.start, "end": word.end} for word in result.words
+    ]
     speech_metrics = SpeechAnalyserService().analyse_from_timestamps(
         result.text, words, locale_fillers=fillers
     )
@@ -172,10 +180,13 @@ async def get_company_research(
 ) -> CompanyResearchResponse:
     """Return cached company research. Returns 404 if no valid cache entry exists."""
     from ..repositories.research_repository import ResearchRepository
+
     repo = ResearchRepository(db)
     cached = await repo.get_cached(company_name)
     if not cached:
-        raise HTTPException(status_code=404, detail="No cached research found for this company")
+        raise HTTPException(
+            status_code=404, detail="No cached research found for this company"
+        )
     return CompanyResearchResponse(
         company_name=cached.company_name,
         sector=cached.sector,
@@ -249,6 +260,7 @@ async def abandon_session(
 ) -> Response:
     """Mark a session as abandoned."""
     from ..repositories.session_repository import SessionRepository
+
     repo = SessionRepository(db)
     session = await repo.get_session(session_id)
     if not session:
@@ -303,7 +315,10 @@ async def retry_session(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/sessions/{session_id}/next-question", response_model=Optional[QuestionPresentation])
+@router.get(
+    "/sessions/{session_id}/next-question",
+    response_model=Optional[QuestionPresentation],
+)
 async def get_next_question(
     session_id: str,
     db: AsyncSession = Depends(get_db),
@@ -329,7 +344,9 @@ async def skip_question(
     try:
         await repo.record_skip(session_id=session_id, question_id=question_id)
     except LookupError:
-        raise HTTPException(status_code=404, detail="Question not found in this session")
+        raise HTTPException(
+            status_code=404, detail="Question not found in this session"
+        )
     except CoachConflictError as exc:
         raise HTTPException(
             status_code=409,
@@ -358,6 +375,7 @@ async def submit_answer(
 
     await reconcile_session(db, session_id)
     async_job = await AsyncJobService.create(db, "submit_answer")
+    trace_context = get_telemetry().capture_trace_context()
     try:
         recording = await SessionRepository(db).reserve_answer_attempt(
             session_id=session_id,
@@ -431,7 +449,16 @@ async def submit_answer(
                 await job_db.commit()
                 await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
 
-    AsyncJobService.run(job_id, _work())
+    AsyncJobService.run(
+        job_id,
+        _work(),
+        trace_context=trace_context,
+        trace_attributes={
+            COACH_SESSION_ID: session_id,
+            ASYNC_JOB_ID: job_id,
+        },
+        telemetry_operation="answer_submit",
+    )
     return {"job_id": job_id, "status": "pending", "type": "submit_answer"}
 
 
@@ -443,7 +470,9 @@ async def submit_audio(
     session_id: str,
     question_id: str = Form(...),
     audio: UploadFile = File(...),
-    face_summary: Optional[str] = Form(default=None),  # JSON-encoded FaceSummary (Phase D)
+    face_summary: Optional[str] = Form(
+        default=None
+    ),  # JSON-encoded FaceSummary (Phase D)
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
 ) -> dict:
@@ -471,6 +500,7 @@ async def submit_audio(
     face_summary_dict: dict | None = None
     if face_summary:
         import json as _json  # noqa: PLC0415
+
         try:
             face_summary_dict = _json.loads(face_summary)
         except Exception:
@@ -481,6 +511,7 @@ async def submit_audio(
 
     await reconcile_session(db, session_id)
     async_job = await AsyncJobService.create(db, "submit_audio")
+    trace_context = get_telemetry().capture_trace_context()
     job_id = async_job.id
     suffix = _AUDIO_CT_TO_EXT.get(ct, ".audio")
     recordings_dir = Path(os.getenv("DATA_DIR", "./data")) / "recordings" / session_id
@@ -516,6 +547,7 @@ async def submit_audio(
 
     async def _work() -> None:
         from ..database import AsyncSessionLocal  # noqa: PLC0415
+
         async with AsyncSessionLocal() as job_db:
             try:
                 evaluation = await run_with_stage_deadline(
@@ -562,7 +594,16 @@ async def submit_audio(
                 await job_db.commit()
                 await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
 
-    AsyncJobService.run(job_id, _work())
+    AsyncJobService.run(
+        job_id,
+        _work(),
+        trace_context=trace_context,
+        trace_attributes={
+            COACH_SESSION_ID: session_id,
+            ASYNC_JOB_ID: job_id,
+        },
+        telemetry_operation="answer_submit",
+    )
     return {"job_id": job_id, "status": "pending", "type": "submit_audio"}
 
 
@@ -597,6 +638,7 @@ async def end_session(
         }
 
     async_job = await AsyncJobService.create(db, "end_session")
+    trace_context = get_telemetry().capture_trace_context()
     claimed = await repository.claim_report(
         session_id, async_job.id, session.activity_version
     )
@@ -619,11 +661,18 @@ async def end_session(
                 "type": "end_session",
                 "reused": True,
             }
-        if session and session.report_state in {"completed", "fallback"} and session.report_json:
+        if (
+            session
+            and session.report_state in {"completed", "fallback"}
+            and session.report_json
+        ):
             return JSONResponse(status_code=200, content=session.report_json)
         raise HTTPException(
             status_code=409,
-            detail={"code": "coach_session_closed", "message": "Session cannot be ended."},
+            detail={
+                "code": "coach_session_closed",
+                "message": "Session cannot be ended.",
+            },
         )
     await db.commit()
 
@@ -656,7 +705,9 @@ async def end_session(
                         job_id, result.model_dump_json(), None, db=job_db
                     )
                 except Exception as exc:
-                    logger.error("end_session timeout fallback %s failed: %s", job_id, exc)
+                    logger.error(
+                        "end_session timeout fallback %s failed: %s", job_id, exc
+                    )
                     await job_db.rollback()
                     diagnostic = CoachDiagnostic(
                         stage="session_report",
@@ -696,7 +747,16 @@ async def end_session(
                 await job_db.commit()
                 await AsyncJobService._finish(job_id, None, str(exc), db=job_db)
 
-    AsyncJobService.run(job_id, _work())
+    AsyncJobService.run(
+        job_id,
+        _work(),
+        trace_context=trace_context,
+        trace_attributes={
+            COACH_SESSION_ID: session_id,
+            ASYNC_JOB_ID: job_id,
+        },
+        telemetry_operation="session_end",
+    )
     return {"job_id": job_id, "status": "pending", "type": "end_session"}
 
 
@@ -753,7 +813,9 @@ async def get_application_progress(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/sessions/{session_id}/plan-followup", response_model=PlanFollowUpResponse)
+@router.post(
+    "/sessions/{session_id}/plan-followup", response_model=PlanFollowUpResponse
+)
 async def plan_followup_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
@@ -774,6 +836,7 @@ async def get_progress_trend(
 ) -> list[ProgressTrendItem]:
     """Return per-session progress trend for the session chain containing session_id."""
     from ..repositories.session_repository import SessionRepository
+
     repo = SessionRepository(db)
     trend_data = await repo.get_progress_trend(session_id)
     return [
@@ -798,6 +861,7 @@ async def get_capabilities() -> dict:
     """Return which perception capabilities are enabled per profile.yaml."""
     try:
         from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
+
         profile = load_profile()
         return {
             "face_analysis": profile.perception.face.enabled,

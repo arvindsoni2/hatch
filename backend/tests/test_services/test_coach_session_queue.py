@@ -9,10 +9,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.async_job import AsyncJob
 from app.models.coach_session import InterviewSession, SessionQuestion
-from app.schemas.coach import CreateSessionRequest, ModelAnswerResult, QuestionPresentation
+from app.schemas.coach import (
+    CreateSessionRequest,
+    ModelAnswerResult,
+    QuestionPresentation,
+)
 from app.services.coach_contracts import CoachDiagnostic
 from app.services.coach_service import CoachService
 from app.services.coach_session_queue import queue_coach_session
+from app.observability import TraceContextToken
 
 
 async def _timeout(awaitable, _seconds):
@@ -33,15 +38,25 @@ async def test_queue_creates_visible_stub_and_async_job(db_session):
         result = await queue_coach_session(request, db_session, MagicMock())
 
     session = (
-        await db_session.execute(select(InterviewSession).where(InterviewSession.id == result["session_id"]))
+        await db_session.execute(
+            select(InterviewSession).where(InterviewSession.id == result["session_id"])
+        )
     ).scalar_one()
     async_job = (
-        await db_session.execute(select(AsyncJob).where(AsyncJob.id == result["job_id"]))
+        await db_session.execute(
+            select(AsyncJob).where(AsyncJob.id == result["job_id"])
+        )
     ).scalar_one()
     assert session.status == "setup"
     assert session.company_name == "Iron Mountain"
     assert async_job.type == "coach_session"
     run.assert_called_once()
+    assert isinstance(run.call_args.kwargs["trace_context"], TraceContextToken)
+    assert run.call_args.kwargs["trace_attributes"] == {
+        "hatch.coach.session_id": result["session_id"],
+        "hatch.async_job_id": result["job_id"],
+    }
+    assert run.call_args.kwargs["telemetry_operation"] == "session_create"
     run.call_args.args[1].close()
 
 
@@ -130,7 +145,9 @@ async def test_create_job_timeout_fails_stub_with_diagnostic(db_session):
         )
     ).scalar_one()
     job = (
-        await db_session.execute(select(AsyncJob).where(AsyncJob.id == result["job_id"]))
+        await db_session.execute(
+            select(AsyncJob).where(AsyncJob.id == result["job_id"])
+        )
     ).scalar_one()
     assert session.status == "failed"
     assert session.diagnostics["stages"]["question_generation"]["final"][
@@ -170,22 +187,28 @@ async def test_create_cancellation_during_drills_rolls_back_questions_and_activa
     service.research_company = AsyncMock(return_value=None)
     service._researcher = MagicMock(last_diagnostic=None)
     service._question_gen = MagicMock()
-    service._question_gen.generate = AsyncMock(return_value=[QuestionPresentation(
-        id="generated-1",
-        text="Explain a migration.",
-        category="Technical",
-        difficulty="medium",
-        requirement_id="requirement-1",
-        num=1,
-        total=1,
-    )])
+    service._question_gen.generate = AsyncMock(
+        return_value=[
+            QuestionPresentation(
+                id="generated-1",
+                text="Explain a migration.",
+                category="Technical",
+                difficulty="medium",
+                requirement_id="requirement-1",
+                num=1,
+                total=1,
+            )
+        ]
+    )
     service._model_answer_gen = MagicMock()
-    service._model_answer_gen.generate = AsyncMock(return_value=ModelAnswerResult(
-        model_answer="",
-        star_breakdown={},
-        evidence_references=[],
-        diagnostic=diagnostic,
-    ))
+    service._model_answer_gen.generate = AsyncMock(
+        return_value=ModelAnswerResult(
+            model_answer="",
+            star_breakdown={},
+            evidence_references=[],
+            diagnostic=diagnostic,
+        )
+    )
 
     service._drills = MagicMock()
     service._drills.build_drills = AsyncMock(
@@ -197,7 +220,9 @@ async def test_create_cancellation_during_drills_rolls_back_questions_and_activa
         role_title="Engineer",
         config={"question_count": 1},
     )
-    with patch("app.services.coach_service._load_candidate_summary", return_value="Evidence"):
+    with patch(
+        "app.services.coach_service._load_candidate_summary", return_value="Evidence"
+    ):
         with pytest.raises(asyncio.CancelledError, match="cancelled"):
             await service.create_session(request, db_session, session_id=stub_id)
     await db_session.rollback()
