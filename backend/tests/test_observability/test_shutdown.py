@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 from app.observability import runtime
 from app.observability.runtime import TelemetryRuntime, shutdown_telemetry
@@ -62,9 +63,7 @@ def test_shutdown_contains_provider_errors_and_warns_once(monkeypatch, caplog) -
     assert first.completed is True
     assert second.completed is True
     warnings = [
-        record.message
-        for record in caplog.records
-        if record.levelname == "WARNING"
+        record.message for record in caplog.records if record.levelname == "WARNING"
     ]
     assert warnings == [
         "OpenTelemetry shutdown did not complete cleanly; continuing application shutdown."
@@ -105,3 +104,11 @@ def test_disabled_shutdown_is_immediate(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "_runtime", TelemetryRuntime(status="disabled"))
 
     assert shutdown_telemetry(deadline_seconds=5.0).completed is True
+
+
+def test_application_owns_one_five_second_shutdown_call() -> None:
+    source = (Path(__file__).resolve().parents[2] / "app" / "main.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert source.count("shutdown_telemetry(deadline_seconds=5.0)") == 1

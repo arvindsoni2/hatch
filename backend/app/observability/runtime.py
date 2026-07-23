@@ -1,4 +1,5 @@
 """Optional OpenTelemetry runtime behind a dependency-free Hatch facade."""
+
 from __future__ import annotations
 
 import logging
@@ -8,15 +9,32 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from .attributes import (
+    COACH_GATE_CODE,
     FAILED_GATE_CODES,
     MODEL_ID,
     PROVIDER_TYPE,
     VALIDATION_STATE,
     WORKFLOW_NAME,
+    COACH_OUTCOME,
+    COACH_STAGE,
     sanitize_attributes,
+    sanitize_metric_attributes,
+)
+from .coach import (
+    COACH_ASYNC_JOB_OUTCOMES,
+    COACH_EVALUATION_OUTCOMES,
+    COACH_MODEL_ANSWER_OUTCOMES,
+    COACH_OUTCOME_METRICS,
+    COACH_QUESTION_GENERATION_COUNT,
+    COACH_REPORT_OUTCOMES,
+    COACH_RUBRIC_OUTCOMES,
+    COACH_STAGE_DURATION,
+    COACH_STAGE_OUTCOMES,
+    metric_stage_name,
 )
 from .logging import configure_log_correlation
 
@@ -25,6 +43,7 @@ TelemetryStatus = Literal["disabled", "active", "degraded"]
 _ALLOWED_EVENT_NAMES = frozenset(
     {
         "model_error",
+        "coach_gate",
         "validation_failure",
         "workflow_error",
     }
@@ -38,6 +57,7 @@ class SafeSpan:
         self._span = span
         self._parent = parent
         self._failed = False
+        self._attributes: dict[str, Any] = {}
 
     @property
     def failed(self) -> bool:
@@ -45,12 +65,19 @@ class SafeSpan:
 
     def set_attribute(self, key: str, value: Any) -> None:
         attributes = sanitize_attributes({key: value})
-        if self._span is None or key not in attributes:
+        if key not in attributes:
+            return
+        self._attributes[key] = attributes[key]
+        if self._span is None:
             return
         try:
             self._span.set_attribute(key, attributes[key])
         except Exception:
             return
+
+    def get_attribute(self, key: str, default: Any = None) -> Any:
+        """Return a sanitized value recorded through this adapter."""
+        return self._attributes.get(key, default)
 
     def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
         if self._span is None:
@@ -102,6 +129,25 @@ class ShutdownResult:
     timed_out: bool
 
 
+@dataclass(frozen=True)
+class TraceContextToken:
+    """Immutable, content-free request trace context for a later span link."""
+
+    span_context: Any = None
+
+
+@dataclass(frozen=True)
+class _BackgroundTraceState:
+    token: TraceContextToken
+    attributes: tuple[tuple[str, Any], ...]
+
+
+_background_trace_state: ContextVar[_BackgroundTraceState | None] = ContextVar(
+    "hatch_background_trace_state",
+    default=None,
+)
+
+
 class TelemetryRuntime:
     """Hatch-owned facade over optional SDK providers and instruments."""
 
@@ -129,9 +175,21 @@ class TelemetryRuntime:
         self._input_tokens = self._counter("hatch.ai.tokens.input")
         self._output_tokens = self._counter("hatch.ai.tokens.output")
         self._workflow_outcomes = self._counter("hatch.ai.workflow.outcomes")
+        self._coach_stage_duration = self._histogram(COACH_STAGE_DURATION)
+        self._coach_stage_outcomes = self._counter(COACH_STAGE_OUTCOMES)
+        self._coach_question_generation_count = self._counter(
+            COACH_QUESTION_GENERATION_COUNT
+        )
+        self._coach_outcome_instruments = {
+            "model_answer": self._counter(COACH_MODEL_ANSWER_OUTCOMES),
+            "evaluation": self._counter(COACH_EVALUATION_OUTCOMES),
+            "rubric": self._counter(COACH_RUBRIC_OUTCOMES),
+            "report": self._counter(COACH_REPORT_OUTCOMES),
+            "async_job": self._counter(COACH_ASYNC_JOB_OUTCOMES),
+        }
 
     def _histogram(self, name: str) -> Any:
-        if self.meter is None:
+        if self.status != "active" or self.meter is None:
             return None
         try:
             return self.meter.create_histogram(name, unit="ms")
@@ -139,7 +197,7 @@ class TelemetryRuntime:
             return None
 
     def _counter(self, name: str) -> Any:
-        if self.meter is None:
+        if self.status != "active" or self.meter is None:
             return None
         try:
             return self.meter.create_counter(name)
@@ -147,14 +205,29 @@ class TelemetryRuntime:
             return None
 
     @contextmanager
-    def _span(self, name: str, attributes: dict[str, Any] | None = None):
+    def _span(
+        self,
+        name: str,
+        attributes: dict[str, Any] | None = None,
+        *,
+        link_context: Any = None,
+    ):
         if self.status != "active" or self.tracer is None:
             yield SafeSpan()
             return
         try:
+            start_options: dict[str, Any] = {
+                "attributes": sanitize_attributes(attributes),
+            }
+            if link_context is not None:
+                from opentelemetry.context import Context
+                from opentelemetry.trace import Link
+
+                start_options["context"] = Context()
+                start_options["links"] = (Link(link_context),)
             manager = self.tracer.start_as_current_span(
                 name,
-                attributes=sanitize_attributes(attributes),
+                **start_options,
             )
             raw_span = manager.__enter__()
         except Exception:
@@ -182,13 +255,23 @@ class TelemetryRuntime:
         attributes: dict[str, Any] | None = None,
     ):
         started = time.monotonic()
-        safe_attributes = {WORKFLOW_NAME: workflow, **(attributes or {})}
+        background = _background_trace_state.get()
+        background_attributes = (
+            dict(background.attributes) if background is not None else {}
+        )
+        safe_attributes = {
+            WORKFLOW_NAME: workflow,
+            **background_attributes,
+            **(attributes or {}),
+        }
+        link_context = background.token.span_context if background is not None else None
         outcome = "completed"
         workflow_token = _current_workflow.set(workflow)
         try:
             with self._span(
                 f"hatch.ai.workflow.{workflow}",
                 safe_attributes,
+                link_context=link_context,
             ) as span:
                 yield span
                 if span.failed:
@@ -219,12 +302,52 @@ class TelemetryRuntime:
         ) as span:
             yield span
 
+    @contextmanager
+    def coach_stage_span(
+        self,
+        name: str,
+        attributes: Mapping[str, Any] | None = None,
+    ):
+        """Observe one exact Coach stage and its bounded operational outcome."""
+        started = time.monotonic()
+        supplied = dict(attributes or {})
+        outcome = supplied.get(COACH_OUTCOME, "completed")
+        if not isinstance(outcome, str):
+            outcome = "completed"
+        metric_attributes = {
+            **supplied,
+            COACH_STAGE: metric_stage_name(name),
+            COACH_OUTCOME: outcome,
+        }
+        try:
+            with self._span(name, metric_attributes) as span:
+                yield span
+                metric_attributes[COACH_OUTCOME] = span.get_attribute(
+                    COACH_OUTCOME,
+                    outcome,
+                )
+        except BaseException:
+            metric_attributes[COACH_OUTCOME] = "failed"
+            raise
+        finally:
+            duration_ms = (time.monotonic() - started) * 1000
+            self._record(
+                self._coach_stage_duration,
+                duration_ms,
+                metric_attributes,
+            )
+            self._add(
+                self._coach_stage_outcomes,
+                1,
+                metric_attributes,
+            )
+
     @staticmethod
     def _record(instrument: Any, value: float, attributes: dict[str, Any]) -> None:
         if instrument is None:
             return
         try:
-            instrument.record(value, sanitize_attributes(attributes))
+            instrument.record(value, sanitize_metric_attributes(attributes))
         except Exception:
             return
 
@@ -233,7 +356,7 @@ class TelemetryRuntime:
         if instrument is None:
             return
         try:
-            instrument.add(value, sanitize_attributes(attributes))
+            instrument.add(value, sanitize_metric_attributes(attributes))
         except Exception:
             return
 
@@ -277,6 +400,88 @@ class TelemetryRuntime:
             {WORKFLOW_NAME: workflow, FAILED_GATE_CODES: [gate_code]},
         )
 
+    def record_coach_question_count(
+        self,
+        count: int,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Record a non-negative number of generated Coach questions."""
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            return
+        self._add(
+            self._coach_question_generation_count,
+            count,
+            dict(attributes or {}),
+        )
+
+    def record_coach_outcome(
+        self,
+        family: str,
+        outcome: str,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Increment one allowlisted Coach outcome family."""
+        if family not in COACH_OUTCOME_METRICS:
+            return
+        instrument = self._coach_outcome_instruments.get(family)
+        self._add(
+            instrument,
+            1,
+            {**dict(attributes or {}), COACH_OUTCOME: outcome},
+        )
+
+    def record_coach_diagnostic(
+        self,
+        family: str | None,
+        outcome: str,
+        gate_codes: list[str] | tuple[str, ...] = (),
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Annotate the current Coach stage and record its bounded outcome."""
+        span = _current_span.get()
+        if span is not None:
+            span.set_attribute(COACH_OUTCOME, outcome)
+            for gate_code in tuple(gate_codes)[:32]:
+                span.add_event("coach_gate", {COACH_GATE_CODE: gate_code})
+        if family is not None:
+            self.record_coach_outcome(family, outcome, attributes)
+
+    def capture_trace_context(self) -> TraceContextToken:
+        """Capture only a valid current SpanContext, never the request span."""
+        if self.status != "active":
+            return TraceContextToken()
+        try:
+            from opentelemetry.trace import get_current_span
+
+            span_context = get_current_span().get_span_context()
+            if not span_context.is_valid:
+                return TraceContextToken()
+            return TraceContextToken(span_context=span_context)
+        except Exception:
+            return TraceContextToken()
+
+    @contextmanager
+    def use_background_trace_context(
+        self,
+        token: TraceContextToken,
+        attributes: Mapping[str, Any] | None = None,
+    ):
+        """Make one immutable link and safe root attributes available to a job."""
+        span_context = token.span_context
+        try:
+            valid = bool(span_context is not None and span_context.is_valid)
+        except Exception:
+            valid = False
+        state = _BackgroundTraceState(
+            token=token if valid else TraceContextToken(),
+            attributes=tuple(sanitize_attributes(attributes).items()),
+        )
+        context_token = _background_trace_state.set(state)
+        try:
+            yield
+        finally:
+            _background_trace_state.reset(context_token)
+
     def mark_current_error(
         self,
         code: str,
@@ -309,16 +514,42 @@ def get_telemetry() -> TelemetryRuntime:
     return _runtime
 
 
-def trace_workflow(workflow: str):
+def trace_workflow(
+    workflow: str,
+    *,
+    attributes: Mapping[str, Any] | None = None,
+    stage: str | None = None,
+    nested_stage_only: bool = False,
+):
     """Decorate an async workflow with the current fail-open runtime."""
+
+    static_attributes = dict(attributes or {})
 
     def decorate(function):
         @wraps(function)
         async def wrapped(*args, **kwargs):
-            with get_telemetry().workflow_span(workflow):
+            telemetry = get_telemetry()
+            if (
+                nested_stage_only
+                and stage is not None
+                and telemetry.current_workflow("") == workflow
+            ):
+                with telemetry.coach_stage_span(stage):
+                    return await function(*args, **kwargs)
+            manager = (
+                telemetry.workflow_span(workflow, static_attributes)
+                if static_attributes
+                else telemetry.workflow_span(workflow)
+            )
+            with manager:
+                if stage is not None:
+                    with telemetry.coach_stage_span(stage):
+                        return await function(*args, **kwargs)
                 return await function(*args, **kwargs)
 
         wrapped.__hatch_workflow__ = workflow
+        wrapped.__hatch_workflow_attributes__ = static_attributes
+        wrapped.__hatch_stage__ = stage
         return wrapped
 
     return decorate
@@ -465,9 +696,7 @@ def _build_enabled_runtime(settings: Any) -> TelemetryRuntime:
         str(settings.LOG_LEVEL).upper() == "DEBUG"
     )
     if console_enabled:
-        tracer_provider.add_span_processor(
-            SimpleSpanProcessor(ConsoleSpanExporter())
-        )
+        tracer_provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
         readers.append(
             PeriodicExportingMetricReader(
                 ConsoleMetricExporter(),

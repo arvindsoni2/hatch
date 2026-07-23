@@ -26,7 +26,9 @@ def test_disabled_runtime_is_constant_time_noop() -> None:
     telemetry = initialize_telemetry(_settings())
 
     assert telemetry.status == "disabled"
-    with telemetry.workflow_span("cv_tailoring", {"hatch.ai.model.id": "local"}) as span:
+    with telemetry.workflow_span(
+        "cv_tailoring", {"hatch.ai.model.id": "local"}
+    ) as span:
         span.set_attribute("hatch.ai.validation.state", "passed")
         span.record_exception(RuntimeError("not exported"))
     telemetry.record_model_call(
@@ -38,11 +40,13 @@ def test_disabled_runtime_is_constant_time_noop() -> None:
 
 
 def test_runtime_degrades_when_optional_sdk_is_unavailable(monkeypatch) -> None:
-    monkeypatch.setattr(runtime, "_build_enabled_runtime", lambda _settings: (_ for _ in ()).throw(ImportError("missing")))
-
-    telemetry = initialize_telemetry(
-        _settings(HATCH_OBSERVABILITY_ENABLED=True)
+    monkeypatch.setattr(
+        runtime,
+        "_build_enabled_runtime",
+        lambda _settings: (_ for _ in ()).throw(ImportError("missing")),
     )
+
+    telemetry = initialize_telemetry(_settings(HATCH_OBSERVABILITY_ENABLED=True))
 
     assert telemetry.status == "degraded"
 
@@ -84,6 +88,14 @@ def test_metric_instruments_use_stable_names() -> None:
         "hatch.ai.tokens.input",
         "hatch.ai.tokens.output",
         "hatch.ai.workflow.outcomes",
+        "hatch.coach.stage.duration",
+        "hatch.coach.stage.outcomes",
+        "hatch.coach.question_generation.count",
+        "hatch.coach.model_answer.outcomes",
+        "hatch.coach.evaluation.outcomes",
+        "hatch.coach.rubric.outcomes",
+        "hatch.coach.report.outcomes",
+        "hatch.coach.async_job.outcomes",
     ]
 
 
@@ -168,10 +180,7 @@ def test_controlled_fallback_error_marks_workflow_outcome_failed() -> None:
         result = []
 
     assert result == []
-    assert any(
-        item.get("hatch.ai.validation.state") == "failed"
-        for item in outcomes
-    )
+    assert any(item.get("hatch.ai.validation.state") == "failed" for item in outcomes)
 
 
 def test_current_workflow_uses_active_root_then_restores_default() -> None:

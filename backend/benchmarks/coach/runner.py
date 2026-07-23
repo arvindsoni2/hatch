@@ -1,4 +1,5 @@
 """Sequential, resumable Coach benchmark execution with bounded deadlines."""
+
 from __future__ import annotations
 
 import asyncio
@@ -17,6 +18,20 @@ from urllib.parse import unquote, urlparse
 from pydantic import Field
 
 from app.config import settings
+from app.observability import get_telemetry
+from app.observability.attributes import (
+    BENCHMARK_CASE_ID,
+    BENCHMARK_RUN_ID,
+    BENCHMARK_SEED,
+    COACH_BENCHMARK_STATUS,
+    COACH_GATE_CODE,
+    COACH_OPERATION,
+    COACH_OUTCOME,
+    COACH_PROFILE,
+    COACH_REPETITION,
+    COACH_SUITE_VERSION,
+    MODEL_ID,
+)
 from app.services.profile_service import current_profile_hash
 from benchmarks.adapters import BenchmarkLLMClient
 from benchmarks.contracts import ModelSpec, StrictModel
@@ -53,9 +68,7 @@ from .validators import validate_execution
 class RunRequest(StrictModel):
     suite_path: Path
     output_root: Path
-    profile_name: Literal[
-        "contract-smoke", "acceptance-smoke", "standard", "extended"
-    ]
+    profile_name: Literal["contract-smoke", "acceptance-smoke", "standard", "extended"]
     model_ids: tuple[str, ...] = Field(min_length=1)
     command: str = Field(min_length=1)
     call_timeout_seconds: float | None = Field(default=None, gt=0)
@@ -64,9 +77,7 @@ class RunRequest(StrictModel):
 
 
 @asynccontextmanager
-async def _default_adapter_factory(
-    spec: ModelSpec, seed: int
-) -> AsyncIterator[object]:
+async def _default_adapter_factory(spec: ModelSpec, seed: int) -> AsyncIterator[object]:
     client = BenchmarkLLMClient(spec, seed)
     try:
         yield client
@@ -200,7 +211,10 @@ def _initial_artifacts(
     prompt_hashes = {
         path.relative_to(Path.cwd()).as_posix(): hash_file(path)
         for path in sorted((Path.cwd() / "app/prompts").glob("*.j2"))
-        if any(name in path.name for name in ("question", "answer", "rubric", "report", "research", "drill"))
+        if any(
+            name in path.name
+            for name in ("question", "answer", "rubric", "report", "research", "drill")
+        )
     }
     skill_hashes = {
         path.relative_to(Path.cwd()).as_posix(): hash_file(path)
@@ -238,7 +252,9 @@ def _initial_artifacts(
         "identity": stable_identity(identity_payload),
         "identity_payload": identity_payload,
         "suite_path": _relative(request.suite_path),
-        "request": request.model_dump(mode="json", exclude={"suite_path", "output_root"}),
+        "request": request.model_dump(
+            mode="json", exclude={"suite_path", "output_root"}
+        ),
         "schedule": [item.model_dump(mode="json") for item in schedule],
     }
     atomic_write_json(run_dir / "manifest.json", manifest)
@@ -248,7 +264,9 @@ def _initial_artifacts(
         {"scheduled": len(schedule), "terminal": 0, "completed_attempt_ids": []},
     )
     atomic_write_json(run_dir / "aggregate.json", {"capabilities": [], "ranking": []})
-    atomic_write_text(run_dir / "report.md", f"# Coach benchmark {run_id}\n\nRun in progress.\n")
+    atomic_write_text(
+        run_dir / "report.md", f"# Coach benchmark {run_id}\n\nRun in progress.\n"
+    )
     return manifest
 
 
@@ -273,6 +291,14 @@ def _status(outcome: str) -> str:
     }.get(outcome, "failed")
 
 
+def _production_stage_name(stage: str) -> str:
+    return {
+        "model_answer": "coach.model_answer.generate",
+        "session_report": "coach.session_report",
+        "technical_drills": "coach.technical_drills",
+    }.get(stage, f"coach.{stage}")
+
+
 def _scenario_result(
     attempt: ScheduleEntry,
     execution: Any,
@@ -280,14 +306,18 @@ def _scenario_result(
 ) -> ScenarioResult:
     scenario = execution[0]
     stage_execution = execution[1]
-    validation = validate_execution(scenario, stage_execution)
-    score = score_execution(scenario, stage_execution, validation)
+    telemetry = get_telemetry()
+    with telemetry.coach_stage_span("coach.benchmark.validate"):
+        validation = validate_execution(scenario, stage_execution)
+    with telemetry.coach_stage_span("coach.benchmark.score"):
+        score = score_execution(scenario, stage_execution, validation)
     calibration_in_range: int | None = None
     calibration_applicable: int | None = None
     calibration_error: str | None = None
-    if scenario.stage == "answer_evaluation" and stage_execution.output.get(
-        "evaluation_state"
-    ) == "completed":
+    if (
+        scenario.stage == "answer_evaluation"
+        and stage_execution.output.get("evaluation_state") == "completed"
+    ):
         ranges = {
             key: value
             for key, value in scenario.expected.score_ranges.items()
@@ -470,7 +500,9 @@ def _write_summary(
         run_dir / "aggregate.json",
         {
             "state": summary.state,
-            "capabilities": [item.model_dump(mode="json") for item in summary.capabilities],
+            "capabilities": [
+                item.model_dump(mode="json") for item in summary.capabilities
+            ],
             "ranking": summary.ranking,
         },
     )
@@ -528,52 +560,99 @@ async def _execute_run(
                     timeout_stage = "model"
                 scenario = suite.scenario(attempt.scenario_id)
                 call_started = dependencies.monotonic()
-                try:
-                    if scenario.forced_failure:
-                        client_context = _single_client(
-                            HarnessFailureClient(scenario.forced_failure)
-                        )
-                    elif profile.name == "contract-smoke":
-                        client_context = _single_client(
-                            DeterministicCoachClient(
-                                scenario, context, attempt.model_id
+                telemetry = get_telemetry()
+                root_attributes = {
+                    COACH_OPERATION: "benchmark_scenario",
+                    BENCHMARK_RUN_ID: run_id,
+                    COACH_SUITE_VERSION: suite.version,
+                    BENCHMARK_CASE_ID: attempt.scenario_id,
+                    MODEL_ID: attempt.model_id,
+                    BENCHMARK_SEED: attempt.seed,
+                    COACH_REPETITION: attempt.repetition,
+                    COACH_PROFILE: profile.name,
+                    COACH_BENCHMARK_STATUS: "running",
+                    COACH_OUTCOME: "running",
+                }
+                with telemetry.workflow_span(
+                    "coach_benchmark",
+                    root_attributes,
+                ) as benchmark_span:
+                    with telemetry.coach_stage_span("coach.benchmark.scenario"):
+                        try:
+                            with telemetry.coach_stage_span("coach.benchmark.prepare"):
+                                if scenario.forced_failure:
+                                    client_context = _single_client(
+                                        HarnessFailureClient(scenario.forced_failure)
+                                    )
+                                elif profile.name == "contract-smoke":
+                                    client_context = _single_client(
+                                        DeterministicCoachClient(
+                                            scenario,
+                                            context,
+                                            attempt.model_id,
+                                        )
+                                    )
+                                else:
+                                    client_context = dependencies.adapter_factory(
+                                        models[model_id],
+                                        attempt.seed,
+                                    )
+                            async with client_context as client:
+                                async with asyncio.timeout(timeout):
+                                    with telemetry.coach_stage_span(
+                                        _production_stage_name(scenario.stage)
+                                    ):
+                                        stage_execution = await adapter.execute(
+                                            scenario,
+                                            client,
+                                            context,
+                                        )
+                            result = _scenario_result(
+                                attempt,
+                                (scenario, stage_execution),
+                                int((dependencies.monotonic() - call_started) * 1000),
                             )
-                        )
-                    else:
-                        client_context = dependencies.adapter_factory(
-                            models[model_id], attempt.seed
-                        )
-                    async with client_context as client:
-                        async with asyncio.timeout(timeout):
-                            stage_execution = await adapter.execute(
-                                scenario, client, context
+                        except TimeoutError:
+                            result = _timeout_result(attempt, timeout_stage)
+                            if timeout_stage != "call":
+                                deadline = True
+                                stop_run = timeout_stage == "whole_run"
+                        except Exception as exc:
+                            result = ScenarioResult(
+                                attempt=attempt,
+                                status="failed",
+                                stage_outcome="failed",
+                                duration_ms=int(
+                                    (dependencies.monotonic() - call_started) * 1000
+                                ),
+                                gates=[
+                                    GateFinding(
+                                        code="coach_stage_failed",
+                                        blocking=True,
+                                    )
+                                ],
+                                exclusion_reason=type(exc).__name__,
                             )
-                    result = _scenario_result(
-                        attempt,
-                        (scenario, stage_execution),
-                        int((dependencies.monotonic() - call_started) * 1000),
-                    )
-                except TimeoutError:
-                    result = _timeout_result(attempt, timeout_stage)
-                    if timeout_stage != "call":
-                        deadline = True
-                        stop_run = timeout_stage == "whole_run"
-                except Exception as exc:
-                    result = ScenarioResult(
-                        attempt=attempt,
-                        status="failed",
-                        stage_outcome="failed",
-                        duration_ms=int(
-                            (dependencies.monotonic() - call_started) * 1000
-                        ),
-                        gates=[GateFinding(code="coach_stage_failed", blocking=True)],
-                        exclusion_reason=type(exc).__name__,
-                    )
-                results.append(result)
-                atomic_write_json(
-                    _result_path(run_dir, attempt), result.model_dump(mode="json")
-                )
-                _write_progress(run_dir, schedule, results)
+                        benchmark_span.set_attribute(
+                            COACH_BENCHMARK_STATUS,
+                            result.status,
+                        )
+                        benchmark_span.set_attribute(
+                            COACH_OUTCOME,
+                            result.stage_outcome,
+                        )
+                        for gate in result.gates:
+                            benchmark_span.add_event(
+                                "coach_gate",
+                                {COACH_GATE_CODE: gate.code},
+                            )
+                        results.append(result)
+                        with telemetry.coach_stage_span("coach.benchmark.persist"):
+                            atomic_write_json(
+                                _result_path(run_dir, attempt),
+                                result.model_dump(mode="json"),
+                            )
+                            _write_progress(run_dir, schedule, results)
                 if deadline and timeout_stage in {"model", "whole_run"}:
                     break
     except BaseException:
@@ -633,9 +712,7 @@ async def run_benchmark(
     schedule = build_schedule(suite, profile, request.model_ids)
     run_id = uuid.uuid4().hex
     run_dir = request.output_root / run_id
-    manifest = _initial_artifacts(
-        run_dir, run_id, request, suite, profile, schedule
-    )
+    manifest = _initial_artifacts(run_dir, run_id, request, suite, profile, schedule)
     return await _execute_run(
         request,
         suite,
@@ -675,7 +752,9 @@ async def resume_benchmark(
     for attempt in schedule:
         path = _result_path(run_dir, attempt)
         if path.is_file():
-            result = ScenarioResult.model_validate_json(path.read_text(encoding="utf-8"))
+            result = ScenarioResult.model_validate_json(
+                path.read_text(encoding="utf-8")
+            )
             if retry_timeouts and result.status == "timeout":
                 path.unlink()
             else:

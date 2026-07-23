@@ -1,10 +1,10 @@
 ---
 title: Hatch Coach model quality, benchmark, and observability Codex specification v5
 document_type: implementation-spec
-status: active
-implementation_status: partial
+status: implemented
+implementation_status: complete
 applies_to: main/latest
-last_verified: 2026-07-22
+last_verified: 2026-07-23
 supersedes: Hatch_Coach_Model_Quality_Benchmark_Observability_Codex_Spec_v4.md
 superseded_by: []
 ---
@@ -16,7 +16,7 @@ superseded_by: []
 **Branching rule:** C1 must wait for PR42 to land on `main`; it must branch from updated `main`, not directly from `b1349f2` or the PR42 feature branch  
 **Primary goal:** make Coach model behaviour measurable, safe, reproducible, and observable without redesigning the Coach product  
 **Audience:** Codex implementation agent and human reviewer  
-**Delivery status:** PR C1 is implemented on `feat/coach-c1-contract-correctness` pending review; PRs C2 and C3 have not started. `implementation_status: partial` now reflects the C1 branch plus the existing Coach and PR42 baseline until C1 is merged.
+**Delivery status:** Complete. C1 is on `main` (implementation checkpoint `bebb2f8`, verification checkpoint `d4eb173`, followed by reviewed hardening through `6d1c61a`). C2 is on `main` through PR #46 (`3cf7ede`). C3 is implemented and verified on `feat/coach-c3-observability` through checkpoint `2c416a6`; it extends the shared facade without changing the default model or core profile.
 **C1 implementation start:** `85bb3c046d18cf11d3f109bc128085921381dd56` from `origin/main`; `git merge-base --is-ancestor b1349f2 HEAD` passed before C1 changes, confirming the PR42 start gate.
 **Start gate:** before changing code, Codex must verify that `git merge-base --is-ancestor b1349f2 HEAD` succeeds or that the owner confirms PR42 was squash/rebase merged with equivalent content. Record the exact `HEAD` SHA in the C1 implementation summary. If PR42 is not present on `main`, stop without modifying files.
 

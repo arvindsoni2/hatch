@@ -1,4 +1,5 @@
 """Tests that coach endpoints return 202 + job_id."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.models.async_job import AsyncJob
 from app.models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from app.repositories.session_repository import SessionRepository
+from app.observability import TraceContextToken
 
 
 async def _timeout(awaitable, _seconds):
@@ -84,9 +86,7 @@ async def test_submit_answer_returns_202(client, db_session):
     data = response.json()
     assert "job_id" in data
     assert data["type"] == "submit_answer"
-    recording = (
-        await db_session.execute(select(SessionRecording))
-    ).scalar_one()
+    recording = (await db_session.execute(select(SessionRecording))).scalar_one()
     assert recording.evaluation_state == "pending"
     assert recording.async_job_id == data["job_id"]
     session = (
@@ -96,6 +96,12 @@ async def test_submit_answer_returns_202(client, db_session):
     ).scalar_one()
     assert session.activity_version == 1
     run.assert_called_once()
+    assert isinstance(run.call_args.kwargs["trace_context"], TraceContextToken)
+    assert run.call_args.kwargs["trace_attributes"] == {
+        "hatch.coach.session_id": "session-1",
+        "hatch.async_job_id": data["job_id"],
+    }
+    assert run.call_args.kwargs["telemetry_operation"] == "answer_submit"
     run.call_args.args[1].close()
 
 
@@ -133,8 +139,14 @@ async def test_repeated_submissions_reserve_immutable_attempts(client, db_sessio
 
     assert first.status_code == second.status_code == 202
     recordings = (
-        await db_session.execute(select(SessionRecording).order_by(SessionRecording.id))
-    ).scalars().all()
+        (
+            await db_session.execute(
+                select(SessionRecording).order_by(SessionRecording.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(recordings) == 2
     assert {recording.async_job_id for recording in recordings} == {
         first.json()["job_id"],
@@ -218,6 +230,12 @@ async def test_end_session_returns_202(client, db_session):
     ).scalar_one()
     assert session.report_state == "building"
     assert session.report_job_id == data["job_id"]
+    assert isinstance(run.call_args.kwargs["trace_context"], TraceContextToken)
+    assert run.call_args.kwargs["trace_attributes"] == {
+        "hatch.coach.session_id": "session-end",
+        "hatch.async_job_id": data["job_id"],
+    }
+    assert run.call_args.kwargs["telemetry_operation"] == "session_end"
     run.call_args.args[1].close()
 
 
@@ -251,13 +269,15 @@ async def test_end_reuses_existing_claim_and_does_not_launch(client, db_session)
 @pytest.mark.asyncio
 async def test_end_rejects_pending_answers(client, db_session):
     await _seed_active_question(db_session, "session-pending", "question-pending")
-    db_session.add(SessionRecording(
-        session_id="session-pending",
-        question_id="question-pending",
-        recording_type="text",
-        evaluation_state="pending",
-        async_job_id="answer-job",
-    ))
+    db_session.add(
+        SessionRecording(
+            session_id="session-pending",
+            question_id="question-pending",
+            recording_type="text",
+            evaluation_state="pending",
+            async_job_id="answer-job",
+        )
+    )
     await db_session.commit()
 
     response = await client.post("/api/coach/sessions/session-pending/end")
@@ -310,7 +330,9 @@ async def test_answer_job_timeout_is_terminal_retryable_no_score(client, db_sess
 @pytest.mark.asyncio
 async def test_end_job_timeout_persists_deterministic_fallback(client, db_session):
     session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
-    await _seed_active_question(db_session, "session-end-timeout", "question-end-timeout")
+    await _seed_active_question(
+        db_session, "session-end-timeout", "question-end-timeout"
+    )
     with (
         patch("app.routers.coach.AsyncJobService.run") as run,
         patch(
@@ -325,9 +347,7 @@ async def test_end_job_timeout_persists_deterministic_fallback(client, db_sessio
     db_session.expire_all()
     session = (
         await db_session.execute(
-            select(InterviewSession).where(
-                InterviewSession.id == "session-end-timeout"
-            )
+            select(InterviewSession).where(InterviewSession.id == "session-end-timeout")
         )
     ).scalar_one()
     job = (
@@ -368,17 +388,23 @@ async def test_submit_audio_returns_202(client, db_session, tmp_path, monkeypatc
     data = response.json()
     assert "job_id" in data
     assert data["type"] == "submit_audio"
-    recording = (
-        await db_session.execute(select(SessionRecording))
-    ).scalar_one()
+    recording = (await db_session.execute(select(SessionRecording))).scalar_one()
     assert recording.evaluation_state == "pending"
     assert recording.async_job_id == data["job_id"]
     assert data["job_id"] in (recording.audio_uri or "")
+    assert isinstance(run.call_args.kwargs["trace_context"], TraceContextToken)
+    assert run.call_args.kwargs["trace_attributes"] == {
+        "hatch.coach.session_id": "s-audio-test",
+        "hatch.async_job_id": data["job_id"],
+    }
+    assert run.call_args.kwargs["telemetry_operation"] == "answer_submit"
     run.call_args.args[1].close()
 
 
 @pytest.mark.asyncio
-async def test_submit_audio_rejects_non_audio_content_type(client, tmp_path, monkeypatch):
+async def test_submit_audio_rejects_non_audio_content_type(
+    client, tmp_path, monkeypatch
+):
     """POST /api/coach/sessions/{id}/submit-audio returns 400 for non-audio content-type."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     response = await client.post(
@@ -404,12 +430,7 @@ async def test_submit_audio_saves_file_to_recordings_dir(
             data={"question_id": "q456"},
         )
     assert response.status_code == 202
-    saved = (
-        tmp_path
-        / "recordings"
-        / "s123"
-        / f"q456-{response.json()['job_id']}.wav"
-    )
+    saved = tmp_path / "recordings" / "s123" / f"q456-{response.json()['job_id']}.wav"
     assert saved.exists(), f"Expected saved audio at {saved}"
     assert saved.read_bytes() == _WAV_HEADER
     run.call_args.args[1].close()
@@ -425,9 +446,7 @@ async def test_skip_is_terminal_and_increments_activity(client, db_session):
     )
 
     assert response.status_code == 204
-    recording = (
-        await db_session.execute(select(SessionRecording))
-    ).scalar_one()
+    recording = (await db_session.execute(select(SessionRecording))).scalar_one()
     assert recording.evaluation_state == "skipped"
     assert recording.async_job_id is None
     session = (

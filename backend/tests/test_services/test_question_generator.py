@@ -1,8 +1,10 @@
 """Tests for QuestionGeneratorService — question count, category weights, model answers."""
+
 from __future__ import annotations
 
 import copy
 import re
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -56,7 +58,9 @@ def mock_claude():
     claude = MagicMock()
 
     async def response_with_allowed_ids(_system: str, user: str, **_kwargs):
-        requirement_ids = list(dict.fromkeys(re.findall(r"requirement-[a-f0-9]{12}", user)))
+        requirement_ids = list(
+            dict.fromkeys(re.findall(r"requirement-[a-f0-9]{12}", user))
+        )
         payload = copy.deepcopy(MOCK_QUESTIONS_RESPONSE)
         for index, question in enumerate(payload):
             question["requirement_id"] = requirement_ids[index % len(requirement_ids)]
@@ -77,7 +81,9 @@ def generator(mock_claude) -> QuestionGeneratorService:
 
 
 @pytest.mark.asyncio
-async def test_generate_returns_question_presentations(generator: QuestionGeneratorService) -> None:
+async def test_generate_returns_question_presentations(
+    generator: QuestionGeneratorService,
+) -> None:
     """generate() returns a list of QuestionPresentation objects."""
     config = SessionConfig(question_count=5)
     result = await generator.generate(
@@ -93,19 +99,32 @@ async def test_generate_returns_question_presentations(generator: QuestionGenera
 async def test_generate_correct_count(generator: QuestionGeneratorService) -> None:
     """generate() returns exactly the number of questions requested."""
     config = SessionConfig(question_count=5)
-    result = await generator.generate(config=config, company_name="Accenture", role_title="SA")
+    result = await generator.generate(
+        config=config, company_name="Accenture", role_title="SA"
+    )
     assert len(result) == 5
 
 
 @pytest.mark.asyncio
-async def test_question_has_required_fields(generator: QuestionGeneratorService) -> None:
+async def test_question_has_required_fields(
+    generator: QuestionGeneratorService,
+) -> None:
     """Each QuestionPresentation has id, text, category, difficulty, num, total."""
     config = SessionConfig(question_count=5)
-    result = await generator.generate(config=config, company_name="Accenture", role_title="SA")
+    result = await generator.generate(
+        config=config, company_name="Accenture", role_title="SA"
+    )
     for q in result:
         assert q.id
         assert q.text
-        assert q.category in {"Technical", "Behavioural", "Situational", "Domain", "Culture", "Commercial"}
+        assert q.category in {
+            "Technical",
+            "Behavioural",
+            "Situational",
+            "Domain",
+            "Culture",
+            "Commercial",
+        }
         assert q.difficulty in {"easy", "medium", "hard"}
         assert q.num >= 1
         assert q.total == 5
@@ -120,12 +139,14 @@ async def test_category_weights_defined() -> None:
 
 def test_question_rejects_confirmed_second_person_history() -> None:
     result = _validate_questions(
-        [{
-            "text": "Tell me how you led the Acme migration.",
-            "category": "Behavioural",
-            "difficulty": "medium",
-            "requirement_id": "requirement-1",
-        }],
+        [
+            {
+                "text": "Tell me how you led the Acme migration.",
+                "category": "Behavioural",
+                "difficulty": "medium",
+                "requirement_id": "requirement-1",
+            }
+        ],
         expected_count=1,
         requirement_ids=("requirement-1",),
     )
@@ -136,12 +157,14 @@ def test_question_rejects_confirmed_second_person_history() -> None:
 
 def test_question_rejects_unseen_named_candidate_action() -> None:
     result = _validate_questions(
-        [{
-            "text": "Tell me how Alex spearheaded the Acme migration.",
-            "category": "Behavioural",
-            "difficulty": "medium",
-            "requirement_id": "requirement-1",
-        }],
+        [
+            {
+                "text": "Tell me how Alex spearheaded the Acme migration.",
+                "category": "Behavioural",
+                "difficulty": "medium",
+                "requirement_id": "requirement-1",
+            }
+        ],
         expected_count=1,
         requirement_ids=("requirement-1",),
     )
@@ -159,12 +182,14 @@ def test_question_rejects_unseen_named_candidate_action() -> None:
 )
 def test_question_allows_known_employer_history(question: str) -> None:
     result = _validate_questions(
-        [{
-            "text": question,
-            "category": "Commercial",
-            "difficulty": "medium",
-            "requirement_id": "requirement-1",
-        }],
+        [
+            {
+                "text": question,
+                "category": "Commercial",
+                "difficulty": "medium",
+                "requirement_id": "requirement-1",
+            }
+        ],
         expected_count=1,
         requirement_ids=("requirement-1",),
         allowed_entity_names=("Acme",),
@@ -175,9 +200,12 @@ def test_question_allows_known_employer_history(question: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_with_company_research(generator: QuestionGeneratorService) -> None:
+async def test_generate_with_company_research(
+    generator: QuestionGeneratorService,
+) -> None:
     """generate() succeeds when company_research is provided."""
     from app.schemas.coach import CompanyResearchResponse
+
     config = SessionConfig(question_count=5)
     research = CompanyResearchResponse(
         company_name="Accenture",
@@ -212,7 +240,31 @@ async def test_generate_with_jd_text(generator: QuestionGeneratorService) -> Non
 
 
 @pytest.mark.asyncio
-async def test_questions_are_mapped_deduplicated_and_versioned(mock_claude) -> None:
+async def test_questions_are_mapped_deduplicated_and_versioned(
+    mock_claude,
+    monkeypatch,
+) -> None:
+    from app.services import question_generator
+
+    repair_spans: list[str] = []
+    repair_counts: list[tuple[str, str]] = []
+
+    class _Telemetry:
+        @contextmanager
+        def coach_stage_span(self, stage, _attributes=None):
+            repair_spans.append(stage)
+            yield MagicMock()
+
+        def record_repair(self, workflow, repair_type):
+            repair_counts.append((workflow, repair_type))
+
+        def record_model_call(self, **_kwargs):
+            return None
+
+        def record_validation_failure(self, *_args):
+            return None
+
+    monkeypatch.setattr(question_generator, "get_telemetry", lambda: _Telemetry())
     requirement_ids = [
         item["requirement_id"]
         for item in _build_requirements(
@@ -222,20 +274,20 @@ async def test_questions_are_mapped_deduplicated_and_versioned(mock_claude) -> N
     mock_claude.complete_json = AsyncMock(
         side_effect=[
             {
-            "questions": [
-                {
-                    "text": "How do you design secure AWS platforms?",
-                    "category": "Technical",
-                    "difficulty": "hard",
-                    "requirement_id": requirement_ids[0],
-                },
-                {
-                    "text": " How do you design secure AWS platforms? ",
-                    "category": "General",
-                    "difficulty": "hard",
-                    "requirement_id": "unknown",
-                },
-            ]
+                "questions": [
+                    {
+                        "text": "How do you design secure AWS platforms?",
+                        "category": "Technical",
+                        "difficulty": "hard",
+                        "requirement_id": requirement_ids[0],
+                    },
+                    {
+                        "text": " How do you design secure AWS platforms? ",
+                        "category": "General",
+                        "difficulty": "hard",
+                        "requirement_id": "unknown",
+                    },
+                ]
             },
             {
                 "questions": [
@@ -269,6 +321,8 @@ async def test_questions_are_mapped_deduplicated_and_versioned(mock_claude) -> N
     assert result.repair_diagnostic is not None
     assert result.final_diagnostic.outcome == "completed"
     assert result.final_diagnostic.repair_count == 1
+    assert repair_spans == ["coach.question_generation.repair"]
+    assert repair_counts == [("coach_generation", "question_generation")]
     system_prompt, user_prompt = mock_claude.complete_json.await_args_list[0].args[:2]
     combined = system_prompt + user_prompt
     assert '"prompt_id": "question_generation"' in combined

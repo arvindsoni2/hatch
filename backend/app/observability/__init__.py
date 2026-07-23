@@ -1,7 +1,9 @@
 """Optional, privacy-safe Hatch telemetry facade."""
+
 from .runtime import (
     ShutdownResult,
     TelemetryRuntime,
+    TraceContextToken,
     get_telemetry,
     initialize_telemetry,
     instrument_fastapi_app,
@@ -13,6 +15,7 @@ from .runtime import (
 __all__ = [
     "ShutdownResult",
     "TelemetryRuntime",
+    "TraceContextToken",
     "get_telemetry",
     "initialize_telemetry",
     "instrument_fastapi_app",
