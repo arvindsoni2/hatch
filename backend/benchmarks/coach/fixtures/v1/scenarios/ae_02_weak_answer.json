@@ -1,0 +1,11 @@
+{
+  "scenario_id": "ae_02_weak_answer",
+  "stage": "answer_evaluation",
+  "description": "Vague transcript receives low completed scores and a focused follow-up.",
+  "qualification_scope": "model_capability",
+  "input": {"question": "Describe how you improved multi-team delivery.", "category": "Behavioural", "transcript": "I worked with teams and things improved."},
+  "expected": {"outcome": "completed", "score_ranges": {"relevance": [2, 6], "star_structure": [1, 5], "technical_depth": [1, 5], "conciseness": [3, 7], "communication": [3, 7], "impact_metrics": [1, 4], "overall": [1, 5]}, "follow_up_required": true, "required_term_groups": [["result", "outcome"], ["action", "did"]], "expected_gap_tags": ["specificity", "impact"]},
+  "scoring": {},
+  "quality_dimensions": ["dimension_band_agreement", "overall_calibration", "grounded_feedback", "strengths_gaps", "follow_up"],
+  "acceptance_smoke": true
+}

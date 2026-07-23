@@ -1,0 +1,12 @@
+{
+  "scenario_id": "sr_02_provider_fallback",
+  "stage": "session_report",
+  "description": "Deterministic provider failure yields a fallback snapshot with identical authoritative scores and counts.",
+  "qualification_scope": "harness_contract",
+  "input": {"session_id": "SESSION-SYNTH-02", "role_title": "Senior Technology Delivery Manager", "company_name": "Atlas Example Cloud", "authoritative_report": {"question_count_total": 4, "question_count_evaluated": 2, "question_count_skipped": 1, "question_count_unavailable": 1, "overall_score": 6.5, "category_scores": {"Behavioural": 8.0, "Technical": 5.0}, "improvement_areas": ["specificity", "technical_depth"]}},
+  "expected": {"outcome": "fallback", "expected_gap_tags": ["specificity", "technical_depth"], "expected_priority_dimensions": ["technical_depth", "specificity"]},
+  "scoring": {},
+  "quality_dimensions": ["score_count_fidelity", "prioritisation", "actionability"],
+  "acceptance_smoke": false,
+  "forced_failure": "provider_unavailable"
+}

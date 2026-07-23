@@ -1,0 +1,11 @@
+{
+  "scenario_id": "cr_02_conflicting_sources",
+  "stage": "company_research",
+  "description": "Conflicting fixed sources retain uncertainty without invented resolution.",
+  "qualification_scope": "model_capability",
+  "input": {"company_name": "Atlas Example Cloud", "sector": "workflow software", "conflicting_source_ids": ["SRC-OFFICIAL-02", "SRC-NEWS-01"]},
+  "expected": {"outcome": "completed"},
+  "scoring": {"allowed_source_ids": ["SRC-OFFICIAL-01", "SRC-OFFICIAL-02", "SRC-NEWS-01"], "expected_source_ids": ["SRC-OFFICIAL-02", "SRC-NEWS-01"], "expected_verification_state": "partially_verified", "min_words": 10, "target_max_words": 160, "hard_max_words": 240},
+  "quality_dimensions": ["source_grounding", "verification", "conciseness"],
+  "acceptance_smoke": false
+}

@@ -28,6 +28,11 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r backend/requirements-dev.txt
+      - name: Run bounded Coach contract smoke
+        run: |
+          cd backend
+          timeout 180s python -m benchmarks.coach smoke \
+            --suite benchmarks/coach/fixtures/v1
       - name: Run backend tests
         run: cd backend && pytest --cov=app --cov-report=xml -q
       - name: Dead-code gates (import graph + vulture)

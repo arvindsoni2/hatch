@@ -1,0 +1,11 @@
+{
+  "scenario_id": "qg_01_requirement_coverage",
+  "stage": "question_generation",
+  "description": "Generate exactly six unique questions covering required requirements.",
+  "qualification_scope": "model_capability",
+  "input": {"question_count": 6, "difficulty": "medium", "company_name": "Atlas Example Cloud", "role_title": "Senior Technology Delivery Manager"},
+  "expected": {"outcome": "completed", "blocking_gate_codes_absent": ["coach_question_count_mismatch", "coach_question_duplicate", "coach_question_requirement_unknown", "coach_question_candidate_claim"]},
+  "scoring": {"required_requirement_ids": ["REQ-01", "REQ-02", "REQ-03", "REQ-04", "REQ-05", "REQ-06"], "accepted_requirement_ids": ["REQ-01", "REQ-02", "REQ-03", "REQ-04", "REQ-05", "REQ-06", "REQ-07"], "expected_category_counts": {"Technical": 2, "Behavioural": 2, "Situational": 1, "Commercial": 1}, "role_relevance_term_groups": [["delivery"], ["risk"], ["technical trade-offs"], ["service metrics"]], "banned_generic_phrases": ["tell me about yourself"]},
+  "quality_dimensions": ["requirement_coverage", "category_distribution", "specificity", "diversity", "clarity"],
+  "acceptance_smoke": true
+}

@@ -1,0 +1,12 @@
+{
+  "scenario_id": "ae_h02_malformed_output",
+  "stage": "answer_evaluation",
+  "description": "Deterministic malformed responses exhaust the production parse path.",
+  "qualification_scope": "harness_contract",
+  "input": {"question": "Describe a delivery improvement.", "category": "Behavioural", "transcript": "A fully synthetic answer."},
+  "expected": {"outcome": "invalid", "blocking_gate_codes_absent": []},
+  "scoring": {},
+  "quality_dimensions": [],
+  "acceptance_smoke": false,
+  "forced_failure": "malformed_output"
+}
