@@ -1,7 +1,7 @@
 ---
 title: Hatch Coach model quality, benchmark, and observability Codex specification v5
 document_type: implementation-spec
-status: completed
+status: implemented
 implementation_status: complete
 applies_to: main/latest
 last_verified: 2026-07-23
