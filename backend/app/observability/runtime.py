@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from .attributes import (
+    COACH_GATE_CODE,
     FAILED_GATE_CODES,
     MODEL_ID,
     PROVIDER_TYPE,
@@ -42,6 +43,7 @@ TelemetryStatus = Literal["disabled", "active", "degraded"]
 _ALLOWED_EVENT_NAMES = frozenset(
     {
         "model_error",
+        "coach_gate",
         "validation_failure",
         "workflow_error",
     }
@@ -55,6 +57,7 @@ class SafeSpan:
         self._span = span
         self._parent = parent
         self._failed = False
+        self._attributes: dict[str, Any] = {}
 
     @property
     def failed(self) -> bool:
@@ -62,12 +65,19 @@ class SafeSpan:
 
     def set_attribute(self, key: str, value: Any) -> None:
         attributes = sanitize_attributes({key: value})
-        if self._span is None or key not in attributes:
+        if key not in attributes:
+            return
+        self._attributes[key] = attributes[key]
+        if self._span is None:
             return
         try:
             self._span.set_attribute(key, attributes[key])
         except Exception:
             return
+
+    def get_attribute(self, key: str, default: Any = None) -> Any:
+        """Return a sanitized value recorded through this adapter."""
+        return self._attributes.get(key, default)
 
     def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
         if self._span is None:
@@ -312,6 +322,10 @@ class TelemetryRuntime:
         try:
             with self._span(name, metric_attributes) as span:
                 yield span
+                metric_attributes[COACH_OUTCOME] = span.get_attribute(
+                    COACH_OUTCOME,
+                    outcome,
+                )
         except BaseException:
             metric_attributes[COACH_OUTCOME] = "failed"
             raise
@@ -415,6 +429,22 @@ class TelemetryRuntime:
             1,
             {**dict(attributes or {}), COACH_OUTCOME: outcome},
         )
+
+    def record_coach_diagnostic(
+        self,
+        family: str | None,
+        outcome: str,
+        gate_codes: list[str] | tuple[str, ...] = (),
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Annotate the current Coach stage and record its bounded outcome."""
+        span = _current_span.get()
+        if span is not None:
+            span.set_attribute(COACH_OUTCOME, outcome)
+            for gate_code in tuple(gate_codes)[:32]:
+                span.add_event("coach_gate", {COACH_GATE_CODE: gate_code})
+        if family is not None:
+            self.record_coach_outcome(family, outcome, attributes)
 
     def capture_trace_context(self) -> TraceContextToken:
         """Capture only a valid current SpanContext, never the request span."""

@@ -18,6 +18,7 @@ from app.observability.attributes import (
     COACH_SUITE_VERSION,
     MODEL_ID,
 )
+from app.observability.runtime import TelemetryRuntime
 from benchmarks.coach import runner as coach_runner
 from benchmarks.coach.runner import RunRequest, run_benchmark
 
@@ -101,3 +102,55 @@ async def test_contract_scenarios_emit_bounded_benchmark_hierarchy(
     telemetry_payload = repr((roots, events))
     assert "Ignore all previous" not in telemetry_payload
     assert "synthetic-candidate" not in telemetry_payload
+
+
+@pytest.mark.asyncio
+async def test_telemetry_failures_do_not_change_benchmark_artifacts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class BrokenTracer:
+        def start_as_current_span(self, *_args, **_kwargs):
+            raise RuntimeError("span exporter unavailable")
+
+    class BrokenInstrument:
+        def add(self, *_args, **_kwargs):
+            raise RuntimeError("metric exporter unavailable")
+
+        def record(self, *_args, **_kwargs):
+            raise RuntimeError("metric exporter unavailable")
+
+    class BrokenMeter:
+        def create_counter(self, *_args, **_kwargs):
+            return BrokenInstrument()
+
+        def create_histogram(self, *_args, **_kwargs):
+            return BrokenInstrument()
+
+    monkeypatch.setattr(
+        coach_runner,
+        "get_telemetry",
+        lambda: TelemetryRuntime(
+            status="active",
+            tracer=BrokenTracer(),
+            meter=BrokenMeter(),
+        ),
+    )
+
+    summary = await run_benchmark(
+        RunRequest(
+            suite_path=SUITE_PATH,
+            output_root=tmp_path,
+            profile_name="contract-smoke",
+            model_ids=("qwen35-4b",),
+            command="pytest telemetry failure isolation",
+        )
+    )
+
+    assert summary.terminal == summary.scheduled
+    assert (
+        len(
+            list((tmp_path / summary.run_id / "scenarios").glob("**/repetition-*.json"))
+        )
+        == summary.terminal
+    )

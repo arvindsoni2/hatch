@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from app.observability.attributes import (
+    ALLOWED_ATTRIBUTE_KEYS,
     FAILED_GATE_CODES,
     MODEL_ID,
     PROMPT_ID,
@@ -57,3 +60,29 @@ def test_exception_payload_and_arbitrary_event_name_are_not_forwarded() -> None:
     span.add_event("Bearer private-token", {"prompt.text": "private CV"})
 
     assert calls == [("event", ("telemetry_event", {}))]
+
+
+@pytest.mark.parametrize(
+    ("key", "sentinel"),
+    [
+        ("candidate.cv", "Private CV sentinel"),
+        ("job.description", "Private JD sentinel"),
+        ("coach.question.text", "Private question sentinel"),
+        ("coach.model_answer.text", "Private model answer sentinel"),
+        ("coach.answer.transcript", "Private transcript sentinel"),
+        ("coach.audio.path", "/home/private/audio-sentinel.wav"),
+        ("coach.performance.score", "9.75"),
+    ],
+)
+def test_prohibited_coach_content_has_no_telemetry_attribute(
+    key: str,
+    sentinel: str,
+) -> None:
+    assert sanitize_attributes({key: sentinel}) == {}
+    assert key not in ALLOWED_ATTRIBUTE_KEYS
+
+
+def test_authoritative_ai_attribute_names_have_no_conflicting_aliases() -> None:
+    assert "hatch.ai.workflow" not in ALLOWED_ATTRIBUTE_KEYS
+    assert "hatch.ai.provider" not in ALLOWED_ATTRIBUTE_KEYS
+    assert "hatch.ai.model_id" not in ALLOWED_ATTRIBUTE_KEYS

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..database import get_db
 from ..observability import get_telemetry
-from ..observability.attributes import ASYNC_JOB_ID, COACH_SESSION_ID
+from ..observability.attributes import ASYNC_JOB_ID, COACH_OPERATION, COACH_SESSION_ID
 from ..schemas.coach import (
     AnswerEvaluation,
     CompanyResearchResponse,
@@ -105,13 +105,47 @@ async def _evaluate_audio_attempt(
     face_summary: dict | None,
     job_db: AsyncSession,
 ) -> AnswerEvaluation:
+    """Evaluate audio inside the one linked Coach answer workflow root."""
+    telemetry = get_telemetry()
+    with telemetry.workflow_span(
+        "coach_generation",
+        {COACH_OPERATION: "answer_submit"},
+    ):
+        with telemetry.coach_stage_span("coach.answer.submit"):
+            # The request transaction durably reserves the attempt and writes
+            # the blob before queuing this job. This child marks that handoff;
+            # the path itself is deliberately never attached to telemetry.
+            with telemetry.coach_stage_span("coach.audio.persist"):
+                pass
+            return await _evaluate_audio_attempt_impl(
+                session_id=session_id,
+                question_id=question_id,
+                recording_id=recording_id,
+                job_id=job_id,
+                audio_path=audio_path,
+                face_summary=face_summary,
+                job_db=job_db,
+            )
+
+
+async def _evaluate_audio_attempt_impl(
+    *,
+    session_id: str,
+    question_id: str,
+    recording_id: str,
+    job_id: str,
+    audio_path: str,
+    face_summary: dict | None,
+    job_db: AsyncSession,
+) -> AnswerEvaluation:
     """Transcribe and evaluate one reserved audio attempt inside its job budget."""
     from ..agents.tools.perception_factory import get_transcriber
     from ..agents.tools.profile_loader import load_profile
     from ..services.locale_service import get_coach_fillers
     from ..services.speech_analyser import SpeechAnalyserService
 
-    result = await asyncio.to_thread(get_transcriber().transcribe, audio_path)
+    with get_telemetry().coach_stage_span("coach.transcription"):
+        result = await asyncio.to_thread(get_transcriber().transcribe, audio_path)
     try:
         fillers: list[str] | None = get_coach_fillers(load_profile().locale)
     except Exception:
@@ -142,7 +176,7 @@ async def _evaluate_audio_attempt(
         if result.text.strip()
         else SubmitAnswerRequest.model_construct(**request_data)
     )
-    return await CoachService().submit_answer(
+    return await CoachService()._submit_answer_impl(
         session_id,
         question_id,
         request,

@@ -104,6 +104,13 @@ class CoachService:
             )
 
         result = await self._researcher.research(company_name, sector)
+        diagnostic = self._researcher.last_diagnostic
+        if isinstance(diagnostic, CoachDiagnostic):
+            get_telemetry().record_coach_diagnostic(
+                None,
+                diagnostic.outcome,
+                diagnostic.gate_codes,
+            )
 
         await research_repo.save(
             company_name=company_name,
@@ -202,13 +209,27 @@ class CoachService:
         # Generate questions
         try:
             with telemetry.coach_stage_span("coach.question_generation"):
-                generated_questions = await self._question_gen.generate(
-                    config=request.config,
-                    company_name=request.company_name,
-                    role_title=request.role_title,
-                    company_research=company_research,
-                    jd_text=request.jd_text,
-                )
+                try:
+                    generated_questions = await self._question_gen.generate(
+                        config=request.config,
+                        company_name=request.company_name,
+                        role_title=request.role_title,
+                        company_research=company_research,
+                        jd_text=request.jd_text,
+                    )
+                except QuestionGenerationContractError as exc:
+                    telemetry.record_coach_diagnostic(
+                        None,
+                        exc.result.final_diagnostic.outcome,
+                        exc.result.final_diagnostic.gate_codes,
+                    )
+                    raise
+                if isinstance(generated_questions, QuestionGenerationResult):
+                    telemetry.record_coach_diagnostic(
+                        None,
+                        generated_questions.final_diagnostic.outcome,
+                        generated_questions.final_diagnostic.gate_codes,
+                    )
         except QuestionGenerationContractError as exc:
             await session_repo.update_stage_diagnostics(
                 session.id,
@@ -275,16 +296,17 @@ class CoachService:
                     company_research=research_dict,
                     candidate_summary=candidate_summary,
                 )
-            telemetry.record_coach_outcome(
-                "model_answer",
-                model_answer_result.diagnostic.outcome,
-                {
-                    COACH_MODEL_ANSWER_OUTCOME: (
-                        model_answer_result.diagnostic.outcome
-                    ),
-                    COACH_QUESTION_CATEGORY: q.category,
-                },
-            )
+                telemetry.record_coach_diagnostic(
+                    "model_answer",
+                    model_answer_result.diagnostic.outcome,
+                    model_answer_result.diagnostic.gate_codes,
+                    {
+                        COACH_MODEL_ANSWER_OUTCOME: (
+                            model_answer_result.diagnostic.outcome
+                        ),
+                        COACH_QUESTION_CATEGORY: q.category,
+                    },
+                )
             db_questions.append(
                 {
                     "question_num": i + 1,
@@ -378,6 +400,26 @@ class CoachService:
         recording_id: str | None = None,
         async_job_id: str | None = None,
     ) -> AnswerEvaluation:
+        """Run the traced text-answer workflow."""
+        return await self._submit_answer_impl(
+            session_id,
+            question_id,
+            request,
+            db,
+            recording_id=recording_id,
+            async_job_id=async_job_id,
+        )
+
+    async def _submit_answer_impl(
+        self,
+        session_id: str,
+        question_id: str,
+        request: SubmitAnswerRequest,
+        db: AsyncSession,
+        *,
+        recording_id: str | None = None,
+        async_job_id: str | None = None,
+    ) -> AnswerEvaluation:
         """Submit an answer for evaluation and persist the recording.
 
         Args:
@@ -427,10 +469,12 @@ class CoachService:
                 video_metrics=video_metrics,
                 model_answer=question.model_answer,
             )
-        telemetry.record_coach_outcome(
-            "evaluation",
-            evaluation.evaluation_state,
-        )
+            diagnostic = evaluation.diagnostic
+            telemetry.record_coach_diagnostic(
+                "evaluation",
+                evaluation.evaluation_state,
+                diagnostic.gate_codes if diagnostic else (),
+            )
 
         if evaluation.evaluation_state == "completed":
             try:
@@ -440,6 +484,21 @@ class CoachService:
                             transcript=request.transcript,
                             evaluation=evaluation,
                             speech_metrics=speech_metrics,
+                        )
+                        rubric_diagnostic = evaluation.rubric.diagnostic
+                        rubric_outcome = (
+                            rubric_diagnostic.outcome
+                            if rubric_diagnostic is not None
+                            else "completed"
+                        )
+                        telemetry.record_coach_diagnostic(
+                            "rubric",
+                            rubric_outcome,
+                            (
+                                rubric_diagnostic.gate_codes
+                                if rubric_diagnostic is not None
+                                else ()
+                            ),
                         )
                     if video_metrics and evaluation.rubric:
                         from .rubric_builder import build_presence_dimension
@@ -454,7 +513,6 @@ class CoachService:
                                 }
                             )
                         )
-                telemetry.record_coach_outcome("rubric", "completed")
             except Exception as exc:
                 logger.warning("Rubric synthesis skipped: %s", exc)
                 telemetry.record_coach_outcome(
@@ -597,7 +655,12 @@ class CoachService:
                     speech_summaries=speech_summaries or None,
                     deterministic_report=deterministic_report,
                 )
-        telemetry.record_coach_outcome("report", report.report_state)
+            report_diagnostic = report.diagnostic
+            telemetry.record_coach_diagnostic(
+                "report",
+                report.report_state,
+                report_diagnostic.gate_codes if report_diagnostic else (),
+            )
 
         with telemetry.coach_stage_span("coach.session.persist"):
             if report_job_id:

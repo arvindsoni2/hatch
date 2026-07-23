@@ -8,14 +8,16 @@ import pytest
 
 from app.observability import attributes as telemetry_attributes
 from app.observability import runtime as runtime_module
+from app.observability.attributes import (
+    ASYNC_JOB_ID,
+    BENCHMARK_CASE_ID,
+    BENCHMARK_RUN_ID,
+    COACH_GATE_CODE,
+    COACH_OUTCOME,
+    COACH_SESSION_ID,
+    COACH_STAGE,
+)
 from app.observability.runtime import TelemetryRuntime, trace_workflow
-
-ASYNC_JOB_ID = "hatch.async_job_id"
-COACH_BENCHMARK_RUN_ID = "hatch.coach.benchmark.run_id"
-COACH_OUTCOME = "hatch.coach.outcome"
-COACH_SCENARIO_ID = "hatch.coach.scenario_id"
-COACH_SESSION_ID = "hatch.coach.session_id"
-COACH_STAGE = "hatch.coach.stage"
 
 
 @dataclass
@@ -77,8 +79,8 @@ def test_coach_metric_attributes_drop_all_correlation_ids() -> None:
             COACH_OUTCOME: "completed",
             COACH_SESSION_ID: "session-1",
             ASYNC_JOB_ID: "job-1",
-            COACH_BENCHMARK_RUN_ID: "run-1",
-            COACH_SCENARIO_ID: "scenario-1",
+            BENCHMARK_RUN_ID: "run-1",
+            BENCHMARK_CASE_ID: "scenario-1",
         }
     )
 
@@ -114,6 +116,63 @@ def test_coach_stage_records_exact_span_and_bounded_metrics() -> None:
             {
                 COACH_STAGE: "question_generation",
                 COACH_OUTCOME: "completed",
+            },
+        )
+    ]
+
+
+def test_coach_diagnostic_updates_stage_outcome_and_emits_bounded_gates() -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    attributes: dict[str, Any] = {}
+
+    class RawSpan:
+        def set_attribute(self, key: str, value: Any) -> None:
+            attributes[key] = value
+
+        def add_event(self, name: str, event_attributes: dict[str, Any]) -> None:
+            events.append((name, event_attributes))
+
+    class SpanManager(AbstractContextManager[RawSpan]):
+        def __enter__(self) -> RawSpan:
+            return RawSpan()
+
+        def __exit__(self, *_args: Any) -> bool:
+            return False
+
+    class Tracer:
+        def start_as_current_span(self, *_args: Any, **_kwargs: Any) -> SpanManager:
+            return SpanManager()
+
+    meter = _Meter()
+    runtime = TelemetryRuntime(status="active", tracer=Tracer(), meter=meter)
+
+    with runtime.coach_stage_span("coach.answer_evaluation"):
+        runtime.record_coach_diagnostic(
+            "evaluation",
+            "unavailable",
+            ["coach_evaluation_provider_unavailable"],
+            {COACH_SESSION_ID: "session-private"},
+        )
+
+    assert attributes[COACH_OUTCOME] == "unavailable"
+    assert events == [
+        (
+            "coach_gate",
+            {COACH_GATE_CODE: "coach_evaluation_provider_unavailable"},
+        )
+    ]
+    assert meter.instruments["hatch.coach.stage.outcomes"].calls[-1] == (
+        1,
+        {
+            COACH_STAGE: "answer_evaluation",
+            COACH_OUTCOME: "unavailable",
+        },
+    )
+    assert meter.instruments["hatch.coach.evaluation.outcomes"].calls == [
+        (
+            1,
+            {
+                COACH_OUTCOME: "unavailable",
             },
         )
     ]

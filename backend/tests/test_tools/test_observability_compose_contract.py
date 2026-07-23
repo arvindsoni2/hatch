@@ -1,4 +1,5 @@
 """Static contracts for the opt-in local observability profile."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -21,6 +22,21 @@ def test_core_compose_does_not_start_or_configure_telemetry() -> None:
     assert all("OTEL_" not in value for value in backend_environment)
 
 
+def test_core_image_does_not_install_optional_observability_sdk() -> None:
+    dockerfile = (ROOT / "backend" / "Dockerfile").read_text(encoding="utf-8")
+    core_stage = dockerfile.split("FROM runtime-base AS core", 1)[1].split(
+        "FROM runtime-base AS browser",
+        1,
+    )[0]
+    core_requirements = (ROOT / "backend" / "requirements-core.txt").read_text(
+        encoding="utf-8"
+    )
+
+    assert "observability-builder" not in core_stage
+    assert "requirements-observability" not in core_stage
+    assert "opentelemetry" not in core_requirements.casefold()
+
+
 def test_observability_overlay_is_explicit_and_locally_scoped() -> None:
     services = _compose("docker-compose.observability.yml")["services"]
     backend = services["backend"]
@@ -38,12 +54,14 @@ def test_observability_overlay_is_explicit_and_locally_scoped() -> None:
 
 def test_collector_accepts_otlp_and_exports_only_local_debug_data() -> None:
     config = yaml.safe_load(
-        (
-            ROOT / "infrastructure" / "observability" / "otel-collector.yaml"
-        ).read_text(encoding="utf-8")
+        (ROOT / "infrastructure" / "observability" / "otel-collector.yaml").read_text(
+            encoding="utf-8"
+        )
     )
 
-    assert config["receivers"]["otlp"]["protocols"]["grpc"]["endpoint"] == "0.0.0.0:4317"
+    assert (
+        config["receivers"]["otlp"]["protocols"]["grpc"]["endpoint"] == "0.0.0.0:4317"
+    )
     assert set(config["exporters"]) == {"debug", "prometheus"}
     assert config["service"]["pipelines"]["traces"]["exporters"] == ["debug"]
     assert config["service"]["pipelines"]["metrics"]["exporters"] == [
