@@ -1,4 +1,5 @@
 """Strict, bounded interview-question generation for Coach sessions."""
+
 from __future__ import annotations
 
 import hashlib
@@ -296,7 +297,8 @@ class QuestionGeneratorService:
         candidate_names = candidate_name_aliases(candidate_summary.splitlines()[0])
         research_dict = (
             company_research.model_dump(mode="json")
-            if company_research and company_research.verification_state != "not_verified"
+            if company_research
+            and company_research.verification_state != "not_verified"
             else {}
         )
         requirements = _build_requirements(jd_text or role_title)
@@ -333,9 +335,13 @@ class QuestionGeneratorService:
                 attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
-                [], initial, None,
+                [],
+                initial,
+                None,
                 _final_diagnostic(
-                    outcome="unavailable", attempts=initial.attempt_count, repair_count=0,
+                    outcome="unavailable",
+                    attempts=initial.attempt_count,
+                    repair_count=0,
                     gates=["coach_stage_timeout"],
                 ),
             )
@@ -351,9 +357,13 @@ class QuestionGeneratorService:
                 attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
-                [], initial, None,
+                [],
+                initial,
+                None,
                 _final_diagnostic(
-                    outcome="unavailable", attempts=initial.attempt_count, repair_count=0,
+                    outcome="unavailable",
+                    attempts=initial.attempt_count,
+                    repair_count=0,
                     gates=["coach_stage_failed"],
                 ),
             )
@@ -369,7 +379,9 @@ class QuestionGeneratorService:
         initial = _diagnostic(
             stage="question_generation",
             prompt_id="question_generation",
-            outcome=("completed" if not initial_validation.gate_codes else "invalid_output"),
+            outcome=(
+                "completed" if not initial_validation.gate_codes else "invalid_output"
+            ),
             gate_codes=initial_validation.gate_codes,
             duration_ms=duration_ms,
             model_id=configured_model_id(self._client),
@@ -383,8 +395,10 @@ class QuestionGeneratorService:
                 initial,
                 None,
                 _final_diagnostic(
-                    outcome="completed", attempts=initial.attempt_count,
-                    repair_count=0, gates=[]
+                    outcome="completed",
+                    attempts=initial.attempt_count,
+                    repair_count=0,
+                    gates=[],
                 ),
             )
 
@@ -412,12 +426,17 @@ class QuestionGeneratorService:
                 difficulty=config.difficulty,
             )
         )
+        telemetry = get_telemetry()
+        telemetry.record_repair("coach_generation", "question_generation")
         try:
-            repair_raw, repair_duration = await self._invoke(
-                repair_system,
-                repair_user,
-                timeout_seconds=settings.HATCH_COACH_TIMEOUT_QUESTION_REPAIR_SECONDS,
-            )
+            with telemetry.coach_stage_span("coach.question_generation.repair"):
+                repair_raw, repair_duration = await self._invoke(
+                    repair_system,
+                    repair_user,
+                    timeout_seconds=(
+                        settings.HATCH_COACH_TIMEOUT_QUESTION_REPAIR_SECONDS
+                    ),
+                )
         except TimeoutError:
             repair = _diagnostic(
                 stage="question_generation_repair",
@@ -429,7 +448,9 @@ class QuestionGeneratorService:
                 attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
-                [], initial, repair,
+                [],
+                initial,
+                repair,
                 _final_diagnostic(
                     outcome="unavailable",
                     attempts=initial.attempt_count + repair.attempt_count,
@@ -449,7 +470,9 @@ class QuestionGeneratorService:
                 attempt_count=configured_attempt_count(self._client),
             )
             result = QuestionGenerationResult(
-                [], initial, repair,
+                [],
+                initial,
+                repair,
                 _final_diagnostic(
                     outcome="unavailable",
                     attempts=initial.attempt_count + repair.attempt_count,
@@ -491,9 +514,14 @@ class QuestionGeneratorService:
         for gate in repair_gates:
             get_telemetry().record_validation_failure("coach_generation", gate)
         if final_validation.gate_codes:
-            final_gates = [*final_validation.gate_codes, "coach_question_repair_exhausted"]
+            final_gates = [
+                *final_validation.gate_codes,
+                "coach_question_repair_exhausted",
+            ]
             result = QuestionGenerationResult(
-                [], initial, repair,
+                [],
+                initial,
+                repair,
                 _final_diagnostic(
                     outcome="invalid_output",
                     attempts=initial.attempt_count + repair.attempt_count,

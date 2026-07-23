@@ -488,6 +488,8 @@ def trace_workflow(
     workflow: str,
     *,
     attributes: Mapping[str, Any] | None = None,
+    stage: str | None = None,
+    nested_stage_only: bool = False,
 ):
     """Decorate an async workflow with the current fail-open runtime."""
 
@@ -497,15 +499,27 @@ def trace_workflow(
         @wraps(function)
         async def wrapped(*args, **kwargs):
             telemetry = get_telemetry()
+            if (
+                nested_stage_only
+                and stage is not None
+                and telemetry.current_workflow("") == workflow
+            ):
+                with telemetry.coach_stage_span(stage):
+                    return await function(*args, **kwargs)
             manager = (
                 telemetry.workflow_span(workflow, static_attributes)
                 if static_attributes
                 else telemetry.workflow_span(workflow)
             )
             with manager:
+                if stage is not None:
+                    with telemetry.coach_stage_span(stage):
+                        return await function(*args, **kwargs)
                 return await function(*args, **kwargs)
 
         wrapped.__hatch_workflow__ = workflow
+        wrapped.__hatch_workflow_attributes__ = static_attributes
+        wrapped.__hatch_stage__ = stage
         return wrapped
 
     return decorate

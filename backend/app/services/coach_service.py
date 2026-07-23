@@ -1,4 +1,5 @@
 """Coach Service — orchestrates the full interview preparation pipeline."""
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,14 @@ from ..schemas.coach import (
     SubmitAnswerRequest,
 )
 from ..config import settings
-from ..observability import trace_workflow
+from ..observability import get_telemetry, trace_workflow
+from ..observability.attributes import (
+    COACH_MODEL_ANSWER_OUTCOME,
+    COACH_OPERATION,
+    COACH_OUTCOME,
+    COACH_QUESTION_CATEGORY,
+    COACH_QUESTION_INDEX,
+)
 from .answer_evaluator import AnswerEvaluatorService
 from .llm_client import LLMClient
 from .company_researcher import CompanyResearchService
@@ -59,6 +67,12 @@ class CoachService:
         self._drills = TechnicalDrillsService(self._claude)
         self._followup_planner = FollowUpPlannerService()
 
+    @trace_workflow(
+        "coach_generation",
+        attributes={COACH_OPERATION: "company_research"},
+        stage="coach.company_research",
+        nested_stage_only=True,
+    )
     async def research_company(
         self, company_name: str, sector: str | None, db: AsyncSession
     ) -> CompanyResearchResponse:
@@ -73,6 +87,7 @@ class CoachService:
             CompanyResearchResponse.
         """
         from ..repositories.research_repository import ResearchRepository
+
         research_repo = ResearchRepository(db)
 
         cached = await research_repo.get_cached(company_name)
@@ -104,9 +119,16 @@ class CoachService:
         await db.commit()
         return result
 
-    @trace_workflow("coach_generation")
+    @trace_workflow(
+        "coach_generation",
+        attributes={COACH_OPERATION: "session_create"},
+        stage="coach.session.create",
+    )
     async def create_session(
-        self, request: CreateSessionRequest, db: AsyncSession, session_id: str | None = None
+        self,
+        request: CreateSessionRequest,
+        db: AsyncSession,
+        session_id: str | None = None,
     ) -> SessionResponse:
         """Create a new interview session with pre-generated questions.
 
@@ -121,23 +143,26 @@ class CoachService:
             SessionResponse with session ID and all generated questions.
         """
         from ..repositories.session_repository import SessionRepository
+
         session_repo = SessionRepository(db)
+        telemetry = get_telemetry()
 
         # Resolve the visible stub before model work so a terminal question
         # diagnostic can always be persisted when setup fails.
-        if session_id:
-            session = await session_repo.get_session(session_id)
-            if not session:
-                raise ValueError(
-                    f"Stub session {session_id} not found — cannot populate questions"
+        with telemetry.coach_stage_span("coach.session.stub_persist"):
+            if session_id:
+                session = await session_repo.get_session(session_id)
+                if not session:
+                    raise ValueError(
+                        f"Stub session {session_id} not found — cannot populate questions"
+                    )
+            else:
+                session = await session_repo.create_session(
+                    application_id=request.application_id,
+                    company_name=request.company_name,
+                    role_title=request.role_title,
+                    config=request.config.model_dump(),
                 )
-        else:
-            session = await session_repo.create_session(
-                application_id=request.application_id,
-                company_name=request.company_name,
-                role_title=request.role_title,
-                config=request.config.model_dump(),
-            )
 
         # Optionally fetch company research for richer questions
         company_research: CompanyResearchResponse | None = None
@@ -176,13 +201,14 @@ class CoachService:
 
         # Generate questions
         try:
-            generated_questions = await self._question_gen.generate(
-                config=request.config,
-                company_name=request.company_name,
-                role_title=request.role_title,
-                company_research=company_research,
-                jd_text=request.jd_text,
-            )
+            with telemetry.coach_stage_span("coach.question_generation"):
+                generated_questions = await self._question_gen.generate(
+                    config=request.config,
+                    company_name=request.company_name,
+                    role_title=request.role_title,
+                    company_research=company_research,
+                    jd_text=request.jd_text,
+                )
         except QuestionGenerationContractError as exc:
             await session_repo.update_stage_diagnostics(
                 session.id,
@@ -208,17 +234,25 @@ class CoachService:
                 session.id,
                 "question_generation",
                 {
-                    "initial": generated_questions.initial_diagnostic.model_dump(mode="json"),
+                    "initial": generated_questions.initial_diagnostic.model_dump(
+                        mode="json"
+                    ),
                     "repair": (
                         generated_questions.repair_diagnostic.model_dump(mode="json")
                         if generated_questions.repair_diagnostic
                         else None
                     ),
-                    "final": generated_questions.final_diagnostic.model_dump(mode="json"),
+                    "final": generated_questions.final_diagnostic.model_dump(
+                        mode="json"
+                    ),
                 },
             )
         else:
             questions = generated_questions
+        telemetry.record_coach_question_count(
+            len(questions),
+            {COACH_OUTCOME: "completed"},
+        )
 
         # Generate model answers and persist questions
         candidate_summary = _load_candidate_summary()
@@ -226,30 +260,52 @@ class CoachService:
 
         db_questions = []
         for i, q in enumerate(questions):
-            model_answer_result = await self._model_answer_gen.generate(
-                question=q.text,
-                category=q.category,
-                difficulty=q.difficulty,
-                company_name=request.company_name,
-                company_research=research_dict,
-                candidate_summary=candidate_summary,
+            with telemetry.coach_stage_span(
+                "coach.model_answer.generate",
+                {
+                    COACH_QUESTION_INDEX: i,
+                    COACH_QUESTION_CATEGORY: q.category,
+                },
+            ):
+                model_answer_result = await self._model_answer_gen.generate(
+                    question=q.text,
+                    category=q.category,
+                    difficulty=q.difficulty,
+                    company_name=request.company_name,
+                    company_research=research_dict,
+                    candidate_summary=candidate_summary,
+                )
+            telemetry.record_coach_outcome(
+                "model_answer",
+                model_answer_result.diagnostic.outcome,
+                {
+                    COACH_MODEL_ANSWER_OUTCOME: (
+                        model_answer_result.diagnostic.outcome
+                    ),
+                    COACH_QUESTION_CATEGORY: q.category,
+                },
             )
-            db_questions.append({
-                "question_num": i + 1,
-                "text": q.text,
-                "category": q.category,
-                "difficulty": q.difficulty,
-                "context": q.context,
-                "model_answer": model_answer_result.model_answer,
-                "requirement_id": q.requirement_id,
-                "model_answer_diagnostics": model_answer_result.diagnostic.model_dump(
-                    mode="json"
-                ),
-                "order_in_session": i + 1,
-            })
+            db_questions.append(
+                {
+                    "question_num": i + 1,
+                    "text": q.text,
+                    "category": q.category,
+                    "difficulty": q.difficulty,
+                    "context": q.context,
+                    "model_answer": model_answer_result.model_answer,
+                    "requirement_id": q.requirement_id,
+                    "model_answer_diagnostics": model_answer_result.diagnostic.model_dump(
+                        mode="json"
+                    ),
+                    "order_in_session": i + 1,
+                }
+            )
 
-        saved_questions = await session_repo.add_questions(session.id, db_questions)
-        await session_repo.update_session_status(session.id, "active")
+        with telemetry.coach_stage_span("coach.questions.persist"):
+            saved_questions = await session_repo.add_questions(
+                session.id,
+                db_questions,
+            )
 
         # Map saved DB questions to QuestionPresentation
         total = len(saved_questions)
@@ -270,7 +326,8 @@ class CoachService:
         # Build technical drills for any technical/domain questions
         drills = []
         try:
-            drill_result = await self._drills.build_drills(saved_questions)
+            with telemetry.coach_stage_span("coach.technical_drills"):
+                drill_result = await self._drills.build_drills(saved_questions)
             drills = list(drill_result)
             await session_repo.update_stage_diagnostics(
                 session.id,
@@ -281,10 +338,15 @@ class CoachService:
                 },
             )
         except Exception as exc:
-            logger.warning("TechnicalDrillsService failed — proceeding without drills: %s", exc)
-        await db.commit()
+            logger.warning(
+                "TechnicalDrillsService failed — proceeding without drills: %s", exc
+            )
+        with telemetry.coach_stage_span("coach.session.activate"):
+            await session_repo.update_session_status(session.id, "active")
+            await db.commit()
 
         from ..schemas.coach import SessionQuestionRead
+
         cfg = session.config or {}
         return SessionResponse(
             id=session.id,
@@ -293,13 +355,19 @@ class CoachService:
             role_title=session.role_title,
             status="active",
             overall_score=None,
-            questions=[SessionQuestionRead.model_validate(sq) for sq in saved_questions],
+            questions=[
+                SessionQuestionRead.model_validate(sq) for sq in saved_questions
+            ],
             created_at=session.created_at,
             interview_date=cfg.get("interview_date"),
             technical_drills=drills,
         )
 
-    @trace_workflow("coach_generation")
+    @trace_workflow(
+        "coach_generation",
+        attributes={COACH_OPERATION: "answer_submit"},
+        stage="coach.answer.submit",
+    )
     async def submit_answer(
         self,
         session_id: str,
@@ -322,92 +390,131 @@ class CoachService:
             AnswerEvaluation with scores and feedback.
         """
         from ..repositories.session_repository import SessionRepository
+
         session_repo = SessionRepository(db)
+        telemetry = get_telemetry()
 
         # Load question for context
         question = await session_repo.get_question(question_id)
         if not question or question.session_id != session_id:
-            raise HTTPException(status_code=404, detail="Question not found in this session")
+            raise HTTPException(
+                status_code=404, detail="Question not found in this session"
+            )
 
         # Analyse speech metrics if not provided
         speech_metrics = request.speech_metrics
-        if not speech_metrics and request.transcript:
-            speech_metrics = self._speech_analyser.analyse(
-                request.transcript, request.duration_ms
-            )
+        with telemetry.coach_stage_span("coach.speech_metrics"):
+            if not speech_metrics and request.transcript:
+                speech_metrics = self._speech_analyser.analyse(
+                    request.transcript, request.duration_ms
+                )
 
         # Validate video metrics if provided
         video_metrics = None
         if request.video_metrics:
-            video_metrics = self._video_analyser.validate_metrics(
-                request.video_metrics.model_dump()
-            )
+            with telemetry.coach_stage_span("coach.video_metrics.validate"):
+                video_metrics = self._video_analyser.validate_metrics(
+                    request.video_metrics.model_dump()
+                )
 
         # Evaluate the answer
-        evaluation = await self._evaluator.evaluate(
-            question=question.text,
-            category=question.category,
-            transcript=request.transcript,
-            speech_metrics=speech_metrics,
-            video_metrics=video_metrics,
-            model_answer=question.model_answer,
+        with telemetry.coach_stage_span("coach.answer_evaluation"):
+            evaluation = await self._evaluator.evaluate(
+                question=question.text,
+                category=question.category,
+                transcript=request.transcript,
+                speech_metrics=speech_metrics,
+                video_metrics=video_metrics,
+                model_answer=question.model_answer,
+            )
+        telemetry.record_coach_outcome(
+            "evaluation",
+            evaluation.evaluation_state,
         )
 
         if evaluation.evaluation_state == "completed":
             try:
-                evaluation.rubric = await self._rubric_synthesiser.synthesise(
-                    transcript=request.transcript,
-                    evaluation=evaluation,
-                    speech_metrics=speech_metrics,
-                )
-                if video_metrics and evaluation.rubric:
-                    from .rubric_builder import build_presence_dimension
-                    evaluation.rubric.dimensions["presence"] = build_presence_dimension({
-                        "eye_contact_pct": video_metrics.eye_contact_pct / 100.0,
-                        "head_stability": video_metrics.head_stability,
-                    })
+                with telemetry.coach_stage_span("coach.rubric_build"):
+                    with telemetry.coach_stage_span("coach.rubric_synthesis"):
+                        evaluation.rubric = await self._rubric_synthesiser.synthesise(
+                            transcript=request.transcript,
+                            evaluation=evaluation,
+                            speech_metrics=speech_metrics,
+                        )
+                    if video_metrics and evaluation.rubric:
+                        from .rubric_builder import build_presence_dimension
+
+                        evaluation.rubric.dimensions["presence"] = (
+                            build_presence_dimension(
+                                {
+                                    "eye_contact_pct": (
+                                        video_metrics.eye_contact_pct / 100.0
+                                    ),
+                                    "head_stability": video_metrics.head_stability,
+                                }
+                            )
+                        )
+                telemetry.record_coach_outcome("rubric", "completed")
             except Exception as exc:
                 logger.warning("Rubric synthesis skipped: %s", exc)
+                telemetry.record_coach_outcome(
+                    "rubric",
+                    "fallback_deterministic",
+                )
 
         # Persist recording + evaluation
         recording_type = (
-            "audio" if request.audio_uri
+            "audio"
+            if request.audio_uri
             else ("audio" if request.speech_metrics else "text")
         )
         evaluation_json = json.dumps(evaluation.model_dump(mode="json"))
-        if recording_id and async_job_id:
-            changed = await session_repo.finalize_answer_attempt(
-                recording_id,
-                async_job_id,
-                evaluation_state=evaluation.evaluation_state,
-                evaluation_json=evaluation_json,
-                transcript=request.transcript,
-                speech_metrics=speech_metrics.model_dump() if speech_metrics else None,
-                video_metrics=video_metrics.model_dump() if video_metrics else None,
-                audio_uri=request.audio_uri,
-            )
-            if not changed:
-                from .coach_contracts import StaleWorkerFencedError
+        with telemetry.coach_stage_span("coach.recording.persist"):
+            if recording_id and async_job_id:
+                changed = await session_repo.finalize_answer_attempt(
+                    recording_id,
+                    async_job_id,
+                    evaluation_state=evaluation.evaluation_state,
+                    evaluation_json=evaluation_json,
+                    transcript=request.transcript,
+                    speech_metrics=(
+                        speech_metrics.model_dump() if speech_metrics else None
+                    ),
+                    video_metrics=(
+                        video_metrics.model_dump() if video_metrics else None
+                    ),
+                    audio_uri=request.audio_uri,
+                )
+                if not changed:
+                    from .coach_contracts import StaleWorkerFencedError
 
-                await db.rollback()
-                raise StaleWorkerFencedError("stale_worker_fenced")
-        else:
-            await session_repo.save_recording(
-                session_id=session_id,
-                question_id=question_id,
-                recording_type=recording_type,
-                transcript=request.transcript,
-                speech_metrics=speech_metrics.model_dump() if speech_metrics else None,
-                video_metrics=video_metrics.model_dump() if video_metrics else None,
-                evaluation_json=evaluation_json,
-                audio_uri=request.audio_uri,
-                evaluation_state=evaluation.evaluation_state,
-            )
-        await db.commit()
+                    await db.rollback()
+                    raise StaleWorkerFencedError("stale_worker_fenced")
+            else:
+                await session_repo.save_recording(
+                    session_id=session_id,
+                    question_id=question_id,
+                    recording_type=recording_type,
+                    transcript=request.transcript,
+                    speech_metrics=(
+                        speech_metrics.model_dump() if speech_metrics else None
+                    ),
+                    video_metrics=(
+                        video_metrics.model_dump() if video_metrics else None
+                    ),
+                    evaluation_json=evaluation_json,
+                    audio_uri=request.audio_uri,
+                    evaluation_state=evaluation.evaluation_state,
+                )
+            await db.commit()
 
         return evaluation
 
-    @trace_workflow("coach_generation")
+    @trace_workflow(
+        "coach_generation",
+        attributes={COACH_OPERATION: "session_end"},
+        stage="coach.session.end",
+    )
     async def end_session(
         self,
         session_id: str,
@@ -426,14 +533,17 @@ class CoachService:
             SessionFeedbackReport.
         """
         from ..repositories.session_repository import SessionRepository
+
         session_repo = SessionRepository(db)
+        telemetry = get_telemetry()
 
         session = await session_repo.get_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        recordings = await session_repo.get_recordings(session_id)
-        questions = await session_repo.get_questions(session_id)
+        with telemetry.coach_stage_span("coach.recordings.load"):
+            recordings = await session_repo.get_recordings(session_id)
+            questions = await session_repo.get_questions(session_id)
 
         from .coach_aggregation import (
             aggregate_session_rubric,
@@ -441,11 +551,12 @@ class CoachService:
             resolve_canonical_attempts,
         )
 
-        resolved = resolve_canonical_attempts(questions, recordings)
-        deterministic_report = build_deterministic_report(
-            session_id, questions, recordings
-        )
-        aggregate_rubric = aggregate_session_rubric(resolved)
+        with telemetry.coach_stage_span("coach.session_rubric.aggregate"):
+            resolved = resolve_canonical_attempts(questions, recordings)
+            deterministic_report = build_deterministic_report(
+                session_id, questions, recordings
+            )
+            aggregate_rubric = aggregate_session_rubric(resolved)
 
         # Build narrative inputs from canonical completed attempts only.
         question_evaluations: list[tuple[str, str, str, AnswerEvaluation]] = []
@@ -453,81 +564,90 @@ class CoachService:
         for item in resolved:
             if item.evaluation is None or item.recording is None:
                 continue
-            question_evaluations.append((
-                str(item.question.id),
-                item.question.text,
-                item.question.category,
-                item.evaluation,
-            ))
+            question_evaluations.append(
+                (
+                    str(item.question.id),
+                    item.question.text,
+                    item.question.category,
+                    item.evaluation,
+                )
+            )
             if item.recording.speech_metrics:
                 speech_summaries.append(item.recording.speech_metrics)
 
-        if deterministic_only:
-            report = deterministic_report
-            report.report_state = "fallback"
-            report.diagnostic = CoachDiagnostic(
-                stage="session_report",
-                outcome="fallback_deterministic",
-                execution_mode="deterministic",
-                attempt_count=0,
-                repair_count=0,
-                gate_codes=["coach_job_timeout"],
-                duration_ms=0,
-            )
-        else:
-            report = await self._feedback_gen.generate_report(
-                session_id=session_id,
-                role_title=session.role_title,
-                company_name=session.company_name,
-                question_evaluations=question_evaluations,
-                speech_summaries=speech_summaries or None,
-                deterministic_report=deterministic_report,
-            )
+        with telemetry.coach_stage_span("coach.session_report"):
+            if deterministic_only:
+                report = deterministic_report
+                report.report_state = "fallback"
+                report.diagnostic = CoachDiagnostic(
+                    stage="session_report",
+                    outcome="fallback_deterministic",
+                    execution_mode="deterministic",
+                    attempt_count=0,
+                    repair_count=0,
+                    gate_codes=["coach_job_timeout"],
+                    duration_ms=0,
+                )
+            else:
+                report = await self._feedback_gen.generate_report(
+                    session_id=session_id,
+                    role_title=session.role_title,
+                    company_name=session.company_name,
+                    question_evaluations=question_evaluations,
+                    speech_summaries=speech_summaries or None,
+                    deterministic_report=deterministic_report,
+                )
+        telemetry.record_coach_outcome("report", report.report_state)
 
-        if report_job_id:
-            report_diagnostic = report.diagnostic
-            aggregation_diagnostic = aggregate_rubric.diagnostic
-            if report_diagnostic is None or aggregation_diagnostic is None:
-                raise RuntimeError("Coach report diagnostics are incomplete")
-            changed = await session_repo.finalize_report_claim(
-                session_id,
-                report_job_id,
-                report_json=report.model_dump(mode="json"),
-                rubric=aggregate_rubric.model_dump(mode="json"),
-                overall_score=report.overall_score,
-                feedback_summary=report.executive_summary,
-                report_state=report.report_state,
-                report_diagnostic=report_diagnostic.model_dump(mode="json"),
-                aggregation_diagnostic=aggregation_diagnostic.model_dump(mode="json"),
-            )
-            if not changed:
-                from .coach_contracts import StaleWorkerFencedError
-
-                await db.rollback()
-                raise StaleWorkerFencedError("stale_worker_fenced")
-        else:
-            # Compatibility for direct service callers. HTTP completion always uses
-            # a fenced database claim.
-            from sqlalchemy import update
-            from ..models.coach_session import InterviewSession
-
-            await db.execute(
-                update(InterviewSession)
-                .where(InterviewSession.id == session_id)
-                .values(
+        with telemetry.coach_stage_span("coach.session.persist"):
+            if report_job_id:
+                report_diagnostic = report.diagnostic
+                aggregation_diagnostic = aggregate_rubric.diagnostic
+                if report_diagnostic is None or aggregation_diagnostic is None:
+                    raise RuntimeError("Coach report diagnostics are incomplete")
+                changed = await session_repo.finalize_report_claim(
+                    session_id,
+                    report_job_id,
                     report_json=report.model_dump(mode="json"),
                     rubric=aggregate_rubric.model_dump(mode="json"),
                     overall_score=report.overall_score,
                     feedback_summary=report.executive_summary,
                     report_state=report.report_state,
-                    status="completed",
+                    report_diagnostic=report_diagnostic.model_dump(mode="json"),
+                    aggregation_diagnostic=(
+                        aggregation_diagnostic.model_dump(mode="json")
+                    ),
                 )
-            )
-        await db.commit()
+                if not changed:
+                    from .coach_contracts import StaleWorkerFencedError
+
+                    await db.rollback()
+                    raise StaleWorkerFencedError("stale_worker_fenced")
+            else:
+                # Compatibility for direct service callers. HTTP completion always
+                # uses a fenced database claim.
+                from sqlalchemy import update
+                from ..models.coach_session import InterviewSession
+
+                await db.execute(
+                    update(InterviewSession)
+                    .where(InterviewSession.id == session_id)
+                    .values(
+                        report_json=report.model_dump(mode="json"),
+                        rubric=aggregate_rubric.model_dump(mode="json"),
+                        overall_score=report.overall_score,
+                        feedback_summary=report.executive_summary,
+                        report_state=report.report_state,
+                        status="completed",
+                    )
+                )
+            await db.commit()
 
         return report
 
-    async def get_report(self, session_id: str, db: AsyncSession) -> SessionFeedbackReport:
+    async def get_report(
+        self, session_id: str, db: AsyncSession
+    ) -> SessionFeedbackReport:
         """Return a stored or regenerated feedback report for a completed session.
 
         Args:
@@ -538,6 +658,7 @@ class CoachService:
             SessionFeedbackReport.
         """
         from ..repositories.session_repository import SessionRepository
+
         session_repo = SessionRepository(db)
 
         session = await session_repo.get_session(session_id)
@@ -553,6 +674,7 @@ class CoachService:
         # Legacy completed rows have no immutable snapshot. Build an in-memory
         # deterministic fallback without model work or persistence.
         from .coach_aggregation import build_deterministic_report
+
         questions = await session_repo.get_questions(session_id)
         recordings = await session_repo.get_recordings(session_id)
         report = build_deterministic_report(session_id, questions, recordings)
@@ -587,6 +709,7 @@ class CoachService:
             List of SessionListItem.
         """
         from ..repositories.session_repository import SessionRepository
+
         session_repo = SessionRepository(db)
         return await session_repo.list_sessions(
             limit,
@@ -605,6 +728,7 @@ class CoachService:
             SessionResponse.
         """
         from ..repositories.session_repository import SessionRepository
+
         session_repo = SessionRepository(db)
 
         session = await session_repo.get_session(session_id)
@@ -613,6 +737,7 @@ class CoachService:
 
         questions = await session_repo.get_questions(session_id)
         from ..schemas.coach import SessionQuestionRead
+
         cfg = session.config or {}
         return SessionResponse(
             id=session.id,
@@ -626,6 +751,11 @@ class CoachService:
             interview_date=cfg.get("interview_date"),
         )
 
+    @trace_workflow(
+        "coach_generation",
+        attributes={COACH_OPERATION: "followup_plan"},
+        stage="coach.followup.plan",
+    )
     async def plan_followup_session(
         self, session_id: str, db: AsyncSession
     ) -> PlanFollowUpResponse:
@@ -640,32 +770,38 @@ class CoachService:
         """
         from ..repositories.session_repository import SessionRepository
         from ..schemas.coach import SessionRubric
-        session_repo = SessionRepository(db)
 
-        session = await session_repo.get_session(session_id)
+        session_repo = SessionRepository(db)
+        telemetry = get_telemetry()
+
+        with telemetry.coach_stage_span("coach.parent_session.load"):
+            session = await session_repo.get_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
         # Load rubric from DB if stored
-        rubric = None
-        if session.rubric and isinstance(session.rubric, dict):
-            try:
-                rubric = SessionRubric.model_validate(session.rubric)
-            except Exception as exc:
-                logger.warning("Could not parse stored rubric: %s", exc)
+        with telemetry.coach_stage_span("coach.focus_areas.derive"):
+            rubric = None
+            if session.rubric and isinstance(session.rubric, dict):
+                try:
+                    rubric = SessionRubric.model_validate(session.rubric)
+                except Exception as exc:
+                    logger.warning("Could not parse stored rubric: %s", exc)
 
-        if rubric is None:
-            rubric = SessionRubric()  # empty — no focus areas
+            if rubric is None:
+                rubric = SessionRubric()  # empty — no focus areas
 
         try:
-            new_session_id, focus_areas = await run_with_stage_deadline(
-                self._followup_planner.plan(
-                    parent_session=session,
-                    rubric=rubric,
-                    db=db,
-                ),
-                settings.HATCH_COACH_TIMEOUT_FOLLOWUP_SECONDS,
-            )
+            with telemetry.coach_stage_span("coach.followup_session.persist"):
+                with telemetry.coach_stage_span("coach.followup_questions.copy"):
+                    new_session_id, focus_areas = await run_with_stage_deadline(
+                        self._followup_planner.plan(
+                            parent_session=session,
+                            rubric=rubric,
+                            db=db,
+                        ),
+                        settings.HATCH_COACH_TIMEOUT_FOLLOWUP_SECONDS,
+                    )
         except TimeoutError as exc:
             await db.rollback()
             raise HTTPException(
@@ -697,6 +833,7 @@ class CoachService:
             Next QuestionPresentation, or None if session complete.
         """
         from ..repositories.session_repository import SessionRepository
+
         session_repo = SessionRepository(db)
 
         questions = await session_repo.get_questions(session_id)
@@ -706,10 +843,14 @@ class CoachService:
         total = len(questions)
         all_q = [
             QuestionPresentation(
-                id=q.id, text=q.text, category=q.category,
-                difficulty=q.difficulty, context=q.context,
+                id=q.id,
+                text=q.text,
+                category=q.category,
+                difficulty=q.difficulty,
+                context=q.context,
                 requirement_id=q.requirement_id,
-                num=q.order_in_session, total=total,
+                num=q.order_in_session,
+                total=total,
             )
             for q in questions
         ]

@@ -163,7 +163,7 @@ def test_coach_outcome_uses_only_allowlisted_family_and_dimensions() -> None:
 async def test_workflow_decorator_forwards_static_coach_attributes(
     monkeypatch,
 ) -> None:
-    observed: list[tuple[str, dict[str, Any]]] = []
+    observed: list[tuple[str, str, dict[str, Any]]] = []
 
     class _Runtime:
         def workflow_span(
@@ -171,7 +171,15 @@ async def test_workflow_decorator_forwards_static_coach_attributes(
             workflow: str,
             attributes: dict[str, Any] | None = None,
         ) -> _SpanManager:
-            observed.append((workflow, dict(attributes or {})))
+            observed.append(("workflow", workflow, dict(attributes or {})))
+            return _SpanManager()
+
+        def coach_stage_span(
+            self,
+            stage: str,
+            attributes: dict[str, Any] | None = None,
+        ) -> _SpanManager:
+            observed.append(("stage", stage, dict(attributes or {})))
             return _SpanManager()
 
     monkeypatch.setattr(runtime_module, "get_telemetry", lambda: _Runtime())
@@ -179,6 +187,7 @@ async def test_workflow_decorator_forwards_static_coach_attributes(
     @trace_workflow(
         "coach_generation",
         attributes={"hatch.coach.operation": "session_create"},
+        stage="coach.session.create",
     )
     async def operation() -> str:
         return "unchanged"
@@ -186,7 +195,40 @@ async def test_workflow_decorator_forwards_static_coach_attributes(
     assert await operation() == "unchanged"
     assert observed == [
         (
+            "workflow",
             "coach_generation",
             {"hatch.coach.operation": "session_create"},
-        )
+        ),
+        ("stage", "coach.session.create", {}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_nested_stage_only_does_not_create_a_second_root(monkeypatch) -> None:
+    observed: list[str] = []
+
+    class _Runtime:
+        @staticmethod
+        def current_workflow(_default: str) -> str:
+            return "coach_generation"
+
+        def workflow_span(self, *_args, **_kwargs):
+            raise AssertionError("nested workflow must not create a second root")
+
+        def coach_stage_span(self, stage: str) -> _SpanManager:
+            observed.append(stage)
+            return _SpanManager()
+
+    monkeypatch.setattr(runtime_module, "get_telemetry", lambda: _Runtime())
+
+    @trace_workflow(
+        "coach_generation",
+        attributes={"hatch.coach.operation": "company_research"},
+        stage="coach.company_research",
+        nested_stage_only=True,
+    )
+    async def operation() -> str:
+        return "unchanged"
+
+    assert await operation() == "unchanged"
+    assert observed == ["coach.company_research"]
