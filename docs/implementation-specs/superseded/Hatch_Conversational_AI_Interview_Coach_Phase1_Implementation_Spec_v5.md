@@ -2,19 +2,21 @@
 title: Hatch Conversational AI Interview Coach Phase 1 Implementation Specification v5
 document_type: implementation-spec
 content_type: text/markdown
-status: active
+status: historical
 implementation_status: partial
 applies_to: main/latest
 last_verified: 2026-07-24
 supersedes: Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v4.md
-superseded_by: []
+superseded_by: Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
 ---
 
 # Hatch Conversational AI Interview Coach: Phase 1 Implementation Specification v5.0
 
+> Historical specification. Superseded by `Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`; do not implement from this version.
+
 **Implementation order:** Must be completed before the Candidate Intelligence Platform and Interview Mentor phase
 **Target repository:** `https://github.com/arvindsoni2/hatch`
-**Canonical repository path:** `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md`
+**Canonical repository path:** `docs/implementation-specs/superseded/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md`
 **Prepared:** 24 July 2026
 **Specification type:** Repository-grounded Codex implementation contract
 
@@ -31,8 +33,8 @@ This document is an active implementation specification and must be committed to
 Before implementation begins, Codex must verify:
 
 ```bash
-git check-ignore -v docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md
-git ls-files --error-unmatch docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md
+git check-ignore -v docs/implementation-specs/superseded/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md
+git ls-files --error-unmatch docs/implementation-specs/superseded/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md
 python scripts/check_docs.py
 ```
 
@@ -65,7 +67,7 @@ git pull --ff-only
 git merge-base --is-ancestor 3985da09 HEAD
 git rev-parse HEAD
 python scripts/check_docs.py
-git ls-files --error-unmatch docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md
+git ls-files --error-unmatch docs/implementation-specs/superseded/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v5.md
 git status --short
 ```
 
