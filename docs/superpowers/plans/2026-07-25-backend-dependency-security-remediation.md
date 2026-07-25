@@ -18,7 +18,7 @@
 - Preserve every core, browser, local-AI, observability, perception, full, development, and test profile boundary.
 - Do not ignore audit findings, loosen vulnerable pins, or use dependency-resolver bypass flags.
 - Do not modify application source. Real perception model-checkpoint smoke is an infrastructure test and must not download a large checkpoint during this dependency-only task.
-- Commit only the approved security plan, `backend/requirements.txt`, `backend/requirements-core.txt`, `backend/requirements-dev.txt`, `backend/requirements-perception.txt`, `backend/pytest.ini`, and `backend/tests/test_tools/test_requirement_groups.py`.
+- Commit only the approved security plan, `backend/requirements.txt`, `backend/requirements-core.txt`, `backend/requirements-dev.txt`, `backend/requirements-local-ai.txt`, `backend/requirements-perception.txt`, `backend/pytest.ini`, and `backend/tests/test_tools/test_requirement_groups.py`.
 
 ## Corrective discovery after Task 2
 
@@ -178,13 +178,14 @@ git commit -m "build(backend): remediate dependency advisories"
 
 Expected: one dependency/configuration-only commit is created.
 
-### Task 3: Align perception dependencies and prove Python audit closure and application compatibility
+### Task 3: Align canonical Transformers dependencies and prove Python audit closure and application compatibility
 
 **Files:**
-- Verify: `backend/requirements.txt`
+- Modify: `backend/requirements.txt`
 - Verify: `backend/requirements-core.txt`
 - Verify: `backend/requirements-dev.txt`
 - Modify: `backend/requirements-perception.txt`
+- Modify: `backend/requirements-local-ai.txt`
 - Verify: `backend/pytest.ini`
 - Modify: `backend/tests/test_tools/test_requirement_groups.py`
 - Verify: `backend/app/services/email_sender.py`
@@ -196,7 +197,7 @@ Expected: one dependency/configuration-only commit is created.
 
 - [ ] **Step 1: Add a failing requirement-profile alignment regression**
 
-Add a focused test to `backend/tests/test_tools/test_requirement_groups.py` that parses the perception and local-AI requirement specifications and requires both profiles to use a Transformers 5 security floor and compatible tokenizer bounds.
+Add a focused test to `backend/tests/test_tools/test_requirement_groups.py` that parses all three canonical direct Transformers declarations (`requirements.txt`, local AI, and perception), rejects Transformers 5.4, admits 5.5, retains the `<6` boundary, and requires Transformers-5-compatible tokenizer bounds in perception.
 
 Run:
 
@@ -205,18 +206,18 @@ cd backend
 python -m pytest tests/test_tools/test_requirement_groups.py --no-cov -q
 ```
 
-Expected before the manifest fix: the new test fails because perception allows Transformers 4 and constrains tokenizers below 0.20.
+Expected before the manifest fix: the new test fails because the default and local-AI manifests still admit Transformers 5.4 (and, on the original baseline, perception also allowed Transformers 4 and constrained tokenizers below 0.20).
 
 - [ ] **Step 2: Align perception with the security-safe Transformers 5 contract**
 
-In `backend/requirements-perception.txt`, replace the stale Transformers 4/tokenizers 0.19 constraints and comments with:
+Align every canonical direct Transformers declaration. In `backend/requirements.txt` and `backend/requirements-local-ai.txt`, set `transformers>=5.5,<6.0`. In `backend/requirements-perception.txt`, replace the stale Transformers 4/tokenizers 0.19 constraints and comments with:
 
 ```text
 tokenizers>=0.22.0,<=0.23.0
 transformers>=5.5,<6.0
 ```
 
-Expected: perception retains the same capability boundary, excludes all versions implicated by the observed audit result, and shares the tokenizer range declared by Transformers 5.5 through 5.14.
+Expected: all three direct declarations exclude every version implicated by the observed audit result, preserve the existing major-version boundary, and perception uses the tokenizer range declared by Transformers 5.5 through 5.14.
 
 - [ ] **Step 3: Verify the regression and fresh resolver evidence**
 
@@ -292,29 +293,55 @@ PY
 
 Expected: exit 0 and the verification message, proving both production call shapes bind against the installed 5.1.1 API.
 
-- [ ] **Step 6: Run the complete backend test suite with coverage**
+- [ ] **Step 6: Prepare the existing project Python environment for application tests**
+
+The baseline suite established that the repository's existing `python` interpreter already contains the full backend/test graph. Upgrade only the four changed packages in that same environment and verify their exact versions:
+
+```bash
+python -m pip install --upgrade \
+  'aiosmtplib==5.1.1' \
+  'pytest==9.0.3' \
+  'pytest-asyncio==1.3.0' \
+  'pytest-httpx==0.36.0'
+python - <<'PY'
+import aiosmtplib
+import pytest
+import pytest_asyncio
+import pytest_httpx
+
+assert aiosmtplib.__version__ == "5.1.1"
+assert pytest.__version__ == "9.0.3"
+assert pytest_asyncio.__version__ == "1.3.0"
+assert pytest_httpx.__version__ == "0.36.0"
+print("project test interpreter verified")
+PY
+```
+
+Expected: installation and assertions exit 0. `.venv-security-clean` remains limited to the focused four-package `pip check`; application tests do not rely on an undeclared overlay environment.
+
+- [ ] **Step 7: Run the complete backend test suite with coverage**
 
 Run:
 
 ```bash
 cd backend
-../.venv-security/bin/python -m pytest --cov=app --cov-report=xml -q
+python -m pytest --cov=app --cov-report=xml -q
 ```
 
 Expected: all collected tests pass, coverage remains at or above the configured 58% floor, and no pytest-asyncio loop-scope or plugin compatibility warning appears.
 
-- [ ] **Step 7: Run the bounded Coach contract smoke**
+- [ ] **Step 8: Run the bounded Coach contract smoke**
 
 Run from `backend`:
 
 ```bash
-timeout 180s ../.venv-security/bin/python -m benchmarks.coach smoke \
+timeout 180s python -m benchmarks.coach smoke \
   --suite benchmarks/coach/fixtures/v1
 ```
 
 Expected: exit 0 within 180 seconds.
 
-- [ ] **Step 8: Audit every requirements profile**
+- [ ] **Step 9: Audit every requirements profile**
 
 Run from the repository root:
 
@@ -336,7 +363,7 @@ done
 
 Expected: every audit exits 0 with no known vulnerability. The included-profile audits repeat safe packages but produce no finding.
 
-- [ ] **Step 9: Run repository documentation and committed-range checks**
+- [ ] **Step 10: Run repository documentation and committed-range checks**
 
 Run:
 
@@ -406,7 +433,7 @@ gh pr view --repo arvindsoni2/hatch "$pr_number" \
   --json mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
 ```
 
-Expected: GitHub reports a clean, mergeable PR; the diff contains only the approved plan, five backend dependency/configuration files, and the requirement-profile regression test; merging projects removal of all eight moderate Python alert records and leaves every canonical dependency profile resolvable and audit-clean.
+Expected: GitHub reports a clean, mergeable PR; the diff contains only the approved plan, six backend dependency/configuration files, and the requirement-profile regression test; merging projects removal of all eight moderate Python alert records and leaves every canonical dependency profile resolvable and audit-clean.
 
 - [ ] **Step 5: Stop at the owner review gate**
 
