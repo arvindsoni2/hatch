@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 class TestProfileRouter:

@@ -10,10 +10,8 @@ Guards against:
 from __future__ import annotations
 
 import importlib
-import os
 from pathlib import Path
 
-import pytest
 
 SKILLS_DIR = Path(__file__).parent.parent.parent / "app" / "skills"
 

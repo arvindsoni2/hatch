@@ -1,8 +1,6 @@
 """T10: docx_cv_builder skill-label field mismatch fix."""
 from __future__ import annotations
 
-import pytest
-from unittest.mock import MagicMock, patch
 
 from app.services.docx_cv_builder import _build_cv_spec
 from app.schemas.tailor import TailoredCVResult, JDAnalysisResult

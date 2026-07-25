@@ -15,7 +15,6 @@ from ..services.ai_setup import (
     AISetupIntent,
     ExperienceSetupIntent,
     BACKEND_PROFILES,
-    build_hardware_recommendation,
     canonical_provider,
     config_dir,
     load_backend_capabilities,

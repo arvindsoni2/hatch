@@ -8,10 +8,8 @@ T5e — soft warning logged when tiny primary model + reasoning disabled
 from __future__ import annotations
 
 import json
-import re
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +101,6 @@ def test_reasoning_field_exists_on_llm_config():
 
 def test_reasoning_true_in_profile_passes_to_ollama_kwargs():
     """_build_model must pass reasoning=True to init_chat_model when profile sets it."""
-    from unittest.mock import patch, MagicMock
     from app.agents.tools import llm_factory
 
     mock_cfg = MagicMock()
@@ -144,7 +141,6 @@ def test_top_p_top_k_fields_on_llm_config():
 
 def test_top_p_top_k_passed_to_ollama_when_set():
     """_build_model must pass top_p/top_k to Ollama when configured."""
-    from unittest.mock import patch, MagicMock
     from app.agents.tools import llm_factory
 
     mock_cfg = MagicMock()
@@ -179,7 +175,6 @@ def test_top_p_top_k_passed_to_ollama_when_set():
 def test_warning_logged_for_tiny_model_with_reasoning_off(caplog):
     """A warning must be logged when primary_model is a tiny model and reasoning=False."""
     import logging
-    from unittest.mock import patch, MagicMock
     from app.agents.tools import llm_factory
 
     mock_cfg = MagicMock()
