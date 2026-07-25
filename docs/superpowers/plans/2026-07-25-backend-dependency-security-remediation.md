@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eliminate the eight remaining moderate Python dependency alerts without changing application behaviour or runtime-profile boundaries.
+**Goal:** Eliminate the eight remaining moderate Python dependency alerts and the pre-existing vulnerable/unsatisfiable perception profile without changing application behaviour or runtime-profile boundaries.
 
-**Architecture:** Upgrade the two vulnerable direct pins to their minimum fixed releases and update only the two pytest plugins whose existing pins make Pytest 9 unsatisfiable. Preserve asyncio fixture semantics explicitly in pytest configuration, then validate resolution, the real aiosmtplib call signatures, all backend tests, the Coach smoke path, and every canonical requirements audit before publishing PR 2.
+**Architecture:** Upgrade the two vulnerable direct pins to their minimum fixed releases and update only the two pytest plugins whose existing pins make Pytest 9 unsatisfiable. Preserve asyncio fixture semantics explicitly in pytest configuration. Correct the pre-existing perception/full-profile conflict by aligning perception with the repository's existing Transformers 5 contract, then validate dependency integrity in a clean virtual environment, resolution, the real aiosmtplib call signatures, all backend tests, the Coach smoke path, and every canonical requirements audit before publishing PR 2.
 
 **Tech Stack:** Python 3.12 CI, Python virtual environments, pip, pip-audit, pytest 9, pytest-asyncio, pytest-httpx, aiosmtplib
 
@@ -17,7 +17,17 @@
 - Preserve `asyncio_mode = auto` and explicitly preserve function-scoped async fixtures.
 - Preserve every core, browser, local-AI, observability, perception, full, development, and test profile boundary.
 - Do not ignore audit findings, loosen vulnerable pins, or use dependency-resolver bypass flags.
-- Commit only the approved security plan, `backend/requirements.txt`, `backend/requirements-core.txt`, `backend/requirements-dev.txt`, and `backend/pytest.ini`.
+- Do not modify application source. Real perception model-checkpoint smoke is an infrastructure test and must not download a large checkpoint during this dependency-only task.
+- Commit only the approved security plan, `backend/requirements.txt`, `backend/requirements-core.txt`, `backend/requirements-dev.txt`, `backend/requirements-perception.txt`, `backend/pytest.ini`, and `backend/tests/test_tools/test_requirement_groups.py`.
+
+## Corrective discovery after Task 2
+
+Task 3 exposed two pre-existing repository conditions outside GitHub's eight-alert manifest view:
+
+- `requirements-perception.txt` resolved `transformers==4.44.2`, for which `pip-audit` reported 29 advisories. The highest fixed-version floor in that result was Transformers 5.5.
+- `requirements-full.txt` was unsatisfiable because perception constrained `tokenizers>=0.19,<0.20` while the existing local-AI profile required Transformers 5, whose declared tokenizer range is `>=0.22.0,<=0.23.0`.
+
+The original `--system-site-packages` verification also inherited unrelated, inconsistent host packages, so its `pip check` result did not measure the changed dependency set. Corrected verification uses a clean virtual environment without host-site inheritance and combines its focused `pip check` with fresh resolver/audit gates for the complete canonical profiles.
 
 ---
 
@@ -168,42 +178,84 @@ git commit -m "build(backend): remediate dependency advisories"
 
 Expected: one dependency/configuration-only commit is created.
 
-### Task 3: Prove Python audit closure and application compatibility
+### Task 3: Align perception dependencies and prove Python audit closure and application compatibility
 
 **Files:**
 - Verify: `backend/requirements.txt`
 - Verify: `backend/requirements-core.txt`
 - Verify: `backend/requirements-dev.txt`
+- Modify: `backend/requirements-perception.txt`
 - Verify: `backend/pytest.ini`
+- Modify: `backend/tests/test_tools/test_requirement_groups.py`
 - Verify: `backend/app/services/email_sender.py`
 - Verify: `backend/app/services/digest_service.py`
 
 **Interfaces:**
 - Consumes: the remediated Python dependency set from Task 2
-- Produces: isolated resolution, API compatibility, regression, smoke, and audit evidence
+- Produces: an explicit profile-alignment regression, isolated resolution, API compatibility, regression, smoke, and audit evidence
 
-- [ ] **Step 1: Create an isolated overlay environment and install the changed set**
+- [ ] **Step 1: Add a failing requirement-profile alignment regression**
 
-Run from the repository root:
-
-```bash
-python -m venv --system-site-packages .venv-security
-.venv-security/bin/python -m pip install --upgrade \
-  'aiosmtplib==5.1.1' \
-  'pytest==9.0.3' \
-  'pytest-asyncio==1.3.0' \
-  'pytest-httpx==0.36.0'
-.venv-security/bin/python -m pip check
-```
-
-Expected: installation and `pip check` exit 0. The environment overlays only the four changed packages on the already-installed backend dependency graph.
-
-- [ ] **Step 2: Verify installed versions and actual SMTP call signatures**
+Add a focused test to `backend/tests/test_tools/test_requirement_groups.py` that parses the perception and local-AI requirement specifications and requires both profiles to use a Transformers 5 security floor and compatible tokenizer bounds.
 
 Run:
 
 ```bash
-.venv-security/bin/python - <<'PY'
+cd backend
+python -m pytest tests/test_tools/test_requirement_groups.py --no-cov -q
+```
+
+Expected before the manifest fix: the new test fails because perception allows Transformers 4 and constrains tokenizers below 0.20.
+
+- [ ] **Step 2: Align perception with the security-safe Transformers 5 contract**
+
+In `backend/requirements-perception.txt`, replace the stale Transformers 4/tokenizers 0.19 constraints and comments with:
+
+```text
+tokenizers>=0.22.0,<=0.23.0
+transformers>=5.5,<6.0
+```
+
+Expected: perception retains the same capability boundary, excludes all versions implicated by the observed audit result, and shares the tokenizer range declared by Transformers 5.5 through 5.14.
+
+- [ ] **Step 3: Verify the regression and fresh resolver evidence**
+
+Run:
+
+```bash
+cd backend
+python -m pytest tests/test_tools/test_requirement_groups.py --no-cov -q
+cd ..
+python -m pip install --dry-run --ignore-installed \
+  'transformers>=5.5,<6.0' \
+  'tokenizers>=0.22.0,<=0.23.0'
+python -m pip install --dry-run --ignore-installed -r backend/requirements-full.txt
+```
+
+Expected: the focused tests and both fresh resolution checks exit 0.
+
+- [ ] **Step 4: Create a clean environment and install the changed set**
+
+Run from the repository root:
+
+```bash
+python -m venv .venv-security-clean
+.venv-security-clean/bin/python -m pip install --upgrade \
+  'aiosmtplib==5.1.1' \
+  'pytest==9.0.3' \
+  'pytest-asyncio==1.3.0' \
+  'pytest-httpx==0.36.0'
+.venv-security-clean/bin/python -m pip check
+```
+
+Expected: installation and `pip check` exit 0. The environment contains only the four directly changed packages and their dependencies; it does not inherit unrelated host packages.
+
+- [ ] **Step 5: Verify installed versions and actual SMTP call signatures**
+
+Run:
+
+```bash
+.venv-security-clean/bin/python - <<'PY'
 from email.message import EmailMessage
 from inspect import signature
 
@@ -240,7 +292,7 @@ PY
 
 Expected: exit 0 and the verification message, proving both production call shapes bind against the installed 5.1.1 API.
 
-- [ ] **Step 3: Run the complete backend test suite with coverage**
+- [ ] **Step 6: Run the complete backend test suite with coverage**
 
 Run:
 
@@ -251,7 +303,7 @@ cd backend
 
 Expected: all collected tests pass, coverage remains at or above the configured 58% floor, and no pytest-asyncio loop-scope or plugin compatibility warning appears.
 
-- [ ] **Step 4: Run the bounded Coach contract smoke**
+- [ ] **Step 7: Run the bounded Coach contract smoke**
 
 Run from `backend`:
 
@@ -262,7 +314,7 @@ timeout 180s ../.venv-security/bin/python -m benchmarks.coach smoke \
 
 Expected: exit 0 within 180 seconds.
 
-- [ ] **Step 5: Audit every requirements profile**
+- [ ] **Step 8: Audit every requirements profile**
 
 Run from the repository root:
 
@@ -284,7 +336,7 @@ done
 
 Expected: every audit exits 0 with no known vulnerability. The included-profile audits repeat safe packages but produce no finding.
 
-- [ ] **Step 6: Run repository documentation and committed-range checks**
+- [ ] **Step 9: Run repository documentation and committed-range checks**
 
 Run:
 
@@ -295,7 +347,7 @@ git diff --check origin/main...HEAD
 git status --short --branch
 ```
 
-Expected: both documentation checks and diff check pass; the tracked tree is clean and only `.venv-security` may exist as ignored local state.
+Expected: both documentation checks and diff check pass; the tracked tree is clean and only ignored local verification environments may exist.
 
 ### Task 4: Publish PR 2 and reconcile the final security gate
 
@@ -354,7 +406,7 @@ gh pr view --repo arvindsoni2/hatch "$pr_number" \
   --json mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
 ```
 
-Expected: GitHub reports a clean, mergeable PR; the diff contains only the approved plan and four backend dependency/configuration files; merging projects removal of all eight moderate Python alert records.
+Expected: GitHub reports a clean, mergeable PR; the diff contains only the approved plan, five backend dependency/configuration files, and the requirement-profile regression test; merging projects removal of all eight moderate Python alert records and leaves every canonical dependency profile resolvable and audit-clean.
 
 - [ ] **Step 5: Stop at the owner review gate**
 
