@@ -220,6 +220,22 @@ def test_unversioned_view_fails_without_mutation(tmp_path: Path) -> None:
     assert database.read_bytes() == before
 
 
+def test_reserved_version_view_fails_without_mutation(tmp_path: Path) -> None:
+    database = tmp_path / "reserved-version-view.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE VIEW alembic_version AS "
+            "SELECT CAST(NULL AS TEXT) AS version_num WHERE 0"
+        )
+    before = database.read_bytes()
+
+    result = _run_setup(database)
+
+    assert result.returncode != 0
+    assert "non-empty unversioned" in result.stderr.lower()
+    assert database.read_bytes() == before
+
+
 def test_partial_a70_database_fails_without_mutation(tmp_path: Path) -> None:
     database = tmp_path / "partial-a70.db"
     _create_version_state(database, "a70e739c5a23")

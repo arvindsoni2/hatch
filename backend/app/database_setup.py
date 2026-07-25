@@ -87,20 +87,20 @@ def setup_database(database_url: str | None = None) -> None:
     engine = create_engine(sync_url)
     try:
         with engine.connect() as connection:
-            schema_objects = set(
-                connection.exec_driver_sql(
-                    "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+            schema_objects = {
+                (row[0], row[1])
+                for row in connection.exec_driver_sql(
+                    "SELECT type, name FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%'"
                 )
-                .scalars()
-                .all()
-            )
+            }
             current_heads = MigrationContext.configure(connection).get_current_heads()
 
         if len(current_heads) > 1:
             raise DatabaseSetupError("Multiple database heads are not supported.")
 
         if not current_heads:
-            application_objects = schema_objects - {VERSION_TABLE}
+            application_objects = schema_objects - {("table", VERSION_TABLE)}
             if application_objects:
                 raise DatabaseSetupError(
                     "Non-empty unversioned database cannot be bootstrapped."
