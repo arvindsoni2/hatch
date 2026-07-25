@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Interview Security Testing"
+  short_description: "Test AI interview trust boundaries safely"
+  default_prompt: "Use $ai-interview-security-testing to build an isolated, contract-grounded security test plan and evidence bundle for this Coach change."
