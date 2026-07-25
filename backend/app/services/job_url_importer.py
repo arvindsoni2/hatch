@@ -38,12 +38,15 @@ def _jobposting(value):
     if isinstance(value, list):
         for item in value:
             found = _jobposting(item)
-            if found: return found
+            if found:
+                return found
     if isinstance(value, dict):
-        if value.get("@type") == "JobPosting": return value
+        if value.get("@type") == "JobPosting":
+            return value
         for item in value.values():
             found = _jobposting(item)
-            if found: return found
+            if found:
+                return found
     return None
 
 
@@ -54,11 +57,13 @@ def extract_job(html_text: str, source_url: str) -> dict:
             posting = _jobposting(json.loads(raw))
         except Exception:
             continue
-        if posting: break
+        if posting:
+            break
     if posting:
         org = posting.get("hiringOrganization") or {}
         location = posting.get("jobLocation") or {}
-        if isinstance(location, list): location = location[0] if location else {}
+        if isinstance(location, list):
+            location = location[0] if location else {}
         address = location.get("address", {}) if isinstance(location, dict) else {}
         return {"title": posting.get("title"), "company": org.get("name") if isinstance(org, dict) else None,
                 "location": ", ".join(str(v) for v in address.values() if v) if isinstance(address, dict) else str(address),
@@ -82,7 +87,8 @@ async def preview_url(url: str) -> dict:
             async with client.stream("GET", current, headers=headers) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
-                    if not location: raise ValueError("Redirect did not include a location")
+                    if not location:
+                        raise ValueError("Redirect did not include a location")
                     current = normalize_url(urljoin(current, location))
                     continue
                 content_type = response.headers.get("content-type", "").lower()
@@ -91,7 +97,8 @@ async def preview_url(url: str) -> dict:
                 chunks, size = [], 0
                 async for chunk in response.aiter_bytes():
                     size += len(chunk)
-                    if size > 2 * 1024 * 1024: raise ValueError("Job page exceeds the 2 MB limit")
+                    if size > 2 * 1024 * 1024:
+                        raise ValueError("Job page exceeds the 2 MB limit")
                     chunks.append(chunk)
                 text = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
                 draft = extract_job(text, current)

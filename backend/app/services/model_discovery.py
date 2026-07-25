@@ -280,7 +280,7 @@ async def discover_models(
             raise ValueError("No curated compatible GGUF files were returned by Hugging Face.")
         _save_cache(models, rejected)
         return _result("live", models, probe, rejected=rejected)
-    except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as exc:
+    except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError):
         if cached := _load_cache(probe):
             cached.error = "Live discovery is unavailable; showing the recent curated cache."
             return cached

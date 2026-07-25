@@ -1,6 +1,5 @@
 """Deterministic pre/post-generation CV quality gate."""
 from __future__ import annotations
-import re
 from typing import Any
 from .docx_quality_parser import parse_docx_quality
 

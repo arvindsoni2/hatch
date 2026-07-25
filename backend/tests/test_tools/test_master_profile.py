@@ -1,13 +1,11 @@
 """Tests for master profile loader — SEC-4 example-file fallback."""
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
 
 def test_load_master_profile_falls_back_to_example(tmp_path):
     """load_master_profile() uses the example YAML when master_profile.yaml is absent."""
-    import importlib
     import app.config as cfg_pkg
 
     # Override the paths to point to tmp_path (no real profile present)
