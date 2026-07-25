@@ -113,12 +113,16 @@ def test_full_requirements_include_all_capability_groups() -> None:
     assert "-r requirements-perception.txt" in lines
 
 
-def test_perception_dependencies_align_with_secure_transformers_5_runtime() -> None:
-    """Perception and full profiles must share the secure Transformers 5 solution."""
+def test_canonical_requirements_align_with_secure_transformers_5_runtime() -> None:
+    """Every direct declaration must share the secure Transformers 5 solution."""
+    default_path = BACKEND_DIR / "requirements.txt"
     perception_path = BACKEND_DIR / "requirements-perception.txt"
     local_ai_path = BACKEND_DIR / "requirements-local-ai.txt"
-    perception_transformers = _requirement(perception_path, "transformers")
-    local_ai_transformers = _requirement(local_ai_path, "transformers")
+    transformers_requirements = (
+        _requirement(default_path, "transformers"),
+        _requirement(local_ai_path, "transformers"),
+        _requirement(perception_path, "transformers"),
+    )
     perception_tokenizers = _requirement(perception_path, "tokenizers")
 
     secure_transformers_floor = Version("5.5")
@@ -127,10 +131,18 @@ def test_perception_dependencies_align_with_secure_transformers_5_runtime() -> N
     compatible_tokenizer_versions = (Version("0.22.0"), Version("0.23.0"))
     incompatible_tokenizer_versions = (Version("0.21.9"), Version("0.23.1"))
 
-    assert secure_transformers_floor in perception_transformers.specifier
-    assert secure_transformers_floor in local_ai_transformers.specifier
-    assert vulnerable_transformers_version not in perception_transformers.specifier
-    assert transformers_next_major not in perception_transformers.specifier
+    assert all(
+        secure_transformers_floor in requirement.specifier
+        for requirement in transformers_requirements
+    )
+    assert all(
+        vulnerable_transformers_version not in requirement.specifier
+        for requirement in transformers_requirements
+    )
+    assert all(
+        transformers_next_major not in requirement.specifier
+        for requirement in transformers_requirements
+    )
     assert all(
         version in perception_tokenizers.specifier
         for version in compatible_tokenizer_versions
