@@ -192,6 +192,10 @@ unversioned, partial, unknown-revision, and multiple-head states without trying
 to repair or restamp them. Do not use bare `alembic upgrade head` to initialise
 an empty database.
 
+`make dev` and `make dev-back` run that canonical setup gate before starting
+the development backend. An unsafe or structurally incomplete database stops
+backend startup instead of being repaired, restamped, or served.
+
 Frontend checks:
 
 ```bash

@@ -13,7 +13,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util import CommandError
 from sqlalchemy import create_engine
-from sqlalchemy.engine import URL, make_url
+from sqlalchemy.engine import Connection, URL, make_url
 
 from .config import settings
 from .database import Base
@@ -56,6 +56,31 @@ def _copy_sqlite_database(source: Path, destination: Path) -> None:
             source_connection.backup(destination_connection)
 
 
+def _validate_empty_version_table(connection: Connection) -> None:
+    columns = connection.exec_driver_sql(f"PRAGMA table_info({VERSION_TABLE})").all()
+    canonical = (
+        len(columns) == 1
+        and columns[0][1] == "version_num"
+        and columns[0][2].upper() == "VARCHAR(32)"
+        and columns[0][3] == 1
+        and columns[0][4] is None
+        and columns[0][5] == 1
+    )
+    if not canonical:
+        raise DatabaseSetupError(
+            "Malformed alembic_version table cannot be bootstrapped."
+        )
+
+
+def _validate_schema(config: Config) -> None:
+    try:
+        command.check(config)
+    except Exception as exc:
+        raise DatabaseSetupError(
+            "Schema validation failed; database left unchanged."
+        ) from exc
+
+
 def _preflight_upgrade(database: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="hatch-database-setup-") as directory:
         candidate = Path(directory) / "migration-preflight.db"
@@ -63,6 +88,7 @@ def _preflight_upgrade(database: Path) -> None:
         candidate_config = _alembic_config(_async_url_for_path(candidate))
         try:
             command.upgrade(candidate_config, "head")
+            command.check(candidate_config)
         except Exception as exc:
             raise DatabaseSetupError(
                 "Migration preflight failed; database left unchanged."
@@ -105,12 +131,17 @@ def setup_database(database_url: str | None = None) -> None:
                 raise DatabaseSetupError(
                     "Non-empty unversioned database cannot be bootstrapped."
                 )
+            if schema_objects:
+                with engine.connect() as connection:
+                    _validate_empty_version_table(connection)
             Base.metadata.create_all(engine)
             command.stamp(config, "head")
+            _validate_schema(config)
             return
 
         current = current_heads[0]
         if current == head:
+            _validate_schema(config)
             return
 
         try:
@@ -132,6 +163,7 @@ def setup_database(database_url: str | None = None) -> None:
 
         _preflight_upgrade(database)
         command.upgrade(config, "head")
+        _validate_schema(config)
     finally:
         engine.dispose()
 

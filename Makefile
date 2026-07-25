@@ -8,12 +8,12 @@
 
 # ──────────────────────── Development ────────────────────────
 
-dev: ## Start full stack locally (backend + frontend)
+dev: migrate ## Start full stack locally (backend + frontend)
 	@echo "Starting Hatch development environment..."
 	@make dev-back &
 	@make dev-front
 
-dev-back: ## Start backend with hot reload
+dev-back: migrate ## Start backend with hot reload
 	cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 dev-front: ## Start frontend with hot reload

@@ -16,6 +16,7 @@ from app import database_setup
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+REPOSITORY_DIR = BACKEND_DIR.parent
 HEAD_REVISION = "p3q4r5s6t7u8"
 PRIOR_HEAD_REVISION = "o2p3q4r5s6t7"
 
@@ -85,34 +86,16 @@ def _create_version_state(database: Path, *revisions: str) -> None:
 
 
 def _create_prior_head_database(database: Path) -> None:
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    downgrade = _run_alembic(database, "downgrade", PRIOR_HEAD_REVISION)
+    assert downgrade.returncode == 0, downgrade.stderr
     with sqlite3.connect(database) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE interview_sessions (
-                id VARCHAR(36) PRIMARY KEY,
-                status VARCHAR(32),
-                completed_at DATETIME
-            );
-            CREATE TABLE session_questions (
-                id VARCHAR(36) PRIMARY KEY,
-                session_id VARCHAR(36),
-                text TEXT
-            );
-            CREATE TABLE session_recordings (
-                id VARCHAR(36) PRIMARY KEY,
-                session_id VARCHAR(36),
-                transcript TEXT,
-                evaluation_json TEXT,
-                created_at DATETIME
-            );
-            CREATE TABLE alembic_version (
-                version_num VARCHAR(32) NOT NULL PRIMARY KEY
-            );
-            INSERT INTO alembic_version(version_num)
-            VALUES ('o2p3q4r5s6t7');
-            INSERT INTO interview_sessions(id, status)
-            VALUES ('preserved-session', 'active');
-            """
+        connection.execute(
+            "INSERT INTO interview_sessions("
+            "id, company_name, role_title, status, created_at) "
+            "VALUES ('preserved-session', 'Example Ltd', 'Engineer', "
+            "'active', CURRENT_TIMESTAMP)"
         )
 
 
@@ -162,6 +145,23 @@ def test_empty_alembic_version_table_is_still_a_fresh_bootstrap(tmp_path: Path) 
     assert _tables(database) == set(Base.metadata.tables) | {"alembic_version"}
 
 
+def test_malformed_empty_version_table_fails_without_mutation(tmp_path: Path) -> None:
+    database = tmp_path / "malformed-empty-version.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE alembic_version ("
+            "version_num VARCHAR(32) NOT NULL PRIMARY KEY, "
+            "required_value TEXT NOT NULL)"
+        )
+    before = database.read_bytes()
+
+    result = _run_setup(database)
+
+    assert result.returncode != 0
+    assert "malformed alembic_version table" in result.stderr.lower()
+    assert database.read_bytes() == before
+
+
 def test_current_database_is_a_no_op(tmp_path: Path) -> None:
     database = tmp_path / "current.db"
     first = _run_setup(database)
@@ -171,6 +171,20 @@ def test_current_database_is_a_no_op(tmp_path: Path) -> None:
     second = _run_setup(database)
 
     assert second.returncode == 0, second.stderr
+    assert database.read_bytes() == before
+
+
+def test_head_only_database_fails_structural_validation_without_mutation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "head-only.db"
+    _create_version_state(database, HEAD_REVISION)
+    before = database.read_bytes()
+
+    result = _run_setup(database)
+
+    assert result.returncode != 0
+    assert "schema validation failed" in result.stderr.lower()
     assert database.read_bytes() == before
 
 
@@ -191,6 +205,8 @@ def test_known_prior_head_is_upgraded_and_preserves_data(tmp_path: Path) -> None
             for row in connection.execute("PRAGMA table_info(interview_sessions)")
         }
     assert "report_state" in columns
+    check = _run_alembic(database, "check")
+    assert check.returncode == 0, check.stderr
 
 
 def test_non_empty_unversioned_database_fails_without_mutation(tmp_path: Path) -> None:
@@ -331,3 +347,23 @@ MetaData.create_all = fail_create_all
     assert result.returncode != 0
     assert "deliberate-create-all-failure" in result.stderr
     assert "alembic_version" not in _tables(database)
+
+
+def test_development_backend_runs_canonical_setup_before_server() -> None:
+    result = subprocess.run(
+        ["make", "--no-print-directory", "-n", "dev-back"],
+        cwd=REPOSITORY_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    commands = result.stdout.splitlines()
+    setup_index = commands.index("cd backend && python -m app.database_setup")
+    server_index = next(
+        index
+        for index, command_line in enumerate(commands)
+        if "uvicorn app.main:app" in command_line
+    )
+    assert setup_index < server_index
