@@ -5,6 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from packaging.requirements import Requirement
+from packaging.version import Version
+
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 REQUIRED_GROUPS = {
@@ -56,6 +59,16 @@ def _package_names(path: Path) -> set[str]:
     }
 
 
+def _requirement(path: Path, package_name: str) -> Requirement:
+    for requirement_line in _requirement_lines(path):
+        if requirement_line.startswith("-r "):
+            continue
+        requirement = Requirement(requirement_line)
+        if requirement.name.lower() == package_name:
+            return requirement
+    raise AssertionError(f"{package_name} is not declared in {path.name}")
+
+
 def test_requirement_group_files_exist() -> None:
     """The dependency split must be explicit before Docker targets consume it."""
     missing = sorted(name for name in REQUIRED_GROUPS if not (BACKEND_DIR / name).is_file())
@@ -98,6 +111,34 @@ def test_full_requirements_include_all_capability_groups() -> None:
     assert "-r requirements-local-ai.txt" in lines
     assert "-r requirements-observability.txt" in lines
     assert "-r requirements-perception.txt" in lines
+
+
+def test_perception_dependencies_align_with_secure_transformers_5_runtime() -> None:
+    """Perception and full profiles must share the secure Transformers 5 solution."""
+    perception_path = BACKEND_DIR / "requirements-perception.txt"
+    local_ai_path = BACKEND_DIR / "requirements-local-ai.txt"
+    perception_transformers = _requirement(perception_path, "transformers")
+    local_ai_transformers = _requirement(local_ai_path, "transformers")
+    perception_tokenizers = _requirement(perception_path, "tokenizers")
+
+    secure_transformers_floor = Version("5.5")
+    vulnerable_transformers_version = Version("5.4.0")
+    transformers_next_major = Version("6.0")
+    compatible_tokenizer_versions = (Version("0.22.0"), Version("0.23.0"))
+    incompatible_tokenizer_versions = (Version("0.21.9"), Version("0.23.1"))
+
+    assert secure_transformers_floor in perception_transformers.specifier
+    assert secure_transformers_floor in local_ai_transformers.specifier
+    assert vulnerable_transformers_version not in perception_transformers.specifier
+    assert transformers_next_major not in perception_transformers.specifier
+    assert all(
+        version in perception_tokenizers.specifier
+        for version in compatible_tokenizer_versions
+    )
+    assert all(
+        version not in perception_tokenizers.specifier
+        for version in incompatible_tokenizer_versions
+    )
 
 
 def test_optional_dependency_modules_import_without_optional_packages() -> None:
