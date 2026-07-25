@@ -52,8 +52,8 @@ test-cov: ## Run backend tests with coverage
 
 # ──────────────────────── Database ───────────────────────────
 
-migrate: ## Run Alembic migrations
-	cd backend && alembic upgrade head
+migrate: ## Set up or safely migrate the application database
+	cd backend && python -m app.database_setup
 
 migrate-new: ## Create new migration (usage: make migrate-new MSG="add_column")
 	cd backend && alembic revision --autogenerate -m "$(MSG)"
