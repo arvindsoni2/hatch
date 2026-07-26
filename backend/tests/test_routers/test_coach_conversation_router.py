@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import math
+from datetime import datetime, timezone
+from itertools import product
 
 import pytest
 from pydantic import ValidationError
@@ -15,6 +18,7 @@ from app.schemas.coach_conversation import (
     ConversationCommandResult,
     ConversationErrorResponse,
     ConversationLiveView,
+    ConversationalQuestionRead,
     DeleteAudioPayload,
     DeleteTranscriptPayload,
     EditTranscriptPayload,
@@ -22,6 +26,8 @@ from app.schemas.coach_conversation import (
     FinishAnswerPayload,
     KeepSpeakingPayload,
     PausePayload,
+    PlanInterview,
+    PlanRole,
     RebuildPlanPayload,
     RecordSelfAssessmentPayload,
     RequestCoachingPayload,
@@ -31,11 +37,14 @@ from app.schemas.coach_conversation import (
     RetryProcessingPayload,
     RetryReportPayload,
     RetrySetupPayload,
+    RecoverableErrorProjection,
     ReturnToReviewPayload,
     SkipQuestionPayload,
     StartPayload,
+    TranscriptVersionRead,
     UpdateRetentionPayload,
 )
+from app.services.coach_conversational_contracts import ERROR_REGISTRY
 
 
 COMMAND_CONTRACT = "coach_conversation_command_v1"
@@ -236,7 +245,7 @@ def valid_live_view() -> dict:
             "difficulty": "realistic",
             "question_kind": "planned",
             "question_state": "asked",
-            "root_question_id": "question_1",
+            "root_question_id": None,
             "parent_question_id": None,
             "follow_up_depth": 0,
             "attempts_created_count": 2,
@@ -250,7 +259,7 @@ def valid_live_view() -> dict:
             "difficulty": "realistic",
             "question_kind": "planned",
             "question_state": "asked",
-            "root_question_id": "question_1",
+            "root_question_id": None,
             "parent_question_id": None,
             "follow_up_depth": 0,
             "attempts_created_count": 2,
@@ -398,3 +407,354 @@ def test_error_response_accepts_only_the_central_safe_error_registry() -> None:
                 }
             }
         )
+
+
+@pytest.mark.parametrize("coerced", ["1", 1.0, True])
+def test_new_contracts_reject_scalar_coercion_across_boundaries(
+    coerced: object,
+) -> None:
+    command_payload = command("start")
+    command_payload["expected_state_version"] = coerced
+    live_payload = valid_live_view()
+    live_payload["state_version"] = coerced
+
+    with pytest.raises(ValidationError):
+        ConversationCommandRequest.model_validate(command_payload)
+    with pytest.raises(ValidationError):
+        ConversationLiveView.model_validate(live_payload)
+
+
+@pytest.mark.parametrize("coerced", ["true", "yes", 1])
+def test_draft_consent_rejects_truthy_non_booleans(coerced: object) -> None:
+    from tests.test_services.test_coach_session_plan import (
+        VALID_CONVERSATIONAL_REQUEST,
+    )
+
+    payload = json.loads(json.dumps(VALID_CONVERSATIONAL_REQUEST))
+    payload["conversational_config"]["evidence_selection"]["draft_evidence_consent"] = (
+        coerced
+    )
+
+    from app.schemas.coach import CreateSessionRequest
+
+    with pytest.raises(ValidationError):
+        CreateSessionRequest.model_validate(payload)
+
+
+def test_strict_contract_still_accepts_native_json_arrays_objects_and_literals() -> (
+    None
+):
+    parsed = ConversationCommandRequest.model_validate_json(
+        json.dumps(command("rebuild_plan", {"refresh_sources": True}))
+    )
+
+    assert parsed.command_type == "rebuild_plan"
+    assert parsed.payload.refresh_sources is True
+
+
+@pytest.mark.parametrize("model_name", ["attempt", "processing"])
+def test_retry_projection_rejects_consumed_count_above_snapshot_limit(
+    model_name: str,
+) -> None:
+    payload = valid_live_view()
+    if model_name == "attempt":
+        payload["active_attempt"]["processing_retry_count"] = 3
+        payload["active_attempt"]["processing_retry_limit"] = 2
+        payload["active_attempt"]["processing_retries_remaining"] = 0
+    else:
+        payload["processing"]["retry_count"] = 3
+        payload["processing"]["retry_limit"] = 2
+        payload["processing"]["retries_remaining"] = 0
+
+    with pytest.raises(ValidationError):
+        ConversationLiveView.model_validate(payload)
+
+
+def test_question_read_enforces_planned_and_adaptive_shape_invariants() -> None:
+    planned = valid_live_view()["active_question"]
+    assert ConversationalQuestionRead.model_validate(planned).question_kind == "planned"
+
+    invalid_planned = {**planned, "parent_question_id": "question_parent"}
+    invalid_follow_up = {
+        **planned,
+        "id": "question_followup",
+        "question_kind": "adaptive_follow_up",
+        "root_question_id": None,
+        "parent_question_id": "question_parent",
+        "follow_up_depth": 1,
+        "follow_up_reason": "clarify_example",
+    }
+    valid_follow_up = {
+        **invalid_follow_up,
+        "root_question_id": "question_root",
+    }
+
+    with pytest.raises(ValidationError):
+        ConversationalQuestionRead.model_validate(invalid_planned)
+    with pytest.raises(ValidationError):
+        ConversationalQuestionRead.model_validate(invalid_follow_up)
+    assert (
+        ConversationalQuestionRead.model_validate(valid_follow_up).follow_up_depth == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "created_by", "edit_reason", "valid"),
+    [
+        ("transcription", "system", None, True),
+        ("recovered_transcription", "system", None, True),
+        ("candidate_text", "candidate", None, True),
+        ("candidate_edit", "candidate", "transcription_error", True),
+        ("transcription", "candidate", None, False),
+        ("candidate_text", "system", None, False),
+        ("candidate_edit", "candidate", None, False),
+        ("candidate_edit", "candidate", "other", False),
+    ],
+)
+def test_transcript_read_enforces_source_actor_and_edit_reason_combinations(
+    source: str, created_by: str, edit_reason: str | None, valid: bool
+) -> None:
+    payload = {
+        "id": "transcript_1",
+        "version_number": 1,
+        "transcript": "Canonical answer",
+        "source": source,
+        "edit_reason": edit_reason,
+        "created_by": created_by,
+        "processing_generation": 1,
+        "created_at": datetime(2026, 8, 5, tzinfo=timezone.utc),
+    }
+
+    if valid:
+        assert (
+            TranscriptVersionRead.model_validate(payload).transcript
+            == "Canonical answer"
+        )
+    else:
+        with pytest.raises(ValidationError):
+            TranscriptVersionRead.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [None, "", "  ", "line one\r\nline two", "x" * 30_001],
+    ids=["missing", "empty", "whitespace", "noncanonical-newline", "overflow"],
+)
+def test_transcript_read_rejects_missing_empty_noncanonical_or_oversized_text(
+    transcript: str | None,
+) -> None:
+    payload = {
+        "id": "transcript_1",
+        "version_number": 1,
+        "transcript": transcript,
+        "source": "candidate_text",
+        "edit_reason": None,
+        "created_by": "candidate",
+        "processing_generation": 1,
+        "created_at": datetime(2026, 8, 5, tzinfo=timezone.utc),
+    }
+
+    with pytest.raises(ValidationError):
+        TranscriptVersionRead.model_validate(payload)
+
+
+def test_persisted_plan_role_and_interview_enforce_cross_field_invariants() -> None:
+    common_role = {
+        "title": "Architect",
+        "role_family": "solution_architecture",
+        "role_family_label": None,
+        "role_level": "senior",
+        "industry": "technology",
+    }
+    with pytest.raises(ValidationError):
+        PlanRole.model_validate({**common_role, "role_family_label": "Custom role"})
+    with pytest.raises(ValidationError):
+        PlanRole.model_validate(
+            {**common_role, "role_family": "other", "role_family_label": None}
+        )
+    assert (
+        PlanRole.model_validate(
+            {**common_role, "role_family": "other", "role_family_label": "Custom role"}
+        ).role_family
+        == "other"
+    )
+
+    interview = {
+        "type": "mixed",
+        "difficulty": "realistic",
+        "duration_minutes": 30,
+        "planned_question_count": 6,
+        "focus_areas": ["architecture"],
+        "locale": "en-GB",
+        "allowed_answer_modes": ["audio", "text"],
+    }
+    with pytest.raises(ValidationError):
+        PlanInterview.model_validate(
+            {**interview, "focus_areas": ["architecture", "architecture"]}
+        )
+    with pytest.raises(ValidationError):
+        PlanInterview.model_validate(
+            {**interview, "allowed_answer_modes": ["audio", "audio"]}
+        )
+    with pytest.raises(ValidationError):
+        PlanInterview.model_validate({**interview, "locale": "EN-gb"})
+
+
+@pytest.mark.parametrize(
+    ("status", "state"),
+    [
+        ("setup", "planning"),
+        ("setup", "ready"),
+        ("active", "asking"),
+        ("active", "processing_answer"),
+        ("active", "reporting"),
+        ("completed", "completed"),
+        ("abandoned", "abandoned"),
+        ("failed", "failed"),
+    ],
+)
+def test_live_view_accepts_valid_status_state_pairs(status: str, state: str) -> None:
+    payload = valid_live_view()
+    payload.update(status=status, conversation_state=state)
+
+    assert ConversationLiveView.model_validate(payload).conversation_state == state
+
+
+@pytest.mark.parametrize(
+    ("status", "state"),
+    [
+        ("setup", "asking"),
+        ("active", "ready"),
+        ("completed", "reporting"),
+        ("abandoned", "completed"),
+        ("failed", "recoverable_error"),
+    ],
+)
+def test_live_view_rejects_contradictory_status_state_pairs(
+    status: str, state: str
+) -> None:
+    payload = valid_live_view()
+    payload.update(status=status, conversation_state=state)
+
+    with pytest.raises(ValidationError):
+        ConversationLiveView.model_validate(payload)
+
+
+VALID_STATUS_STATE_PAIRS = {
+    ("setup", "planning"),
+    ("setup", "ready"),
+    ("setup", "recoverable_error"),
+    ("active", "asking"),
+    ("active", "listening"),
+    ("active", "processing_answer"),
+    ("active", "awaiting_next_action"),
+    ("active", "coaching"),
+    ("active", "asking_follow_up"),
+    ("active", "advancing"),
+    ("active", "paused"),
+    ("active", "reporting"),
+    ("active", "recoverable_error"),
+    ("completed", "completed"),
+    ("abandoned", "abandoned"),
+    ("failed", "failed"),
+}
+ALL_STATUSES = ("setup", "active", "completed", "abandoned", "failed")
+ALL_STATES = (
+    "planning",
+    "ready",
+    "asking",
+    "listening",
+    "processing_answer",
+    "awaiting_next_action",
+    "coaching",
+    "asking_follow_up",
+    "advancing",
+    "paused",
+    "reporting",
+    "completed",
+    "recoverable_error",
+    "abandoned",
+    "failed",
+)
+
+
+@pytest.mark.parametrize(("status", "state"), product(ALL_STATUSES, ALL_STATES))
+def test_live_view_status_state_matrix_is_exhaustive(status: str, state: str) -> None:
+    payload = valid_live_view()
+    payload.update(status=status, conversation_state=state)
+
+    if (status, state) in VALID_STATUS_STATE_PAIRS:
+        assert ConversationLiveView.model_validate(payload).conversation_state == state
+    else:
+        with pytest.raises(ValidationError):
+            ConversationLiveView.model_validate(payload)
+
+
+def test_command_result_rejects_unknown_state_and_duplicate_allowed_commands() -> None:
+    result = {
+        "command_id": "command_1",
+        "result": "completed",
+        "session_id": "session_1",
+        "state": "listening",
+        "state_version": 8,
+        "active_question_id": "question_1",
+        "active_attempt_id": "attempt_1",
+        "async_job_id": None,
+        "allowed_commands": ["finish_answer", "finish_answer"],
+        "contract_version": "coach_conversation_command_result_v1",
+    }
+
+    with pytest.raises(ValidationError):
+        ConversationCommandResult.model_validate(result)
+    with pytest.raises(ValidationError):
+        ConversationCommandResult.model_validate(
+            {**result, "state": "invented", "allowed_commands": []}
+        )
+
+
+@pytest.mark.parametrize("code", list(ERROR_REGISTRY))
+def test_error_schemas_derive_exact_registry_message_and_retryability(
+    code: str,
+) -> None:
+    definition = ERROR_REGISTRY[code]
+    response = ConversationErrorResponse.model_validate(
+        {"error": {"code": code, "correlation_id": "correlation_1"}}
+    )
+    projection = RecoverableErrorProjection.model_validate(
+        {"code": code, "scope": "attempt_processing"}
+    )
+
+    assert (response.error.message, response.error.retryable) == (
+        definition.message,
+        definition.retryable,
+    )
+    assert (projection.message, projection.retryable) == (
+        definition.message,
+        definition.retryable,
+    )
+
+
+def test_error_schemas_reject_registry_metadata_mismatches() -> None:
+    definition = ERROR_REGISTRY["coach_conversation_invalid_state"]
+    for mismatch in (
+        {"message": definition.message + " changed"},
+        {"retryable": not definition.retryable},
+    ):
+        with pytest.raises(ValidationError):
+            ConversationErrorResponse.model_validate(
+                {
+                    "error": {
+                        "code": "coach_conversation_invalid_state",
+                        "correlation_id": "correlation_1",
+                        **mismatch,
+                    }
+                }
+            )
+        with pytest.raises(ValidationError):
+            RecoverableErrorProjection.model_validate(
+                {
+                    "code": "coach_conversation_invalid_state",
+                    "scope": "attempt_processing",
+                    **mismatch,
+                }
+            )

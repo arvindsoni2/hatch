@@ -28,6 +28,7 @@ from ..services.coach_conversational_contracts import (
     REPORT_CONTRACT,
     RUBRIC_CONTRACT,
 )
+from ..services.coach_conversation_state import TRANSITIONS
 
 
 SAFE_TOKEN_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
@@ -94,7 +95,7 @@ TranscriptRetentionPolicy = Literal["retain"]
 class StrictContractModel(BaseModel):
     """Base for new contracts: reject unknown fields and non-JSON numbers."""
 
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
 
 def _normalized_bounded_text(
@@ -489,18 +490,63 @@ ConversationCommandResultState = Literal[
     "stale_claim",
 ]
 
+ConversationState = Literal[
+    "planning",
+    "ready",
+    "asking",
+    "listening",
+    "processing_answer",
+    "awaiting_next_action",
+    "coaching",
+    "asking_follow_up",
+    "advancing",
+    "paused",
+    "reporting",
+    "completed",
+    "recoverable_error",
+    "abandoned",
+    "failed",
+]
+ConversationStatus = Literal["setup", "active", "completed", "abandoned", "failed"]
+
+# Candidate-command pairs come from Task 1's authoritative transition registry.
+# These are the additional worker/transient/terminal pairs which never expose a
+# candidate command while persisted.
+_INTERNAL_STATUS_STATE_PAIRS = frozenset(
+    {
+        ("planning", "setup"),
+        ("processing_answer", "active"),
+        ("asking_follow_up", "active"),
+        ("advancing", "active"),
+        ("reporting", "active"),
+        ("abandoned", "abandoned"),
+        ("failed", "failed"),
+    }
+)
+VALID_STATUS_STATE_PAIRS = (
+    frozenset(pair for rule in TRANSITIONS.values() for pair in rule.allowed_pairs)
+    | _INTERNAL_STATUS_STATE_PAIRS
+)
+
 
 class ConversationCommandResult(StrictContractModel):
     command_id: SafeToken
     result: ConversationCommandResultState
     session_id: SafeToken
-    state: str
+    state: ConversationState
     state_version: NonNegativeInt
     active_question_id: SafeToken | None
     active_attempt_id: SafeToken | None
     async_job_id: SafeToken | None
     allowed_commands: list[CommandType]
     contract_version: Literal[CONVERSATION_COMMAND_RESULT_CONTRACT]
+
+    @field_validator("allowed_commands")
+    @classmethod
+    def require_unique_allowed_commands(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("allowed_commands must be unique")
+        return value
 
 
 QuestionCategory = Literal[
@@ -520,31 +566,89 @@ class ConversationalQuestionRead(StrictContractModel):
     root_question_id: SafeToken | None
     parent_question_id: SafeToken | None
     follow_up_depth: Annotated[int, Field(ge=0, le=2)]
+    follow_up_reason: (
+        Literal[
+            "clarify_example",
+            "measurable_result",
+            "personal_action",
+            "reasoning",
+            "role_depth",
+            "resolve_ambiguity",
+            "evidence_consistency",
+        ]
+        | None
+    ) = None
     attempts_created_count: Annotated[int, Field(ge=0, le=20)]
     attempt_limit: Annotated[int, Field(ge=1, le=20)]
     attempts_remaining: NonNegativeInt
 
     @model_validator(mode="after")
-    def validate_attempt_budget(self) -> Self:
+    def validate_read_invariants(self) -> Self:
         if self.attempts_created_count > self.attempt_limit:
             raise ValueError("attempts_created_count exceeds the attempt limit")
-        expected = max(self.attempt_limit - self.attempts_created_count, 0)
+        expected = self.attempt_limit - self.attempts_created_count
         if self.attempts_remaining != expected:
             raise ValueError("attempts_remaining does not match the attempt budget")
+        if self.question_kind == "planned":
+            if (
+                self.root_question_id is not None
+                or self.parent_question_id is not None
+                or self.follow_up_reason is not None
+                or self.follow_up_depth != 0
+            ):
+                raise ValueError("planned questions cannot contain follow-up metadata")
+        elif (
+            self.root_question_id is None
+            or self.parent_question_id is None
+            or self.follow_up_reason is None
+            or self.follow_up_depth not in (1, 2)
+        ):
+            raise ValueError(
+                "adaptive follow-ups require root, parent, reason, and depth"
+            )
         return self
 
 
 class TranscriptVersionRead(StrictContractModel):
     id: SafeToken
     version_number: Annotated[int, Field(ge=1)]
-    transcript: Annotated[str, Field(max_length=30_000)] | None
+    transcript: Annotated[str, Field(min_length=1, max_length=30_000)]
     source: Literal[
         "transcription", "candidate_text", "candidate_edit", "recovered_transcription"
     ]
-    edit_reason: str | None = None
+    edit_reason: Literal["transcription_error"] | None = None
     created_by: Literal["system", "candidate"]
     processing_generation: NonNegativeInt | None
     created_at: datetime
+
+    @field_validator("transcript")
+    @classmethod
+    def require_canonical_transcript(cls, value: str) -> str:
+        normalized = (
+            unicodedata.normalize("NFC", value)
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
+        if value != normalized or not value.strip():
+            raise ValueError("transcript must be non-empty canonical NFC/LF text")
+        return value
+
+    @model_validator(mode="after")
+    def validate_source_actor(self) -> Self:
+        if self.source in ("transcription", "recovered_transcription"):
+            valid = self.created_by == "system" and self.edit_reason is None
+        elif self.source == "candidate_text":
+            valid = self.created_by == "candidate" and self.edit_reason is None
+        else:
+            valid = (
+                self.created_by == "candidate"
+                and self.edit_reason == "transcription_error"
+            )
+        if not valid:
+            raise ValueError(
+                "transcript source, actor, and edit reason are inconsistent"
+            )
+        return self
 
 
 class InterviewAttemptRead(StrictContractModel):
@@ -585,7 +689,9 @@ class InterviewAttemptRead(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_processing_retry_budget(self) -> Self:
-        expected = max(self.processing_retry_limit - self.processing_retry_count, 0)
+        if self.processing_retry_count > self.processing_retry_limit:
+            raise ValueError("processing retry count exceeds its snapshotted limit")
+        expected = self.processing_retry_limit - self.processing_retry_count
         if self.processing_retries_remaining != expected:
             raise ValueError(
                 "processing_retries_remaining does not match the retry budget"
@@ -626,7 +732,9 @@ class ProcessingProjection(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_retry_budget(self) -> Self:
-        expected = max(self.retry_limit - self.retry_count, 0)
+        if self.retry_count > self.retry_limit:
+            raise ValueError("processing retry count exceeds its snapshotted limit")
+        expected = self.retry_limit - self.retry_count
         if self.retries_remaining != expected:
             raise ValueError("retries_remaining does not match the retry budget")
         return self
@@ -678,40 +786,54 @@ class SilencePolicy(StrictContractModel):
         return self
 
 
-class RecoverableErrorProjection(StrictContractModel):
+class RegisteredErrorMetadata(StrictContractModel):
     code: Annotated[str, Field(min_length=1, max_length=128)]
+    message: Annotated[str, Field(min_length=1, max_length=500)]
+    retryable: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_registry_metadata(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        code = value.get("code")
+        if not isinstance(code, str) or code not in ERROR_REGISTRY:
+            return value
+        definition = ERROR_REGISTRY[code]
+        derived = dict(value)
+        for field_name, expected in (
+            ("message", definition.message),
+            ("retryable", definition.retryable),
+        ):
+            supplied = derived.get(field_name, expected)
+            if supplied != expected:
+                raise ValueError(
+                    f"{field_name} does not match the canonical error registry"
+                )
+            derived[field_name] = expected
+        return derived
+
+    @field_validator("code")
+    @classmethod
+    def require_registered_error_code(cls, value: str) -> str:
+        if value not in ERROR_REGISTRY:
+            raise ValueError("unregistered conversational error code")
+        return value
+
+
+class RecoverableErrorProjection(RegisteredErrorMetadata):
     scope: Literal[
         "setup", "attempt_processing", "initial_report", "completed_report_rebuild"
     ]
-    retryable: bool
     details: Annotated[dict[str, str | int | bool | None], Field(max_length=20)] = (
         Field(default_factory=dict)
     )
 
 
-ConversationState = Literal[
-    "planning",
-    "ready",
-    "asking",
-    "listening",
-    "processing_answer",
-    "awaiting_next_action",
-    "coaching",
-    "asking_follow_up",
-    "advancing",
-    "paused",
-    "reporting",
-    "completed",
-    "recoverable_error",
-    "abandoned",
-    "failed",
-]
-
-
 class ConversationLiveView(StrictContractModel):
     session_id: SafeToken
     experience_version: Literal["conversational_v1"]
-    status: Literal["setup", "active", "completed", "abandoned", "failed"]
+    status: ConversationStatus
     conversation_state: ConversationState
     state_version: NonNegativeInt
     activity_version: NonNegativeInt
@@ -737,24 +859,20 @@ class ConversationLiveView(StrictContractModel):
             raise ValueError("allowed_commands must be unique")
         return value
 
+    @model_validator(mode="after")
+    def validate_status_state_pair(self) -> Self:
+        if (self.conversation_state, self.status) not in VALID_STATUS_STATE_PAIRS:
+            raise ValueError("conversation state contradicts the coarse session status")
+        return self
 
-class ConversationError(StrictContractModel):
-    code: Annotated[str, Field(min_length=1, max_length=128)]
-    message: Annotated[str, Field(min_length=1, max_length=500)]
-    retryable: bool
+
+class ConversationError(RegisteredErrorMetadata):
     current_state: ConversationState | None = None
     current_state_version: NonNegativeInt | None = None
     correlation_id: SafeToken
     details: Annotated[dict[str, str | int | bool | None], Field(max_length=20)] = (
         Field(default_factory=dict)
     )
-
-    @field_validator("code")
-    @classmethod
-    def require_registered_error_code(cls, value: str) -> str:
-        if value not in ERROR_REGISTRY:
-            raise ValueError("unregistered conversational error code")
-        return value
 
 
 class ConversationErrorResponse(StrictContractModel):
@@ -768,6 +886,43 @@ class PlanRole(StrictContractModel):
     role_level: RoleLevel
     industry: Annotated[str, Field(min_length=1, max_length=64)] | None
 
+    @field_validator("title")
+    @classmethod
+    def require_canonical_title(cls, value: str) -> str:
+        normalized = unicodedata.normalize("NFC", value).strip()
+        if value != normalized:
+            raise ValueError(
+                "stored plan role title must be canonical trimmed NFC text"
+            )
+        return value
+
+    @field_validator("role_family_label")
+    @classmethod
+    def require_canonical_role_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = unicodedata.normalize("NFC", value).strip()
+        if value != normalized:
+            raise ValueError(
+                "stored role family label must be canonical trimmed NFC text"
+            )
+        return value
+
+    @field_validator("industry")
+    @classmethod
+    def require_canonical_industry(cls, value: str | None) -> str | None:
+        if value is not None and not INDUSTRY_RE.fullmatch(value):
+            raise ValueError("stored industry must be a canonical normalized slug")
+        return value
+
+    @model_validator(mode="after")
+    def validate_role_label(self) -> Self:
+        if self.role_family == "other" and self.role_family_label is None:
+            raise ValueError("other role families require a label")
+        if self.role_family != "other" and self.role_family_label is not None:
+            raise ValueError("registered role families cannot contain a custom label")
+        return self
+
 
 class PlanInterview(StrictContractModel):
     type: InterviewType
@@ -778,7 +933,19 @@ class PlanInterview(StrictContractModel):
     locale: str
     allowed_answer_modes: Annotated[list[AnswerMode], Field(min_length=1, max_length=2)]
 
-    _normalize_locale = field_validator("locale")(normalize_locale)
+    @field_validator("locale")
+    @classmethod
+    def require_canonical_locale(cls, value: str) -> str:
+        if value != normalize_locale(value):
+            raise ValueError("stored plan locale must already be canonical")
+        return value
+
+    @field_validator("focus_areas", "allowed_answer_modes")
+    @classmethod
+    def require_unique_values(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("persisted plan lists must be unique")
+        return value
 
 
 class EvidenceSnapshot(StrictContractModel):

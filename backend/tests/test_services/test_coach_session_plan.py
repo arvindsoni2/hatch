@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -292,7 +293,7 @@ def test_session_plan_exposes_source_selection_retention_and_contracts() -> None
                 "key": "compatibility_01",
                 "version": "coach_progress_compatibility_v1",
             },
-            "created_at": "2026-08-05T12:00:00Z",
+            "created_at": datetime(2026, 8, 5, 12, tzinfo=timezone.utc),
         }
     )
 
