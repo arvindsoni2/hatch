@@ -437,6 +437,40 @@ async def test_conversational_queue_claims_before_dispatch_and_worker_uses_fresh
 
 
 @pytest.mark.asyncio
+async def test_conversational_setup_fails_when_linked_application_has_no_effective_jd(
+    db_session,
+) -> None:
+    application = Application(
+        id="application_without_jd",
+        status="discovered",
+        priority="normal",
+    )
+    db_session.add(application)
+    await db_session.commit()
+    payload = _conversation_request().model_dump(mode="json")
+    payload.update({"application_id": application.id, "jd_text": None})
+    request = CreateSessionRequest.model_validate(payload)
+    session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+
+    with (
+        patch(
+            "app.services.coach_session_queue.settings.HATCH_COACH_CONVERSATIONAL_ENABLED",
+            True,
+        ),
+        patch("app.services.coach_session_queue.AsyncJobService.run") as run,
+        patch("app.database.AsyncSessionLocal", session_factory),
+    ):
+        result = await queue_coach_session(request, db_session)
+        await run.call_args.args[1]
+
+    db_session.expire_all()
+    session = await db_session.get(InterviewSession, result["session_id"])
+    job = await db_session.get(AsyncJob, result["job_id"])
+    assert session is not None and session.conversation_state == "failed"
+    assert job is not None and job.error == "coach_contract_unsupported"
+
+
+@pytest.mark.asyncio
 async def test_conversational_worker_cancellation_releases_setup_claim(
     db_session,
 ) -> None:

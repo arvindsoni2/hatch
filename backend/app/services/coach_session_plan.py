@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import unicodedata
 import uuid
-from collections.abc import Sequence
+import zipfile
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.async_job import AsyncJob
@@ -72,19 +74,52 @@ _CATEGORIES = frozenset(
 _BEHAVIOURAL = ("behavioural", "situational", "culture")
 _ROLE_SPECIFIC = ("technical", "domain", "commercial")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-_SECRET_PATTERNS = (
-    re.compile(
-        r"(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----"
-    ),
-    re.compile(
-        r"(?i)\b(?:api[_-]?key|authorization|password|secret|access[_-]?token)\b"
-        r"\s*[:=]\s*[^\s,;]+"
-    ),
-    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"),
+_PEM_PATTERN = re.compile(
+    r"(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----"
 )
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)([\"']?(?:aws_access_key_id|aws_secret_access_key|client_secret|"
+    r"api[_-]?key|authorization|password|secret|access[_-]?token|token)[\"']?"
+    r"\s*[:=]\s*)(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)"
+)
+_BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _EMAIL_PATTERN = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
-_PHONE_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{7,}\d)(?!\w)")
+_PHONE_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{6,}\d)(?!\w)")
+_YEAR_RANGE_PATTERN = re.compile(r"^\d{4}\s*[-–—]\s*\d{4}$")
+_SENSITIVE_JSON_KEYS = frozenset(
+    {
+        "aws_access_key_id",
+        "aws_secret_access_key",
+        "client_secret",
+        "password",
+        "api_key",
+        "apikey",
+        "token",
+        "access_token",
+        "authorization",
+        "secret",
+        "email",
+        "email_address",
+        "phone",
+        "phone_number",
+        "mobile",
+        "telephone",
+        "address",
+        "postcode",
+        "postal_code",
+        "dob",
+        "date_of_birth",
+    }
+)
+_SENSITIVE_JSON_CONTAINERS = frozenset(
+    {"personal", "personal_details", "contact", "contact_details"}
+)
 _MAX_SOURCE_FILE_BYTES = 10 * 1024 * 1024
+_MAX_EVIDENCE_SNAPSHOT_CODEPOINTS = 2000
+_MAX_DOCX_ENTRIES = 512
+_MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+_MAX_PDF_PAGES = 100
+_SUPPORTED_CV_EXTENSIONS = frozenset({".docx", ".pdf", ".txt", ".md", ".json"})
 
 
 def _canonical_json(value: object) -> str:
@@ -185,11 +220,13 @@ async def load_claim_planning_request(
     request: CreateSessionRequest | None = None,
     claim: SetupClaim | None = None,
     current_retention: dict[str, str] | None = None,
+    now: datetime | None = None,
 ) -> CreateSessionRequest:
     """Resolve initial JD fallback or reload a claim's authoritative stored request."""
     if (request is None) == (claim is None):
         raise ValueError("provide exactly one of request or claim")
     if claim is not None:
+        checked_at = now or datetime.utcnow()
         row = (
             await db.execute(
                 select(
@@ -200,18 +237,20 @@ async def load_claim_planning_request(
                     InterviewSession.setup_job_id == claim.job_id,
                     InterviewSession.setup_claim_token == claim.claim_token,
                     InterviewSession.setup_generation == claim.setup_generation,
+                    InterviewSession.status == "setup",
                     InterviewSession.conversation_state == "planning",
+                    InterviewSession.setup_claim_expires_at >= checked_at,
+                    InterviewSession.deletion_state == "not_requested",
                 )
             )
         ).one_or_none()
         if row is None or row.planning_request_json is None:
             raise SessionPlanError("coach_conversation_invalid_state")
-        payload = copy_json(row.planning_request_json)
-        if claim.rebuild and row.retention_policy_json is not None:
-            payload["conversational_config"]["retention"] = copy_json(
-                row.retention_policy_json
-            )
-        return CreateSessionRequest.model_validate(payload)
+        return _effective_planning_request(
+            row.planning_request_json,
+            retention_policy=row.retention_policy_json,
+            rebuild=claim.rebuild,
+        )
 
     assert request is not None
     payload = request.model_dump(mode="json")
@@ -230,6 +269,18 @@ async def load_claim_planning_request(
     return CreateSessionRequest.model_validate(payload)
 
 
+def _effective_planning_request(
+    planning_request: dict[str, Any],
+    *,
+    retention_policy: dict[str, str] | None,
+    rebuild: bool,
+) -> CreateSessionRequest:
+    payload = copy_json(planning_request)
+    if rebuild and retention_policy is not None:
+        payload["conversational_config"]["retention"] = copy_json(retention_policy)
+    return CreateSessionRequest.model_validate(payload)
+
+
 def copy_json(value: Any) -> Any:
     """Round-trip JSON-compatible state without retaining mutable ORM containers."""
     return json.loads(_canonical_json(value))
@@ -240,11 +291,19 @@ async def load_session_plan_sources(
     request: CreateSessionRequest,
     *,
     now: datetime | None = None,
+    managed_cv_roots: Sequence[Path] | None = None,
+    claim: SetupClaim | None = None,
 ) -> tuple[EvidenceSource, ...]:
     """Select the latest V6-eligible immutable source snapshots."""
+    if claim is not None:
+        effective_request = await load_claim_planning_request(db, claim=claim)
+        if effective_request.model_dump(mode="json") != request.model_dump(mode="json"):
+            raise SessionPlanError("coach_conversation_invalid_state")
     config = request.conversational_config
     if config is None:
         raise SessionPlanError("coach_conversation_invalid_state")
+    if not request.jd_text:
+        raise SessionPlanError("coach_contract_unsupported")
     selected: list[EvidenceSource] = []
     application: Application | None = None
     if request.application_id is not None:
@@ -271,13 +330,16 @@ async def load_session_plan_sources(
                     source_record_id=approved.id,
                     source_record_version=str(approved.version),
                     approval_state="approved",
+                    managed_cv_roots=managed_cv_roots,
                 )
             )
         elif (
             config.evidence_selection.application_cv == "current_if_no_approved"
             and application.cv_version
         ):
-            text = _read_supported_cv(application.cv_version)
+            text = _read_supported_cv(
+                application.cv_version, managed_cv_roots=managed_cv_roots
+            )
             redacted = _redact_evidence_text(text)
             selected.append(
                 EvidenceSource(
@@ -312,28 +374,23 @@ async def load_session_plan_sources(
 
     if config.evidence_selection.company_research == "include_if_fresh":
         timestamp = now or datetime.utcnow()
-        candidates = (
-            (
-                await db.execute(
-                    select(CompanyResearch)
-                    .where(CompanyResearch.expires_at >= timestamp)
-                    .order_by(
-                        CompanyResearch.cached_at.desc(), CompanyResearch.id.asc()
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
         normalized_company = _normalized_name(request.company_name)
-        research = next(
-            (
-                candidate
-                for candidate in candidates
-                if _normalized_name(candidate.company_name) == normalized_company
-            ),
-            None,
-        )
+        research = (
+            await db.execute(
+                select(CompanyResearch)
+                .where(
+                    CompanyResearch.expires_at >= timestamp,
+                    _sql_normalized_name(CompanyResearch.company_name)
+                    == normalized_company,
+                )
+                .order_by(CompanyResearch.cached_at.desc(), CompanyResearch.id.asc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if research is not None and (
+            _normalized_name(research.company_name) != normalized_company
+        ):
+            raise SessionPlanError("coach_grounding_source_unavailable")
         if research is not None:
             research_text = _structured_research_text(research)
             if not research_text:
@@ -358,6 +415,9 @@ async def load_session_plan_sources(
         or sum(len(item.snapshot_text) for item in selected) > 40000
     ):
         raise SessionPlanError("coach_contract_unsupported")
+    if claim is not None:
+        await db.flush()
+        await load_claim_planning_request(db, claim=claim)
     return tuple(selected)
 
 
@@ -368,10 +428,13 @@ def _document_evidence_source(
     source_record_id: str,
     source_record_version: str,
     approval_state: str,
+    managed_cv_roots: Sequence[Path] | None,
 ) -> EvidenceSource:
     if not locator:
         raise SessionPlanError("coach_grounding_source_unavailable")
-    redacted = _redact_evidence_text(_read_supported_cv(locator))
+    redacted = _redact_evidence_text(
+        _read_supported_cv(locator, managed_cv_roots=managed_cv_roots)
+    )
     return EvidenceSource(
         evidence_id=evidence_id,
         source_type="application_cv",
@@ -383,27 +446,37 @@ def _document_evidence_source(
     )
 
 
-def _read_supported_cv(locator: str) -> str:
-    path = Path(locator)
+def _read_supported_cv(
+    locator: str, *, managed_cv_roots: Sequence[Path] | None = None
+) -> str:
     try:
-        if not path.is_file() or path.stat().st_size > _MAX_SOURCE_FILE_BYTES:
-            raise SessionPlanError("coach_grounding_source_unavailable")
+        path = _resolve_managed_cv_path(locator, managed_cv_roots)
         suffix = path.suffix.casefold()
         if suffix == ".docx":
+            with zipfile.ZipFile(path) as archive:
+                entries = archive.infolist()
+                if (
+                    len(entries) > _MAX_DOCX_ENTRIES
+                    or sum(entry.file_size for entry in entries)
+                    > _MAX_DOCX_UNCOMPRESSED_BYTES
+                    or any(entry.flag_bits & 0x1 for entry in entries)
+                ):
+                    raise SessionPlanError("coach_grounding_source_unavailable")
             from docx import Document  # type: ignore  # noqa: PLC0415
 
             document = Document(str(path))
-            value = "\n".join(
+            value = _bounded_text_join(
                 paragraph.text for paragraph in document.paragraphs if paragraph.text
             )
         elif suffix == ".pdf":
             from pypdf import PdfReader  # type: ignore  # noqa: PLC0415
 
-            value = "\n".join(
-                page.extract_text() or "" for page in PdfReader(str(path)).pages
-            )
+            pages = PdfReader(str(path)).pages
+            if len(pages) > _MAX_PDF_PAGES:
+                raise SessionPlanError("coach_contract_unsupported")
+            value = _bounded_text_join(page.extract_text() or "" for page in pages)
         elif suffix in {".txt", ".md", ".json"}:
-            value = path.read_text(encoding="utf-8")
+            value = _read_bounded_text(path)
         else:
             raise SessionPlanError("coach_grounding_source_unavailable")
     except SessionPlanError:
@@ -413,6 +486,79 @@ def _read_supported_cv(locator: str) -> str:
     if not value.strip():
         raise SessionPlanError("coach_grounding_source_unavailable")
     return value
+
+
+def _default_managed_cv_roots() -> tuple[Path, ...]:
+    roots = [Path(__file__).resolve().parents[3] / "data" / "generated"]
+    data_dir = os.environ.get("DATA_DIR")
+    if data_dir:
+        roots.append(Path(data_dir) / "generated")
+    return tuple(dict.fromkeys(root.absolute() for root in roots))
+
+
+def _resolve_managed_cv_path(
+    locator: str, managed_cv_roots: Sequence[Path] | None
+) -> Path:
+    candidate = Path(locator)
+    if candidate.suffix.casefold() not in _SUPPORTED_CV_EXTENSIONS:
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    lexical_candidate = Path(os.path.abspath(candidate))
+    roots = managed_cv_roots or _default_managed_cv_roots()
+    for configured_root in roots:
+        lexical_root = Path(os.path.abspath(configured_root))
+        try:
+            relative = lexical_candidate.relative_to(lexical_root)
+        except ValueError:
+            continue
+        current = lexical_root
+        if current.is_symlink():
+            continue
+        unsafe = False
+        for part in relative.parts:
+            current /= part
+            if current.is_symlink():
+                unsafe = True
+                break
+        if unsafe:
+            continue
+        try:
+            resolved_root = lexical_root.resolve(strict=True)
+            resolved = lexical_candidate.resolve(strict=True)
+            resolved.relative_to(resolved_root)
+        except (OSError, ValueError):
+            continue
+        if resolved.is_file() and resolved.stat().st_size <= _MAX_SOURCE_FILE_BYTES:
+            return resolved
+    raise SessionPlanError("coach_grounding_source_unavailable")
+
+
+def _read_bounded_text(path: Path) -> str:
+    parts: list[str] = []
+    remaining = _MAX_EVIDENCE_SNAPSHOT_CODEPOINTS + 1
+    with path.open(encoding="utf-8", newline=None) as source:
+        while remaining > 0:
+            chunk = source.read(min(4096, remaining))
+            if not chunk:
+                break
+            parts.append(chunk)
+            remaining -= len(chunk)
+    return "".join(parts)
+
+
+def _bounded_text_join(values: Iterable[str]) -> str:
+    parts: list[str] = []
+    size = 0
+    for value in values:
+        if not value:
+            continue
+        prefix = "\n" if parts else ""
+        remaining = _MAX_EVIDENCE_SNAPSHOT_CODEPOINTS + 1 - size
+        if remaining <= 0:
+            break
+        fragment = (prefix + value)[:remaining]
+        parts.append(fragment)
+        size += len(fragment)
+    return "".join(parts)
 
 
 def _master_cv_sources() -> list[EvidenceSource]:
@@ -473,22 +619,18 @@ async def _question_bank_sources(
         confidences = ("draft", "reviewed", "final")
     stmt = select(QuestionBankItem).where(
         QuestionBankItem.archived_at.is_(None),
-        QuestionBankItem.confidence.in_(confidences),
+        or_(
+            QuestionBankItem.type == "company_research_note",
+            QuestionBankItem.confidence.in_(confidences),
+        ),
     )
     explicit_ids = config.evidence_selection.selected_question_bank_record_ids
     if explicit_ids:
         stmt = stmt.where(QuestionBankItem.id.in_(explicit_ids))
-    rows = list(
-        (
-            await db.execute(
-                stmt.order_by(
-                    QuestionBankItem.updated_at.desc(), QuestionBankItem.id.asc()
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    stmt = stmt.order_by(
+        QuestionBankItem.updated_at.desc(), QuestionBankItem.id.asc()
+    ).limit(51 if explicit_ids else 31)
+    rows = list((await db.execute(stmt)).scalars().all())
     if explicit_ids and {row.id for row in rows} != set(explicit_ids):
         raise SessionPlanError("coach_grounding_source_unavailable")
     approval = {"draft": "draft", "reviewed": "reviewed", "final": "reviewed_final"}
@@ -498,7 +640,11 @@ async def _question_bank_sources(
             source_type="question_bank",
             source_record_id=row.id,
             source_record_version=row.updated_at.isoformat(),
-            source_path="question_bank/answer",
+            source_path=(
+                "question_bank/company_research_note"
+                if row.type == "company_research_note"
+                else "question_bank/answer"
+            ),
             snapshot_text=_redact_evidence_text(
                 "\n".join(
                     value
@@ -514,7 +660,11 @@ async def _question_bank_sources(
                     if value
                 )
             ),
-            approval_state=approval[row.confidence],
+            approval_state=(
+                "context_only"
+                if row.type == "company_research_note"
+                else approval[row.confidence]
+            ),
         )
         for row in rows
     ]
@@ -535,13 +685,60 @@ def _normalized_name(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+def _sql_normalized_name(column: Any) -> Any:
+    expression = func.lower(func.trim(column))
+    for whitespace in ("\t", "\n", "\r"):
+        expression = func.replace(expression, whitespace, " ")
+    for _ in range(8):
+        expression = func.replace(expression, "  ", " ")
+    return expression
+
+
 def _redact_evidence_text(value: str) -> str:
-    redacted = _normalize_snapshot(value)
-    for pattern in _SECRET_PATTERNS:
-        redacted = pattern.sub("[REDACTED]", redacted)
+    return _canonical_redacted_text(value)
+
+
+def _canonical_redacted_text(value: str) -> str:
+    normalized = _normalize_snapshot(value).strip()
+    try:
+        parsed = json.loads(normalized)
+    except (json.JSONDecodeError, TypeError):
+        redacted = normalized
+    else:
+        redacted = _canonical_json(_redact_json_value(parsed))
+    redacted = _PEM_PATTERN.sub("[REDACTED]", redacted)
+    redacted = _SECRET_ASSIGNMENT_PATTERN.sub(r"\1[REDACTED]", redacted)
+    redacted = _BEARER_PATTERN.sub("[REDACTED]", redacted)
     redacted = _EMAIL_PATTERN.sub("[REDACTED EMAIL]", redacted)
-    redacted = _PHONE_PATTERN.sub("[REDACTED PHONE]", redacted)
+    redacted = _PHONE_PATTERN.sub(_redact_phone_candidate, redacted)
     return redacted.strip()
+
+
+def _redact_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = re.sub(
+                r"[^a-z0-9]+",
+                "_",
+                unicodedata.normalize("NFKC", str(key)).casefold(),
+            ).strip("_")
+            if normalized_key in _SENSITIVE_JSON_KEYS | _SENSITIVE_JSON_CONTAINERS:
+                redacted[str(key)] = "[REDACTED]"
+            else:
+                redacted[str(key)] = _redact_json_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_json_value(item) for item in value]
+    return value
+
+
+def _redact_phone_candidate(match: re.Match[str]) -> str:
+    candidate = match.group(0)
+    if _YEAR_RANGE_PATTERN.fullmatch(candidate.strip()):
+        return candidate
+    digit_count = sum(character.isdigit() for character in candidate)
+    return "[REDACTED PHONE]" if 8 <= digit_count <= 15 else candidate
 
 
 class SessionPlanBuilder:
@@ -729,7 +926,10 @@ def _normalise_questions(
 
 
 def _validate_source_selection(
-    request: CreateSessionRequest, sources: Sequence[EvidenceSource]
+    request: CreateSessionRequest,
+    sources: Sequence[EvidenceSource],
+    *,
+    require_exact_selected_ids: bool = False,
 ) -> None:
     config = request.conversational_config
     assert config is not None
@@ -737,6 +937,8 @@ def _validate_source_selection(
     application_sources = [
         source for source in sources if source.source_type == "application_cv"
     ]
+    if len(application_sources) > 1:
+        raise ValueError("application CV source selection is inconsistent")
     if selection.application_cv == "none" and application_sources:
         raise ValueError("application CV evidence is excluded by the request")
     if selection.application_cv == "approved_only" and any(
@@ -769,9 +971,9 @@ def _validate_source_selection(
     ):
         raise ValueError("draft evidence requires selected explicit consent")
     allowed_question_approvals = (
-        {"reviewed", "reviewed_final", "draft"}
+        {"reviewed", "reviewed_final", "draft", "context_only"}
         if selection.question_bank == "include_drafts"
-        else {"reviewed", "reviewed_final"}
+        else {"reviewed", "reviewed_final", "context_only"}
         if selection.question_bank == "reviewed_final_only"
         else set()
     )
@@ -780,13 +982,40 @@ def _validate_source_selection(
         for source in question_sources
     ):
         raise ValueError("question bank evidence does not match the request")
+    if any(
+        source.approval_state == "context_only"
+        and source.source_path != "question_bank/company_research_note"
+        for source in question_sources
+    ):
+        raise ValueError("question bank context evidence type is invalid")
+    if require_exact_selected_ids and any(
+        source.approval_state != "context_only"
+        and source.source_path != "question_bank/answer"
+        for source in question_sources
+    ):
+        raise ValueError("question bank evidence type is invalid")
+    selected_ids = set(selection.selected_question_bank_record_ids)
+    if require_exact_selected_ids and selected_ids:
+        built_ids = [source.source_record_id for source in question_sources]
+        if set(built_ids) != selected_ids or len(built_ids) != len(selected_ids):
+            raise ValueError(
+                "question bank evidence does not match selected identifiers"
+            )
     company_sources = [
         source for source in sources if source.source_type == "company_research"
     ]
+    if len(company_sources) > 1:
+        raise ValueError("company research source selection is inconsistent")
     if selection.company_research == "exclude" and company_sources:
         raise ValueError("company research is excluded by the request")
     if any(source.approval_state != "context_only" for source in company_sources):
         raise ValueError("company research must remain context only")
+
+    job_sources = [source for source in sources if source.source_type == "job_posting"]
+    if (require_exact_selected_ids and len(job_sources) != 1) or any(
+        source.approval_state != "context_only" for source in job_sources
+    ):
+        raise ValueError("job posting evidence must remain context only")
 
     known_types = {
         "application_cv",
@@ -824,7 +1053,7 @@ def _build_evidence_records(
             raise ValueError("evidence record metadata is invalid")
         if source.approval_state == "draft" and not allow_drafts:
             raise ValueError("draft evidence requires selected explicit consent")
-        snapshot = _normalize_snapshot(source.snapshot_text)
+        snapshot = _canonical_redacted_text(source.snapshot_text)
         if not snapshot or len(snapshot) > 2000:
             raise ValueError("evidence snapshot exceeds its code-point bound")
         total_codepoints += len(snapshot)
@@ -1017,6 +1246,7 @@ async def persist_session_plan(
     build: SessionPlanBuild,
 ) -> None:
     """Replace all staged plan children inside the caller-owned transaction."""
+    _validate_canonical_evidence_build(build)
     await db.execute(
         delete(CoachSessionEvidenceRecord).where(
             CoachSessionEvidenceRecord.session_id == session_id
@@ -1074,23 +1304,15 @@ async def finalise_session_setup(
 ) -> bool:
     """Atomically publish a complete plan only for the live unexpired claim."""
     completed_at = now or datetime.utcnow()
-    live_request_json = await db.scalar(
-        select(InterviewSession.planning_request_json).where(
-            InterviewSession.id == claim.session_id,
-            InterviewSession.status == "setup",
-            InterviewSession.conversation_state == "planning",
-            InterviewSession.setup_job_id == claim.job_id,
-            InterviewSession.setup_claim_token == claim.claim_token,
-            InterviewSession.setup_generation == claim.setup_generation,
-            InterviewSession.setup_claim_expires_at >= completed_at,
-            InterviewSession.deletion_state == "not_requested",
+    try:
+        effective_request = await load_claim_planning_request(
+            db, claim=claim, now=completed_at
         )
-    )
-    if live_request_json is None:
+    except SessionPlanError:
         return False
     _validate_build_for_request(
         build,
-        request=CreateSessionRequest.model_validate(live_request_json),
+        request=effective_request,
     )
     nested = await db.begin_nested()
     try:
@@ -1216,41 +1438,24 @@ def _validate_build_for_request(
     )
     if canonical_questions != build.questions:
         raise ValueError("plan questions are not canonical")
-    rebuilt_evidence = _build_evidence_records(
-        [
-            EvidenceSource(
-                evidence_id=record.evidence_id,
-                source_type=record.source_type,
-                source_record_id=record.source_record_id,
-                source_record_version=record.source_record_version,
-                source_path=record.source_path,
-                snapshot_text=record.snapshot_text,
-                approval_state=record.approval_state,
-            )
-            for record in build.evidence_records
-        ],
-        allow_drafts=(
-            config.evidence_selection.question_bank == "include_drafts"
-            and config.evidence_selection.draft_evidence_consent
-        ),
-    )
-    if rebuilt_evidence != build.evidence_records:
-        raise ValueError("plan evidence records are not canonical")
-    expected_package_hash = "sha256:" + _sha256(
-        _canonical_json(
-            [
-                record.canonical_package_record()
-                for record in sorted(
-                    build.evidence_records, key=lambda candidate: candidate.evidence_id
-                )
-            ]
+    build_sources = [
+        EvidenceSource(
+            evidence_id=record.evidence_id,
+            source_type=record.source_type,
+            source_record_id=record.source_record_id,
+            source_record_version=record.source_record_version,
+            source_path=record.source_path,
+            snapshot_text=record.snapshot_text,
+            approval_state=record.approval_state,
         )
+        for record in build.evidence_records
+    ]
+    _validate_source_selection(
+        request,
+        build_sources,
+        require_exact_selected_ids=True,
     )
-    if (
-        plan.evidence_snapshot.record_count != len(build.evidence_records)
-        or plan.evidence_snapshot.package_hash != expected_package_hash
-    ):
-        raise ValueError("plan evidence snapshot does not match the build")
+    _validate_canonical_evidence_build(build)
     if (
         plan.role.title != request.role_title
         or plan.role.role_family != config.role_family
@@ -1268,6 +1473,45 @@ def _validate_build_for_request(
         or plan.retention != config.retention
     ):
         raise ValueError("plan snapshot does not match the normalized request")
+
+
+def _validate_canonical_evidence_build(build: SessionPlanBuild) -> None:
+    selection = build.plan.evidence_selection
+    rebuilt_evidence = _build_evidence_records(
+        [
+            EvidenceSource(
+                evidence_id=record.evidence_id,
+                source_type=record.source_type,
+                source_record_id=record.source_record_id,
+                source_record_version=record.source_record_version,
+                source_path=record.source_path,
+                snapshot_text=record.snapshot_text,
+                approval_state=record.approval_state,
+            )
+            for record in build.evidence_records
+        ],
+        allow_drafts=(
+            selection.question_bank == "include_drafts"
+            and selection.draft_evidence_consent
+        ),
+    )
+    if rebuilt_evidence != build.evidence_records:
+        raise ValueError("plan evidence records are not canonical")
+    expected_package_hash = "sha256:" + _sha256(
+        _canonical_json(
+            [
+                record.canonical_package_record()
+                for record in sorted(
+                    build.evidence_records, key=lambda candidate: candidate.evidence_id
+                )
+            ]
+        )
+    )
+    if (
+        build.plan.evidence_snapshot.record_count != len(build.evidence_records)
+        or build.plan.evidence_snapshot.package_hash != expected_package_hash
+    ):
+        raise ValueError("plan evidence snapshot does not match the build")
 
 
 async def fail_session_setup(

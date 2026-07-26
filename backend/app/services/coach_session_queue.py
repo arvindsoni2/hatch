@@ -245,7 +245,9 @@ async def queue_conversational_session_setup(
         async with AsyncSessionLocal() as job_db:
             try:
                 reconstructed = await load_claim_planning_request(job_db, claim=claim)
-                sources = await load_session_plan_sources(job_db, reconstructed)
+                sources = await load_session_plan_sources(
+                    job_db, reconstructed, claim=claim
+                )
                 build = SessionPlanBuilder.build(reconstructed, sources)
                 finalised = await finalise_session_setup(
                     job_db,
