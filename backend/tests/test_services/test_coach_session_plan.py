@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from pypdf import PdfWriter
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
@@ -33,6 +32,8 @@ from app.services.coach_session_plan import (
     PlannedQuestion,
     SessionPlanBuilder,
     SessionPlanError,
+    _canonical_redacted_text,
+    _read_supported_cv,
     claim_session_setup,
     fail_session_setup,
     finalise_session_setup,
@@ -1367,12 +1368,9 @@ async def test_source_selection_uses_latest_eligible_versions_and_exact_policy(
     master_path = tmp_path / "master_cv.json"
     master_path.write_text(json.dumps(master), encoding="utf-8")
 
-    with (
-        patch("app.services.coach_session_plan.load_master_cv", return_value=master),
-        patch(
-            "app.services.coach_session_plan.resolve_master_cv_path",
-            return_value=master_path,
-        ),
+    with patch(
+        "app.services.coach_session_plan.resolve_master_cv_path",
+        return_value=master_path,
     ):
         normalized = await load_claim_planning_request(
             db_session, request=request, current_retention=None
@@ -1529,6 +1527,122 @@ async def test_source_loader_rejects_oversized_snapshot_without_truncation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("layout", ["backend", "app"])
+async def test_source_loader_defaults_to_the_runtime_data_root(
+    db_session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, layout: str
+) -> None:
+    runtime = tmp_path / layout
+    managed = runtime / "data" / "generated"
+    managed.mkdir(parents=True)
+    current_path = managed / "current.txt"
+    current_path.write_text("Runtime-managed candidate CV", encoding="utf-8")
+    monkeypatch.chdir(runtime)
+    application = Application(
+        id=f"application_runtime_{layout}",
+        status="discovered",
+        priority="normal",
+        cv_version=str(current_path),
+    )
+    db_session.add(application)
+    await db_session.commit()
+    payload = _conversational_request(
+        application_id=application.id,
+        interview_type="behavioural",
+        planned_question_count=3,
+        locale="en-GB",
+    ).model_dump(mode="json")
+    payload["conversational_config"]["evidence_selection"].update(
+        {
+            "application_cv": "current_if_no_approved",
+            "master_cv": "exclude",
+            "question_bank": "exclude",
+            "company_research": "exclude",
+        }
+    )
+
+    sources = await load_session_plan_sources(
+        db_session, CreateSessionRequest.model_validate(payload)
+    )
+
+    assert any(source.source_type == "application_cv" for source in sources)
+
+
+@pytest.mark.asyncio
+async def test_master_cv_file_is_bounded_before_loading_or_json_parsing(
+    db_session, tmp_path: Path
+) -> None:
+    master_path = tmp_path / "master_cv.json"
+    with master_path.open("wb") as output:
+        output.truncate(10 * 1024 * 1024 + 1)
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+
+    with (
+        patch(
+            "app.services.coach_session_plan.resolve_master_cv_path",
+            return_value=master_path,
+        ),
+        patch("app.services.coach_session_plan.json.loads") as parser,
+        pytest.raises(SessionPlanError, match="coach_grounding_source_unavailable"),
+    ):
+        await load_session_plan_sources(db_session, request)
+
+    parser.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_master_cv_subset_is_bounded_before_evidence_ledger(
+    db_session, tmp_path: Path
+) -> None:
+    master_path = tmp_path / "master_cv.json"
+    master_path.write_text(json.dumps({"summary": "x" * 40_001}), encoding="utf-8")
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+
+    with (
+        patch(
+            "app.services.coach_session_plan.resolve_master_cv_path",
+            return_value=master_path,
+        ),
+        patch("app.services.coach_session_plan.build_evidence_ledger") as ledger,
+        pytest.raises(SessionPlanError, match="coach_contract_unsupported"),
+    ):
+        await load_session_plan_sources(db_session, request)
+
+    ledger.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_question_bank_snapshot_is_bounded_before_orm_materialization(
+    db_session,
+) -> None:
+    item = QuestionBankItem(
+        id="qb_oversized",
+        type="star_story",
+        title="Oversized story",
+        answer_draft="x" * 2001,
+        confidence="reviewed",
+        updated_at=datetime(2026, 8, 5),
+    )
+    db_session.add(item)
+    await db_session.commit()
+    db_session.expunge_all()
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+
+    with pytest.raises(SessionPlanError, match="coach_contract_unsupported"):
+        await load_session_plan_sources(db_session, request)
+
+    assert not any(
+        isinstance(value, QuestionBankItem)
+        for value in db_session.identity_map.values()
+    )
+
+
+@pytest.mark.asyncio
 async def test_cv_locator_rejects_outside_managed_root_and_symlink(
     db_session, tmp_path: Path
 ) -> None:
@@ -1606,12 +1720,8 @@ async def test_cv_extraction_rejects_archive_and_page_bombs(
             archive.writestr("huge.xml", b"x" * (50 * 1024 * 1024 + 1))
         expected = "coach_grounding_source_unavailable"
     elif kind == "pdf_pages":
-        writer = PdfWriter()
-        for _ in range(101):
-            writer.add_blank_page(width=72, height=72)
-        with locator.open("wb") as output:
-            writer.write(output)
-        expected = "coach_contract_unsupported"
+        locator.write_bytes(b"%PDF-1.7\n%%EOF\n")
+        expected = "coach_grounding_source_unavailable"
     elif kind == "compressed_size":
         with locator.open("wb") as output:
             output.truncate(10 * 1024 * 1024 + 1)
@@ -1649,6 +1759,21 @@ async def test_cv_extraction_rejects_archive_and_page_bombs(
             CreateSessionRequest.model_validate(payload),
             managed_cv_roots=(managed,),
         )
+
+
+def test_pdf_cv_is_rejected_without_invoking_the_parser(tmp_path: Path) -> None:
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    locator = managed / "candidate.pdf"
+    locator.write_bytes(b"%PDF-1.7\n%%EOF\n")
+
+    with (
+        patch("pypdf.PdfReader") as reader,
+        pytest.raises(SessionPlanError, match="coach_grounding_source_unavailable"),
+    ):
+        _read_supported_cv(str(locator), managed_cv_roots=(managed,))
+
+    reader.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1975,6 +2100,54 @@ person@example.test +44 7700 900123 career 2018-2023"""
         second.evidence_records[0].content_hash
         == first.evidence_records[0].content_hash
     )
+
+
+def test_default_questions_use_the_same_redacted_source_as_evidence() -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    source = EvidenceSource(
+        evidence_id="job_context",
+        source_type="job_posting",
+        source_record_id="request",
+        source_record_version="1",
+        source_path="request/jd_text",
+        snapshot_text="api_key=question-secret-canary Design secure systems.",
+        approval_state="context_only",
+    )
+
+    build = SessionPlanBuilder.build(request, [source], questions=None)
+
+    rendered = " ".join(question.text for question in build.questions)
+    assert "question-secret-canary" not in rendered
+    assert "question-secret-canary" not in build.evidence_records[0].snapshot_text
+
+
+def test_json_redaction_is_valid_recursive_and_idempotent() -> None:
+    original = json.dumps(
+        {
+            "token": "[REDACTED]",
+            "client_secret": "json-secret-canary",
+            "summary": (
+                "Contact person@example.test or +44 7700 900123; career 2018-2023; "
+                "api_key=leaf-secret-canary"
+            ),
+            "personal": {"name": "Private Person"},
+        }
+    )
+
+    first = _canonical_redacted_text(original)
+    parsed = json.loads(first)
+
+    assert parsed["token"] == "[REDACTED]"
+    assert parsed["client_secret"] == "[REDACTED]"
+    assert parsed["personal"] == "[REDACTED]"
+    assert "json-secret-canary" not in first
+    assert "leaf-secret-canary" not in first
+    assert "person@example.test" not in first
+    assert "7700 900123" not in first
+    assert "2018-2023" in first
+    assert _canonical_redacted_text(first) == first
 
 
 def test_builder_recursively_redacts_parseable_json_personal_and_contact_keys() -> None:

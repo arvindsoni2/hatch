@@ -11,7 +11,7 @@ import unicodedata
 import uuid
 import zipfile
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -34,11 +34,7 @@ from ..models.question_bank import QuestionBankItem
 from ..schemas.coach import CreateSessionRequest
 from ..schemas.coach_conversation import ConversationalSessionPlan
 from .async_job_service import AsyncJobService
-from .master_cv_store import (
-    MasterCVMissingError,
-    load_master_cv,
-    resolve_master_cv_path,
-)
+from .master_cv_store import resolve_master_cv_path
 from .writing_contracts import build_evidence_ledger
 from .coach_conversational_contracts import (
     DELIVERY_POLICY,
@@ -118,8 +114,7 @@ _MAX_SOURCE_FILE_BYTES = 10 * 1024 * 1024
 _MAX_EVIDENCE_SNAPSHOT_CODEPOINTS = 2000
 _MAX_DOCX_ENTRIES = 512
 _MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
-_MAX_PDF_PAGES = 100
-_SUPPORTED_CV_EXTENSIONS = frozenset({".docx", ".pdf", ".txt", ".md", ".json"})
+_SUPPORTED_CV_EXTENSIONS = frozenset({".docx", ".txt", ".md", ".json"})
 
 
 def _canonical_json(value: object) -> str:
@@ -468,13 +463,6 @@ def _read_supported_cv(
             value = _bounded_text_join(
                 paragraph.text for paragraph in document.paragraphs if paragraph.text
             )
-        elif suffix == ".pdf":
-            from pypdf import PdfReader  # type: ignore  # noqa: PLC0415
-
-            pages = PdfReader(str(path)).pages
-            if len(pages) > _MAX_PDF_PAGES:
-                raise SessionPlanError("coach_contract_unsupported")
-            value = _bounded_text_join(page.extract_text() or "" for page in pages)
         elif suffix in {".txt", ".md", ".json"}:
             value = _read_bounded_text(path)
         else:
@@ -489,11 +477,11 @@ def _read_supported_cv(
 
 
 def _default_managed_cv_roots() -> tuple[Path, ...]:
-    roots = [Path(__file__).resolve().parents[3] / "data" / "generated"]
+    roots = [(Path.cwd() / "data" / "generated").resolve()]
     data_dir = os.environ.get("DATA_DIR")
     if data_dir:
-        roots.append(Path(data_dir) / "generated")
-    return tuple(dict.fromkeys(root.absolute() for root in roots))
+        roots.append((Path(data_dir) / "generated").resolve())
+    return tuple(dict.fromkeys(roots))
 
 
 def _resolve_managed_cv_path(
@@ -563,15 +551,21 @@ def _bounded_text_join(values: Iterable[str]) -> str:
 
 def _master_cv_sources() -> list[EvidenceSource]:
     try:
-        master = load_master_cv()
         configured_path = resolve_master_cv_path()
-    except MasterCVMissingError as exc:
-        if resolve_master_cv_path().exists():
-            raise SessionPlanError("coach_grounding_source_unavailable") from exc
-        return []
+        if not configured_path.exists():
+            return []
+        if configured_path.stat().st_size > _MAX_SOURCE_FILE_BYTES:
+            raise SessionPlanError("coach_grounding_source_unavailable")
+        with configured_path.open("rb") as source:
+            raw = source.read(_MAX_SOURCE_FILE_BYTES + 1)
+        if len(raw) > _MAX_SOURCE_FILE_BYTES:
+            raise SessionPlanError("coach_grounding_source_unavailable")
+        master = json.loads(raw.decode("utf-8"))
     except Exception as exc:
+        if isinstance(exc, SessionPlanError):
+            raise
         raise SessionPlanError("coach_grounding_source_unavailable") from exc
-    if configured_path.exists() and not isinstance(master, dict):
+    if not isinstance(master, dict):
         raise SessionPlanError("coach_grounding_source_unavailable")
     professional = {
         key: master[key]
@@ -586,10 +580,16 @@ def _master_cv_sources() -> list[EvidenceSource]:
         )
         if key in master
     }
-    canonical_professional = _redact_evidence_text(_canonical_json(professional))
+    redacted_professional = _redact_json_value(professional)
+    canonical_professional = _canonical_json(redacted_professional)
+    if (
+        len(canonical_professional) > 40_000
+        or len(canonical_professional.encode("utf-8")) > 40_000
+    ):
+        raise SessionPlanError("coach_contract_unsupported")
     source_version = _sha256(canonical_professional)
     rows: list[EvidenceSource] = []
-    for item in build_evidence_ledger(professional):
+    for item in build_evidence_ledger(redacted_professional):
         text = _redact_evidence_text(item.text)
         if text:
             rows.append(
@@ -617,7 +617,22 @@ async def _question_bank_sources(
     confidences = ("reviewed", "final")
     if policy == "include_drafts":
         confidences = ("draft", "reviewed", "final")
-    stmt = select(QuestionBankItem).where(
+    text_columns = (
+        QuestionBankItem.title,
+        QuestionBankItem.question,
+        QuestionBankItem.situation,
+        QuestionBankItem.task,
+        QuestionBankItem.action,
+        QuestionBankItem.result,
+        QuestionBankItem.answer_draft,
+    )
+    stmt = select(
+        QuestionBankItem.id,
+        QuestionBankItem.type,
+        QuestionBankItem.confidence,
+        QuestionBankItem.updated_at,
+        *(func.length(column) for column in text_columns),
+    ).where(
         QuestionBankItem.archived_at.is_(None),
         or_(
             QuestionBankItem.type == "company_research_note",
@@ -629,9 +644,32 @@ async def _question_bank_sources(
         stmt = stmt.where(QuestionBankItem.id.in_(explicit_ids))
     stmt = stmt.order_by(
         QuestionBankItem.updated_at.desc(), QuestionBankItem.id.asc()
-    ).limit(51 if explicit_ids else 31)
-    rows = list((await db.execute(stmt)).scalars().all())
-    if explicit_ids and {row.id for row in rows} != set(explicit_ids):
+    ).limit(50 if explicit_ids else 31)
+    metadata_rows = list((await db.execute(stmt)).all())
+    if explicit_ids and {row.id for row in metadata_rows} != set(explicit_ids):
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    if not explicit_ids and len(metadata_rows) > 30:
+        raise SessionPlanError("coach_contract_unsupported")
+    for row in metadata_rows:
+        lengths = [length for length in row[4:] if length]
+        if sum(lengths) + max(0, len(lengths) - 1) > 2000:
+            raise SessionPlanError("coach_contract_unsupported")
+    selected_ids = [row.id for row in metadata_rows]
+    if not selected_ids:
+        return []
+    rows = list(
+        (
+            await db.execute(
+                select(QuestionBankItem)
+                .where(QuestionBankItem.id.in_(selected_ids))
+                .order_by(QuestionBankItem.updated_at.desc(), QuestionBankItem.id.asc())
+                .limit(len(selected_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if [row.id for row in rows] != selected_ids:
         raise SessionPlanError("coach_grounding_source_unavailable")
     approval = {"draft": "draft", "reviewed": "reviewed", "final": "reviewed_final"}
     return [
@@ -703,15 +741,16 @@ def _canonical_redacted_text(value: str) -> str:
     try:
         parsed = json.loads(normalized)
     except (json.JSONDecodeError, TypeError):
-        redacted = normalized
-    else:
-        redacted = _canonical_json(_redact_json_value(parsed))
-    redacted = _PEM_PATTERN.sub("[REDACTED]", redacted)
+        return _redact_plain_text(normalized).strip()
+    return _canonical_json(_redact_json_value(parsed))
+
+
+def _redact_plain_text(value: str) -> str:
+    redacted = _PEM_PATTERN.sub("[REDACTED]", value)
     redacted = _SECRET_ASSIGNMENT_PATTERN.sub(r"\1[REDACTED]", redacted)
     redacted = _BEARER_PATTERN.sub("[REDACTED]", redacted)
     redacted = _EMAIL_PATTERN.sub("[REDACTED EMAIL]", redacted)
-    redacted = _PHONE_PATTERN.sub(_redact_phone_candidate, redacted)
-    return redacted.strip()
+    return _PHONE_PATTERN.sub(_redact_phone_candidate, redacted)
 
 
 def _redact_json_value(value: Any) -> Any:
@@ -730,6 +769,8 @@ def _redact_json_value(value: Any) -> Any:
         return redacted
     if isinstance(value, list):
         return [_redact_json_value(item) for item in value]
+    if isinstance(value, str):
+        return _redact_plain_text(value)
     return value
 
 
@@ -760,20 +801,28 @@ class SessionPlanBuilder:
         count = config.planned_question_count or _default_question_count(
             config.duration_minutes
         )
-        _validate_source_selection(request, sources)
+        canonical_sources = tuple(
+            replace(
+                source,
+                snapshot_text=_canonical_redacted_text(source.snapshot_text),
+            )
+            for source in sources
+        )
+        _validate_source_selection(request, canonical_sources)
         normalized_questions = _normalise_questions(
-            _default_questions(request, sources, count)
+            _default_questions(request, canonical_sources, count)
             if questions is None
             else questions,
             expected_count=count,
             interview_type=config.interview_type,
         )
         evidence_records = _build_evidence_records(
-            sources,
+            canonical_sources,
             allow_drafts=(
                 config.evidence_selection.question_bank == "include_drafts"
                 and config.evidence_selection.draft_evidence_consent
             ),
+            canonicalize_snapshots=False,
         )
         package_hash = "sha256:" + _sha256(
             _canonical_json(
@@ -1032,6 +1081,7 @@ def _build_evidence_records(
     sources: Sequence[EvidenceSource],
     *,
     allow_drafts: bool,
+    canonicalize_snapshots: bool = True,
 ) -> tuple[EvidenceRecordBuild, ...]:
     if len(sources) > 30:
         raise ValueError("evidence package exceeds 30 records")
@@ -1053,7 +1103,11 @@ def _build_evidence_records(
             raise ValueError("evidence record metadata is invalid")
         if source.approval_state == "draft" and not allow_drafts:
             raise ValueError("draft evidence requires selected explicit consent")
-        snapshot = _canonical_redacted_text(source.snapshot_text)
+        snapshot = (
+            _canonical_redacted_text(source.snapshot_text)
+            if canonicalize_snapshots
+            else source.snapshot_text
+        )
         if not snapshot or len(snapshot) > 2000:
             raise ValueError("evidence snapshot exceeds its code-point bound")
         total_codepoints += len(snapshot)
