@@ -246,6 +246,35 @@ FLOAT_WHITESPACE_CASES = tuple(
     for codepoint in FLOAT_WHITESPACE_FAMILY_CODEPOINTS
     for placement in ("prefix", "suffix", "both")
 )
+MALFORMED_MEMBERSHIP_VALUES = (
+    ("object", {}),
+    ("list", []),
+    ("number", 42),
+    ("null", None),
+)
+MALFORMED_MEMBERSHIP_SITES = (
+    "diagnostic.stage",
+    "diagnostic.outcome",
+    "diagnostic.execution_mode",
+    "diagnostic.gate_codes.item",
+    "rubric.dimensions.score_band",
+)
+JSON_SHAPE_FUZZ_VALUES = (
+    None,
+    False,
+    0,
+    0.0,
+    "",
+    [],
+    {},
+    [None],
+    [[]],
+    [{}],
+    {"nested": None},
+    {"nested": []},
+    {"nested": {}},
+    [None, [], {}],
+)
 
 
 def _coercion_case_id(case: tuple[tuple[str, ...], object]) -> str:
@@ -911,6 +940,66 @@ def _insert_recording(
     )
 
 
+def _completed_payload_with_contracts() -> dict[str, object]:
+    diagnostic = {
+        "stage": "answer_evaluation",
+        "outcome": "completed",
+        "execution_mode": "deterministic",
+        "attempt_count": 0,
+        "repair_count": 0,
+        "gate_codes": [],
+        "duration_ms": 0,
+    }
+    return {
+        "evaluation_state": "completed",
+        "scores": {
+            "relevance": 8,
+            "star_structure": 7,
+            "technical_depth": 9,
+            "conciseness": 6,
+            "communication": 8,
+            "impact_metrics": 7,
+        },
+        "overall": 7.5,
+        "diagnostic": diagnostic,
+        "rubric": {
+            "dimensions": {
+                "relevance": {
+                    "score": 8,
+                    "score_band": "good",
+                    "evidence": [],
+                    "drill": "",
+                }
+            },
+            "diagnostic": diagnostic.copy(),
+        },
+        "retryable": False,
+    }
+
+
+def _set_malformed_membership_site(
+    payload: dict[str, object], site: str, malformed: object
+) -> object:
+    if site.startswith("diagnostic."):
+        diagnostic = payload["diagnostic"]
+        assert isinstance(diagnostic, dict)
+        field = site.removeprefix("diagnostic.")
+        if field == "gate_codes.item":
+            diagnostic["gate_codes"] = [malformed]
+        else:
+            diagnostic[field] = malformed
+        return diagnostic
+
+    rubric = payload["rubric"]
+    assert isinstance(rubric, dict)
+    dimensions = rubric["dimensions"]
+    assert isinstance(dimensions, dict)
+    relevance = dimensions["relevance"]
+    assert isinstance(relevance, dict)
+    relevance["score_band"] = malformed
+    return rubric
+
+
 def _upgrade(database: Path) -> None:
     _run_alembic(database, "upgrade", "head")
     with sqlite3.connect(database) as connection:
@@ -1014,6 +1103,95 @@ def test_migration_validity_helper_matches_legacy_canonical_resolver(
     ) is (_parse_completed(recording) is not None)
 
 
+@pytest.mark.parametrize("site", MALFORMED_MEMBERSHIP_SITES)
+@pytest.mark.parametrize(
+    "malformed",
+    [value for _, value in MALFORMED_MEMBERSHIP_VALUES],
+    ids=[name for name, _ in MALFORMED_MEMBERSHIP_VALUES],
+)
+def test_malformed_membership_values_are_invalid_without_raising_and_match_resolver(
+    site: str, malformed: object
+) -> None:
+    from app.services.coach_aggregation import _parse_completed
+
+    module = _load_migration_module()
+    payload = _completed_payload_with_contracts()
+    helper_value = _set_malformed_membership_site(payload, site, malformed)
+    if site.startswith("diagnostic."):
+        assert module._is_valid_diagnostic(helper_value) is False
+    else:
+        assert module._is_valid_rubric(helper_value) is False
+
+    recording = SimpleNamespace(
+        id="recording",
+        question_id="question",
+        evaluation_state="completed",
+        evaluation_json=json.dumps(payload, separators=(",", ":")),
+        created_at=datetime(2026, 7, 1),
+    )
+    assert _parse_completed(recording) is None
+    assert (
+        module._is_valid_legacy_completed_evaluation(
+            recording.evaluation_state, recording.evaluation_json
+        )
+        is False
+    )
+
+
+def test_bounded_json_shape_fuzz_matches_resolver_without_exceptions() -> None:
+    from app.services.coach_aggregation import _parse_completed
+
+    module = _load_migration_module()
+    paths = (
+        ("evaluation_state",),
+        ("overall",),
+        ("scores",),
+        ("feedback",),
+        ("strengths",),
+        ("follow_up_question",),
+        ("diagnostic",),
+        ("rubric",),
+        ("retryable",),
+        ("diagnostic", "stage"),
+        ("diagnostic", "outcome"),
+        ("diagnostic", "execution_mode"),
+        ("diagnostic", "gate_codes"),
+        ("rubric", "dimensions", "relevance", "score_band"),
+    )
+    mismatches: list[str] = []
+    for path in paths:
+        for shape_index, malformed in enumerate(JSON_SHAPE_FUZZ_VALUES):
+            payload = _completed_payload_with_contracts()
+            target = payload
+            for segment in path[:-1]:
+                nested = target[segment]
+                assert isinstance(nested, dict)
+                target = nested
+            target[path[-1]] = malformed
+            evaluation_json = json.dumps(payload, separators=(",", ":"))
+            recording = SimpleNamespace(
+                id="recording",
+                question_id="question",
+                evaluation_state="completed",
+                evaluation_json=evaluation_json,
+                created_at=datetime(2026, 7, 1),
+            )
+            authoritative = _parse_completed(recording) is not None
+            try:
+                migration_valid = module._is_valid_legacy_completed_evaluation(
+                    recording.evaluation_state, recording.evaluation_json
+                )
+            except Exception as exc:  # pragma: no cover - assertion captures regression
+                mismatches.append(
+                    f"{'.'.join(path)}[{shape_index}] raised {type(exc).__name__}"
+                )
+            else:
+                if migration_valid is not authoritative:
+                    mismatches.append(f"{'.'.join(path)}[{shape_index}] parity")
+
+    assert mismatches == []
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     COERCION_AUTHORITY_CASES,
@@ -1081,6 +1259,9 @@ def test_migration_validator_matches_authority_for_every_coercion_field(
     )
 
 
+# These exhaustive grammar comparisons intentionally remain in the ordinary migration
+# gate. Their runtime and memory cost is accepted because this migration snapshots
+# pydantic-core coercion without importing the application runtime.
 def test_migration_validator_matches_authority_for_ascii_float_string_grammar() -> None:
     from app.services.coach_aggregation import _parse_completed
 
@@ -1446,6 +1627,74 @@ def test_migration_backfills_before_constraints_indexes_and_non_null_enforcement
     assert min(positions) > backfill_position
 
 
+def test_attempt_number_backfill_uses_one_materialized_window_ranking() -> None:
+    module = _load_migration_module()
+    recorder = _RecordingAlembicOperations()
+    module.op = recorder
+    module.upgrade()
+    statement = next(
+        str(detail)
+        for _, operation, detail in recorder.operations
+        if operation == "execute" and "SET attempt_number" in str(detail)
+    )
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.execute(
+            """
+            CREATE TABLE session_recordings(
+                id TEXT PRIMARY KEY,
+                question_id TEXT,
+                created_at TEXT,
+                attempt_number INTEGER,
+                attempt_version INTEGER,
+                processing_generation INTEGER,
+                processing_retry_count INTEGER,
+                processing_retry_limit INTEGER,
+                hint_count INTEGER
+            )
+            """
+        )
+        plan = [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {statement}")]
+
+    assert plan.count("MATERIALIZE ranked") == 1
+    assert not any("CORRELATED" in step for step in plan)
+
+
+def test_window_attempt_number_backfill_matches_partitioned_created_at_id_order(
+    prior_head_db: Path,
+) -> None:
+    with sqlite3.connect(prior_head_db) as connection:
+        _insert_session(connection, "ranking-session")
+        _insert_question(connection, "ranking-session", "question-a")
+        _insert_question(connection, "ranking-session", "question-b")
+        rows = (
+            ("z-a", "question-a", "2026-07-01 10:00:00"),
+            ("a-a", "question-a", "2026-07-01 10:00:00"),
+            ("m-a", "question-a", "2026-07-01 10:01:00"),
+            ("z-b", "question-b", "2026-07-01 09:59:00"),
+            ("a-b", "question-b", "2026-07-01 10:02:00"),
+        )
+        for recording_id, question_id, created_at in rows:
+            _insert_recording(
+                connection,
+                recording_id=recording_id,
+                session_id="ranking-session",
+                question_id=question_id,
+                created_at=created_at,
+                evaluation_state="failed",
+            )
+
+    _upgrade(prior_head_db)
+
+    with sqlite3.connect(prior_head_db) as connection:
+        actual = dict(
+            connection.execute(
+                "SELECT id, attempt_number FROM session_recordings"
+            ).fetchall()
+        )
+    assert actual == {"a-a": 1, "z-a": 2, "m-a": 3, "z-b": 1, "a-b": 2}
+
+
 @pytest.mark.parametrize(
     ("recordings", "expected_state", "expected_numbers", "expected_kinds"),
     [
@@ -1616,6 +1865,51 @@ def test_malformed_completed_legacy_evaluations_remain_pending(
         assert connection.execute(
             "SELECT question_state FROM session_questions WHERE id='malformed-question'"
         ).fetchone() == ("pending",)
+
+
+def test_upgrade_rejects_all_malformed_membership_shapes_without_partial_state(
+    prior_head_db: Path,
+) -> None:
+    malformed_cases = tuple(
+        (site, shape_name, malformed)
+        for site in MALFORMED_MEMBERSHIP_SITES
+        for shape_name, malformed in MALFORMED_MEMBERSHIP_VALUES
+        if shape_name in {"object", "list"}
+    )
+    with sqlite3.connect(prior_head_db) as connection:
+        _insert_session(connection, "malformed-membership-session")
+        for index, (site, shape_name, malformed) in enumerate(malformed_cases):
+            question_id = f"malformed-membership-question-{index}"
+            payload = _completed_payload_with_contracts()
+            _set_malformed_membership_site(payload, site, malformed)
+            _insert_question(connection, "malformed-membership-session", question_id)
+            _insert_recording(
+                connection,
+                recording_id=f"malformed-membership-recording-{index}",
+                session_id="malformed-membership-session",
+                question_id=question_id,
+                created_at=f"2026-07-01 10:00:{index:02d}",
+                evaluation_state="completed",
+                evaluation_json=json.dumps(payload, separators=(",", ":")),
+            )
+
+    _upgrade(prior_head_db)
+
+    with sqlite3.connect(prior_head_db) as connection:
+        states = connection.execute(
+            """
+            SELECT question_state
+            FROM session_questions
+            WHERE id LIKE 'malformed-membership-question-%'
+            ORDER BY id
+            """
+        ).fetchall()
+        assert states == [("pending",)] * len(malformed_cases)
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone() == (COACH_REVISION,)
 
 
 def test_upgrade_classifies_pydantic_float_string_families(

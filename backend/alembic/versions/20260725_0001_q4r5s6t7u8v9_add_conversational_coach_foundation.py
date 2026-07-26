@@ -200,12 +200,17 @@ def _is_valid_diagnostic(value: object) -> bool:
         return False
     if value.get("validation_schema_version", "1.0.0") != "1.0.0":
         return False
-    if value.get("stage") not in _DIAGNOSTIC_STAGES:
+    stage = value.get("stage")
+    if not isinstance(stage, str) or stage not in _DIAGNOSTIC_STAGES:
         return False
-    if value.get("outcome") not in _DIAGNOSTIC_OUTCOMES:
+    outcome = value.get("outcome")
+    if not isinstance(outcome, str) or outcome not in _DIAGNOSTIC_OUTCOMES:
         return False
     execution_mode = value.get("execution_mode")
-    if execution_mode not in _DIAGNOSTIC_EXECUTION_MODES:
+    if (
+        not isinstance(execution_mode, str)
+        or execution_mode not in _DIAGNOSTIC_EXECUTION_MODES
+    ):
         return False
     attempt_count = _coerce_non_negative_integer(value.get("attempt_count"))
     if (
@@ -217,7 +222,7 @@ def _is_valid_diagnostic(value: object) -> bool:
         return False
     gate_codes = value.get("gate_codes")
     if not isinstance(gate_codes, list) or not all(
-        code in _DIAGNOSTIC_GATE_CODES for code in gate_codes
+        isinstance(code, str) and code in _DIAGNOSTIC_GATE_CODES for code in gate_codes
     ):
         return False
     prompt_values = tuple(
@@ -257,7 +262,8 @@ def _is_valid_rubric(value: object) -> bool:
         score = _coerce_non_negative_integer(dimension.get("score", 0))
         if score is None or score > 10:
             return False
-        if dimension.get("score_band", "needs_work") not in {
+        score_band = dimension.get("score_band", "needs_work")
+        if not isinstance(score_band, str) or score_band not in {
             "strong",
             "good",
             "needs_work",
@@ -1052,22 +1058,24 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             """
+            WITH ranked AS MATERIALIZED (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY question_id
+                           ORDER BY created_at, id
+                       ) AS attempt_number
+                FROM session_recordings
+                WHERE question_id IS NOT NULL
+            )
             UPDATE session_recordings AS recording
-            SET attempt_number = (
-                    SELECT COUNT(*)
-                    FROM session_recordings AS earlier
-                    WHERE earlier.question_id = recording.question_id
-                      AND (
-                          earlier.created_at < recording.created_at
-                          OR (earlier.created_at = recording.created_at AND earlier.id <= recording.id)
-                      )
-                ),
+            SET attempt_number = ranked.attempt_number,
                 attempt_version = 0,
                 processing_generation = 0,
                 processing_retry_count = 0,
                 processing_retry_limit = 0,
                 hint_count = 0
-            WHERE recording.question_id IS NOT NULL
+            FROM ranked
+            WHERE ranked.id = recording.id
             """
         )
     )
