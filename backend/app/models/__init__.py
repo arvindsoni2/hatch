@@ -1,10 +1,24 @@
 """ORM models package — import all models so Alembic can detect them."""
+
 from .job import JobPosting, ScrapeLog  # noqa: F401
 from .application import Application, InterviewRound, FollowUp  # noqa: F401
 from .activity import ActivityLog  # noqa: F401
 from .document import GeneratedDocument  # noqa: F401
 from .document_asset import GeneratedDocumentAsset  # noqa: F401
-from .coach_session import CompanyResearch, InterviewSession, SessionQuestion, SessionRecording  # noqa: F401
+from .coach_session import (  # noqa: F401
+    CoachSessionDeletionResult,
+    CoachSessionEvidenceRecord,
+    CompanyResearch,
+    ConversationCommandResultRecord,
+    InterviewAttemptEvaluation,
+    InterviewAttemptStage,
+    InterviewAttemptUpload,
+    InterviewSession,
+    InterviewSessionEvent,
+    InterviewTranscriptVersion,
+    SessionQuestion,
+    SessionRecording,
+)
 from .recruiter import RecruiterContact  # noqa: F401
 from .follow_up_email import FollowUpEmail  # noqa: F401
 from .agency_reputation import AgencyReputation  # noqa: F401
@@ -20,19 +34,53 @@ from .opportunity_score import OpportunityScore  # noqa: F401
 from .app_lock import AppLockConfig, AppLockSession  # noqa: F401
 from .onboarding import OnboardingState  # noqa: F401
 from .tailoring_review import TailoringReview  # noqa: F401
-from .company_watchlist import CompanyWatchlistItem, WatchlistScanRun, DiscoveredRoleFingerprint  # noqa: F401
+from .company_watchlist import (
+    CompanyWatchlistItem,
+    WatchlistScanRun,
+    DiscoveredRoleFingerprint,
+)  # noqa: F401
 from .question_bank import QuestionBankItem  # noqa: F401
 
 __all__ = [
-    "JobPosting", "ScrapeLog", "Application", "InterviewRound", "FollowUp",
-    "ActivityLog", "GeneratedDocument", "GeneratedDocumentAsset",
-    "CompanyResearch", "InterviewSession", "SessionQuestion", "SessionRecording",
-    "RecruiterContact", "FollowUpEmail", "AgencyReputation",
-    "AgentEvent", "AgentState", "JobScore",
-    "Story", "StoryUsage", "CostTracking",
-    "AsyncJob", "ApplicationScoreSnapshot", "ApplicationOutcome", "OpportunityScore",
-    "AppLockConfig", "AppLockSession", "OnboardingState",
+    "JobPosting",
+    "ScrapeLog",
+    "Application",
+    "InterviewRound",
+    "FollowUp",
+    "ActivityLog",
+    "GeneratedDocument",
+    "GeneratedDocumentAsset",
+    "CompanyResearch",
+    "InterviewSession",
+    "SessionQuestion",
+    "SessionRecording",
+    "ConversationCommandResultRecord",
+    "InterviewSessionEvent",
+    "CoachSessionEvidenceRecord",
+    "InterviewTranscriptVersion",
+    "InterviewAttemptEvaluation",
+    "InterviewAttemptStage",
+    "InterviewAttemptUpload",
+    "CoachSessionDeletionResult",
+    "RecruiterContact",
+    "FollowUpEmail",
+    "AgencyReputation",
+    "AgentEvent",
+    "AgentState",
+    "JobScore",
+    "Story",
+    "StoryUsage",
+    "CostTracking",
+    "AsyncJob",
+    "ApplicationScoreSnapshot",
+    "ApplicationOutcome",
+    "OpportunityScore",
+    "AppLockConfig",
+    "AppLockSession",
+    "OnboardingState",
     "TailoringReview",
-    "CompanyWatchlistItem", "WatchlistScanRun", "DiscoveredRoleFingerprint",
+    "CompanyWatchlistItem",
+    "WatchlistScanRun",
+    "DiscoveredRoleFingerprint",
     "QuestionBankItem",
 ]
