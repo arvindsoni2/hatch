@@ -178,6 +178,7 @@ _EVENT_ENUM_KEYS = frozenset(
         "result",
         "policy",
         "hint_type",
+        "execution_mode",
     }
 )
 _EVENT_ENUM_LIST_KEYS = frozenset({"hint_types", "stages", "reason_codes"})
@@ -430,6 +431,8 @@ def _validate_processing_diagnostics(
             elif key in {"code", "error", "error_code"}:
                 if value not in _PROCESSING_ERROR_CODES:
                     raise invalid
+                if evaluation_state == "unavailable" and key == "code":
+                    reason_count += 1
             elif key in {"reason", "reason_code"}:
                 reason_count += 1
                 if value not in _PROCESSING_REASON_CODES:
@@ -1395,7 +1398,10 @@ class ConversationalSessionRepository:
                         raise _StaleFinalisation
                 else:
                     reason = result.diagnostics.get(
-                        "reason_code", result.diagnostics.get("reason")
+                        "reason_code",
+                        result.diagnostics.get(
+                            "reason", result.diagnostics.get("code")
+                        ),
                     )
                     transcription = stage_by_name.get("transcription")
                     downstream = {
@@ -1665,7 +1671,8 @@ class ConversationalSessionRepository:
                     "result"
                 ) or {}
                 reason = result_diagnostics.get(
-                    "reason_code", result_diagnostics.get("reason")
+                    "reason_code",
+                    result_diagnostics.get("reason", result_diagnostics.get("code")),
                 )
                 evaluator_reasons = {
                     "coach_evaluation_unavailable",
