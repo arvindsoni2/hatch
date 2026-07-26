@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Final
 
 CONVERSATION_COMMAND_CONTRACT = "coach_conversation_command_v1"
 CONVERSATION_COMMAND_RESULT_CONTRACT = "coach_conversation_command_result_v1"
@@ -39,7 +42,7 @@ def _unavailable(message: str) -> ErrorDefinition:
 
 # This is the sole registry for the error codes specified by V6 Section 31.7.
 # Messages deliberately contain no provider, prompt, path, or candidate content.
-ERROR_REGISTRY: dict[str, ErrorDefinition] = {
+_ERROR_REGISTRY: dict[str, ErrorDefinition] = {
     "coach_conversation_not_enabled": ErrorDefinition(
         403, False, "Conversational interview sessions are not enabled."
     ),
@@ -179,3 +182,5 @@ ERROR_REGISTRY: dict[str, ErrorDefinition] = {
         "The interview deletion claim expired.", retryable=True
     ),
 }
+
+ERROR_REGISTRY: Final[Mapping[str, ErrorDefinition]] = MappingProxyType(_ERROR_REGISTRY)

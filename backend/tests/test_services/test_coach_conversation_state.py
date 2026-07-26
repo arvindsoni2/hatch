@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 from pydantic import ValidationError
 
 from app.config import settings
 from app.services.coach_conversation_state import (
+    TRANSITIONS,
     allowed_commands,
     require_transition,
 )
@@ -163,6 +166,62 @@ EXPECTED_ERROR_HTTP_STATUSES = {
 }
 
 
+EXPECTED_RETRYABLE_ERRORS = frozenset(
+    {
+        "coach_setup_claim_expired",
+        "coach_evaluation_unavailable",
+        "coach_grounding_source_unavailable",
+        "coach_audio_cleanup_failed",
+        "coach_audio_deletion_failed",
+        "coach_export_source_changed",
+        "coach_report_conversational_snapshot_stale",
+        "coach_session_deletion_failed",
+        "coach_deletion_claim_expired",
+    }
+)
+
+
+@dataclass
+class SessionStateFixture:
+    conversation_state: str | None
+    status: str
+
+
+def test_public_contract_registries_are_runtime_read_only() -> None:
+    with pytest.raises(TypeError):
+        TRANSITIONS["start"] = TRANSITIONS["start"]  # type: ignore[index]
+    with pytest.raises(TypeError):
+        ERROR_REGISTRY["coach_conversation_version_conflict"] = ERROR_REGISTRY[
+            "coach_conversation_version_conflict"
+        ]  # type: ignore[index]
+
+    assert "start" in allowed_commands(state="ready", status="setup")
+    assert ERROR_REGISTRY["coach_conversation_version_conflict"].http_status == 409
+
+
+def test_session_object_drives_allowed_commands_and_required_transition() -> None:
+    session = SessionStateFixture(conversation_state="ready", status="setup")
+
+    assert allowed_commands(session) == ("start", "rebuild_plan", "update_retention")
+    assert require_transition(session, "start") is TRANSITIONS["start"]
+
+
+@pytest.mark.parametrize(
+    "session",
+    [
+        SessionStateFixture(conversation_state=None, status="setup"),
+        SessionStateFixture(conversation_state="not_a_state", status="active"),
+        SessionStateFixture(conversation_state="ready", status="not_a_status"),
+    ],
+)
+def test_session_object_with_null_or_invalid_projection_fails_closed(
+    session: SessionStateFixture,
+) -> None:
+    assert allowed_commands(session) == ()
+    with pytest.raises(ValueError, match="coach_conversation_invalid_state"):
+        require_transition(session, "start")
+
+
 def test_allowed_commands_are_derived_from_transition_registry() -> None:
     assert allowed_commands(state="ready", status="setup") == (
         "start",
@@ -253,6 +312,31 @@ def test_error_registry_is_complete_and_rejects_forbidden_alias() -> None:
     )
 
 
+def test_error_registry_locks_retryability_and_frontend_safe_messages() -> None:
+    assert {
+        code for code, definition in ERROR_REGISTRY.items() if definition.retryable
+    } == EXPECTED_RETRYABLE_ERRORS
+
+    forbidden_message_fragments = (
+        "provider",
+        "prompt",
+        "stack trace",
+        "traceback",
+        "secret",
+        "api key",
+        ".env",
+        "file://",
+    )
+    for definition in ERROR_REGISTRY.values():
+        message = definition.message
+        assert message == message.strip()
+        assert 1 <= len(message) <= 120
+        assert "/" not in message and "\\" not in message
+        assert not any(
+            fragment in message.casefold() for fragment in forbidden_message_fragments
+        )
+
+
 def test_canonical_contract_versions_are_centralized() -> None:
     assert CONVERSATION_COMMAND_CONTRACT == "coach_conversation_command_v1"
     assert (
@@ -268,31 +352,10 @@ def test_canonical_contract_versions_are_centralized() -> None:
     assert DELIVERY_POLICY == "coach_delivery_policy_v1"
 
 
-def test_conversational_defaults_match_section_36_and_processing_contract() -> None:
-    assert {
-        "HATCH_COACH_CONVERSATIONAL_ENABLED": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
-        "HATCH_COACH_AUTO_TURN_DETECTION_ENABLED": settings.HATCH_COACH_AUTO_TURN_DETECTION_ENABLED,
-        "HATCH_COACH_EVIDENCE_GROUNDING_ENABLED": settings.HATCH_COACH_EVIDENCE_GROUNDING_ENABLED,
-        "HATCH_COACH_CONVERSATIONAL_PROGRESS_ENABLED": settings.HATCH_COACH_CONVERSATIONAL_PROGRESS_ENABLED,
-        "HATCH_COACH_SILENCE_WARNING_MS": settings.HATCH_COACH_SILENCE_WARNING_MS,
-        "HATCH_COACH_SILENCE_FINISH_PROMPT_MS": settings.HATCH_COACH_SILENCE_FINISH_PROMPT_MS,
-        "HATCH_COACH_MAX_ANSWER_DURATION_SECONDS": settings.HATCH_COACH_MAX_ANSWER_DURATION_SECONDS,
-        "HATCH_COACH_MAX_ATTEMPTS_PER_QUESTION": settings.HATCH_COACH_MAX_ATTEMPTS_PER_QUESTION,
-        "HATCH_COACH_MAX_PROCESSING_RETRIES_PER_ATTEMPT": settings.HATCH_COACH_MAX_PROCESSING_RETRIES_PER_ATTEMPT,
-        "HATCH_COACH_PROGRESS_MAX_GROUPS": settings.HATCH_COACH_PROGRESS_MAX_GROUPS,
-        "HATCH_COACH_MAX_FOLLOWUPS_PER_ROOT": settings.HATCH_COACH_MAX_FOLLOWUPS_PER_ROOT,
-        "HATCH_COACH_MAX_TRANSCRIPT_CHARACTERS": settings.HATCH_COACH_MAX_TRANSCRIPT_CHARACTERS,
-        "HATCH_COACH_MAX_EVIDENCE_CLAIMS": settings.HATCH_COACH_MAX_EVIDENCE_CLAIMS,
-        "HATCH_COACH_AUDIO_FAILURE_RETENTION_HOURS": settings.HATCH_COACH_AUDIO_FAILURE_RETENTION_HOURS,
-        "HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS": settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS,
-        "HATCH_COACH_TIMEOUT_TRANSCRIPTION_SECONDS": settings.HATCH_COACH_TIMEOUT_TRANSCRIPTION_SECONDS,
-        "HATCH_COACH_TIMEOUT_SPEECH_ANALYSIS_SECONDS": settings.HATCH_COACH_TIMEOUT_SPEECH_ANALYSIS_SECONDS,
-        "HATCH_COACH_TIMEOUT_CONVERSATIONAL_EVALUATION_SECONDS": settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_EVALUATION_SECONDS,
-        "HATCH_COACH_TIMEOUT_EVIDENCE_GROUNDING_SECONDS": settings.HATCH_COACH_TIMEOUT_EVIDENCE_GROUNDING_SECONDS,
-        "HATCH_COACH_TIMEOUT_FOLLOWUP_DECISION_SECONDS": settings.HATCH_COACH_TIMEOUT_FOLLOWUP_DECISION_SECONDS,
-        "HATCH_COACH_TIMEOUT_COACHING_JOB_SECONDS": settings.HATCH_COACH_TIMEOUT_COACHING_JOB_SECONDS,
-        "HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS": settings.HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS,
-    } == {
+def test_conversational_field_defaults_match_section_36_and_processing_contract() -> (
+    None
+):
+    expected_defaults = {
         "HATCH_COACH_CONVERSATIONAL_ENABLED": False,
         "HATCH_COACH_AUTO_TURN_DETECTION_ENABLED": True,
         "HATCH_COACH_EVIDENCE_GROUNDING_ENABLED": True,
@@ -316,6 +379,13 @@ def test_conversational_defaults_match_section_36_and_processing_contract() -> N
         "HATCH_COACH_TIMEOUT_COACHING_JOB_SECONDS": 240,
         "HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS": 180,
     }
+    assert {
+        name: Settings.model_fields[name].default for name in expected_defaults
+    } == expected_defaults
+
+
+def test_checked_environment_keeps_conversational_creation_disabled() -> None:
+    assert settings.HATCH_COACH_CONVERSATIONAL_ENABLED is False
 
 
 @pytest.mark.parametrize(

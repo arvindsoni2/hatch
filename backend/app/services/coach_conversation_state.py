@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from types import MappingProxyType
+from typing import Final, Protocol
 
 
 class ConversationState(Protocol):
@@ -29,7 +31,7 @@ def _rule(*allowed_pairs: tuple[str, str]) -> TransitionRule:
     return TransitionRule(frozenset(allowed_pairs))
 
 
-TRANSITIONS: dict[str, TransitionRule] = {
+_TRANSITIONS: dict[str, TransitionRule] = {
     "start": _rule(("ready", "setup")),
     "begin_answer": _rule(("asking", "active")),
     "finish_answer": _rule(("listening", "active")),
@@ -106,6 +108,8 @@ TRANSITIONS: dict[str, TransitionRule] = {
         ("completed", "completed"),
     ),
 }
+
+TRANSITIONS: Final[Mapping[str, TransitionRule]] = MappingProxyType(_TRANSITIONS)
 
 
 def _resolve_state(
