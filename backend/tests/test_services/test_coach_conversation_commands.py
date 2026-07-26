@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,55 @@ async def seed_command_database(
             )
         )
         await db.commit()
+
+
+async def seed_review_command_context(
+    db: AsyncSession, *, target_state: str, version: int
+) -> tuple[InterviewSession, SessionQuestion, SessionRecording]:
+    session, questions = await seed_session(
+        db, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db.commit()
+    service = ConversationCommandService(db)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=0,
+            command_id=f"seed-begin-{target_state}",
+            payload={
+                "recording_type": "text",
+                "client_attempt_id": f"seed-attempt-{target_state}",
+            },
+        ),
+    )
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "finish_answer",
+            version=begun.state_version,
+            command_id=f"seed-finish-{target_state}",
+            payload={
+                "attempt_id": begun.active_attempt_id,
+                "transcript": "A bounded seed answer.",
+            },
+        ),
+    )
+    await db.refresh(session)
+    session.conversation_state = target_state
+    session.state_version = version
+    if target_state == "recoverable_error":
+        session.recoverable_error_scope = "attempt_processing"
+        session.recoverable_error_code = "coach_evaluation_unavailable"
+        session.recoverable_error_context_json = {"retryable": True}
+    await db.commit()
+    attempt = await db.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    return session, questions[0], attempt
 
 
 @pytest.mark.asyncio
@@ -663,6 +713,337 @@ async def test_pause_resume_preserves_draft_and_keep_speaking(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prior_state", ["asking", "awaiting_next_action", "coaching"])
+async def test_pause_persists_exact_effect_and_replays_for_each_legal_review_state(
+    db_session: AsyncSession, prior_state: str
+) -> None:
+    if prior_state == "asking":
+        session, questions = await seed_session(
+            db_session, state="asking", status="active", version=7
+        )
+        session.active_question_id = questions[0].id
+        questions[0].question_state = "asked"
+        await db_session.commit()
+        question = questions[0]
+        active_attempt_id = None
+    else:
+        session, question, attempt = await seed_review_command_context(
+            db_session, target_state=prior_state, version=7
+        )
+        active_attempt_id = attempt.id
+    request = command("pause", version=7, command_id=f"pause-{prior_state}")
+    activity_version = session.activity_version
+    retention_version = session.retention_version
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    assert replay == result
+    assert (result.state, result.state_version) == ("paused", 8)
+    await db_session.refresh(session)
+    assert (session.status, session.resume_state) == ("active", prior_state)
+    assert session.paused_at is not None
+    assert session.active_question_id == question.id
+    assert session.active_recording_id == active_attempt_id
+    assert (session.activity_version, session.retention_version) == (
+        activity_version,
+        retention_version,
+    )
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent).where(
+                InterviewSessionEvent.session_id == session.id,
+                InterviewSessionEvent.command_id == request.command_id,
+            )
+        )
+    ).all()
+    assert len(events) == 1
+    assert (
+        events[0].event_type,
+        events[0].actor_type,
+        events[0].state_before,
+        events[0].state_after,
+        events[0].state_version,
+        events[0].command_id,
+    ) == (
+        "session_paused",
+        "candidate",
+        prior_state,
+        "paused",
+        8,
+        request.command_id,
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(ConversationCommandResultRecord.id)).where(
+                ConversationCommandResultRecord.session_id == session.id,
+                ConversationCommandResultRecord.command_id == request.command_id,
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resume_state",
+    ["asking", "awaiting_next_action", "coaching", "recoverable_error"],
+)
+async def test_resume_restores_exact_state_and_replays_for_each_legal_target(
+    db_session: AsyncSession, resume_state: str
+) -> None:
+    if resume_state == "asking":
+        session, questions = await seed_session(
+            db_session, state="paused", status="active", version=10
+        )
+        session.active_question_id = questions[0].id
+        questions[0].question_state = "asked"
+        question = questions[0]
+        active_attempt_id = None
+    else:
+        session, question, attempt = await seed_review_command_context(
+            db_session, target_state=resume_state, version=10
+        )
+        session.conversation_state = "paused"
+        active_attempt_id = attempt.id
+    session.resume_state = resume_state
+    session.paused_at = datetime.utcnow()
+    await db_session.commit()
+    request = command("resume", version=10, command_id=f"resume-{resume_state}")
+    activity_version = session.activity_version
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    assert replay == result
+    assert (result.state, result.state_version) == (resume_state, 11)
+    await db_session.refresh(session)
+    assert session.status == "active"
+    assert session.resume_state is None and session.paused_at is None
+    assert session.active_question_id == question.id
+    assert session.active_recording_id == active_attempt_id
+    assert session.activity_version == activity_version
+    if resume_state == "recoverable_error":
+        assert session.recoverable_error_scope == "attempt_processing"
+        assert session.recoverable_error_code == "coach_evaluation_unavailable"
+        assert session.recoverable_error_context_json == {"retryable": True}
+    event = await db_session.scalar(
+        select(InterviewSessionEvent).where(
+            InterviewSessionEvent.session_id == session.id,
+            InterviewSessionEvent.command_id == request.command_id,
+        )
+    )
+    assert event is not None
+    assert (
+        event.event_type,
+        event.actor_type,
+        event.state_before,
+        event.state_after,
+        event.state_version,
+        event.command_id,
+    ) == (
+        "session_resumed",
+        "candidate",
+        "paused",
+        resume_state,
+        11,
+        request.command_id,
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(ConversationCommandResultRecord.id)).where(
+                ConversationCommandResultRecord.session_id == session.id,
+                ConversationCommandResultRecord.command_id == request.command_id,
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prior_state", ["coaching", "recoverable_error"])
+async def test_retry_answer_from_each_remaining_legal_state_has_exact_effect(
+    db_session: AsyncSession, prior_state: str
+) -> None:
+    session, question, attempt = await seed_review_command_context(
+        db_session, target_state=prior_state, version=12
+    )
+    request = command(
+        "retry_answer",
+        version=12,
+        command_id=f"retry-{prior_state}",
+        payload={"question_id": question.id},
+    )
+    attempt_version = attempt.attempt_version
+    attempts_created_count = question.attempts_created_count
+    activity_version = session.activity_version
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    assert replay == result
+    assert (result.state, result.state_version, result.active_attempt_id) == (
+        "asking",
+        13,
+        None,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(question)
+    await db_session.refresh(attempt)
+    assert session.status == "active"
+    assert session.active_question_id == question.id
+    assert session.active_recording_id is None
+    assert (
+        session.recoverable_error_scope,
+        session.recoverable_error_code,
+        session.recoverable_error_context_json,
+    ) == (None, None, None)
+    assert session.activity_version == activity_version
+    assert question.question_state == "asked"
+    assert question.attempts_created_count == attempts_created_count
+    assert (attempt.attempt_state, attempt.attempt_version) == (
+        "unavailable",
+        attempt_version,
+    )
+    event = await db_session.scalar(
+        select(InterviewSessionEvent).where(
+            InterviewSessionEvent.session_id == session.id,
+            InterviewSessionEvent.command_id == request.command_id,
+        )
+    )
+    assert event is not None
+    assert (
+        event.event_type,
+        event.actor_type,
+        event.state_before,
+        event.state_after,
+        event.state_version,
+        event.recording_id,
+        event.command_id,
+    ) == (
+        "attempt_retried",
+        "candidate",
+        prior_state,
+        "asking",
+        13,
+        attempt.id,
+        request.command_id,
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(ConversationCommandResultRecord.id)).where(
+                ConversationCommandResultRecord.session_id == session.id,
+                ConversationCommandResultRecord.command_id == request.command_id,
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_request_hint_while_listening_updates_only_active_attempt_and_replays(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=0,
+            command_id="seed-listening-hint",
+            payload={
+                "recording_type": "text",
+                "client_attempt_id": "listening-hint-attempt",
+            },
+        ),
+    )
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    question_pending_count = questions[0].pending_hint_count
+    request = command(
+        "request_hint",
+        version=begun.state_version,
+        command_id="hint-while-listening",
+        payload={"hint_type": "clarify_question"},
+    )
+
+    result = await service.execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    assert replay == result
+    assert (result.state, result.state_version, result.active_attempt_id) == (
+        "listening",
+        2,
+        attempt.id,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    await db_session.refresh(questions[0])
+    assert session.status == "active"
+    assert attempt.hint_count == 1
+    assert questions[0].pending_hint_count == question_pending_count
+    assert questions[0].pending_hint_types_json is None
+    event = await db_session.scalar(
+        select(InterviewSessionEvent).where(
+            InterviewSessionEvent.session_id == session.id,
+            InterviewSessionEvent.command_id == request.command_id,
+        )
+    )
+    assert event is not None
+    assert (
+        event.event_type,
+        event.actor_type,
+        event.state_before,
+        event.state_after,
+        event.state_version,
+        event.recording_id,
+        event.command_id,
+        event.payload_json,
+    ) == (
+        "hint_presented",
+        "system",
+        "listening",
+        "listening",
+        2,
+        attempt.id,
+        request.command_id,
+        {"hint_type": "clarify_question"},
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(ConversationCommandResultRecord.id)).where(
+                ConversationCommandResultRecord.session_id == session.id,
+                ConversationCommandResultRecord.command_id == request.command_id,
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_retry_preserves_terminal_attempt_and_budget(
     db_session: AsyncSession,
 ) -> None:
@@ -870,6 +1251,42 @@ async def test_event_failure_rolls_back_state_and_receipt(
     assert await db_session.scalar(select(func.count(InterviewSessionEvent.id))) == 0
     assert (
         await db_session.scalar(select(func.count(ConversationCommandResultRecord.id)))
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_shared_state_change_event_failure_rolls_back_pause_and_receipt(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=3
+    )
+    session.active_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    session_id = session.id
+    service = ConversationCommandService(db_session)
+
+    async def fail_events(**_: object) -> None:
+        raise ValueError("event payload must be content-free and bounded")
+
+    monkeypatch.setattr(service.repository, "append_session_events", fail_events)
+    request = command("pause", version=3, command_id="rollback-pause")
+    with pytest.raises(ConversationCommandError):
+        await service.execute(user_id="local", session_id=session_id, request=request)
+
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert (persisted.conversation_state, persisted.state_version) == ("asking", 3)
+    assert persisted.resume_state is None and persisted.paused_at is None
+    assert await db_session.scalar(select(func.count(InterviewSessionEvent.id))) == 0
+    assert (
+        await db_session.scalar(
+            select(func.count(ConversationCommandResultRecord.id)).where(
+                ConversationCommandResultRecord.command_id == request.command_id
+            )
+        )
         == 0
     )
 
