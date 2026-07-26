@@ -43,7 +43,7 @@ ERROR_REGISTRY: dict[str, ErrorDefinition] = {
     "coach_conversation_not_enabled": ErrorDefinition(
         403, False, "Conversational interview sessions are not enabled."
     ),
-    "coach_conversational_command_required": _unprocessable(
+    "coach_conversational_command_required": _conflict(
         "Use the conversational command endpoint for this session."
     ),
     "coach_conversation_invalid_state": _conflict(

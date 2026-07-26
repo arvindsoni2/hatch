@@ -13,105 +13,97 @@ class ConversationState(Protocol):
 
 @dataclass(frozen=True)
 class TransitionRule:
-    states: frozenset[str]
-    statuses: frozenset[str]
+    """Exact coarse state/status projections that may invoke one command."""
+
+    allowed_pairs: frozenset[tuple[str, str]]
+
+    def permits(self, state: str | None, status: str | None) -> bool:
+        return (
+            state is not None
+            and status is not None
+            and (state, status) in self.allowed_pairs
+        )
+
+
+def _rule(*allowed_pairs: tuple[str, str]) -> TransitionRule:
+    return TransitionRule(frozenset(allowed_pairs))
 
 
 TRANSITIONS: dict[str, TransitionRule] = {
-    "start": TransitionRule(frozenset({"ready"}), frozenset({"setup"})),
-    "begin_answer": TransitionRule(frozenset({"asking"}), frozenset({"active"})),
-    "finish_answer": TransitionRule(frozenset({"listening"}), frozenset({"active"})),
-    "keep_speaking": TransitionRule(frozenset({"listening"}), frozenset({"active"})),
-    "pause": TransitionRule(
-        frozenset(
-            {
-                "asking",
-                "listening",
-                "awaiting_next_action",
-                "coaching",
-                "recoverable_error",
-            }
-        ),
-        frozenset({"active"}),
+    "start": _rule(("ready", "setup")),
+    "begin_answer": _rule(("asking", "active")),
+    "finish_answer": _rule(("listening", "active")),
+    "keep_speaking": _rule(("listening", "active")),
+    "pause": _rule(
+        ("asking", "active"),
+        ("listening", "active"),
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
+        ("recoverable_error", "active"),
     ),
-    "resume": TransitionRule(frozenset({"paused"}), frozenset({"active"})),
-    "cancel_attempt": TransitionRule(frozenset({"listening"}), frozenset({"active"})),
-    "retry_answer": TransitionRule(
-        frozenset({"awaiting_next_action", "coaching", "recoverable_error"}),
-        frozenset({"active"}),
+    "resume": _rule(("paused", "active")),
+    "cancel_attempt": _rule(("listening", "active")),
+    "retry_answer": _rule(
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
+        ("recoverable_error", "active"),
     ),
-    "retry_setup": TransitionRule(
-        frozenset({"recoverable_error"}), frozenset({"setup"})
+    "retry_setup": _rule(("recoverable_error", "setup")),
+    "rebuild_plan": _rule(("ready", "setup")),
+    "retry_processing": _rule(("recoverable_error", "active")),
+    "retry_report": _rule(
+        ("recoverable_error", "active"),
+        ("completed", "completed"),
     ),
-    "rebuild_plan": TransitionRule(frozenset({"ready"}), frozenset({"setup"})),
-    "retry_processing": TransitionRule(
-        frozenset({"recoverable_error"}), frozenset({"active"})
+    "request_hint": _rule(
+        ("asking", "active"),
+        ("listening", "active"),
     ),
-    "retry_report": TransitionRule(
-        frozenset({"recoverable_error", "completed"}),
-        frozenset({"active", "completed"}),
+    "request_coaching": _rule(("awaiting_next_action", "active")),
+    "return_to_review": _rule(("coaching", "active")),
+    "edit_transcript": _rule(
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
     ),
-    "request_hint": TransitionRule(
-        frozenset({"asking", "listening"}), frozenset({"active"})
+    "accept_attempt": _rule(
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
     ),
-    "request_coaching": TransitionRule(
-        frozenset({"awaiting_next_action"}), frozenset({"active"})
+    "record_self_assessment": _rule(
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
+        ("completed", "completed"),
     ),
-    "return_to_review": TransitionRule(frozenset({"coaching"}), frozenset({"active"})),
-    "edit_transcript": TransitionRule(
-        frozenset({"awaiting_next_action", "coaching"}), frozenset({"active"})
+    "update_retention": _rule(
+        ("ready", "setup"),
+        ("asking", "active"),
+        ("listening", "active"),
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
+        ("paused", "active"),
+        ("recoverable_error", "setup"),
+        ("recoverable_error", "active"),
     ),
-    "accept_attempt": TransitionRule(
-        frozenset({"awaiting_next_action", "coaching"}), frozenset({"active"})
+    "skip_question": _rule(("asking", "active")),
+    "end_session": _rule(
+        ("asking", "active"),
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
+        ("paused", "active"),
+        ("recoverable_error", "active"),
     ),
-    "record_self_assessment": TransitionRule(
-        frozenset({"awaiting_next_action", "coaching", "completed"}),
-        frozenset({"active", "completed"}),
+    "delete_audio": _rule(
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
+        ("paused", "active"),
+        ("recoverable_error", "active"),
+        ("completed", "completed"),
     ),
-    "update_retention": TransitionRule(
-        frozenset(
-            {
-                "ready",
-                "asking",
-                "listening",
-                "awaiting_next_action",
-                "coaching",
-                "paused",
-                "recoverable_error",
-            }
-        ),
-        frozenset({"setup", "active"}),
-    ),
-    "skip_question": TransitionRule(frozenset({"asking"}), frozenset({"active"})),
-    "end_session": TransitionRule(
-        frozenset(
-            {
-                "asking",
-                "awaiting_next_action",
-                "coaching",
-                "paused",
-                "recoverable_error",
-            }
-        ),
-        frozenset({"active"}),
-    ),
-    "delete_audio": TransitionRule(
-        frozenset(
-            {
-                "awaiting_next_action",
-                "coaching",
-                "paused",
-                "recoverable_error",
-                "completed",
-            }
-        ),
-        frozenset({"active", "completed"}),
-    ),
-    "delete_transcript": TransitionRule(
-        frozenset(
-            {"awaiting_next_action", "coaching", "recoverable_error", "completed"}
-        ),
-        frozenset({"active", "completed"}),
+    "delete_transcript": _rule(
+        ("awaiting_next_action", "active"),
+        ("coaching", "active"),
+        ("recoverable_error", "active"),
+        ("completed", "completed"),
     ),
 }
 
@@ -138,7 +130,7 @@ def allowed_commands(
     return tuple(
         command_type
         for command_type, rule in TRANSITIONS.items()
-        if state in rule.states and status in rule.statuses
+        if rule.permits(state, status)
     )
 
 
@@ -152,6 +144,6 @@ def require_transition(
     """Return a permitted coarse rule or reject with the canonical error code."""
     state, status = _resolve_state(session, state, status)
     rule = TRANSITIONS.get(command_type)
-    if rule is None or state not in rule.states or status not in rule.statuses:
+    if rule is None or not rule.permits(state, status):
         raise ValueError("coach_conversation_invalid_state")
     return rule
