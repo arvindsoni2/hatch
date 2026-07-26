@@ -89,7 +89,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             reconcile_stale_coach_state,
         )
 
-        recovered = await reconcile_stale_coach_state()
+        # One bounded entry point covers legacy and conversational Coach claims.
+        recovered = await reconcile_stale_coach_state(batch_size=100)
         if recovered:
             logger.warning("Recovered %d stale Coach async states.", recovered)
     except Exception:
