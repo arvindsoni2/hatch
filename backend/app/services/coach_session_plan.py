@@ -11,20 +11,33 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.async_job import AsyncJob
+from ..models.application import Application
 from ..models.coach_session import (
+    CompanyResearch,
     CoachSessionEvidenceRecord,
     InterviewSession,
     InterviewSessionEvent,
     SessionRecording,
     SessionQuestion,
 )
+from ..models.document import GeneratedDocument
+from ..models.job import JobPosting
+from ..models.question_bank import QuestionBankItem
 from ..schemas.coach import CreateSessionRequest
 from ..schemas.coach_conversation import ConversationalSessionPlan
 from .async_job_service import AsyncJobService
+from .master_cv_store import (
+    MasterCVMissingError,
+    load_master_cv,
+    resolve_master_cv_path,
+)
+from .writing_contracts import build_evidence_ledger
 from .coach_conversational_contracts import (
     DELIVERY_POLICY,
     EVIDENCE_GROUNDING_CONTRACT,
@@ -59,6 +72,19 @@ _CATEGORIES = frozenset(
 _BEHAVIOURAL = ("behavioural", "situational", "culture")
 _ROLE_SPECIFIC = ("technical", "domain", "commercial")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SECRET_PATTERNS = (
+    re.compile(
+        r"(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----"
+    ),
+    re.compile(
+        r"(?i)\b(?:api[_-]?key|authorization|password|secret|access[_-]?token)\b"
+        r"\s*[:=]\s*[^\s,;]+"
+    ),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+"),
+)
+_EMAIL_PATTERN = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
+_PHONE_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d ()-]{7,}\d)(?!\w)")
+_MAX_SOURCE_FILE_BYTES = 10 * 1024 * 1024
 
 
 def _canonical_json(value: object) -> str:
@@ -153,6 +179,371 @@ class SessionPlanError(ValueError):
         super().__init__(code)
 
 
+async def load_claim_planning_request(
+    db: AsyncSession,
+    *,
+    request: CreateSessionRequest | None = None,
+    claim: SetupClaim | None = None,
+    current_retention: dict[str, str] | None = None,
+) -> CreateSessionRequest:
+    """Resolve initial JD fallback or reload a claim's authoritative stored request."""
+    if (request is None) == (claim is None):
+        raise ValueError("provide exactly one of request or claim")
+    if claim is not None:
+        row = (
+            await db.execute(
+                select(
+                    InterviewSession.planning_request_json,
+                    InterviewSession.retention_policy_json,
+                ).where(
+                    InterviewSession.id == claim.session_id,
+                    InterviewSession.setup_job_id == claim.job_id,
+                    InterviewSession.setup_claim_token == claim.claim_token,
+                    InterviewSession.setup_generation == claim.setup_generation,
+                    InterviewSession.conversation_state == "planning",
+                )
+            )
+        ).one_or_none()
+        if row is None or row.planning_request_json is None:
+            raise SessionPlanError("coach_conversation_invalid_state")
+        payload = copy_json(row.planning_request_json)
+        if claim.rebuild and row.retention_policy_json is not None:
+            payload["conversational_config"]["retention"] = copy_json(
+                row.retention_policy_json
+            )
+        return CreateSessionRequest.model_validate(payload)
+
+    assert request is not None
+    payload = request.model_dump(mode="json")
+    if request.jd_text is None and request.application_id is not None:
+        linked_jd = await db.scalar(
+            select(JobPosting.description)
+            .join(Application, Application.job_id == JobPosting.id)
+            .where(Application.id == request.application_id)
+        )
+        if linked_jd:
+            payload["jd_text"] = linked_jd
+    if payload.get("jd_text"):
+        payload["jd_text"] = _redact_evidence_text(payload["jd_text"])
+    if current_retention is not None:
+        payload["conversational_config"]["retention"] = copy_json(current_retention)
+    return CreateSessionRequest.model_validate(payload)
+
+
+def copy_json(value: Any) -> Any:
+    """Round-trip JSON-compatible state without retaining mutable ORM containers."""
+    return json.loads(_canonical_json(value))
+
+
+async def load_session_plan_sources(
+    db: AsyncSession,
+    request: CreateSessionRequest,
+    *,
+    now: datetime | None = None,
+) -> tuple[EvidenceSource, ...]:
+    """Select the latest V6-eligible immutable source snapshots."""
+    config = request.conversational_config
+    if config is None:
+        raise SessionPlanError("coach_conversation_invalid_state")
+    selected: list[EvidenceSource] = []
+    application: Application | None = None
+    if request.application_id is not None:
+        application = await db.get(Application, request.application_id)
+
+    if config.evidence_selection.application_cv != "none" and application is not None:
+        approved = (
+            await db.execute(
+                select(GeneratedDocument)
+                .where(
+                    GeneratedDocument.application_id == application.id,
+                    GeneratedDocument.document_type == "cv",
+                    GeneratedDocument.status == "approved",
+                )
+                .order_by(GeneratedDocument.version.desc(), GeneratedDocument.id.asc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if approved is not None:
+            selected.append(
+                _document_evidence_source(
+                    locator=approved.file_path,
+                    evidence_id=f"application_cv:{approved.id}",
+                    source_record_id=approved.id,
+                    source_record_version=str(approved.version),
+                    approval_state="approved",
+                )
+            )
+        elif (
+            config.evidence_selection.application_cv == "current_if_no_approved"
+            and application.cv_version
+        ):
+            text = _read_supported_cv(application.cv_version)
+            redacted = _redact_evidence_text(text)
+            selected.append(
+                EvidenceSource(
+                    evidence_id=f"application_cv:{application.id}",
+                    source_type="application_cv",
+                    source_record_id=application.id,
+                    source_record_version=_sha256(redacted),
+                    source_path="application/current_cv",
+                    snapshot_text=redacted,
+                    approval_state="candidate_selected_unapproved",
+                )
+            )
+
+    if config.evidence_selection.master_cv == "include":
+        selected.extend(_master_cv_sources())
+
+    selected.extend(await _question_bank_sources(db, request))
+
+    if request.jd_text:
+        redacted_jd = _redact_evidence_text(request.jd_text)
+        selected.append(
+            EvidenceSource(
+                evidence_id="job_description",
+                source_type="job_posting",
+                source_record_id=request.application_id or "planning_request",
+                source_record_version=_sha256(redacted_jd),
+                source_path="planning_request/jd_text",
+                snapshot_text=redacted_jd,
+                approval_state="context_only",
+            )
+        )
+
+    if config.evidence_selection.company_research == "include_if_fresh":
+        timestamp = now or datetime.utcnow()
+        candidates = (
+            (
+                await db.execute(
+                    select(CompanyResearch)
+                    .where(CompanyResearch.expires_at >= timestamp)
+                    .order_by(
+                        CompanyResearch.cached_at.desc(), CompanyResearch.id.asc()
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        normalized_company = _normalized_name(request.company_name)
+        research = next(
+            (
+                candidate
+                for candidate in candidates
+                if _normalized_name(candidate.company_name) == normalized_company
+            ),
+            None,
+        )
+        if research is not None:
+            research_text = _structured_research_text(research)
+            if not research_text:
+                raise SessionPlanError("coach_grounding_source_unavailable")
+            selected.append(
+                EvidenceSource(
+                    evidence_id=f"company_research:{research.id}",
+                    source_type="company_research",
+                    source_record_id=research.id,
+                    source_record_version=research.cached_at.isoformat(),
+                    source_path="company_research/structured",
+                    snapshot_text=research_text,
+                    approval_state="context_only",
+                )
+            )
+
+    if any(not item.snapshot_text for item in selected):
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    if (
+        len(selected) > 30
+        or any(len(item.snapshot_text) > 2000 for item in selected)
+        or sum(len(item.snapshot_text) for item in selected) > 40000
+    ):
+        raise SessionPlanError("coach_contract_unsupported")
+    return tuple(selected)
+
+
+def _document_evidence_source(
+    *,
+    locator: str | None,
+    evidence_id: str,
+    source_record_id: str,
+    source_record_version: str,
+    approval_state: str,
+) -> EvidenceSource:
+    if not locator:
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    redacted = _redact_evidence_text(_read_supported_cv(locator))
+    return EvidenceSource(
+        evidence_id=evidence_id,
+        source_type="application_cv",
+        source_record_id=source_record_id,
+        source_record_version=source_record_version,
+        source_path="application/generated_cv",
+        snapshot_text=redacted,
+        approval_state=approval_state,
+    )
+
+
+def _read_supported_cv(locator: str) -> str:
+    path = Path(locator)
+    try:
+        if not path.is_file() or path.stat().st_size > _MAX_SOURCE_FILE_BYTES:
+            raise SessionPlanError("coach_grounding_source_unavailable")
+        suffix = path.suffix.casefold()
+        if suffix == ".docx":
+            from docx import Document  # type: ignore  # noqa: PLC0415
+
+            document = Document(str(path))
+            value = "\n".join(
+                paragraph.text for paragraph in document.paragraphs if paragraph.text
+            )
+        elif suffix == ".pdf":
+            from pypdf import PdfReader  # type: ignore  # noqa: PLC0415
+
+            value = "\n".join(
+                page.extract_text() or "" for page in PdfReader(str(path)).pages
+            )
+        elif suffix in {".txt", ".md", ".json"}:
+            value = path.read_text(encoding="utf-8")
+        else:
+            raise SessionPlanError("coach_grounding_source_unavailable")
+    except SessionPlanError:
+        raise
+    except Exception as exc:
+        raise SessionPlanError("coach_grounding_source_unavailable") from exc
+    if not value.strip():
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    return value
+
+
+def _master_cv_sources() -> list[EvidenceSource]:
+    try:
+        master = load_master_cv()
+        configured_path = resolve_master_cv_path()
+    except MasterCVMissingError as exc:
+        if resolve_master_cv_path().exists():
+            raise SessionPlanError("coach_grounding_source_unavailable") from exc
+        return []
+    except Exception as exc:
+        raise SessionPlanError("coach_grounding_source_unavailable") from exc
+    if configured_path.exists() and not isinstance(master, dict):
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    professional = {
+        key: master[key]
+        for key in (
+            "summary",
+            "summary_variants",
+            "skills",
+            "experience",
+            "education",
+            "certifications",
+            "projects",
+        )
+        if key in master
+    }
+    canonical_professional = _redact_evidence_text(_canonical_json(professional))
+    source_version = _sha256(canonical_professional)
+    rows: list[EvidenceSource] = []
+    for item in build_evidence_ledger(professional):
+        text = _redact_evidence_text(item.text)
+        if text:
+            rows.append(
+                EvidenceSource(
+                    evidence_id=f"master_cv:{_sha256(item.source_path)[:24]}",
+                    source_type="master_cv",
+                    source_record_id="master_cv",
+                    source_record_version=source_version,
+                    source_path=f"master_cv/{item.source_path}",
+                    snapshot_text=text,
+                    approval_state="confirmed",
+                )
+            )
+    return rows
+
+
+async def _question_bank_sources(
+    db: AsyncSession, request: CreateSessionRequest
+) -> list[EvidenceSource]:
+    config = request.conversational_config
+    assert config is not None
+    policy = config.evidence_selection.question_bank
+    if policy == "exclude":
+        return []
+    confidences = ("reviewed", "final")
+    if policy == "include_drafts":
+        confidences = ("draft", "reviewed", "final")
+    stmt = select(QuestionBankItem).where(
+        QuestionBankItem.archived_at.is_(None),
+        QuestionBankItem.confidence.in_(confidences),
+    )
+    explicit_ids = config.evidence_selection.selected_question_bank_record_ids
+    if explicit_ids:
+        stmt = stmt.where(QuestionBankItem.id.in_(explicit_ids))
+    rows = list(
+        (
+            await db.execute(
+                stmt.order_by(
+                    QuestionBankItem.updated_at.desc(), QuestionBankItem.id.asc()
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if explicit_ids and {row.id for row in rows} != set(explicit_ids):
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    approval = {"draft": "draft", "reviewed": "reviewed", "final": "reviewed_final"}
+    return [
+        EvidenceSource(
+            evidence_id=f"question_bank:{row.id}",
+            source_type="question_bank",
+            source_record_id=row.id,
+            source_record_version=row.updated_at.isoformat(),
+            source_path="question_bank/answer",
+            snapshot_text=_redact_evidence_text(
+                "\n".join(
+                    value
+                    for value in (
+                        row.title,
+                        row.question,
+                        row.situation,
+                        row.task,
+                        row.action,
+                        row.result,
+                        row.answer_draft,
+                    )
+                    if value
+                )
+            ),
+            approval_state=approval[row.confidence],
+        )
+        for row in rows
+    ]
+
+
+def _structured_research_text(research: CompanyResearch) -> str:
+    payload = {
+        "sector": research.sector,
+        "description": research.description,
+        "recent_news": research.recent_news,
+        "key_products": research.key_products,
+        "tech_stack_signals": research.tech_stack_signals,
+    }
+    return _redact_evidence_text(_canonical_json(payload)).strip()
+
+
+def _normalized_name(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _redact_evidence_text(value: str) -> str:
+    redacted = _normalize_snapshot(value)
+    for pattern in _SECRET_PATTERNS:
+        redacted = pattern.sub("[REDACTED]", redacted)
+    redacted = _EMAIL_PATTERN.sub("[REDACTED EMAIL]", redacted)
+    redacted = _PHONE_PATTERN.sub("[REDACTED PHONE]", redacted)
+    return redacted.strip()
+
+
 class SessionPlanBuilder:
     """Build the V6 immutable plan from validated request and source snapshots."""
 
@@ -172,8 +563,11 @@ class SessionPlanBuilder:
         count = config.planned_question_count or _default_question_count(
             config.duration_minutes
         )
+        _validate_source_selection(request, sources)
         normalized_questions = _normalise_questions(
-            questions or _default_questions(config.interview_type, count),
+            _default_questions(request, sources, count)
+            if questions is None
+            else questions,
             expected_count=count,
             interview_type=config.interview_type,
         )
@@ -266,7 +660,14 @@ def _default_question_count(duration_minutes: int) -> int:
     return 12
 
 
-def _default_questions(interview_type: str, count: int) -> tuple[PlannedQuestion, ...]:
+def _default_questions(
+    request: CreateSessionRequest,
+    sources: Sequence[EvidenceSource],
+    count: int,
+) -> tuple[PlannedQuestion, ...]:
+    config = request.conversational_config
+    assert config is not None
+    interview_type = config.interview_type
     if interview_type == "behavioural":
         categories = _BEHAVIOURAL
     elif interview_type == "role_specific_verbal":
@@ -277,9 +678,23 @@ def _default_questions(interview_type: str, count: int) -> tuple[PlannedQuestion
             for pair in zip(_BEHAVIOURAL, _ROLE_SPECIFIC, strict=True)
             for category in pair
         )
+    focus = ", ".join(area.replace("_", " ") for area in config.focus_areas)
+    grounding = next(
+        (
+            source.snapshot_text[:160].strip()
+            for source in sources
+            if source.source_type == "job_posting" and source.snapshot_text.strip()
+        ),
+        "the supplied role context",
+    )
+    role_context = f"the {request.role_title} role"
+    focus_context = f", focusing on {focus}" if focus else ""
     return tuple(
         PlannedQuestion(
-            text=f"Discuss a relevant example for this {category} interview question.",
+            text=(
+                f"For {role_context}{focus_context}, discuss a {category} example "
+                f"relevant to: {grounding}"
+            )[:10_000],
             category=category,
         )
         for index in range(count)
@@ -296,7 +711,7 @@ def _normalise_questions(
     for question in questions:
         text = _normalize_snapshot(question.text).strip()
         category = question.category.strip().lower()
-        if not text or category not in _CATEGORIES:
+        if not text or len(text) > 10_000 or category not in _CATEGORIES:
             raise ValueError("planned question is invalid")
         normalized.append(PlannedQuestion(text=text, category=category))
     categories = {question.category for question in normalized}
@@ -311,6 +726,77 @@ def _normalise_questions(
     ):
         raise ValueError("mixed plan must contain both category groups")
     return tuple(normalized)
+
+
+def _validate_source_selection(
+    request: CreateSessionRequest, sources: Sequence[EvidenceSource]
+) -> None:
+    config = request.conversational_config
+    assert config is not None
+    selection = config.evidence_selection
+    application_sources = [
+        source for source in sources if source.source_type == "application_cv"
+    ]
+    if selection.application_cv == "none" and application_sources:
+        raise ValueError("application CV evidence is excluded by the request")
+    if selection.application_cv == "approved_only" and any(
+        source.approval_state != "approved" for source in application_sources
+    ):
+        raise ValueError("application CV approval does not match the request")
+    if any(
+        source.approval_state not in {"approved", "candidate_selected_unapproved"}
+        for source in application_sources
+    ) or (
+        any(source.approval_state == "approved" for source in application_sources)
+        and any(
+            source.approval_state == "candidate_selected_unapproved"
+            for source in application_sources
+        )
+    ):
+        raise ValueError("application CV source selection is inconsistent")
+
+    master_sources = [source for source in sources if source.source_type == "master_cv"]
+    if selection.master_cv == "exclude" and master_sources:
+        raise ValueError("master CV evidence is excluded by the request")
+    if any(source.approval_state != "confirmed" for source in master_sources):
+        raise ValueError("master CV evidence must be confirmed")
+
+    question_sources = [
+        source for source in sources if source.source_type == "question_bank"
+    ]
+    if any(source.approval_state == "draft" for source in question_sources) and not (
+        selection.question_bank == "include_drafts" and selection.draft_evidence_consent
+    ):
+        raise ValueError("draft evidence requires selected explicit consent")
+    allowed_question_approvals = (
+        {"reviewed", "reviewed_final", "draft"}
+        if selection.question_bank == "include_drafts"
+        else {"reviewed", "reviewed_final"}
+        if selection.question_bank == "reviewed_final_only"
+        else set()
+    )
+    if any(
+        source.approval_state not in allowed_question_approvals
+        for source in question_sources
+    ):
+        raise ValueError("question bank evidence does not match the request")
+    company_sources = [
+        source for source in sources if source.source_type == "company_research"
+    ]
+    if selection.company_research == "exclude" and company_sources:
+        raise ValueError("company research is excluded by the request")
+    if any(source.approval_state != "context_only" for source in company_sources):
+        raise ValueError("company research must remain context only")
+
+    known_types = {
+        "application_cv",
+        "master_cv",
+        "question_bank",
+        "job_posting",
+        "company_research",
+    }
+    if any(source.source_type not in known_types for source in sources):
+        raise ValueError("evidence source type is not selected by the request")
 
 
 def _build_evidence_records(
@@ -385,21 +871,18 @@ async def claim_session_setup(
     db: AsyncSession,
     *,
     session_id: str,
-    request: CreateSessionRequest,
+    request: CreateSessionRequest | None = None,
     rebuild: bool = False,
     supported_locales: Sequence[str] = ("en-GB",),
     now: datetime | None = None,
     lease_seconds: int = DEFAULT_SETUP_LEASE_SECONDS,
 ) -> SetupClaim:
     """Claim one initial, retry, or candidate-requested rebuild generation."""
-    config = request.conversational_config
-    if request.experience_version != "conversational_v1" or config is None:
-        raise SessionPlanError("coach_conversation_invalid_state")
-    if config.locale not in frozenset(supported_locales):
-        raise SessionPlanError("coach_locale_unsupported")
     current = await db.get(InterviewSession, session_id)
     if current is None or current.experience_version != "conversational_v1":
         raise SessionPlanError("coach_conversation_invalid_state")
+    await db.flush()
+    await db.refresh(current)
     if current.deletion_state != "not_requested":
         raise SessionPlanError("coach_session_deletion_in_progress")
     if current.setup_job_id is not None or current.setup_claim_token is not None:
@@ -430,12 +913,52 @@ async def claim_session_setup(
             else "coach_conversation_invalid_state"
         )
 
+    if initial:
+        if request is None:
+            raise SessionPlanError("coach_conversation_invalid_state")
+        authoritative_request = request
+    else:
+        if current.planning_request_json is None:
+            raise SessionPlanError("coach_conversation_invalid_state")
+        authoritative_request = CreateSessionRequest.model_validate(
+            current.planning_request_json
+        )
+        if request is not None and request.model_dump(
+            mode="json"
+        ) != authoritative_request.model_dump(mode="json"):
+            raise SessionPlanError("coach_conversation_invalid_state")
+    config = authoritative_request.conversational_config
+    if (
+        authoritative_request.experience_version != "conversational_v1"
+        or config is None
+    ):
+        raise SessionPlanError("coach_conversation_invalid_state")
+    if config.locale not in frozenset(supported_locales):
+        raise SessionPlanError("coach_locale_unsupported")
+
     claimed_at = now or datetime.utcnow()
     claim_expires_at = claimed_at + timedelta(seconds=lease_seconds)
     claim_token = secrets.token_hex(32)
     job = await AsyncJobService.create(db, "coach_session")
     prior_state = current.conversation_state
     increment_state = 0 if initial else 1
+    values: dict[str, object] = {
+        "setup_generation": InterviewSession.setup_generation + 1,
+        "setup_attempt_count": InterviewSession.setup_attempt_count + 1,
+        "setup_job_id": job.id,
+        "setup_claim_token": claim_token,
+        "setup_claimed_at": claimed_at,
+        "setup_claim_expires_at": claim_expires_at,
+        "setup_started_at": claimed_at,
+        "setup_completed_at": None,
+        "recoverable_error_code": None,
+        "recoverable_error_scope": None,
+        "recoverable_error_context_json": None,
+        "conversation_state": "planning",
+        "state_version": InterviewSession.state_version + increment_state,
+    }
+    if initial:
+        values["planning_request_json"] = authoritative_request.model_dump(mode="json")
     claimed = await db.execute(
         update(InterviewSession)
         .where(
@@ -452,22 +975,7 @@ async def claim_session_setup(
             InterviewSession.setup_claim_token.is_(None),
             InterviewSession.deletion_state == "not_requested",
         )
-        .values(
-            planning_request_json=request.model_dump(mode="json"),
-            setup_generation=InterviewSession.setup_generation + 1,
-            setup_attempt_count=InterviewSession.setup_attempt_count + 1,
-            setup_job_id=job.id,
-            setup_claim_token=claim_token,
-            setup_claimed_at=claimed_at,
-            setup_claim_expires_at=claim_expires_at,
-            setup_started_at=claimed_at,
-            setup_completed_at=None,
-            recoverable_error_code=None,
-            recoverable_error_scope=None,
-            recoverable_error_context_json=None,
-            conversation_state="planning",
-            state_version=InterviewSession.state_version + increment_state,
-        )
+        .values(**values)
         .returning(InterviewSession.setup_generation, InterviewSession.state_version)
     )
     row = claimed.one_or_none()
@@ -584,75 +1092,88 @@ async def finalise_session_setup(
         build,
         request=CreateSessionRequest.model_validate(live_request_json),
     )
-    transitioned = await db.execute(
-        update(InterviewSession)
-        .where(
-            InterviewSession.id == claim.session_id,
-            InterviewSession.status == "setup",
-            InterviewSession.conversation_state == "planning",
-            InterviewSession.setup_job_id == claim.job_id,
-            InterviewSession.setup_claim_token == claim.claim_token,
-            InterviewSession.setup_generation == claim.setup_generation,
-            InterviewSession.setup_claim_expires_at >= completed_at,
-            InterviewSession.deletion_state == "not_requested",
+    nested = await db.begin_nested()
+    try:
+        job_transitioned = await db.execute(
+            update(AsyncJob)
+            .where(
+                AsyncJob.id == claim.job_id,
+                AsyncJob.status.in_(("pending", "running")),
+            )
+            .values(
+                status="done",
+                result_json=_canonical_json(
+                    {"session_id": claim.session_id, "status": "ready"}
+                ),
+                error=None,
+                updated_at=completed_at,
+            )
+            .returning(AsyncJob.id)
         )
-        .values(
-            session_plan_json=build.plan.model_dump(mode="json"),
-            session_plan_contract_version=SESSION_PLAN_CONTRACT,
-            evaluation_contract_version=RUBRIC_CONTRACT,
-            report_contract_version=REPORT_CONTRACT,
-            compatibility_key=build.compatibility_key,
-            retention_policy_json=build.plan.retention.model_dump(mode="json"),
-            session_plan_amendment_version=(
-                InterviewSession.session_plan_amendment_version + 1
-                if claim.rebuild
-                else InterviewSession.session_plan_amendment_version
-            ),
-            setup_job_id=None,
-            setup_claim_token=None,
-            setup_claimed_at=None,
-            setup_claim_expires_at=None,
-            setup_completed_at=completed_at,
-            recoverable_error_code=None,
-            recoverable_error_scope=None,
-            recoverable_error_context_json=None,
-            conversation_state="ready",
-            state_version=InterviewSession.state_version + 1,
-        )
-        .returning(InterviewSession.state_version)
-    )
-    state_version = transitioned.scalar_one_or_none()
-    if state_version is None:
-        return False
+        if job_transitioned.scalar_one_or_none() is None:
+            await nested.rollback()
+            return False
 
-    await persist_session_plan(db, session_id=claim.session_id, build=build)
-    await db.execute(
-        update(AsyncJob)
-        .where(
-            AsyncJob.id == claim.job_id,
-            AsyncJob.status.in_(("pending", "running")),
+        transitioned = await db.execute(
+            update(InterviewSession)
+            .where(
+                InterviewSession.id == claim.session_id,
+                InterviewSession.status == "setup",
+                InterviewSession.conversation_state == "planning",
+                InterviewSession.setup_job_id == claim.job_id,
+                InterviewSession.setup_claim_token == claim.claim_token,
+                InterviewSession.setup_generation == claim.setup_generation,
+                InterviewSession.setup_claim_expires_at >= completed_at,
+                InterviewSession.deletion_state == "not_requested",
+            )
+            .values(
+                session_plan_json=build.plan.model_dump(mode="json"),
+                session_plan_contract_version=SESSION_PLAN_CONTRACT,
+                evaluation_contract_version=RUBRIC_CONTRACT,
+                report_contract_version=REPORT_CONTRACT,
+                compatibility_key=build.compatibility_key,
+                retention_policy_json=build.plan.retention.model_dump(mode="json"),
+                session_plan_amendment_version=(
+                    InterviewSession.session_plan_amendment_version + 1
+                    if claim.rebuild
+                    else InterviewSession.session_plan_amendment_version
+                ),
+                setup_job_id=None,
+                setup_claim_token=None,
+                setup_claimed_at=None,
+                setup_claim_expires_at=None,
+                setup_completed_at=completed_at,
+                recoverable_error_code=None,
+                recoverable_error_scope=None,
+                recoverable_error_context_json=None,
+                conversation_state="ready",
+                state_version=InterviewSession.state_version + 1,
+            )
+            .returning(InterviewSession.state_version)
         )
-        .values(
-            status="done",
-            result_json=_canonical_json(
-                {"session_id": claim.session_id, "status": "ready"}
+        state_version = transitioned.scalar_one_or_none()
+        if state_version is None:
+            await nested.rollback()
+            return False
+
+        await persist_session_plan(db, session_id=claim.session_id, build=build)
+        await _append_setup_events(
+            db,
+            session_id=claim.session_id,
+            event_types=(
+                "session_plan_rebuilt" if claim.rebuild else "session_plan_completed",
             ),
-            error=None,
-            updated_at=completed_at,
+            state_before="planning",
+            state_after="ready",
+            state_version=state_version,
         )
-    )
-    await _append_setup_events(
-        db,
-        session_id=claim.session_id,
-        event_types=(
-            "session_plan_rebuilt" if claim.rebuild else "session_plan_completed",
-        ),
-        state_before="planning",
-        state_after="ready",
-        state_version=state_version,
-    )
-    await db.flush()
-    return True
+        await db.flush()
+        await nested.commit()
+        return True
+    except BaseException:
+        if nested.is_active:
+            await nested.rollback()
+        raise
 
 
 def _validate_build_for_request(
@@ -688,11 +1209,13 @@ def _validate_build_for_request(
     expected_question_count = config.planned_question_count or _default_question_count(
         config.duration_minutes
     )
-    _normalise_questions(
+    canonical_questions = _normalise_questions(
         build.questions,
         expected_count=expected_question_count,
         interview_type=config.interview_type,
     )
+    if canonical_questions != build.questions:
+        raise ValueError("plan questions are not canonical")
     rebuilt_evidence = _build_evidence_records(
         [
             EvidenceSource(
@@ -765,55 +1288,71 @@ async def fail_session_setup(
     recoverable = retryable and session.setup_attempt_count < session.setup_max_attempts
     state_after = "recoverable_error" if recoverable else "failed"
     status_after = "setup" if recoverable else "failed"
-    transitioned = await db.execute(
-        update(InterviewSession)
-        .where(
-            InterviewSession.id == claim.session_id,
-            InterviewSession.status == "setup",
-            InterviewSession.conversation_state == "planning",
-            InterviewSession.setup_job_id == claim.job_id,
-            InterviewSession.setup_claim_token == claim.claim_token,
-            InterviewSession.setup_generation == claim.setup_generation,
-            InterviewSession.setup_claim_expires_at >= failed_at,
-            InterviewSession.deletion_state == "not_requested",
+    nested = await db.begin_nested()
+    try:
+        job_transitioned = await db.execute(
+            update(AsyncJob)
+            .where(
+                AsyncJob.id == claim.job_id,
+                AsyncJob.status.in_(("pending", "running")),
+            )
+            .values(
+                status="failed",
+                result_json=None,
+                error=error_code,
+                updated_at=failed_at,
+            )
+            .returning(AsyncJob.id)
         )
-        .values(
-            status=status_after,
-            conversation_state=state_after,
-            setup_job_id=None,
-            setup_claim_token=None,
-            setup_claimed_at=None,
-            setup_claim_expires_at=None,
-            recoverable_error_code=error_code if recoverable else None,
-            recoverable_error_scope="setup" if recoverable else None,
-            recoverable_error_context_json={} if recoverable else None,
-            state_version=InterviewSession.state_version + 1,
+        if job_transitioned.scalar_one_or_none() is None:
+            await nested.rollback()
+            return False
+
+        transitioned = await db.execute(
+            update(InterviewSession)
+            .where(
+                InterviewSession.id == claim.session_id,
+                InterviewSession.status == "setup",
+                InterviewSession.conversation_state == "planning",
+                InterviewSession.setup_job_id == claim.job_id,
+                InterviewSession.setup_claim_token == claim.claim_token,
+                InterviewSession.setup_generation == claim.setup_generation,
+                InterviewSession.setup_claim_expires_at >= failed_at,
+                InterviewSession.deletion_state == "not_requested",
+            )
+            .values(
+                status=status_after,
+                conversation_state=state_after,
+                setup_job_id=None,
+                setup_claim_token=None,
+                setup_claimed_at=None,
+                setup_claim_expires_at=None,
+                recoverable_error_code=error_code if recoverable else None,
+                recoverable_error_scope="setup" if recoverable else None,
+                recoverable_error_context_json={} if recoverable else None,
+                state_version=InterviewSession.state_version + 1,
+            )
+            .returning(InterviewSession.state_version)
         )
-        .returning(InterviewSession.state_version)
-    )
-    state_version = transitioned.scalar_one_or_none()
-    if state_version is None:
-        return False
-    await db.execute(
-        update(AsyncJob)
-        .where(
-            AsyncJob.id == claim.job_id,
-            AsyncJob.status.in_(("pending", "running")),
+        state_version = transitioned.scalar_one_or_none()
+        if state_version is None:
+            await nested.rollback()
+            return False
+        await _append_setup_events(
+            db,
+            session_id=claim.session_id,
+            event_types=("session_plan_failed",),
+            state_before="planning",
+            state_after=state_after,
+            state_version=state_version,
         )
-        .values(
-            status="failed", result_json=None, error=error_code, updated_at=failed_at
-        )
-    )
-    await _append_setup_events(
-        db,
-        session_id=claim.session_id,
-        event_types=("session_plan_failed",),
-        state_before="planning",
-        state_after=state_after,
-        state_version=state_version,
-    )
-    await db.flush()
-    return True
+        await db.flush()
+        await nested.commit()
+        return True
+    except BaseException:
+        if nested.is_active:
+            await nested.rollback()
+        raise
 
 
 async def _append_setup_events(

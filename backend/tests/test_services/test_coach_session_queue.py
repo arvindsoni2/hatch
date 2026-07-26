@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.database import Base
+from app.models.application import Application
 from app.models.async_job import AsyncJob
 from app.models.coach_session import InterviewSession, SessionQuestion
 from app.schemas.coach import (
@@ -330,6 +332,67 @@ async def test_conversational_deduplication_never_reuses_a_legacy_session(
     assert result["created"] is True
     assert result["session_id"] != legacy.id
     run.call_args.args[1].close()
+
+
+@pytest.mark.asyncio
+async def test_conversational_application_dedup_is_atomic_across_sqlite_connections(
+    tmp_path,
+) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'dedup-race.db'}",
+        connect_args={"timeout": 10},
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        async with session_factory() as seed_db:
+            seed_db.add(
+                Application(
+                    id="application_race",
+                    status="discovered",
+                    priority="normal",
+                )
+            )
+            await seed_db.commit()
+
+        payload = _conversation_request().model_dump(mode="json")
+        payload["application_id"] = "application_race"
+        request = CreateSessionRequest.model_validate(payload)
+
+        async def create() -> dict:
+            async with session_factory() as request_db:
+                return await queue_coach_session(
+                    request,
+                    request_db,
+                    deduplicate_application=True,
+                )
+
+        with (
+            patch(
+                "app.services.coach_session_queue.settings.HATCH_COACH_CONVERSATIONAL_ENABLED",
+                True,
+            ),
+            patch("app.services.coach_session_queue.AsyncJobService.run") as run,
+        ):
+            first, second = await asyncio.gather(create(), create())
+
+        assert sorted((first["created"], second["created"])) == [False, True]
+        assert first["session_id"] == second["session_id"]
+        run.assert_called_once()
+        run.call_args.args[1].close()
+        async with session_factory() as inspection_db:
+            assert (
+                await inspection_db.scalar(
+                    select(func.count(InterviewSession.id)).where(
+                        InterviewSession.application_id == "application_race",
+                        InterviewSession.experience_version == "conversational_v1",
+                    )
+                )
+                == 1
+            )
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

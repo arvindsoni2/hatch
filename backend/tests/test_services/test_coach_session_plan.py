@@ -4,18 +4,27 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
+from app.models.async_job import AsyncJob
 from app.models.coach_session import (
+    CompanyResearch,
     CoachSessionEvidenceRecord,
     InterviewSession,
     InterviewSessionEvent,
     SessionQuestion,
 )
+from app.models.application import Application
+from app.models.document import GeneratedDocument
+from app.models.job import JobPosting
+from app.models.question_bank import QuestionBankItem
 
 from app.services.coach_session_plan import (
     EvidenceSource,
@@ -25,6 +34,8 @@ from app.services.coach_session_plan import (
     claim_session_setup,
     fail_session_setup,
     finalise_session_setup,
+    load_claim_planning_request,
+    load_session_plan_sources,
 )
 
 from app.schemas.coach import (
@@ -778,6 +789,9 @@ def test_plan_builder_never_admits_draft_evidence_without_selected_consent() -> 
 
 def _conversational_request(**config_overrides) -> CreateSessionRequest:
     payload = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    for field in ("application_id", "jd_text", "company_name", "role_title"):
+        if field in config_overrides:
+            payload[field] = config_overrides.pop(field)
     payload["conversational_config"].update(config_overrides)
     return CreateSessionRequest.model_validate(payload)
 
@@ -960,6 +974,7 @@ async def test_rebuild_keeps_old_audit_plan_until_matching_worker_succeeds(
         conversation_state="ready",
         setup_generation=1,
         setup_attempt_count=1,
+        planning_request_json=request.model_dump(mode="json"),
         session_plan_json={"plan_id": "old_plan"},
         session_plan_contract_version="coach_session_plan_v1",
     )
@@ -1166,3 +1181,462 @@ def test_compatibility_changes_only_for_the_six_exact_v6_components() -> None:
             ).compatibility_key
             != base_key
         )
+
+
+@pytest.mark.asyncio
+async def test_source_selection_uses_latest_eligible_versions_and_exact_policy(
+    db_session, tmp_path: Path
+) -> None:
+    job = JobPosting(
+        id="job_1",
+        title="Architect",
+        company="Example Ltd",
+        description="Fallback distributed systems job description.",
+        url="https://example.test/job",
+        source="manual",
+    )
+    application = Application(
+        id="application_1",
+        job_id=job.id,
+        status="discovered",
+        priority="normal",
+        cv_version=str(tmp_path / "current.txt"),
+    )
+    (tmp_path / "current.txt").write_text("Current unapproved CV", encoding="utf-8")
+    (tmp_path / "approved-old.txt").write_text("Old approved CV", encoding="utf-8")
+    (tmp_path / "approved-new.txt").write_text(
+        "Latest approved platform migration CV", encoding="utf-8"
+    )
+    documents = [
+        GeneratedDocument(
+            id="approved_old",
+            application_id=application.id,
+            document_type="cv",
+            version=1,
+            file_path=str(tmp_path / "approved-old.txt"),
+            status="approved",
+        ),
+        GeneratedDocument(
+            id="approved_new",
+            application_id=application.id,
+            document_type="cv",
+            version=2,
+            file_path=str(tmp_path / "approved-new.txt"),
+            status="approved",
+        ),
+    ]
+    questions = [
+        QuestionBankItem(
+            id="qb_final",
+            type="interview_question",
+            title="Final delivery story",
+            answer_draft="Delivered a resilient migration.",
+            confidence="final",
+            updated_at=datetime(2026, 8, 4),
+        ),
+        QuestionBankItem(
+            id="qb_reviewed",
+            type="star_story",
+            title="Reviewed stakeholder story",
+            answer_draft="Aligned executive stakeholders.",
+            confidence="reviewed",
+            updated_at=datetime(2026, 8, 5),
+        ),
+        QuestionBankItem(
+            id="qb_draft",
+            type="star_story",
+            title="Draft story",
+            answer_draft="Must remain excluded.",
+            confidence="draft",
+            updated_at=datetime(2026, 8, 6),
+        ),
+    ]
+    research = [
+        CompanyResearch(
+            id="research_old",
+            company_name="Example Ltd",
+            description="Expired research",
+            cached_at=datetime(2026, 7, 1),
+            expires_at=datetime(2026, 7, 2),
+        ),
+        CompanyResearch(
+            id="research_fresh",
+            company_name="Example Ltd",
+            sector="Technology",
+            description="Current cloud platform strategy",
+            cached_at=datetime(2026, 8, 4),
+            expires_at=datetime(2026, 9, 1),
+        ),
+    ]
+    db_session.add_all([job, application, *documents, *questions, *research])
+    await db_session.commit()
+    request = _conversational_request(
+        application_id="application_1",
+        jd_text=None,
+        interview_type="mixed",
+        planned_question_count=3,
+        locale="en-GB",
+    )
+    request_payload = request.model_dump(mode="json")
+    request_payload["conversational_config"]["evidence_selection"][
+        "selected_question_bank_record_ids"
+    ] = []
+    request = CreateSessionRequest.model_validate(request_payload)
+    master = {
+        "personal": {"email": "private@example.test"},
+        "summary": "Enterprise architecture leader",
+        "experience": [{"achievements": ["Reduced migration risk"]}],
+    }
+    master_path = tmp_path / "master_cv.json"
+    master_path.write_text(json.dumps(master), encoding="utf-8")
+
+    with (
+        patch("app.services.coach_session_plan.load_master_cv", return_value=master),
+        patch(
+            "app.services.coach_session_plan.resolve_master_cv_path",
+            return_value=master_path,
+        ),
+    ):
+        normalized = await load_claim_planning_request(
+            db_session, request=request, current_retention=None
+        )
+        sources = await load_session_plan_sources(
+            db_session,
+            normalized,
+            now=datetime(2026, 8, 5, 12),
+        )
+
+    assert normalized.jd_text == "Fallback distributed systems job description."
+    assert [
+        source.source_record_id
+        for source in sources
+        if source.source_type == "application_cv"
+    ] == ["approved_new"]
+    assert "Latest approved" in next(
+        source.snapshot_text
+        for source in sources
+        if source.source_type == "application_cv"
+    )
+    assert {
+        source.source_record_id
+        for source in sources
+        if source.source_type == "question_bank"
+    } == {"qb_final", "qb_reviewed"}
+    assert [
+        source.source_record_id
+        for source in sources
+        if source.source_type == "company_research"
+    ] == ["research_fresh"]
+    assert all("private@example.test" not in source.snapshot_text for source in sources)
+
+
+@pytest.mark.asyncio
+async def test_current_application_cv_fallback_is_redacted_and_labelled_unapproved(
+    db_session, tmp_path: Path
+) -> None:
+    current_path = tmp_path / "current.txt"
+    current_path.write_text(
+        "Led cloud delivery. email=person@example.test API_KEY=sk-secret-canary "
+        "+44 7700 900123",
+        encoding="utf-8",
+    )
+    application = Application(
+        id="application_1",
+        status="discovered",
+        priority="normal",
+        cv_version=str(current_path),
+    )
+    db_session.add(application)
+    await db_session.commit()
+    payload = _conversational_request(
+        application_id="application_1",
+        interview_type="behavioural",
+        planned_question_count=3,
+        locale="en-GB",
+    ).model_dump(mode="json")
+    payload["conversational_config"]["evidence_selection"]["application_cv"] = (
+        "current_if_no_approved"
+    )
+    payload["conversational_config"]["evidence_selection"]["master_cv"] = "exclude"
+    payload["conversational_config"]["evidence_selection"]["question_bank"] = "exclude"
+    payload["conversational_config"]["evidence_selection"][
+        "selected_question_bank_record_ids"
+    ] = []
+    request = CreateSessionRequest.model_validate(payload)
+
+    sources = await load_session_plan_sources(db_session, request)
+    selected = next(
+        source for source in sources if source.source_type == "application_cv"
+    )
+
+    assert selected.source_record_id == application.id
+    assert selected.approval_state == "candidate_selected_unapproved"
+    assert len(selected.source_record_version) == 64
+    assert "person@example.test" not in selected.snapshot_text
+    assert "sk-secret-canary" not in selected.snapshot_text
+    assert "7700 900123" not in selected.snapshot_text
+
+
+@pytest.mark.asyncio
+async def test_planning_request_redacts_secrets_before_claim_persistence(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural",
+        planned_question_count=3,
+        locale="en-GB",
+        jd_text="Design secure systems. API_KEY=secret-canary",
+    )
+    normalized = await load_claim_planning_request(db_session, request=request)
+    assert normalized.jd_text is not None
+    assert "secret-canary" not in normalized.jd_text
+
+    session = InterviewSession(
+        company_name=normalized.company_name,
+        role_title=normalized.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    await claim_session_setup(
+        db_session,
+        session_id=session.id,
+        request=normalized,
+    )
+    await db_session.refresh(session)
+    assert "secret-canary" not in json.dumps(session.planning_request_json)
+
+
+@pytest.mark.asyncio
+async def test_source_loader_rejects_oversized_snapshot_without_truncation(
+    db_session, tmp_path: Path
+) -> None:
+    current_path = tmp_path / "oversized.txt"
+    current_path.write_text("x" * 2001, encoding="utf-8")
+    application = Application(
+        id="application_oversized",
+        status="discovered",
+        priority="normal",
+        cv_version=str(current_path),
+    )
+    db_session.add(application)
+    await db_session.commit()
+    payload = _conversational_request(
+        application_id=application.id,
+        interview_type="behavioural",
+        planned_question_count=3,
+        locale="en-GB",
+    ).model_dump(mode="json")
+    selection = payload["conversational_config"]["evidence_selection"]
+    selection.update(
+        {
+            "application_cv": "current_if_no_approved",
+            "master_cv": "exclude",
+            "question_bank": "exclude",
+            "selected_question_bank_record_ids": [],
+            "company_research": "exclude",
+        }
+    )
+
+    with pytest.raises(SessionPlanError, match="coach_contract_unsupported"):
+        await load_session_plan_sources(
+            db_session,
+            CreateSessionRequest.model_validate(payload),
+        )
+
+
+@pytest.mark.asyncio
+async def test_explicit_missing_question_bank_selection_fails_closed(
+    db_session,
+) -> None:
+    payload = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    ).model_dump(mode="json")
+    payload["conversational_config"]["evidence_selection"][
+        "selected_question_bank_record_ids"
+    ] = ["missing_record"]
+    request = CreateSessionRequest.model_validate(payload)
+
+    with pytest.raises(SessionPlanError, match="coach_grounding_source_unavailable"):
+        await load_session_plan_sources(db_session, request)
+
+
+@pytest.mark.asyncio
+async def test_retry_uses_only_stored_request_and_rebuild_overlays_current_retention(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    initial = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+    assert await fail_session_setup(
+        db_session,
+        claim=initial,
+        error_code="coach_setup_claim_expired",
+        retryable=True,
+    )
+    replacement_payload = request.model_dump(mode="json")
+    replacement_payload["role_title"] = "Attacker replacement"
+    replacement = CreateSessionRequest.model_validate(replacement_payload)
+
+    with pytest.raises(SessionPlanError, match="coach_conversation_invalid_state"):
+        await claim_session_setup(
+            db_session,
+            session_id=session.id,
+            request=replacement,
+        )
+    assert session.conversation_state == "recoverable_error"
+    assert session.recoverable_error_scope == "setup"
+    retry = await claim_session_setup(db_session, session_id=session.id)
+    loaded = await load_claim_planning_request(db_session, claim=retry)
+    assert loaded.role_title == request.role_title
+
+    await fail_session_setup(
+        db_session,
+        claim=retry,
+        error_code="coach_setup_claim_expired",
+        retryable=True,
+    )
+    session.conversation_state = "ready"
+    session.retention_policy_json = {
+        "audio": "retain_until_deleted",
+        "transcript": "retain",
+    }
+    await db_session.flush()
+    rebuild = await claim_session_setup(db_session, session_id=session.id, rebuild=True)
+    rebuilt_request = await load_claim_planning_request(db_session, claim=rebuild)
+    assert rebuilt_request.conversational_config.retention.audio == (
+        "retain_until_deleted"
+    )
+    assert (
+        session.planning_request_json["conversational_config"]["retention"]["audio"]
+        == "delete_after_processing"
+    )
+
+
+def test_explicit_empty_questions_fail_and_default_questions_are_grounded() -> None:
+    request = _conversational_request(
+        interview_type="mixed",
+        planned_question_count=3,
+        locale="en-GB",
+        focus_areas=["architecture"],
+    )
+    sources = [
+        EvidenceSource(
+            evidence_id="job_context",
+            source_type="job_posting",
+            source_record_id="request",
+            source_record_version="1",
+            source_path="planning_request/jd_text",
+            snapshot_text="Design zero-trust migration platforms.",
+            approval_state="context_only",
+        )
+    ]
+
+    with pytest.raises(ValueError, match="planned question count"):
+        SessionPlanBuilder.build(request, sources, questions=[])
+    result = SessionPlanBuilder.build(
+        request,
+        sources,
+        questions=None,
+        plan_id="grounded",
+        created_at="2026-08-05T12:00:00Z",
+    )
+    rendered = " ".join(question.text for question in result.questions).casefold()
+    assert "senior solution architect" in rendered
+    assert "architecture" in rendered
+    assert "zero-trust" in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tampered_question",
+    [
+        PlannedQuestion(text=" Question 1 ", category="behavioural"),
+        PlannedQuestion(text="Question 1\r\ncontinued", category="behavioural"),
+        PlannedQuestion(text="Question 1", category="Behavioural"),
+        PlannedQuestion(text="x" * 10_001, category="behavioural"),
+    ],
+    ids=["whitespace", "crlf", "uppercase-category", "too-long"],
+)
+async def test_finaliser_rejects_noncanonical_question_builds(
+    db_session, tampered_question
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    claim = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+    valid = _three_question_build(request)
+    bad = replace(valid, questions=(tampered_question, *valid.questions[1:]))
+
+    with pytest.raises(ValueError, match="question"):
+        await finalise_session_setup(db_session, claim=claim, build=bad)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["finalise", "fail"])
+async def test_setup_terminal_transition_requires_live_async_job(
+    db_session, operation: str
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    session_id = session.id
+    claim = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+    job = await db_session.get(AsyncJob, claim.job_id)
+    assert job is not None
+    job.status = "done"
+    await db_session.flush()
+
+    if operation == "finalise":
+        changed = await finalise_session_setup(
+            db_session, claim=claim, build=_three_question_build(request)
+        )
+    else:
+        changed = await fail_session_setup(
+            db_session,
+            claim=claim,
+            error_code="coach_contract_unsupported",
+            retryable=False,
+        )
+    assert changed is False
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert persisted.conversation_state == "planning"
+    assert persisted.setup_job_id == claim.job_id

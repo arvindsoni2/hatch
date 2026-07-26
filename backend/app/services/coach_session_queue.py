@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.coach_session import InterviewSession
+from ..models.application import Application
 from ..observability import get_telemetry
 from ..observability.attributes import ASYNC_JOB_ID, COACH_SESSION_ID
 from ..repositories.session_repository import SessionRepository
@@ -18,13 +19,15 @@ from .async_job_service import AsyncJobService
 from .coach_service import CoachService
 from .coach_contracts import CoachDiagnostic, run_with_stage_deadline
 from .coach_session_plan import (
-    EvidenceSource,
     SessionPlanBuilder,
     SessionPlanError,
     claim_session_setup,
     fail_session_setup,
     finalise_session_setup,
+    load_claim_planning_request,
+    load_session_plan_sources,
 )
+from .coach_conversational_contracts import ERROR_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +193,14 @@ async def queue_conversational_session_setup(
 ) -> dict:
     """Persist a fenced planning claim before dispatching its worker."""
     if deduplicate_application and request.application_id:
+        # SQLite has no row-level SELECT FOR UPDATE. A harmless write to the
+        # linked application serializes competing creators until this transaction
+        # commits, so the second request observes the first session.
+        await db.execute(
+            update(Application)
+            .where(Application.id == request.application_id)
+            .values(updated_at=Application.updated_at)
+        )
         result = await db.execute(
             select(InterviewSession)
             .where(
@@ -211,43 +222,30 @@ async def queue_conversational_session_setup(
                 "experience_version": existing.experience_version,
             }
 
+    normalized_request = await load_claim_planning_request(db, request=request)
     stub = InterviewSession(
-        application_id=request.application_id,
-        company_name=request.company_name,
-        role_title=request.role_title,
+        application_id=normalized_request.application_id,
+        company_name=normalized_request.company_name,
+        role_title=normalized_request.role_title,
         config={},
         status="setup",
         experience_version="conversational_v1",
     )
     db.add(stub)
     await db.flush()
-    claim = await claim_session_setup(db, session_id=stub.id, request=request)
+    claim = await claim_session_setup(
+        db, session_id=stub.id, request=normalized_request
+    )
     trace_context = get_telemetry().capture_trace_context()
     await db.commit()
-
-    request_data = request.model_dump(mode="json")
 
     async def _work() -> None:
         from ..database import AsyncSessionLocal  # noqa: PLC0415
 
         async with AsyncSessionLocal() as job_db:
             try:
-                reconstructed = CreateSessionRequest.model_validate(request_data)
-                sources: list[EvidenceSource] = []
-                if reconstructed.jd_text:
-                    sources.append(
-                        EvidenceSource(
-                            evidence_id="job_description",
-                            source_type="job_posting",
-                            source_record_id=(
-                                reconstructed.application_id or claim.session_id
-                            ),
-                            source_record_version="1",
-                            source_path="planning_request/jd_text",
-                            snapshot_text=reconstructed.jd_text[:2000],
-                            approval_state="context_only",
-                        )
-                    )
+                reconstructed = await load_claim_planning_request(job_db, claim=claim)
+                sources = await load_session_plan_sources(job_db, reconstructed)
                 build = SessionPlanBuilder.build(reconstructed, sources)
                 finalised = await finalise_session_setup(
                     job_db,
@@ -288,11 +286,16 @@ async def queue_conversational_session_setup(
                     type(exc).__name__,
                 )
                 await job_db.rollback()
+                error_code = (
+                    exc.code
+                    if isinstance(exc, SessionPlanError)
+                    else "coach_contract_unsupported"
+                )
                 if await fail_session_setup(
                     job_db,
                     claim=claim,
-                    error_code="coach_contract_unsupported",
-                    retryable=False,
+                    error_code=error_code,
+                    retryable=ERROR_REGISTRY[error_code].retryable,
                 ):
                     await job_db.commit()
                 else:
