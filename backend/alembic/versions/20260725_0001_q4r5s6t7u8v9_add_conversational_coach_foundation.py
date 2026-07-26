@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Sequence, Union
 
 from alembic import op
@@ -103,13 +104,62 @@ _DIAGNOSTIC_GATE_CODES = {
     "coach_async_job_failed",
     "coach_persistence_failed",
 }
+_PYDANTIC_INTEGER_STRING = re.compile(r"^[+-]?[0-9]+(?:_[0-9]+)*(?:\.0+)?$")
+_PYDANTIC_UNSIGNED_INTEGER_REMAINDER = re.compile(
+    r"^(?:0|[1-9][0-9]*(?:_[0-9]+)*)(?:\.0+)?$"
+)
+
+
+def _coerce_pydantic_integer(value: object) -> int | None:
+    """Mirror Pydantic v2 lax integers for JSON-native persisted values."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) and value.is_integer() else None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if _PYDANTIC_INTEGER_STRING.fullmatch(normalized):
+            integer_part = normalized.partition(".")[0].replace("_", "")
+        else:
+            outer_sign = ""
+            body = normalized
+            if body.startswith(("+", "-")):
+                outer_sign, body = body[0], body[1:]
+            if not body.startswith("0"):
+                return None
+            prefix_end = 0
+            while prefix_end < len(body) and body[prefix_end] in {"0", "_"}:
+                prefix_end += 1
+            remainder = body[prefix_end:]
+            if not remainder:
+                if not body.endswith("0"):
+                    return None
+                integer_part = "0"
+            elif remainder.startswith("-") and outer_sign != "-":
+                magnitude = remainder[1:]
+                if magnitude.startswith("_"):
+                    magnitude = magnitude[1:]
+                if not _PYDANTIC_UNSIGNED_INTEGER_REMAINDER.fullmatch(magnitude):
+                    return None
+                integer_part = "-" + magnitude.partition(".")[0].replace("_", "")
+            else:
+                if not _PYDANTIC_UNSIGNED_INTEGER_REMAINDER.fullmatch(remainder):
+                    return None
+                integer_part = ("-" if outer_sign == "-" else "") + remainder.partition(
+                    "."
+                )[0].replace("_", "")
+        try:
+            return int(integer_part)
+        except ValueError:
+            return None
+    return None
 
 
 def _coerce_non_negative_integer(value: object) -> int | None:
-    number = _coerce_finite_number(value)
-    if number is None or not number.is_integer() or number < 0:
+    number = _coerce_pydantic_integer(value)
+    if number is None or number < 0:
         return None
-    return int(number)
+    return number
 
 
 def _is_valid_diagnostic(value: object) -> bool:
@@ -214,7 +264,7 @@ def _coerce_finite_number(value: object) -> float | None:
     """Mirror Pydantic's finite numeric coercion without importing app runtime."""
     try:
         number = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
 
@@ -222,7 +272,7 @@ def _coerce_finite_number(value: object) -> float | None:
 def _is_pydantic_boolean(value: object) -> bool:
     if isinstance(value, bool):
         return True
-    if isinstance(value, int) and value in {0, 1}:
+    if isinstance(value, (int, float)) and value in {0, 1}:
         return True
     return isinstance(value, str) and value.lower() in {
         "0",
@@ -231,6 +281,10 @@ def _is_pydantic_boolean(value: object) -> bool:
         "on",
         "false",
         "true",
+        "f",
+        "t",
+        "n",
+        "y",
         "no",
         "yes",
     }
@@ -258,8 +312,8 @@ def _is_valid_legacy_completed_evaluation(
     if not isinstance(scores, dict) or set(scores) != _LEGACY_SCORE_DIMENSIONS:
         return False
     for value in scores.values():
-        score = _coerce_finite_number(value)
-        if score is None or not score.is_integer() or not 0 <= score <= 10:
+        score = _coerce_pydantic_integer(value)
+        if score is None or not 0 <= score <= 10:
             return False
     string_fields = ("feedback",)
     if any(

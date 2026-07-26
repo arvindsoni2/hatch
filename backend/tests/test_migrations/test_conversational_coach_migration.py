@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -30,6 +31,148 @@ CANONICAL_COMPLETED_EVALUATION_JSON = (
     '{"evaluation_state":"completed","scores":{"relevance":8,'
     '"star_structure":7,"technical_depth":9,"conciseness":6,'
     '"communication":8,"impact_metrics":7},"overall":7.5}'
+)
+
+INTEGER_COERCION_VALUES = (
+    0,
+    1,
+    8,
+    10,
+    11,
+    -1,
+    0.0,
+    1.0,
+    8.0,
+    8.5,
+    True,
+    False,
+    None,
+    "0",
+    "1",
+    "8",
+    "10",
+    "11",
+    "-1",
+    "+1",
+    "08",
+    "8.0",
+    "8.00",
+    "8.5",
+    "8e0",
+    "8E0",
+    "1_0",
+    "1__0",
+    "0__1",
+    "1_0.0",
+    "1.0_0",
+    "0-1",
+    "0-0",
+    "0-00",
+    "0-_0",
+    "01-8",
+    "+0-1",
+    "+0-0",
+    "0-1.0",
+    "00-0.0",
+    "٨",
+    " 8 ",
+    "8.",
+    ".0",
+    "",
+    "nan",
+    "inf",
+    10**400,
+    {},
+    [],
+)
+INTEGER_COERCION_FIELDS = (
+    ("scores", "relevance"),
+    ("diagnostic", "attempt_count"),
+    ("diagnostic", "repair_count"),
+    ("diagnostic", "duration_ms"),
+    ("rubric", "dimensions", "relevance", "score"),
+    ("rubric", "diagnostic", "attempt_count"),
+    ("rubric", "diagnostic", "repair_count"),
+    ("rubric", "diagnostic", "duration_ms"),
+)
+FLOAT_COERCION_VALUES = (
+    0,
+    10,
+    11,
+    -1,
+    0.0,
+    10.0,
+    10.5,
+    True,
+    False,
+    None,
+    "0",
+    "10",
+    "10.0",
+    "10e0",
+    "1e1",
+    "10.5",
+    "nan",
+    "inf",
+    " 8 ",
+    "",
+    10**400,
+    {},
+    [],
+)
+BOOLEAN_COERCION_VALUES = (
+    False,
+    True,
+    0,
+    1,
+    -1,
+    2,
+    0.0,
+    1.0,
+    -1.0,
+    0.5,
+    "false",
+    "true",
+    "f",
+    "t",
+    "n",
+    "y",
+    "False",
+    "True",
+    "F",
+    "T",
+    "N",
+    "Y",
+    "0",
+    "1",
+    "off",
+    "on",
+    "no",
+    "yes",
+    " true ",
+    "8e0",
+    None,
+    {},
+    [],
+)
+
+
+def _coercion_case_id(case: tuple[tuple[str, ...], object]) -> str:
+    path, value = case
+    rendered = repr(value)
+    if len(rendered) > 24:
+        rendered = f"<{type(value).__name__}>"
+    return f"{'.'.join(path)}={type(value).__name__}:{rendered}"
+
+
+COERCION_AUTHORITY_CASES = (
+    tuple(
+        (path, value)
+        for path in INTEGER_COERCION_FIELDS
+        for value in INTEGER_COERCION_VALUES
+    )
+    + tuple((("overall",), value) for value in FLOAT_COERCION_VALUES)
+    + tuple((("retryable",), value) for value in BOOLEAN_COERCION_VALUES)
 )
 
 SESSION_COLUMNS = {
@@ -781,6 +924,73 @@ def test_migration_validity_helper_matches_legacy_canonical_resolver(
 
 
 @pytest.mark.parametrize(
+    ("path", "value"),
+    COERCION_AUTHORITY_CASES,
+    ids=[_coercion_case_id(case) for case in COERCION_AUTHORITY_CASES],
+)
+def test_migration_validator_matches_authority_for_every_coercion_field(
+    path: tuple[str, ...], value: object
+) -> None:
+    from app.services.coach_aggregation import _parse_completed
+
+    diagnostic = {
+        "stage": "answer_evaluation",
+        "outcome": "completed",
+        "execution_mode": "deterministic",
+        "attempt_count": 0,
+        "repair_count": 0,
+        "gate_codes": [],
+        "duration_ms": 0,
+    }
+    payload = {
+        "evaluation_state": "completed",
+        "scores": {
+            "relevance": 8,
+            "star_structure": 7,
+            "technical_depth": 9,
+            "conciseness": 6,
+            "communication": 8,
+            "impact_metrics": 7,
+        },
+        "overall": 7.5,
+        "diagnostic": diagnostic.copy(),
+        "rubric": {
+            "dimensions": {
+                "relevance": {
+                    "score": 8,
+                    "score_band": "good",
+                    "evidence": [],
+                    "drill": "",
+                }
+            },
+            "diagnostic": diagnostic.copy(),
+        },
+        "retryable": False,
+    }
+    target = payload
+    for segment in path[:-1]:
+        target = target[segment]  # type: ignore[assignment,index]
+    target[path[-1]] = value  # type: ignore[index]
+    evaluation_json = json.dumps(payload, separators=(",", ":"))
+    recording = SimpleNamespace(
+        id="recording",
+        question_id="question",
+        evaluation_state="completed",
+        evaluation_json=evaluation_json,
+        created_at=datetime(2026, 7, 1),
+    )
+    authoritative = _parse_completed(recording) is not None
+    module = _load_migration_module()
+
+    assert (
+        module._is_valid_legacy_completed_evaluation(
+            recording.evaluation_state, recording.evaluation_json
+        )
+        is authoritative
+    )
+
+
+@pytest.mark.parametrize(
     ("table", "backfill_marker"),
     [
         ("session_questions", "UPDATE session_questions AS question"),
@@ -984,6 +1194,11 @@ def test_upgrade_backfills_legacy_vectors_without_mutating_content(
             '{"evaluation_state":"completed","scores":{"relevance":8,'
             '"star_structure":7,"technical_depth":9,"conciseness":6,'
             '"communication":8,"impact_metrics":7},"overall":12}'
+        ),
+        (
+            '{"evaluation_state":"completed","scores":{"relevance":"8e0",'
+            '"star_structure":7,"technical_depth":9,"conciseness":6,'
+            '"communication":8,"impact_metrics":7},"overall":8}'
         ),
     ],
 )
