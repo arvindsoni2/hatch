@@ -38,7 +38,8 @@ LOCALE_RE = re.compile(
 )
 INDUSTRY_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
 RFC3339_DATETIME_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+    r"(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$"
 )
 
 SafeToken: TypeAlias = Annotated[

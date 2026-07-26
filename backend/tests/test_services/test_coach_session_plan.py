@@ -342,6 +342,12 @@ def test_session_plan_json_dump_round_trips_created_at() -> None:
         "2026-08-05T12:00:00.1234567Z",
         "2026-02-30T12:00:00Z",
         "2026-08-05T12:00:00+24:00",
+        "2026-08-05T12:00:00-24:00",
+        "2026-08-05T12:00:00+05:60",
+        "2026-08-05T12:00:00-20:99",
+        "2026-08-05T12:00:00+00:60",
+        "2026-08-05T12:00:00+123:00",
+        "2026-08-05T12:00:00-5:00",
         "2026-08-05T12:00:00-00:00",
         1_786_000_000,
         1_786_000_000.0,
@@ -357,7 +363,13 @@ def test_session_plan_json_dump_round_trips_created_at() -> None:
         "lowercase-zone",
         "excess-fraction",
         "invalid-calendar-date-time",
-        "invalid-zone-offset",
+        "offset-hour-out-of-range",
+        "negative-offset-hour-out-of-range",
+        "offset-minute-normalization",
+        "negative-offset-minute-out-of-range",
+        "zero-hour-offset-minute-out-of-range",
+        "oversized-offset-hour",
+        "single-digit-offset-hour",
         "unknown-local-offset",
         "integer-timestamp",
         "float-timestamp",
@@ -382,6 +394,10 @@ def test_session_plan_rejects_noncanonical_or_non_datetime_created_at(
         "2026-08-05T12:00:00Z",
         "2026-08-05T12:00:00.123456Z",
         "2026-08-05T17:30:00+05:30",
+        "2026-08-05T12:00:00+00:00",
+        "2026-08-05T12:00:00-00:01",
+        "2026-08-05T12:00:00+23:59",
+        "2026-08-05T12:00:00-23:59",
     ],
 )
 def test_session_plan_accepts_canonical_timezone_aware_created_at(
@@ -394,6 +410,29 @@ def test_session_plan_accepts_canonical_timezone_aware_created_at(
 
     assert parsed.created_at.tzinfo is not None
     assert parsed.created_at.utcoffset() is not None
+
+
+@pytest.mark.parametrize(
+    ("created_at", "serialized_created_at"),
+    [
+        ("2026-08-05T12:00:00+00:00", "2026-08-05T12:00:00Z"),
+        ("2026-08-05T12:00:00+23:59", "2026-08-05T12:00:00+23:59"),
+        ("2026-08-05T12:00:00-23:59", "2026-08-05T12:00:00-23:59"),
+    ],
+)
+def test_session_plan_preserves_canonical_created_at_instant_and_offset(
+    created_at: str,
+    serialized_created_at: str,
+) -> None:
+    payload = valid_session_plan_payload()
+    payload["created_at"] = created_at
+
+    plan = ConversationalSessionPlan.model_validate(payload)
+    restored = ConversationalSessionPlan.model_validate_json(plan.model_dump_json())
+
+    assert plan.model_dump(mode="json")["created_at"] == serialized_created_at
+    assert restored.created_at == plan.created_at
+    assert restored.created_at.utcoffset() == plan.created_at.utcoffset()
 
 
 def test_legacy_numeric_evaluation_and_report_fixtures_keep_their_meaning() -> None:
