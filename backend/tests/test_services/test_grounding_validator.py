@@ -1,7 +1,6 @@
 """G-5 tests — entity-level grounding validator catches fabricated content."""
 from __future__ import annotations
 
-import pytest
 
 from app.schemas.tailor import TailoredCVResult, TailoredExperience
 from app.services.grounding_validator import validate

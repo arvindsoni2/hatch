@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 APP_DIR = Path(__file__).parent.parent.parent / "app"

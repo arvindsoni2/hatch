@@ -28,6 +28,8 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r backend/requirements-dev.txt
+      - name: Run Ruff
+        run: cd backend && ruff check app/ tests/
       - name: Run bounded Coach contract smoke
         run: |
           cd backend
