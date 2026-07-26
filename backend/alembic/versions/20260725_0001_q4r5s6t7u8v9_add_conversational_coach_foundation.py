@@ -8,6 +8,8 @@ Create Date: 2026-07-26 09:41:07.583545+00:00
 
 from __future__ import annotations
 
+import json
+import math
 from typing import Sequence, Union
 
 from alembic import op
@@ -19,6 +21,283 @@ revision: str = "q4r5s6t7u8v9"
 down_revision: Union[str, None] = "p3q4r5s6t7u8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+_LEGACY_SCORE_DIMENSIONS = {
+    "relevance",
+    "star_structure",
+    "technical_depth",
+    "conciseness",
+    "communication",
+    "impact_metrics",
+}
+_DIAGNOSTIC_STAGES = {
+    "company_research",
+    "question_generation",
+    "question_generation_repair",
+    "model_answer",
+    "answer_evaluation",
+    "rubric_build",
+    "rubric_synthesis",
+    "technical_drill",
+    "session_report",
+    "session_rubric_aggregation",
+    "followup_plan",
+}
+_DIAGNOSTIC_OUTCOMES = {
+    "completed",
+    "withheld_insufficient_evidence",
+    "fallback_deterministic",
+    "invalid_output",
+    "unavailable",
+    "failed",
+}
+_DIAGNOSTIC_EXECUTION_MODES = {"llm", "deterministic", "cache", "not_run"}
+_DIAGNOSTIC_GATE_CODES = {
+    "coach_question_parse_invalid",
+    "coach_question_count_mismatch",
+    "coach_question_duplicate",
+    "coach_question_category_invalid",
+    "coach_question_difficulty_invalid",
+    "coach_question_requirement_unknown",
+    "coach_question_candidate_claim",
+    "coach_question_prompt_injection_followed",
+    "coach_question_repair_exhausted",
+    "coach_model_answer_no_evidence",
+    "coach_model_answer_empty",
+    "coach_model_answer_schema_invalid",
+    "coach_model_answer_unknown_evidence_id",
+    "coach_model_answer_unsupported_claim",
+    "coach_model_answer_numeric_fidelity",
+    "coach_model_answer_star_incomplete",
+    "coach_model_answer_provider_unavailable",
+    "coach_answer_empty_transcript",
+    "coach_evaluation_schema_invalid",
+    "coach_evaluation_dimension_missing",
+    "coach_evaluation_score_out_of_range",
+    "coach_evaluation_overall_inconsistent",
+    "coach_evaluation_evidence_ungrounded",
+    "coach_evaluation_followup_missing",
+    "coach_evaluation_followup_unexpected",
+    "coach_evaluation_provider_unavailable",
+    "coach_evaluation_fallback_unclassified",
+    "coach_rubric_dimension_missing",
+    "coach_rubric_score_mutation",
+    "coach_rubric_evidence_ungrounded",
+    "coach_rubric_optional_dimension_unexpected",
+    "coach_rubric_provider_unavailable",
+    "coach_report_count_mismatch",
+    "coach_report_score_mutation",
+    "coach_report_unsupported_claim",
+    "coach_report_priority_mismatch",
+    "coach_report_schema_invalid",
+    "coach_report_provider_unavailable",
+    "coach_report_fallback_unclassified",
+    "coach_drill_schema_invalid",
+    "coach_drill_question_mismatch",
+    "coach_drill_candidate_claim",
+    "coach_drill_length_exceeded",
+    "coach_drill_provider_unavailable",
+    "coach_stage_timeout",
+    "coach_job_timeout",
+    "coach_stage_failed",
+    "coach_async_job_failed",
+    "coach_persistence_failed",
+}
+
+
+def _coerce_non_negative_integer(value: object) -> int | None:
+    number = _coerce_finite_number(value)
+    if number is None or not number.is_integer() or number < 0:
+        return None
+    return int(number)
+
+
+def _is_valid_diagnostic(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    allowed = {
+        "validation_schema_version",
+        "stage",
+        "outcome",
+        "execution_mode",
+        "prompt_id",
+        "prompt_version",
+        "output_schema_version",
+        "model_id",
+        "attempt_count",
+        "repair_count",
+        "gate_codes",
+        "duration_ms",
+    }
+    if set(value) - allowed:
+        return False
+    if value.get("validation_schema_version", "1.0.0") != "1.0.0":
+        return False
+    if value.get("stage") not in _DIAGNOSTIC_STAGES:
+        return False
+    if value.get("outcome") not in _DIAGNOSTIC_OUTCOMES:
+        return False
+    execution_mode = value.get("execution_mode")
+    if execution_mode not in _DIAGNOSTIC_EXECUTION_MODES:
+        return False
+    attempt_count = _coerce_non_negative_integer(value.get("attempt_count"))
+    if (
+        attempt_count is None
+        or _coerce_non_negative_integer(value.get("repair_count")) is None
+    ):
+        return False
+    if _coerce_non_negative_integer(value.get("duration_ms")) is None:
+        return False
+    gate_codes = value.get("gate_codes")
+    if not isinstance(gate_codes, list) or not all(
+        code in _DIAGNOSTIC_GATE_CODES for code in gate_codes
+    ):
+        return False
+    prompt_values = tuple(
+        value.get(field)
+        for field in (
+            "prompt_id",
+            "prompt_version",
+            "output_schema_version",
+            "model_id",
+        )
+    )
+    if any(item is not None and not isinstance(item, str) for item in prompt_values):
+        return False
+    if execution_mode == "llm":
+        if (
+            not value.get("prompt_id")
+            or not value.get("prompt_version")
+            or not value.get("model_id")
+        ):
+            return False
+        if attempt_count < 1:
+            return False
+    elif any(item is not None for item in prompt_values):
+        return False
+    return True
+
+
+def _is_valid_rubric(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    dimensions = value.get("dimensions", {})
+    if not isinstance(dimensions, dict):
+        return False
+    for dimension in dimensions.values():
+        if not isinstance(dimension, dict):
+            return False
+        score = _coerce_non_negative_integer(dimension.get("score", 0))
+        if score is None or score > 10:
+            return False
+        if dimension.get("score_band", "needs_work") not in {
+            "strong",
+            "good",
+            "needs_work",
+            "weak",
+        }:
+            return False
+        evidence = dimension.get("evidence", [])
+        if not isinstance(evidence, list) or not all(
+            isinstance(item, str) for item in evidence
+        ):
+            return False
+        if not isinstance(dimension.get("drill", ""), str):
+            return False
+    if not isinstance(value.get("focus_for_next_session", ""), str):
+        return False
+    diagnostic = value.get("diagnostic")
+    return diagnostic is None or _is_valid_diagnostic(diagnostic)
+
+
+def _coerce_finite_number(value: object) -> float | None:
+    """Mirror Pydantic's finite numeric coercion without importing app runtime."""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _is_pydantic_boolean(value: object) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, int) and value in {0, 1}:
+        return True
+    return isinstance(value, str) and value.lower() in {
+        "0",
+        "1",
+        "off",
+        "on",
+        "false",
+        "true",
+        "no",
+        "yes",
+    }
+
+
+def _is_valid_legacy_completed_evaluation(
+    evaluation_state: object, evaluation_json: object
+) -> bool:
+    """Mirror coach_aggregation._parse_completed's persisted validity gates."""
+    if evaluation_state != "completed" or not isinstance(evaluation_json, str):
+        return False
+    try:
+        payload = json.loads(evaluation_json)
+    except (TypeError, ValueError):
+        return False
+    if (
+        not isinstance(payload, dict)
+        or payload.get("evaluation_state", "completed") != "completed"
+    ):
+        return False
+    overall = _coerce_finite_number(payload.get("overall", 0.0))
+    if overall is None or not 0 <= overall <= 10:
+        return False
+    scores = payload.get("scores", {})
+    if not isinstance(scores, dict) or set(scores) != _LEGACY_SCORE_DIMENSIONS:
+        return False
+    for value in scores.values():
+        score = _coerce_finite_number(value)
+        if score is None or not score.is_integer() or not 0 <= score <= 10:
+            return False
+    string_fields = ("feedback",)
+    if any(
+        field in payload and not isinstance(payload[field], str)
+        for field in string_fields
+    ):
+        return False
+    list_fields = (
+        "strengths",
+        "improvements",
+        "evidence_references",
+        "speech_coaching",
+    )
+    if any(
+        field in payload
+        and (
+            not isinstance(payload[field], list)
+            or not all(isinstance(item, str) for item in payload[field])
+        )
+        for field in list_fields
+    ):
+        return False
+    if "follow_up_question" in payload and not (
+        payload["follow_up_question"] is None
+        or isinstance(payload["follow_up_question"], str)
+    ):
+        return False
+    if "diagnostic" in payload and not (
+        payload["diagnostic"] is None or _is_valid_diagnostic(payload["diagnostic"])
+    ):
+        return False
+    if "rubric" in payload and not (
+        payload["rubric"] is None or _is_valid_rubric(payload["rubric"])
+    ):
+        return False
+    if "retryable" in payload and not _is_pydantic_boolean(payload["retryable"]):
+        return False
+    return True
 
 
 def upgrade() -> None:
@@ -240,7 +519,8 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "result_state IN ('completed', 'accepted_processing', 'duplicate', "
             "'invalid_state', 'version_conflict', 'idempotency_conflict', "
-            "'invalid_payload', 'resource_blocked', 'not_found')",
+            "'invalid_payload', 'resource_blocked', 'not_found', "
+            "'permission_denied', 'stale_claim')",
             name="ck_command_results_state",
         ),
         sa.ForeignKeyConstraint(
@@ -616,91 +896,6 @@ def upgrade() -> None:
             sa.Column("question_contract_version", sa.String(length=64), nullable=True)
         )
         batch_op.add_column(sa.Column("asked_sequence", sa.Integer(), nullable=True))
-        batch_op.create_index(
-            "idx_session_questions_root_question", ["root_question_id"], unique=False
-        )
-        batch_op.create_index(
-            "idx_session_questions_session_asked_sequence",
-            ["session_id", "asked_sequence"],
-            unique=False,
-        )
-        batch_op.create_unique_constraint(
-            "uq_session_questions_session_asked_sequence",
-            ["session_id", "asked_sequence"],
-        )
-        batch_op.create_foreign_key(
-            "fk_session_questions_follow_up_recording",
-            "session_recordings",
-            ["follow_up_source_recording_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
-        batch_op.create_foreign_key(
-            "fk_session_questions_follow_up_transcript",
-            "interview_transcript_versions",
-            ["follow_up_source_transcript_version_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
-        batch_op.create_foreign_key(
-            "fk_session_questions_parent_question",
-            "session_questions",
-            ["parent_question_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
-        batch_op.create_foreign_key(
-            "fk_session_questions_root_question",
-            "session_questions",
-            ["root_question_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
-        batch_op.create_foreign_key(
-            "fk_session_questions_accepted_recording",
-            "session_recordings",
-            ["accepted_recording_id"],
-            ["id"],
-            ondelete="SET NULL",
-        )
-
-        batch_op.create_check_constraint(
-            "ck_session_questions_follow_up_depth",
-            "follow_up_depth >= 0 AND follow_up_depth <= 2",
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_question_kind",
-            "question_kind IN ('planned', 'adaptive_follow_up')",
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_question_state",
-            "question_state IN ('pending', 'asked', 'answered', 'skipped')",
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_attempts_created_count", "attempts_created_count >= 0"
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_acceptance_generation", "acceptance_generation >= 0"
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_pending_hint_count", "pending_hint_count >= 0"
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_kind_depth",
-            "(question_kind = 'planned' AND follow_up_depth = 0) OR "
-            "(question_kind = 'adaptive_follow_up' AND root_question_id IS NOT NULL "
-            "AND parent_question_id IS NOT NULL AND follow_up_depth BETWEEN 1 AND 2)",
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_accepted_generation_order",
-            "last_accepted_generation IS NULL OR "
-            "last_accepted_generation <= acceptance_generation",
-        )
-        batch_op.create_check_constraint(
-            "ck_session_questions_accepted_generation_current",
-            "accepted_recording_id IS NULL OR "
-            "last_accepted_generation = acceptance_generation",
-        )
 
     with op.batch_alter_table("session_recordings", schema=None) as batch_op:
         batch_op.add_column(sa.Column("attempt_number", sa.Integer(), nullable=True))
@@ -761,6 +956,249 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column("self_assessment_updated_at", sa.DateTime(), nullable=True)
         )
+
+    op.execute(
+        sa.text(
+            """
+            UPDATE session_recordings AS recording
+            SET attempt_number = (
+                    SELECT COUNT(*)
+                    FROM session_recordings AS earlier
+                    WHERE earlier.question_id = recording.question_id
+                      AND (
+                          earlier.created_at < recording.created_at
+                          OR (earlier.created_at = recording.created_at AND earlier.id <= recording.id)
+                      )
+                ),
+                attempt_version = 0,
+                processing_generation = 0,
+                processing_retry_count = 0,
+                processing_retry_limit = 0,
+                hint_count = 0
+            WHERE recording.question_id IS NOT NULL
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            UPDATE session_recordings
+            SET attempt_version = 0,
+                processing_generation = 0,
+                processing_retry_count = 0,
+                processing_retry_limit = 0,
+                hint_count = 0
+            WHERE question_id IS NULL
+            """
+        )
+    )
+    connection = op.get_bind()
+    valid_question_ids = sorted(
+        {
+            str(row.question_id)
+            for row in connection.execute(
+                sa.text(
+                    """
+                    SELECT question_id, evaluation_state, evaluation_json
+                    FROM session_recordings
+                    WHERE question_id IS NOT NULL AND evaluation_state = 'completed'
+                    """
+                )
+            )
+            if _is_valid_legacy_completed_evaluation(
+                row.evaluation_state, row.evaluation_json
+            )
+        }
+    )
+    op.create_table(
+        "_coach_valid_legacy_completed_questions",
+        sa.Column("question_id", sa.String(length=36), primary_key=True),
+    )
+    if valid_question_ids:
+        connection.execute(
+            sa.text(
+                """
+                INSERT INTO _coach_valid_legacy_completed_questions(question_id)
+                VALUES (:question_id)
+                """
+            ),
+            [{"question_id": question_id} for question_id in valid_question_ids],
+        )
+    op.execute(
+        sa.text(
+            """
+            UPDATE session_recordings
+            SET attempt_kind = CASE WHEN attempt_number = 1 THEN 'primary' ELSE 'retry' END
+            WHERE attempt_number IS NOT NULL
+            """
+        )
+    )
+    op.execute(
+        sa.text(
+            """
+            UPDATE session_questions AS question
+            SET question_kind = 'planned',
+                follow_up_depth = 0,
+                source_deleted = 0,
+                attempts_created_count = 0,
+                acceptance_generation = 0,
+                pending_hint_count = 0,
+                question_state = CASE
+                    WHEN (
+                        SELECT CASE
+                            WHEN latest.evaluation_state = 'skipped'
+                                 OR latest.transcript = '[SKIPPED]'
+                            THEN 1 ELSE 0
+                        END
+                        FROM session_recordings AS latest
+                        WHERE latest.question_id = question.id
+                          AND (
+                              latest.evaluation_state IN
+                                  ('completed', 'unavailable', 'invalid', 'skipped', 'failed')
+                              OR latest.transcript = '[SKIPPED]'
+                          )
+                        ORDER BY latest.created_at DESC, latest.id DESC
+                        LIMIT 1
+                    ) = 1 THEN 'skipped'
+                    WHEN EXISTS (
+                        SELECT 1 FROM _coach_valid_legacy_completed_questions AS completed
+                        WHERE completed.question_id = question.id
+                    ) THEN 'answered'
+                    ELSE 'pending'
+                END,
+                accepted_recording_id = NULL
+            """
+        )
+    )
+    op.drop_table("_coach_valid_legacy_completed_questions")
+
+    with op.batch_alter_table("session_questions", schema=None) as batch_op:
+        batch_op.alter_column(
+            "question_kind", nullable=False, server_default=sa.text("'planned'")
+        )
+        batch_op.alter_column(
+            "follow_up_depth", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column(
+            "source_deleted", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column(
+            "question_state", nullable=False, server_default=sa.text("'pending'")
+        )
+        batch_op.alter_column(
+            "attempts_created_count", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column(
+            "acceptance_generation", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column(
+            "pending_hint_count", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.create_index(
+            "idx_session_questions_root_question", ["root_question_id"], unique=False
+        )
+        batch_op.create_index(
+            "idx_session_questions_session_asked_sequence",
+            ["session_id", "asked_sequence"],
+            unique=False,
+        )
+        batch_op.create_unique_constraint(
+            "uq_session_questions_session_asked_sequence",
+            ["session_id", "asked_sequence"],
+        )
+        batch_op.create_foreign_key(
+            "fk_session_questions_follow_up_recording",
+            "session_recordings",
+            ["follow_up_source_recording_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_foreign_key(
+            "fk_session_questions_follow_up_transcript",
+            "interview_transcript_versions",
+            ["follow_up_source_transcript_version_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_foreign_key(
+            "fk_session_questions_parent_question",
+            "session_questions",
+            ["parent_question_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_foreign_key(
+            "fk_session_questions_root_question",
+            "session_questions",
+            ["root_question_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_foreign_key(
+            "fk_session_questions_accepted_recording",
+            "session_recordings",
+            ["accepted_recording_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_follow_up_depth",
+            "follow_up_depth >= 0 AND follow_up_depth <= 2",
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_question_kind",
+            "question_kind IN ('planned', 'adaptive_follow_up')",
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_question_state",
+            "question_state IN ('pending', 'asked', 'answered', 'skipped')",
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_follow_up_reason",
+            "follow_up_reason IS NULL OR follow_up_reason IN "
+            "('clarify_example', 'measurable_result', 'personal_action', 'reasoning', "
+            "'role_depth', 'resolve_ambiguity', 'evidence_consistency')",
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_attempts_created_count", "attempts_created_count >= 0"
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_acceptance_generation", "acceptance_generation >= 0"
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_pending_hint_count", "pending_hint_count >= 0"
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_kind_depth",
+            "(question_kind = 'planned' AND follow_up_depth = 0) OR "
+            "(question_kind = 'adaptive_follow_up' AND root_question_id IS NOT NULL "
+            "AND parent_question_id IS NOT NULL AND follow_up_depth BETWEEN 1 AND 2)",
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_accepted_generation_order",
+            "last_accepted_generation IS NULL OR "
+            "last_accepted_generation <= acceptance_generation",
+        )
+        batch_op.create_check_constraint(
+            "ck_session_questions_accepted_generation_current",
+            "accepted_recording_id IS NULL OR "
+            "last_accepted_generation = acceptance_generation",
+        )
+
+    with op.batch_alter_table("session_recordings", schema=None) as batch_op:
+        batch_op.alter_column(
+            "attempt_version", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column(
+            "processing_generation", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column(
+            "processing_retry_count", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column(
+            "processing_retry_limit", nullable=False, server_default=sa.text("0")
+        )
+        batch_op.alter_column("hint_count", nullable=False, server_default=sa.text("0"))
         batch_op.create_index(
             "idx_session_recordings_async_job_state",
             ["async_job_id", "attempt_state"],
@@ -799,7 +1237,6 @@ def upgrade() -> None:
             ["id"],
             ondelete="SET NULL",
         )
-
         batch_op.create_check_constraint(
             "ck_session_recordings_attempt_number",
             "attempt_number IS NULL OR attempt_number > 0",
@@ -830,127 +1267,6 @@ def upgrade() -> None:
             "ck_session_recordings_retry_budget",
             "processing_retry_count <= processing_retry_limit",
         )
-
-    op.execute(
-        sa.text(
-            """
-            UPDATE session_recordings AS recording
-            SET attempt_number = (
-                    SELECT COUNT(*)
-                    FROM session_recordings AS earlier
-                    WHERE earlier.question_id = recording.question_id
-                      AND (
-                          earlier.created_at < recording.created_at
-                          OR (earlier.created_at = recording.created_at AND earlier.id <= recording.id)
-                      )
-                ),
-                attempt_version = 0,
-                processing_generation = 0,
-                processing_retry_count = 0,
-                processing_retry_limit = 0,
-                hint_count = 0
-            WHERE recording.question_id IS NOT NULL
-            """
-        )
-    )
-    op.execute(
-        sa.text(
-            """
-            UPDATE session_recordings
-            SET attempt_version = 0,
-                processing_generation = 0,
-                processing_retry_count = 0,
-                processing_retry_limit = 0,
-                hint_count = 0
-            WHERE question_id IS NULL
-            """
-        )
-    )
-    op.execute(
-        sa.text(
-            """
-            UPDATE session_recordings
-            SET attempt_kind = CASE WHEN attempt_number = 1 THEN 'primary' ELSE 'retry' END
-            WHERE attempt_number IS NOT NULL
-            """
-        )
-    )
-    op.execute(
-        sa.text(
-            """
-            UPDATE session_questions AS question
-            SET question_kind = 'planned',
-                follow_up_depth = 0,
-                source_deleted = 0,
-                attempts_created_count = 0,
-                acceptance_generation = 0,
-                pending_hint_count = 0,
-                question_state = CASE
-                    WHEN (
-                        SELECT CASE
-                            WHEN latest.evaluation_state = 'skipped'
-                                 OR latest.transcript = '[SKIPPED]'
-                            THEN 1 ELSE 0
-                        END
-                        FROM session_recordings AS latest
-                        WHERE latest.question_id = question.id
-                          AND (
-                              latest.evaluation_state IN
-                                  ('completed', 'unavailable', 'invalid', 'skipped', 'failed')
-                              OR latest.transcript = '[SKIPPED]'
-                          )
-                        ORDER BY latest.created_at DESC, latest.id DESC
-                        LIMIT 1
-                    ) = 1 THEN 'skipped'
-                    WHEN EXISTS (
-                        SELECT 1 FROM session_recordings AS completed
-                        WHERE completed.question_id = question.id
-                          AND completed.evaluation_state = 'completed'
-                    ) THEN 'answered'
-                    ELSE 'pending'
-                END,
-                accepted_recording_id = NULL
-            """
-        )
-    )
-
-    with op.batch_alter_table("session_questions", schema=None) as batch_op:
-        batch_op.alter_column(
-            "question_kind", nullable=False, server_default=sa.text("'planned'")
-        )
-        batch_op.alter_column(
-            "follow_up_depth", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column(
-            "source_deleted", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column(
-            "question_state", nullable=False, server_default=sa.text("'pending'")
-        )
-        batch_op.alter_column(
-            "attempts_created_count", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column(
-            "acceptance_generation", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column(
-            "pending_hint_count", nullable=False, server_default=sa.text("0")
-        )
-
-    with op.batch_alter_table("session_recordings", schema=None) as batch_op:
-        batch_op.alter_column(
-            "attempt_version", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column(
-            "processing_generation", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column(
-            "processing_retry_count", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column(
-            "processing_retry_limit", nullable=False, server_default=sa.text("0")
-        )
-        batch_op.alter_column("hint_count", nullable=False, server_default=sa.text("0"))
 
     # ### end Alembic commands ###
 
@@ -1018,6 +1334,7 @@ def downgrade() -> None:
         batch_op.drop_constraint("ck_session_questions_follow_up_depth", type_="check")
         batch_op.drop_constraint("ck_session_questions_question_kind", type_="check")
         batch_op.drop_constraint("ck_session_questions_question_state", type_="check")
+        batch_op.drop_constraint("ck_session_questions_follow_up_reason", type_="check")
         batch_op.drop_constraint(
             "ck_session_questions_attempts_created_count", type_="check"
         )
@@ -1069,6 +1386,20 @@ def downgrade() -> None:
         batch_op.drop_column("parent_question_id")
         batch_op.drop_column("root_question_id")
         batch_op.drop_column("question_kind")
+
+    op.execute(
+        sa.text(
+            """
+            UPDATE interview_sessions
+            SET report_state = 'failed',
+                report_json = NULL,
+                report_job_id = NULL,
+                report_started_at = NULL,
+                report_build_reason = NULL
+            WHERE report_state = 'invalidated'
+            """
+        )
+    )
 
     with op.batch_alter_table("interview_sessions", schema=None) as batch_op:
         batch_op.drop_constraint("ck_interview_sessions_deletion_state", type_="check")

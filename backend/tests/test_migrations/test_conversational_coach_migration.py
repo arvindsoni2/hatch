@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import os
 import re
 import shutil
@@ -10,7 +11,9 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,6 +25,11 @@ SOURCE_REVISION = "p3q4r5s6t7u8"
 COACH_REVISION = "q4r5s6t7u8v9"
 SCHEMA_FIXTURE_SHA256 = (
     "58a69e0217a71705d06e45588ec254a3f9dd7f8df4eeb4811f76b84d259de2a6"
+)
+CANONICAL_COMPLETED_EVALUATION_JSON = (
+    '{"evaluation_state":"completed","scores":{"relevance":8,'
+    '"star_structure":7,"technical_depth":9,"conciseness":6,'
+    '"communication":8,"impact_metrics":7},"overall":7.5}'
 )
 
 SESSION_COLUMNS = {
@@ -145,6 +153,398 @@ REQUIRED_INDEXES = {
     "idx_command_results_session_command",
 }
 
+NEW_TABLE_COLUMN_CONTRACTS: dict[str, dict[str, tuple[bool, str | None]]] = {
+    "coach_conversation_command_results": {
+        "id": (True, None),
+        "session_id": (True, None),
+        "command_id": (True, None),
+        "command_type": (True, None),
+        "request_hash": (True, None),
+        "expected_state_version": (True, None),
+        "result_state": (True, None),
+        "result_json": (False, None),
+        "created_at": (True, None),
+        "completed_at": (False, None),
+    },
+    "interview_session_events": {
+        "id": (True, None),
+        "session_id": (True, None),
+        "sequence_number": (True, None),
+        "event_type": (True, None),
+        "state_before": (False, None),
+        "state_after": (False, None),
+        "state_version": (True, None),
+        "question_id": (False, None),
+        "recording_id": (False, None),
+        "command_id": (False, None),
+        "actor_type": (True, None),
+        "payload_json": (False, None),
+        "created_at": (True, None),
+    },
+    "coach_session_evidence_records": {
+        "id": (True, None),
+        "session_id": (True, None),
+        "evidence_id": (True, None),
+        "source_type": (True, None),
+        "source_record_id": (True, None),
+        "source_record_version": (True, None),
+        "source_path": (True, None),
+        "snapshot_text": (True, None),
+        "approval_state": (True, None),
+        "content_hash": (True, None),
+        "snapshot_hash": (True, None),
+        "created_at": (True, None),
+    },
+    "interview_transcript_versions": {
+        "id": (True, None),
+        "recording_id": (True, None),
+        "version_number": (True, None),
+        "transcript": (False, None),
+        "source": (True, None),
+        "content_hash": (False, None),
+        "edit_reason": (False, None),
+        "created_by": (True, None),
+        "processing_generation": (False, None),
+        "created_at": (True, None),
+    },
+    "interview_attempt_evaluations": {
+        "id": (True, None),
+        "recording_id": (True, None),
+        "transcript_version_id": (False, None),
+        "version_number": (True, None),
+        "state": (True, None),
+        "answer_level": (False, None),
+        "rubric_json": (False, None),
+        "evidence_findings_json": (False, None),
+        "coaching_json": (False, None),
+        "follow_up_proposal_json": (False, None),
+        "diagnostics_json": (False, None),
+        "model_route_json": (False, None),
+        "evaluation_contract_version": (True, None),
+        "evidence_contract_version": (True, None),
+        "follow_up_contract_version": (True, None),
+        "async_job_id": (False, None),
+        "created_at": (True, None),
+        "completed_at": (False, None),
+    },
+    "interview_attempt_stages": {
+        "id": (True, None),
+        "recording_id": (True, None),
+        "evaluation_version_id": (True, None),
+        "stage_name": (True, None),
+        "stage_state": (True, None),
+        "attempt_count": (True, "0"),
+        "repair_count": (True, "0"),
+        "job_id": (False, None),
+        "claim_token": (False, None),
+        "expected_processing_generation": (False, None),
+        "source_transcript_version_id": (False, None),
+        "reused_from_stage_id": (False, None),
+        "job_deadline_at": (False, None),
+        "started_at": (False, None),
+        "completed_at": (False, None),
+        "last_error_code": (False, None),
+        "diagnostics_json": (False, None),
+    },
+    "interview_attempt_uploads": {
+        "id": (True, None),
+        "attempt_id": (True, None),
+        "upload_id": (True, None),
+        "request_hash": (True, None),
+        "content_sha256": (True, None),
+        "byte_size": (True, None),
+        "mime_type": (True, None),
+        "storage_uri": (True, None),
+        "result_state": (True, None),
+        "created_at": (True, None),
+        "completed_at": (False, None),
+    },
+    "coach_session_deletion_results": {
+        "id": (True, None),
+        "session_key_hash": (True, None),
+        "command_id": (True, None),
+        "request_hash": (True, None),
+        "result_state": (True, None),
+        "error_code": (False, None),
+        "created_at": (True, None),
+        "completed_at": (False, None),
+        "expires_at": (True, None),
+    },
+}
+
+ADDED_COLUMN_DEFAULTS = {
+    "interview_sessions": {
+        "experience_version": "'legacy_v1'",
+        "state_version": "0",
+        "setup_generation": "0",
+        "setup_attempt_count": "0",
+        "setup_max_attempts": "3",
+        "retention_version": "0",
+        "deletion_state": "'not_requested'",
+        "deletion_generation": "0",
+        "event_version": "0",
+        "session_plan_amendment_version": "0",
+    },
+    "session_questions": {
+        "question_kind": "'planned'",
+        "follow_up_depth": "0",
+        "source_deleted": "0",
+        "question_state": "'pending'",
+        "attempts_created_count": "0",
+        "acceptance_generation": "0",
+        "pending_hint_count": "0",
+    },
+    "session_recordings": {
+        "attempt_version": "0",
+        "processing_generation": "0",
+        "processing_retry_count": "0",
+        "processing_retry_limit": "0",
+        "hint_count": "0",
+    },
+}
+
+INDEX_CONTRACTS = {
+    "idx_interview_sessions_experience_state": (
+        "interview_sessions",
+        ("experience_version", "status"),
+    ),
+    "idx_interview_sessions_conversation_state": (
+        "interview_sessions",
+        ("conversation_state",),
+    ),
+    "idx_session_questions_session_asked_sequence": (
+        "session_questions",
+        ("session_id", "asked_sequence"),
+    ),
+    "idx_session_questions_root_question": ("session_questions", ("root_question_id",)),
+    "idx_session_recordings_question_attempt": (
+        "session_recordings",
+        ("question_id", "attempt_number"),
+    ),
+    "idx_session_recordings_async_job_state": (
+        "session_recordings",
+        ("async_job_id", "attempt_state"),
+    ),
+    "idx_transcript_versions_recording_version": (
+        "interview_transcript_versions",
+        ("recording_id", "version_number"),
+    ),
+    "idx_attempt_evaluations_recording_version": (
+        "interview_attempt_evaluations",
+        ("recording_id", "version_number"),
+    ),
+    "idx_attempt_stages_job_state": (
+        "interview_attempt_stages",
+        ("job_id", "stage_state"),
+    ),
+    "idx_attempt_uploads_attempt_upload": (
+        "interview_attempt_uploads",
+        ("attempt_id", "upload_id"),
+    ),
+    "idx_session_evidence_records_session_evidence": (
+        "coach_session_evidence_records",
+        ("session_id", "evidence_id"),
+    ),
+    "idx_session_events_session_sequence": (
+        "interview_session_events",
+        ("session_id", "sequence_number"),
+    ),
+    "idx_session_events_session_created": (
+        "interview_session_events",
+        ("session_id", "created_at"),
+    ),
+    "idx_session_events_session_type": (
+        "interview_session_events",
+        ("session_id", "event_type"),
+    ),
+    "idx_command_results_session_command": (
+        "coach_conversation_command_results",
+        ("session_id", "command_id"),
+    ),
+    "idx_command_results_session_created": (
+        "coach_conversation_command_results",
+        ("session_id", "created_at"),
+    ),
+}
+
+FOREIGN_KEY_CONTRACTS = {
+    "session_questions": {
+        ("root_question_id", "session_questions", "id", "SET NULL"),
+        ("parent_question_id", "session_questions", "id", "SET NULL"),
+        ("follow_up_source_recording_id", "session_recordings", "id", "SET NULL"),
+        (
+            "follow_up_source_transcript_version_id",
+            "interview_transcript_versions",
+            "id",
+            "SET NULL",
+        ),
+        ("accepted_recording_id", "session_recordings", "id", "SET NULL"),
+    },
+    "session_recordings": {
+        ("retry_of_recording_id", "session_recordings", "id", "SET NULL"),
+        (
+            "current_transcript_version_id",
+            "interview_transcript_versions",
+            "id",
+            "SET NULL",
+        ),
+        (
+            "current_evaluation_version_id",
+            "interview_attempt_evaluations",
+            "id",
+            "SET NULL",
+        ),
+    },
+    "coach_conversation_command_results": {
+        ("session_id", "interview_sessions", "id", "CASCADE")
+    },
+    "interview_session_events": {("session_id", "interview_sessions", "id", "CASCADE")},
+    "coach_session_evidence_records": {
+        ("session_id", "interview_sessions", "id", "CASCADE")
+    },
+    "interview_transcript_versions": {
+        ("recording_id", "session_recordings", "id", "CASCADE")
+    },
+    "interview_attempt_evaluations": {
+        ("recording_id", "session_recordings", "id", "CASCADE"),
+        ("transcript_version_id", "interview_transcript_versions", "id", "CASCADE"),
+    },
+    "interview_attempt_stages": {
+        ("recording_id", "session_recordings", "id", "CASCADE"),
+        ("evaluation_version_id", "interview_attempt_evaluations", "id", "CASCADE"),
+        ("reused_from_stage_id", "interview_attempt_stages", "id", "SET NULL"),
+    },
+    "interview_attempt_uploads": {
+        ("attempt_id", "session_recordings", "id", "CASCADE")
+    },
+}
+
+CHECK_CONTRACTS = {
+    "interview_sessions": {
+        "ck_interview_sessions_report_state",
+        "ck_interview_sessions_status",
+        "ck_interview_sessions_conversation_state",
+        "ck_interview_sessions_recoverable_error_scope",
+        "ck_interview_sessions_deletion_state",
+    },
+    "session_questions": {
+        "ck_session_questions_follow_up_depth",
+        "ck_session_questions_question_kind",
+        "ck_session_questions_question_state",
+        "ck_session_questions_follow_up_reason",
+        "ck_session_questions_attempts_created_count",
+        "ck_session_questions_acceptance_generation",
+        "ck_session_questions_pending_hint_count",
+        "ck_session_questions_kind_depth",
+        "ck_session_questions_accepted_generation_order",
+        "ck_session_questions_accepted_generation_current",
+    },
+    "session_recordings": {
+        "ck_session_recordings_attempt_number",
+        "ck_session_recordings_processing_retry_count",
+        "ck_session_recordings_processing_retry_limit",
+        "ck_session_recordings_hint_count",
+        "ck_session_recordings_attempt_kind",
+        "ck_session_recordings_attempt_state",
+        "ck_session_recordings_retry_budget",
+    },
+    "coach_conversation_command_results": {"ck_command_results_state"},
+    "interview_session_events": {"ck_session_events_actor_type"},
+    "coach_session_evidence_records": {"ck_session_evidence_approval_state"},
+    "interview_transcript_versions": {
+        "ck_transcript_versions_source",
+        "ck_transcript_versions_created_by",
+    },
+    "interview_attempt_evaluations": {"ck_attempt_evaluations_state"},
+    "interview_attempt_stages": {
+        "ck_attempt_stages_name",
+        "ck_attempt_stages_state",
+        "ck_attempt_stages_counts",
+    },
+    "interview_attempt_uploads": {"ck_attempt_uploads_state"},
+    "coach_session_deletion_results": {"ck_deletion_results_state"},
+}
+
+UNIQUE_CONTRACTS = {
+    "session_questions": {("session_id", "asked_sequence")},
+    "session_recordings": {
+        ("question_id", "attempt_number"),
+        ("session_id", "client_attempt_id"),
+    },
+    "coach_conversation_command_results": {("session_id", "command_id")},
+    "interview_session_events": {("session_id", "sequence_number")},
+    "coach_session_evidence_records": {("session_id", "evidence_id")},
+    "interview_transcript_versions": {("recording_id", "version_number")},
+    "interview_attempt_evaluations": {("recording_id", "version_number")},
+    "interview_attempt_stages": {
+        ("recording_id", "evaluation_version_id", "stage_name")
+    },
+    "interview_attempt_uploads": {("attempt_id", "upload_id")},
+    "coach_session_deletion_results": {("session_key_hash", "command_id")},
+}
+
+
+class _RecordingBatchOperations:
+    def __init__(self, table: str, operations: list[tuple[str, str, object]]) -> None:
+        self.table = table
+        self.operations = operations
+
+    def __getattr__(self, operation: str):
+        def record(*args: object, **kwargs: object) -> None:
+            self.operations.append((self.table, operation, (args, kwargs)))
+
+        return record
+
+
+class _RecordingBatchContext:
+    def __init__(self, batch: _RecordingBatchOperations) -> None:
+        self.batch = batch
+
+    def __enter__(self) -> _RecordingBatchOperations:
+        return self.batch
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+
+class _RecordingAlembicOperations:
+    def __init__(self) -> None:
+        self.operations: list[tuple[str, str, object]] = []
+
+    def batch_alter_table(
+        self, table: str, **_kwargs: object
+    ) -> _RecordingBatchContext:
+        return _RecordingBatchContext(_RecordingBatchOperations(table, self.operations))
+
+    def execute(self, statement: object) -> None:
+        self.operations.append(("", "execute", str(statement)))
+
+    def get_bind(self):
+        class _EmptyConnection:
+            @staticmethod
+            def execute(*_args: object, **_kwargs: object) -> list[object]:
+                return []
+
+        return _EmptyConnection()
+
+    def create_table(self, table: str, *_args: object, **_kwargs: object) -> None:
+        self.operations.append((table, "create_table", None))
+
+    def drop_table(self, table: str, **_kwargs: object) -> None:
+        self.operations.append((table, "drop_table", None))
+
+
+def _load_migration_module():
+    path = (
+        BACKEND_DIR
+        / "alembic/versions/20260725_0001_q4r5s6t7u8v9_add_conversational_coach_foundation.py"
+    )
+    spec = importlib.util.spec_from_file_location("coach_q4_migration_order", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 def _run_alembic(database: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "DATABASE_URL": f"sqlite+aiosqlite:///{database}"}
@@ -255,6 +655,7 @@ def _insert_recording(
     created_at: str,
     evaluation_state: str | None,
     transcript: str = "legacy answer",
+    evaluation_json: str = CANONICAL_COMPLETED_EVALUATION_JSON,
 ) -> None:
     connection.execute(
         """
@@ -269,7 +670,7 @@ def _insert_recording(
             question_id,
             transcript,
             '{"wpm":123,"filler_count":2}',
-            '{"scores":{"relevance":7.5},"overall":7.5}',
+            evaluation_json,
             evaluation_state,
             created_at,
         ),
@@ -332,6 +733,114 @@ def test_revision_is_the_only_alembic_head() -> None:
     )
     head_lines = [line for line in result.stdout.splitlines() if line.strip()]
     assert head_lines == [f"{COACH_REVISION} (head)"]
+
+
+@pytest.mark.parametrize(
+    "evaluation_json",
+    [
+        CANONICAL_COMPLETED_EVALUATION_JSON,
+        CANONICAL_COMPLETED_EVALUATION_JSON.replace(
+            '"evaluation_state":"completed",', ""
+        ),
+        CANONICAL_COMPLETED_EVALUATION_JSON.replace('"overall":7.5', '"overall":"7.5"'),
+        CANONICAL_COMPLETED_EVALUATION_JSON.replace('"relevance":8', '"relevance":"8"'),
+        CANONICAL_COMPLETED_EVALUATION_JSON.replace('"relevance":8', '"relevance":8.5'),
+        CANONICAL_COMPLETED_EVALUATION_JSON.replace('"overall":7.5', '"overall":11'),
+        CANONICAL_COMPLETED_EVALUATION_JSON[:-1] + ',"feedback":42}',
+        CANONICAL_COMPLETED_EVALUATION_JSON[:-1] + ',"strengths":["clear",42]}',
+        CANONICAL_COMPLETED_EVALUATION_JSON[:-1] + ',"diagnostic":{}}',
+        CANONICAL_COMPLETED_EVALUATION_JSON[:-1]
+        + ',"diagnostic":{"stage":"answer_evaluation","outcome":"completed",'
+        '"execution_mode":"deterministic","attempt_count":0,"repair_count":0,'
+        '"gate_codes":[],"duration_ms":0}}',
+        CANONICAL_COMPLETED_EVALUATION_JSON[:-1]
+        + ',"diagnostic":{"stage":"answer_evaluation","outcome":"completed",'
+        '"execution_mode":"deterministic","attempt_count":0,"repair_count":0,'
+        '"gate_codes":["not_a_contract_gate"],"duration_ms":0}}',
+        CANONICAL_COMPLETED_EVALUATION_JSON[:-1]
+        + ',"rubric":{"dimensions":{"relevance":{"score":12}}}}',
+        CANONICAL_COMPLETED_EVALUATION_JSON[:-1] + ',"retryable":{}}',
+    ],
+)
+def test_migration_validity_helper_matches_legacy_canonical_resolver(
+    evaluation_json: str,
+) -> None:
+    from app.services.coach_aggregation import _parse_completed
+
+    module = _load_migration_module()
+    recording = SimpleNamespace(
+        id="recording",
+        question_id="question",
+        evaluation_state="completed",
+        evaluation_json=evaluation_json,
+        created_at=datetime(2026, 7, 1),
+    )
+    assert module._is_valid_legacy_completed_evaluation(
+        recording.evaluation_state, recording.evaluation_json
+    ) is (_parse_completed(recording) is not None)
+
+
+@pytest.mark.parametrize(
+    ("table", "backfill_marker"),
+    [
+        ("session_questions", "UPDATE session_questions AS question"),
+        ("session_recordings", "UPDATE session_recordings AS recording"),
+    ],
+)
+def test_migration_backfills_before_constraints_indexes_and_non_null_enforcement(
+    table: str, backfill_marker: str
+) -> None:
+    module = _load_migration_module()
+    recorder = _RecordingAlembicOperations()
+    module.op = recorder
+    module.upgrade()
+
+    operations = recorder.operations
+    backfill_position = next(
+        index
+        for index, (_, operation, detail) in enumerate(operations)
+        if operation == "execute" and backfill_marker in str(detail)
+    )
+    add_operations = [
+        (index, detail)
+        for index, (operation_table, operation, detail) in enumerate(operations)
+        if operation_table == table and operation == "add_column"
+    ]
+    assert add_operations
+    assert all(index < backfill_position for index, _ in add_operations)
+    assert all(
+        args[0].nullable is True
+        for _, (args, _kwargs) in add_operations
+        if args[0].name
+        in {
+            "question_kind",
+            "follow_up_depth",
+            "source_deleted",
+            "question_state",
+            "attempts_created_count",
+            "acceptance_generation",
+            "pending_hint_count",
+            "attempt_version",
+            "processing_generation",
+            "processing_retry_count",
+            "processing_retry_limit",
+            "hint_count",
+        }
+    )
+    contract_operations = {
+        "alter_column",
+        "create_check_constraint",
+        "create_foreign_key",
+        "create_index",
+        "create_unique_constraint",
+    }
+    positions = [
+        index
+        for index, (operation_table, operation, _detail) in enumerate(operations)
+        if operation_table == table and operation in contract_operations
+    ]
+    assert positions
+    assert min(positions) > backfill_position
 
 
 @pytest.mark.parametrize(
@@ -456,6 +965,51 @@ def test_upgrade_backfills_legacy_vectors_without_mutating_content(
             )
 
 
+@pytest.mark.parametrize(
+    "evaluation_json",
+    [
+        "not-json",
+        '{"evaluation_state":"completed","scores":{"relevance":8},"overall":8}',
+        (
+            '{"evaluation_state":"completed","scores":{"relevance":11,'
+            '"star_structure":7,"technical_depth":9,"conciseness":6,'
+            '"communication":8,"impact_metrics":7},"overall":8}'
+        ),
+        (
+            '{"evaluation_state":"unavailable","scores":{"relevance":8,'
+            '"star_structure":7,"technical_depth":9,"conciseness":6,'
+            '"communication":8,"impact_metrics":7},"overall":8}'
+        ),
+        (
+            '{"evaluation_state":"completed","scores":{"relevance":8,'
+            '"star_structure":7,"technical_depth":9,"conciseness":6,'
+            '"communication":8,"impact_metrics":7},"overall":12}'
+        ),
+    ],
+)
+def test_malformed_completed_legacy_evaluations_remain_pending(
+    prior_head_db: Path, evaluation_json: str
+) -> None:
+    with sqlite3.connect(prior_head_db) as connection:
+        _insert_session(connection, "malformed-session")
+        _insert_question(connection, "malformed-session", "malformed-question")
+        _insert_recording(
+            connection,
+            recording_id="malformed-recording",
+            session_id="malformed-session",
+            question_id="malformed-question",
+            created_at="2026-07-01 10:00:00",
+            evaluation_state="completed",
+            evaluation_json=evaluation_json,
+        )
+
+    _upgrade(prior_head_db)
+    with sqlite3.connect(prior_head_db) as connection:
+        assert connection.execute(
+            "SELECT question_state FROM session_questions WHERE id='malformed-question'"
+        ).fetchone() == ("pending",)
+
+
 def test_upgrade_adds_exact_foundation_schema_constraints_and_indexes(
     prior_head_db: Path,
 ) -> None:
@@ -527,11 +1081,34 @@ def test_upgrade_enforces_conversational_state_allowlists(prior_head_db: Path) -
         )
         connection.commit()
 
+        for result_state in ("permission_denied", "stale_claim"):
+            connection.execute(
+                """
+                INSERT INTO coach_conversation_command_results(
+                    id, session_id, command_id, command_type, request_hash,
+                    expected_state_version, result_state, created_at
+                ) VALUES (?, 'constraint-session', ?, 'start', 'hash', 0, ?,
+                          '2026-07-01 10:00:00')
+                """,
+                (f"valid-{result_state}", result_state, result_state),
+            )
+        connection.execute(
+            "UPDATE session_questions SET follow_up_reason=NULL "
+            "WHERE id='constraint-question'"
+        )
+        connection.execute(
+            "UPDATE session_questions SET follow_up_reason='clarify_example' "
+            "WHERE id='constraint-question'"
+        )
+        connection.commit()
+
         invalid_statements = (
             "UPDATE interview_sessions SET conversation_state='invented' "
             "WHERE id='constraint-session'",
             "UPDATE session_questions SET question_kind='adaptive_follow_up', "
             "follow_up_depth=1 WHERE id='constraint-question'",
+            "UPDATE session_questions SET follow_up_reason='invented' "
+            "WHERE id='constraint-question'",
             "UPDATE session_recordings SET attempt_state='invented' "
             "WHERE id='constraint-recording'",
             """
@@ -593,6 +1170,17 @@ def test_upgrade_current_check_downgrade_and_reupgrade(prior_head_db: Path) -> N
         )
 
     _upgrade(prior_head_db)
+    with sqlite3.connect(prior_head_db) as connection:
+        connection.execute(
+            """
+            UPDATE interview_sessions
+            SET report_state='invalidated',
+                report_json='{"stale":"private report"}',
+                report_job_id='stale-report-job',
+                report_started_at='2026-07-01 11:00:00'
+            WHERE id='roundtrip-session'
+            """
+        )
     assert COACH_REVISION in _run_alembic(prior_head_db, "current").stdout
     assert "No new upgrade operations detected" in (
         _run_alembic(prior_head_db, "check").stdout
@@ -608,8 +1196,11 @@ def test_upgrade_current_check_downgrade_and_reupgrade(prior_head_db: Path) -> N
             connection, "interview_sessions"
         )
         assert connection.execute(
-            "SELECT report_json, overall_score FROM interview_sessions WHERE id='roundtrip-session'"
-        ).fetchone() == ('{"summary":"legacy byte contract","scores":[8,7]}', 8.25)
+            """
+            SELECT report_state, report_json, report_job_id, report_started_at, overall_score
+            FROM interview_sessions WHERE id='roundtrip-session'
+            """
+        ).fetchone() == ("failed", None, None, None, 8.25)
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
@@ -620,6 +1211,10 @@ def test_upgrade_current_check_downgrade_and_reupgrade(prior_head_db: Path) -> N
         ).fetchone() == (1, "primary")
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute(
+            "SELECT report_state, report_json FROM interview_sessions "
+            "WHERE id='roundtrip-session'"
+        ).fetchone() == ("failed", None)
 
 
 def test_supported_fresh_install_matches_new_head_metadata(tmp_path: Path) -> None:
@@ -654,9 +1249,23 @@ def test_supported_fresh_install_matches_new_head_metadata(tmp_path: Path) -> No
         in check_result.stdout + check_result.stderr
     )
     with sqlite3.connect(database) as connection:
-        assert SESSION_COLUMNS <= _column_names(connection, "interview_sessions")
-        assert QUESTION_COLUMNS <= _column_names(connection, "session_questions")
-        assert RECORDING_COLUMNS <= _column_names(connection, "session_recordings")
+        added_contracts = {
+            "interview_sessions": SESSION_COLUMNS,
+            "session_questions": QUESTION_COLUMNS,
+            "session_recordings": RECORDING_COLUMNS,
+        }
+        for table, required_columns in added_contracts.items():
+            actual = {
+                row[1]: (bool(row[3]), row[4])
+                for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert required_columns <= set(actual)
+            defaults = ADDED_COLUMN_DEFAULTS[table]
+            for column in required_columns:
+                assert actual[column] == (
+                    column in defaults,
+                    defaults.get(column),
+                )
         tables = {
             row[0]
             for row in connection.execute(
@@ -664,5 +1273,60 @@ def test_supported_fresh_install_matches_new_head_metadata(tmp_path: Path) -> No
             )
         }
         assert NEW_TABLES <= tables
+        for table, expected_columns in NEW_TABLE_COLUMN_CONTRACTS.items():
+            actual_columns = {
+                row[1]: (bool(row[3]), row[4])
+                for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            assert actual_columns == expected_columns
+
+        for index, (table, expected_columns) in INDEX_CONTRACTS.items():
+            index_row = connection.execute(
+                "SELECT tbl_name FROM sqlite_schema WHERE type='index' AND name=?",
+                (index,),
+            ).fetchone()
+            assert index_row == (table,)
+            assert (
+                tuple(
+                    row[2] for row in connection.execute(f"PRAGMA index_info({index})")
+                )
+                == expected_columns
+            )
+
+        for table, expected_uniques in UNIQUE_CONTRACTS.items():
+            assert expected_uniques <= _unique_column_sets(connection, table)
+
+        for table, expected_foreign_keys in FOREIGN_KEY_CONTRACTS.items():
+            actual_foreign_keys = {
+                (row[3], row[2], row[4], row[6])
+                for row in connection.execute(f"PRAGMA foreign_key_list({table})")
+            }
+            assert expected_foreign_keys <= actual_foreign_keys
+
+        for table, expected_checks in CHECK_CONTRACTS.items():
+            table_sql = connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (table,)
+            ).fetchone()[0]
+            assert all(
+                f"CONSTRAINT {constraint} CHECK" in table_sql
+                for constraint in expected_checks
+            )
+        command_sql = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='coach_conversation_command_results'"
+        ).fetchone()[0]
+        assert "permission_denied" in command_sql
+        assert "stale_claim" in command_sql
+        question_sql = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE name='session_questions'"
+        ).fetchone()[0]
+        assert {
+            "clarify_example",
+            "measurable_result",
+            "personal_action",
+            "reasoning",
+            "role_depth",
+            "resolve_ambiguity",
+            "evidence_consistency",
+        } <= set(re.findall(r"'([a-z_]+)'", question_sql))
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []

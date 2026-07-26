@@ -280,6 +280,12 @@ class SessionQuestion(Base):
             name="ck_session_questions_question_state",
         ),
         CheckConstraint(
+            "follow_up_reason IS NULL OR follow_up_reason IN "
+            "('clarify_example', 'measurable_result', 'personal_action', 'reasoning', "
+            "'role_depth', 'resolve_ambiguity', 'evidence_consistency')",
+            name="ck_session_questions_follow_up_reason",
+        ),
+        CheckConstraint(
             "attempts_created_count >= 0",
             name="ck_session_questions_attempts_created_count",
         ),
@@ -605,7 +611,8 @@ class ConversationCommandResultRecord(Base):
         CheckConstraint(
             "result_state IN ('completed', 'accepted_processing', 'duplicate', "
             "'invalid_state', 'version_conflict', 'idempotency_conflict', "
-            "'invalid_payload', 'resource_blocked', 'not_found')",
+            "'invalid_payload', 'resource_blocked', 'not_found', "
+            "'permission_denied', 'stale_claim')",
             name="ck_command_results_state",
         ),
     )
