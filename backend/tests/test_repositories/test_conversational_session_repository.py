@@ -30,6 +30,7 @@ from app.repositories.conversational_session_repository import (
     ConversationVersionConflict,
     ConversationalSessionRepository,
     SessionEventInput,
+    StaleVersion,
     canonical_request_hash,
 )
 from app.schemas.coach_conversation import ConversationCommandRequest
@@ -231,10 +232,37 @@ async def _seed_terminal_attempt_for_acceptance(
                 evaluation_contract_version="coach_conversational_rubric_v1",
                 evidence_contract_version="coach_evidence_grounding_v1",
                 follow_up_contract_version="coach_follow_up_v1",
-                diagnostics_json={"processing_claim": {"processing_generation": 3}},
+                diagnostics_json={
+                    "processing_claim": {"processing_generation": 3},
+                    **(
+                        {"result": {"reason_code": "coach_evaluation_unavailable"}}
+                        if evaluation_state == "unavailable"
+                        else {}
+                    ),
+                },
             )
         )
         await db.flush()
+        if evaluation_state == "unavailable":
+            for stage_name, stage_state in (
+                ("content_evaluation", "failed_terminal"),
+                ("evidence_grounding", "not_applicable"),
+                ("follow_up_decision", "not_applicable"),
+            ):
+                db.add(
+                    InterviewAttemptStage(
+                        recording_id=attempt_id,
+                        evaluation_version_id=evaluation_id,
+                        stage_name=stage_name,
+                        stage_state=stage_state,
+                        source_transcript_version_id=transcript_id,
+                        last_error_code=(
+                            "coach_evaluation_unavailable"
+                            if stage_name == "content_evaluation"
+                            else None
+                        ),
+                    )
+                )
         attempt.current_transcript_version_id = transcript_id
         attempt.current_evaluation_version_id = evaluation_id
         session = await db.get(InterviewSession, "session-1")
@@ -943,6 +971,155 @@ async def test_pretranscription_unavailable_finalisation_requires_exact_diagnost
         assert evaluation.state == "unavailable"
         assert evaluation.transcript_version_id is None
 
+    async with repository_database.begin() as db:
+        accepted = await ConversationalSessionRepository(db).accept_attempt(
+            session_id="session-1",
+            question_id="question-1",
+            attempt_id=claim.recording_id,
+            expected_state_version=5,
+        )
+        assert accepted.accepted is True
+        assert accepted.evaluation_state == "unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recording_type", ("text", "audio"))
+async def test_post_transcript_evaluator_unavailable_preserves_current_transcript(
+    repository_database, recording_type
+) -> None:
+    await _seed_session(repository_database)
+    claim, transcript_id = await _claim_attempt_for_finalisation(
+        repository_database,
+        recording_type=recording_type,
+        attempt_id=f"attempt-evaluator-unavailable-{recording_type}",
+        job_id=f"job-evaluator-unavailable-{recording_type}",
+    )
+    if recording_type == "audio":
+        async with repository_database.begin() as db:
+            transcript = await ConversationalSessionRepository(
+                db
+            ).create_worker_transcript_version(
+                recording_id=claim.recording_id,
+                transcript="Usable audio transcript.",
+                expected_job_id=claim.job_id,
+                expected_processing_generation=claim.processing_generation,
+                expected_audio_content_hash="d" * 64,
+                expected_evaluation_version_id=claim.evaluation_version_id,
+                expected_claim_token=claim.claim_token,
+            )
+            assert transcript is not None
+            transcript_id = transcript.id
+    assert transcript_id is not None
+    async with repository_database.begin() as db:
+        stage_states = {
+            "content_evaluation": "failed_terminal",
+            "evidence_grounding": "not_applicable",
+            "follow_up_decision": "not_applicable",
+        }
+        if recording_type == "audio":
+            stage_states.update(
+                {"transcription": "completed", "speech_analysis": "unavailable"}
+            )
+        for stage_name, stage_state in stage_states.items():
+            db.add(
+                InterviewAttemptStage(
+                    recording_id=claim.recording_id,
+                    evaluation_version_id=claim.evaluation_version_id,
+                    stage_name=stage_name,
+                    stage_state=stage_state,
+                    job_id=claim.job_id,
+                    claim_token=claim.claim_token,
+                    expected_processing_generation=claim.processing_generation,
+                    source_transcript_version_id=(
+                        transcript_id
+                        if stage_name
+                        in {
+                            "content_evaluation",
+                            "evidence_grounding",
+                            "follow_up_decision",
+                        }
+                        else None
+                    ),
+                    job_deadline_at=claim.deadline_at,
+                    last_error_code=(
+                        "coach_evaluation_unavailable"
+                        if stage_name == "content_evaluation"
+                        else None
+                    ),
+                )
+            )
+
+    async with repository_database.begin() as db:
+        changed = await ConversationalSessionRepository(db).finalise_attempt_processing(
+            claim=claim,
+            result=AttemptProcessingResult(
+                evaluation_state="unavailable",
+                evaluation_json={},
+                transcript_version_id=transcript_id,
+                diagnostics={"reason_code": "coach_evaluation_unavailable"},
+            ),
+        )
+        assert changed is True
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        evaluation = await db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        assert attempt is not None and evaluation is not None
+        assert attempt.attempt_state == "unavailable"
+        assert attempt.current_transcript_version_id == transcript_id
+        assert evaluation.state == "unavailable"
+        assert evaluation.transcript_version_id == transcript_id
+
+
+@pytest.mark.asyncio
+async def test_evaluator_unavailable_rejects_completed_content_stage(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    claim, transcript_id = await _claim_attempt_for_finalisation(
+        repository_database,
+        recording_type="text",
+        attempt_id="attempt-invalid-evaluator-unavailable",
+        job_id="job-invalid-evaluator-unavailable",
+    )
+    assert transcript_id is not None
+    async with repository_database.begin() as db:
+        for stage_name, stage_state in (
+            ("content_evaluation", "completed"),
+            ("evidence_grounding", "not_applicable"),
+            ("follow_up_decision", "not_applicable"),
+        ):
+            db.add(
+                InterviewAttemptStage(
+                    recording_id=claim.recording_id,
+                    evaluation_version_id=claim.evaluation_version_id,
+                    stage_name=stage_name,
+                    stage_state=stage_state,
+                    job_id=claim.job_id,
+                    claim_token=claim.claim_token,
+                    expected_processing_generation=claim.processing_generation,
+                    source_transcript_version_id=transcript_id,
+                    job_deadline_at=claim.deadline_at,
+                    last_error_code=(
+                        "coach_evaluation_unavailable"
+                        if stage_name == "content_evaluation"
+                        else None
+                    ),
+                )
+            )
+    async with repository_database.begin() as db:
+        changed = await ConversationalSessionRepository(db).finalise_attempt_processing(
+            claim=claim,
+            result=AttemptProcessingResult(
+                evaluation_state="unavailable",
+                evaluation_json={},
+                transcript_version_id=transcript_id,
+                diagnostics={"reason_code": "coach_evaluation_unavailable"},
+            ),
+        )
+        assert changed is False
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("race", ("audio_hash", "candidate_edit"))
@@ -967,6 +1144,8 @@ async def test_processing_finaliser_rejects_audio_hash_and_edit_races(
                 expected_job_id=claim.job_id,
                 expected_processing_generation=claim.processing_generation,
                 expected_audio_content_hash="d" * 64,
+                expected_evaluation_version_id=claim.evaluation_version_id,
+                expected_claim_token=claim.claim_token,
             )
             assert transcript is not None
             transcript_id = transcript.id
@@ -1122,7 +1301,12 @@ async def test_worker_transcript_promotion_preserves_candidate_attempt_version(
                 evaluation_contract_version="coach_conversational_rubric_v1",
                 evidence_contract_version="coach_evidence_grounding_v1",
                 follow_up_contract_version="coach_follow_up_v1",
-                diagnostics_json={"processing_generation": 3},
+                diagnostics_json={
+                    "processing_claim": {
+                        "processing_generation": 3,
+                        "claim_token": "claim-token-audio",
+                    }
+                },
             )
         )
 
@@ -1135,6 +1319,8 @@ async def test_worker_transcript_promotion_preserves_candidate_attempt_version(
             expected_job_id="job-audio",
             expected_processing_generation=3,
             expected_audio_content_hash="a" * 64,
+            expected_evaluation_version_id="evaluation-audio",
+            expected_claim_token="claim-token-audio",
         )
         assert transcript is not None
 
@@ -1157,6 +1343,8 @@ async def test_worker_transcript_promotion_preserves_candidate_attempt_version(
         ("processing_generation", 4),
         ("audio_content_hash", "b" * 64),
         ("attempt_state", "recoverable_error"),
+        ("evaluation_version_id", "stale-evaluation"),
+        ("claim_token", "stale-claim-token"),
     ),
 )
 async def test_stale_worker_transcript_promotion_makes_no_mutation(
@@ -1179,7 +1367,8 @@ async def test_stale_worker_transcript_promotion_makes_no_mutation(
             processing_retry_limit=2,
             client_attempt_id="client-audio",
         )
-        setattr(attempt, field, stale_value)
+        if field not in {"evaluation_version_id", "claim_token"}:
+            setattr(attempt, field, stale_value)
         db.add(attempt)
         await db.flush()
         db.add(
@@ -1192,7 +1381,12 @@ async def test_stale_worker_transcript_promotion_makes_no_mutation(
                 evaluation_contract_version="coach_conversational_rubric_v1",
                 evidence_contract_version="coach_evidence_grounding_v1",
                 follow_up_contract_version="coach_follow_up_v1",
-                diagnostics_json={"processing_generation": 3},
+                diagnostics_json={
+                    "processing_claim": {
+                        "processing_generation": 3,
+                        "claim_token": "claim-token-audio",
+                    }
+                },
             )
         )
 
@@ -1205,6 +1399,12 @@ async def test_stale_worker_transcript_promotion_makes_no_mutation(
             expected_job_id="job-audio",
             expected_processing_generation=3,
             expected_audio_content_hash="a" * 64,
+            expected_evaluation_version_id=(
+                stale_value if field == "evaluation_version_id" else "evaluation-audio"
+            ),
+            expected_claim_token=(
+                stale_value if field == "claim_token" else "claim-token-audio"
+            ),
         )
         assert transcript is None
 
@@ -1256,6 +1456,214 @@ async def test_processing_claim_rejects_text_attempt_without_source_transcript(
         assert attempt.processing_generation == 0
         assert attempt.attempt_state == "draft"
         assert attempt.async_job_id is None
+
+
+@pytest.mark.asyncio
+async def test_orphan_transcript_fails_closed_without_integrity_error(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        db.add(
+            SessionRecording(
+                id="attempt-orphan-transcript",
+                session_id="session-1",
+                question_id="question-1",
+                recording_type="text",
+                attempt_number=1,
+                attempt_kind="primary",
+                attempt_state="draft",
+                processing_retry_limit=2,
+                client_attempt_id="client-orphan-transcript",
+            )
+        )
+        await db.flush()
+        db.add(
+            InterviewTranscriptVersion(
+                id="orphan-transcript",
+                recording_id="attempt-orphan-transcript",
+                version_number=1,
+                transcript="Unreferenced transcript.",
+                source="candidate_text",
+                created_by="candidate",
+                processing_generation=1,
+            )
+        )
+
+    async with repository_database.begin() as db:
+        with pytest.raises(StaleVersion, match="pointer"):
+            await ConversationalSessionRepository(db).create_transcript_version(
+                recording_id="attempt-orphan-transcript",
+                source="candidate_text",
+                transcript="Replacement transcript.",
+                expected_attempt_version=0,
+                processing_generation=1,
+            )
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, "attempt-orphan-transcript")
+        assert attempt is not None
+        assert attempt.current_transcript_version_id is None
+        assert attempt.attempt_version == 0
+        assert await db.scalar(select(func.count(InterviewTranscriptVersion.id))) == 1
+
+
+@pytest.mark.asyncio
+async def test_orphan_evaluation_fails_claim_without_advancing_generation(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        db.add(
+            SessionRecording(
+                id="attempt-orphan-evaluation",
+                session_id="session-1",
+                question_id="question-1",
+                recording_type="audio",
+                attempt_number=1,
+                attempt_kind="primary",
+                attempt_state="uploaded",
+                audio_content_hash="9" * 64,
+                processing_retry_limit=2,
+                client_attempt_id="client-orphan-evaluation",
+            )
+        )
+        await db.flush()
+        db.add(
+            InterviewAttemptEvaluation(
+                id="orphan-evaluation",
+                recording_id="attempt-orphan-evaluation",
+                version_number=1,
+                state="completed",
+                evaluation_contract_version="coach_conversational_rubric_v1",
+                evidence_contract_version="coach_evidence_grounding_v1",
+                follow_up_contract_version="coach_follow_up_v1",
+            )
+        )
+
+    async with repository_database.begin() as db:
+        claim = await ConversationalSessionRepository(db).claim_attempt_processing(
+            recording_id="attempt-orphan-evaluation",
+            expected_generation=0,
+            job_id="job-orphan-evaluation",
+            deadline=datetime.utcnow() + timedelta(minutes=5),
+            evaluation_contract_version="coach_conversational_rubric_v1",
+            processing_contract_version="coach_processing_v1",
+        )
+        assert claim is None
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, "attempt-orphan-evaluation")
+        assert attempt is not None
+        assert attempt.processing_generation == 0
+        assert attempt.attempt_state == "uploaded"
+        assert await db.scalar(select(func.count(InterviewAttemptEvaluation.id))) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_candidate_transcript_allocation_uses_pointer_fence(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        db.add(
+            SessionRecording(
+                id="attempt-concurrent-transcript",
+                session_id="session-1",
+                question_id="question-1",
+                recording_type="text",
+                attempt_number=1,
+                attempt_kind="primary",
+                attempt_state="draft",
+                processing_retry_limit=2,
+                client_attempt_id="client-concurrent-transcript",
+            )
+        )
+
+    async def create(text: str):
+        async with repository_database.begin() as db:
+            try:
+                return await ConversationalSessionRepository(
+                    db
+                ).create_transcript_version(
+                    recording_id="attempt-concurrent-transcript",
+                    source="candidate_text",
+                    transcript=text,
+                    expected_attempt_version=0,
+                    processing_generation=1,
+                )
+            except StaleVersion as error:
+                return error
+
+    results = await asyncio.gather(create("First."), create("Second."))
+    assert (
+        sum(isinstance(result, InterviewTranscriptVersion) for result in results) == 1
+    )
+    assert sum(isinstance(result, StaleVersion) for result in results) == 1
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, "attempt-concurrent-transcript")
+        versions = (
+            await db.scalars(
+                select(InterviewTranscriptVersion).where(
+                    InterviewTranscriptVersion.recording_id
+                    == "attempt-concurrent-transcript"
+                )
+            )
+        ).all()
+        assert attempt is not None
+        assert attempt.attempt_version == 1
+        assert len(versions) == 1
+        assert versions[0].version_number == 1
+        assert attempt.current_transcript_version_id == versions[0].id
+
+
+@pytest.mark.asyncio
+async def test_processing_claim_allocates_from_current_evaluation_pointer(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        attempt = SessionRecording(
+            id="attempt-current-evaluation",
+            session_id="session-1",
+            question_id="question-1",
+            recording_type="audio",
+            attempt_number=1,
+            attempt_kind="primary",
+            attempt_state="uploaded",
+            audio_content_hash="8" * 64,
+            processing_retry_limit=2,
+            client_attempt_id="client-current-evaluation",
+        )
+        db.add(attempt)
+        await db.flush()
+        prior = InterviewAttemptEvaluation(
+            id="current-evaluation",
+            recording_id=attempt.id,
+            version_number=4,
+            state="completed",
+            evaluation_contract_version="coach_conversational_rubric_v1",
+            evidence_contract_version="coach_evidence_grounding_v1",
+            follow_up_contract_version="coach_follow_up_v1",
+        )
+        db.add(prior)
+        await db.flush()
+        attempt.current_evaluation_version_id = prior.id
+
+    async with repository_database.begin() as db:
+        claim = await ConversationalSessionRepository(db).claim_attempt_processing(
+            recording_id="attempt-current-evaluation",
+            expected_generation=0,
+            job_id="job-current-evaluation",
+            deadline=datetime.utcnow() + timedelta(minutes=5),
+            evaluation_contract_version="coach_conversational_rubric_v1",
+            processing_contract_version="coach_processing_v1",
+        )
+        assert claim is not None
+    async with repository_database() as db:
+        evaluation = await db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        assert evaluation is not None
+        assert evaluation.version_number == 5
 
 
 @pytest.mark.asyncio
@@ -1322,6 +1730,7 @@ async def test_processing_claim_allocates_evaluation_version_and_source_snapshot
                 "source_transcript_version_id": transcript.id,
                 "expected_session_state_version": 4,
                 "processing_contract_version": "coach_processing_v1",
+                "claim_token": claim.claim_token,
             }
         }
         snapshot = await ConversationalSessionRepository(
@@ -1444,11 +1853,14 @@ async def test_acceptance_rejects_missing_stale_or_nonterminal_current_evaluatio
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("evaluation_state", ("completed", "unavailable"))
 async def test_acceptance_selects_matching_terminal_evaluation_once(
-    repository_database,
+    repository_database, evaluation_state
 ) -> None:
     await _seed_session(repository_database)
-    _, evaluation_id = await _seed_terminal_attempt_for_acceptance(repository_database)
+    _, evaluation_id = await _seed_terminal_attempt_for_acceptance(
+        repository_database, evaluation_state=evaluation_state
+    )
     async with repository_database.begin() as db:
         result = await ConversationalSessionRepository(db).accept_attempt(
             session_id="session-1",
@@ -1459,7 +1871,7 @@ async def test_acceptance_selects_matching_terminal_evaluation_once(
         assert result.accepted is True
         assert result.state_version == 5
         assert result.evaluation_version_id == evaluation_id
-        assert result.evaluation_state == "completed"
+        assert result.evaluation_state == evaluation_state
 
     async with repository_database.begin() as db:
         replay = await ConversationalSessionRepository(db).accept_attempt(
@@ -1520,6 +1932,62 @@ async def test_event_payload_rejects_non_allowlisted_or_sensitive_values(
     await _seed_session(repository_database)
     async with repository_database.begin() as db:
         with pytest.raises(ValueError, match="content-free"):
+            await ConversationalSessionRepository(db).append_session_events(
+                session_id="session-1",
+                events=(
+                    SessionEventInput(
+                        "attempt_processing_failed",
+                        "worker",
+                        4,
+                        payload_json=payload,
+                    ),
+                ),
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {
+            "diagnostics": {
+                "diagnostics": {
+                    "diagnostics": {
+                        "diagnostics": {
+                            "diagnostics": {"reason": "provider_unavailable"}
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "diagnostics": {
+                "hint_types": ["safe_code"] * 32,
+                "stages": ["safe_code"] * 32,
+                "reason_codes": ["safe_code"],
+            }
+        },
+        {
+            "attempt_id": "a" * 128,
+            "claim_id": "b" * 128,
+            "command_id": "c" * 128,
+            "evaluation_version_id": "d" * 128,
+            "job_id": "e" * 128,
+            "question_id": "f" * 128,
+            "recording_id": "g" * 128,
+            "session_id": "h" * 128,
+            "stage_id": "i" * 128,
+            "transcript_version_id": "j" * 128,
+        },
+    ),
+    ids=("deep", "wide", "oversize"),
+)
+async def test_event_payload_rejects_unbounded_diagnostics(
+    repository_database, payload
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        with pytest.raises(ValueError, match="bounded"):
             await ConversationalSessionRepository(db).append_session_events(
                 session_id="session-1",
                 events=(

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Sequence
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -107,6 +107,7 @@ class AttemptProcessingClaim:
     source_transcript_version_id: str | None
     expected_session_state_version: int
     processing_contract_version: str
+    claim_token: str
 
 
 @dataclass(frozen=True)
@@ -197,21 +198,55 @@ _EVENT_ID_KEYS = frozenset(
 )
 _SAFE_EVENT_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _SAFE_EVENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+_EVENT_PAYLOAD_MAX_DEPTH = 4
+_EVENT_PAYLOAD_MAX_ITEMS = 64
+_EVENT_PAYLOAD_MAX_BYTES = 1024
 
 
-def _validate_event_payload(value: object, *, key: str | None = None) -> None:
+def _validate_event_payload(value: object) -> None:
     """Accept only bounded structural event diagnostics, never free-form content."""
-    invalid = ValueError("event payload must be content-free")
-    if key is None:
-        if value is None:
-            return
-        if not isinstance(value, dict):
-            raise invalid
-        for nested_key, nested in value.items():
-            if not isinstance(nested_key, str):
-                raise invalid
-            _validate_event_payload(nested, key=nested_key)
+    invalid = ValueError("event payload must be content-free and bounded")
+    if value is None:
         return
+    if not isinstance(value, dict):
+        raise invalid
+    try:
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise invalid from error
+    if len(encoded) > _EVENT_PAYLOAD_MAX_BYTES:
+        raise invalid
+
+    budget = [0]
+    for nested_key, nested in value.items():
+        if not isinstance(nested_key, str):
+            raise invalid
+        _validate_event_payload_value(
+            nested,
+            key=nested_key,
+            depth=1,
+            budget=budget,
+            invalid=invalid,
+        )
+
+
+def _validate_event_payload_value(
+    value: object,
+    *,
+    key: str,
+    depth: int,
+    budget: list[int],
+    invalid: ValueError,
+) -> None:
+    budget[0] += 1
+    if depth > _EVENT_PAYLOAD_MAX_DEPTH or budget[0] > _EVENT_PAYLOAD_MAX_ITEMS:
+        raise invalid
 
     if key in _EVENT_CONTAINER_KEYS:
         if not isinstance(value, dict):
@@ -219,7 +254,13 @@ def _validate_event_payload(value: object, *, key: str | None = None) -> None:
         for nested_key, nested in value.items():
             if not isinstance(nested_key, str):
                 raise invalid
-            _validate_event_payload(nested, key=nested_key)
+            _validate_event_payload_value(
+                nested,
+                key=nested_key,
+                depth=depth + 1,
+                budget=budget,
+                invalid=invalid,
+            )
         return
     if key in _EVENT_ENUM_KEYS:
         if not isinstance(value, str) or _SAFE_EVENT_CODE.fullmatch(value) is None:
@@ -227,6 +268,9 @@ def _validate_event_payload(value: object, *, key: str | None = None) -> None:
         return
     if key in _EVENT_ENUM_LIST_KEYS:
         if not isinstance(value, list) or len(value) > 32:
+            raise invalid
+        budget[0] += len(value)
+        if budget[0] > _EVENT_PAYLOAD_MAX_ITEMS:
             raise invalid
         if any(
             not isinstance(item, str) or _SAFE_EVENT_CODE.fullmatch(item) is None
@@ -601,27 +645,53 @@ class ConversationalSessionRepository:
             or attempt.attempt_version != expected_attempt_version
         ):
             raise StaleVersion("stale attempt version")
-        version_number = (
-            await self._session.scalar(
-                select(func.max(InterviewTranscriptVersion.version_number)).where(
-                    InterviewTranscriptVersion.recording_id == recording_id
-                )
-            )
-            or 0
-        ) + 1
         version_id = str(uuid.uuid4())
-        row = InterviewTranscriptVersion(
-            id=version_id,
-            recording_id=recording_id,
-            version_number=version_number,
-            transcript=normalised,
-            source=source,
-            content_hash=hashlib.sha256(normalised.encode("utf-8")).hexdigest(),
-            created_by="candidate" if source.startswith("candidate") else "system",
-            processing_generation=processing_generation,
-        )
+        current_transcript_version_id = attempt.current_transcript_version_id
         try:
             async with self._session.begin_nested():
+                ownership_lock = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == recording_id,
+                        SessionRecording.attempt_version == expected_attempt_version,
+                        SessionRecording.attempt_state != "deleted",
+                        SessionRecording.current_transcript_version_id
+                        == current_transcript_version_id,
+                    )
+                    .values(attempt_version=SessionRecording.attempt_version)
+                )
+                if ownership_lock.rowcount != 1:
+                    raise _StaleFinalisation
+                if current_transcript_version_id is None:
+                    orphan = await self._session.scalar(
+                        select(InterviewTranscriptVersion.id)
+                        .where(InterviewTranscriptVersion.recording_id == recording_id)
+                        .limit(1)
+                    )
+                    if orphan is not None:
+                        raise _StaleFinalisation
+                    version_number = 1
+                else:
+                    current_version_number = await self._session.scalar(
+                        select(InterviewTranscriptVersion.version_number).where(
+                            InterviewTranscriptVersion.id
+                            == current_transcript_version_id,
+                            InterviewTranscriptVersion.recording_id == recording_id,
+                        )
+                    )
+                    if current_version_number is None:
+                        raise _StaleFinalisation
+                    version_number = current_version_number + 1
+                row = InterviewTranscriptVersion(
+                    id=version_id,
+                    recording_id=recording_id,
+                    version_number=version_number,
+                    transcript=normalised,
+                    source=source,
+                    content_hash=hashlib.sha256(normalised.encode("utf-8")).hexdigest(),
+                    created_by="candidate",
+                    processing_generation=processing_generation,
+                )
                 self._session.add(row)
                 await self._session.flush()
                 changed = await self._session.execute(
@@ -630,6 +700,8 @@ class ConversationalSessionRepository:
                         SessionRecording.id == recording_id,
                         SessionRecording.attempt_version == expected_attempt_version,
                         SessionRecording.attempt_state != "deleted",
+                        SessionRecording.current_transcript_version_id
+                        == current_transcript_version_id,
                     )
                     .values(
                         attempt_version=SessionRecording.attempt_version + 1,
@@ -641,7 +713,7 @@ class ConversationalSessionRepository:
                     raise _StaleFinalisation
                 await self._session.flush()
         except _StaleFinalisation as error:
-            raise StaleVersion("stale attempt version") from error
+            raise StaleVersion("stale transcript pointer or attempt version") from error
         return row
 
     async def create_worker_transcript_version(
@@ -652,6 +724,8 @@ class ConversationalSessionRepository:
         expected_job_id: str,
         expected_processing_generation: int,
         expected_audio_content_hash: str,
+        expected_evaluation_version_id: str,
+        expected_claim_token: str,
     ) -> InterviewTranscriptVersion | None:
         """Promote an audio transcript only while the exact worker claim is live."""
         normalised = unicodedata.normalize(
@@ -675,34 +749,70 @@ class ConversationalSessionRepository:
             return None
         evaluation = await self._session.scalar(
             select(InterviewAttemptEvaluation).where(
+                InterviewAttemptEvaluation.id == expected_evaluation_version_id,
                 InterviewAttemptEvaluation.recording_id == recording_id,
                 InterviewAttemptEvaluation.async_job_id == expected_job_id,
                 InterviewAttemptEvaluation.state == "pending",
                 InterviewAttemptEvaluation.transcript_version_id.is_(None),
+                InterviewAttemptEvaluation.diagnostics_json["processing_claim"][
+                    "claim_token"
+                ].as_string()
+                == expected_claim_token,
             )
         )
         if evaluation is None:
             return None
-        version_number = (
-            await self._session.scalar(
-                select(func.max(InterviewTranscriptVersion.version_number)).where(
-                    InterviewTranscriptVersion.recording_id == recording_id
-                )
-            )
-            or 0
-        ) + 1
-        row = InterviewTranscriptVersion(
-            id=str(uuid.uuid4()),
-            recording_id=recording_id,
-            version_number=version_number,
-            transcript=normalised,
-            source="transcription",
-            content_hash=hashlib.sha256(normalised.encode("utf-8")).hexdigest(),
-            created_by="system",
-            processing_generation=expected_processing_generation,
-        )
         try:
             async with self._session.begin_nested():
+                attempt_lock = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == recording_id,
+                        SessionRecording.recording_type == "audio",
+                        SessionRecording.attempt_state == "pending_processing",
+                        SessionRecording.async_job_id == expected_job_id,
+                        SessionRecording.processing_generation
+                        == expected_processing_generation,
+                        SessionRecording.audio_content_hash
+                        == expected_audio_content_hash,
+                        SessionRecording.current_transcript_version_id.is_(None),
+                    )
+                    .values(attempt_version=SessionRecording.attempt_version)
+                )
+                evaluation_lock = await self._session.execute(
+                    update(InterviewAttemptEvaluation)
+                    .where(
+                        InterviewAttemptEvaluation.id == expected_evaluation_version_id,
+                        InterviewAttemptEvaluation.recording_id == recording_id,
+                        InterviewAttemptEvaluation.async_job_id == expected_job_id,
+                        InterviewAttemptEvaluation.state == "pending",
+                        InterviewAttemptEvaluation.transcript_version_id.is_(None),
+                        InterviewAttemptEvaluation.diagnostics_json["processing_claim"][
+                            "claim_token"
+                        ].as_string()
+                        == expected_claim_token,
+                    )
+                    .values(state=InterviewAttemptEvaluation.state)
+                )
+                if attempt_lock.rowcount != 1 or evaluation_lock.rowcount != 1:
+                    raise _StaleFinalisation
+                orphan = await self._session.scalar(
+                    select(InterviewTranscriptVersion.id)
+                    .where(InterviewTranscriptVersion.recording_id == recording_id)
+                    .limit(1)
+                )
+                if orphan is not None:
+                    raise _StaleFinalisation
+                row = InterviewTranscriptVersion(
+                    id=str(uuid.uuid4()),
+                    recording_id=recording_id,
+                    version_number=1,
+                    transcript=normalised,
+                    source="transcription",
+                    content_hash=hashlib.sha256(normalised.encode("utf-8")).hexdigest(),
+                    created_by="system",
+                    processing_generation=expected_processing_generation,
+                )
                 self._session.add(row)
                 await self._session.flush()
                 attempt_change = await self._session.execute(
@@ -731,6 +841,10 @@ class ConversationalSessionRepository:
                         InterviewAttemptEvaluation.async_job_id == expected_job_id,
                         InterviewAttemptEvaluation.state == "pending",
                         InterviewAttemptEvaluation.transcript_version_id.is_(None),
+                        InterviewAttemptEvaluation.diagnostics_json["processing_claim"][
+                            "claim_token"
+                        ].as_string()
+                        == expected_claim_token,
                     )
                     .values(transcript_version_id=row.id)
                 )
@@ -759,6 +873,7 @@ class ConversationalSessionRepository:
         ):
             return None
         source_transcript_version_id = attempt.current_transcript_version_id
+        current_evaluation_version_id = attempt.current_evaluation_version_id
         if attempt.recording_type == "text" and source_transcript_version_id is None:
             return None
         source_audio_content_hash = attempt.audio_content_hash
@@ -768,6 +883,7 @@ class ConversationalSessionRepository:
         if session_row is None:
             return None
         next_generation = expected_generation + 1
+        claim_token = str(uuid.uuid4())
         claim_snapshot = {
             "processing_generation": next_generation,
             "job_deadline_at": deadline.isoformat(),
@@ -775,6 +891,7 @@ class ConversationalSessionRepository:
             "source_transcript_version_id": source_transcript_version_id,
             "expected_session_state_version": session_row.state_version,
             "processing_contract_version": processing_contract_version,
+            "claim_token": claim_token,
         }
         try:
             async with self._session.begin_nested():
@@ -790,6 +907,8 @@ class ConversationalSessionRepository:
                         == source_transcript_version_id,
                         SessionRecording.audio_content_hash
                         == source_audio_content_hash,
+                        SessionRecording.current_evaluation_version_id
+                        == current_evaluation_version_id,
                     )
                     .values(
                         processing_generation=next_generation,
@@ -803,14 +922,26 @@ class ConversationalSessionRepository:
                 )
                 if changed.rowcount != 1:
                     raise _StaleFinalisation
-                evaluation_version = (
-                    await self._session.scalar(
-                        select(
-                            func.max(InterviewAttemptEvaluation.version_number)
-                        ).where(InterviewAttemptEvaluation.recording_id == recording_id)
+                if current_evaluation_version_id is None:
+                    orphan = await self._session.scalar(
+                        select(InterviewAttemptEvaluation.id)
+                        .where(InterviewAttemptEvaluation.recording_id == recording_id)
+                        .limit(1)
                     )
-                    or 0
-                ) + 1
+                    if orphan is not None:
+                        raise _StaleFinalisation
+                    evaluation_version = 1
+                else:
+                    current_evaluation_number = await self._session.scalar(
+                        select(InterviewAttemptEvaluation.version_number).where(
+                            InterviewAttemptEvaluation.id
+                            == current_evaluation_version_id,
+                            InterviewAttemptEvaluation.recording_id == recording_id,
+                        )
+                    )
+                    if current_evaluation_number is None:
+                        raise _StaleFinalisation
+                    evaluation_version = current_evaluation_number + 1
                 evaluation = InterviewAttemptEvaluation(
                     id=str(uuid.uuid4()),
                     recording_id=recording_id,
@@ -840,6 +971,7 @@ class ConversationalSessionRepository:
             source_transcript_version_id=source_transcript_version_id,
             expected_session_state_version=session_row.state_version,
             processing_contract_version=processing_contract_version,
+            claim_token=claim_token,
         )
 
     async def get_attempt_processing_snapshot(
@@ -875,6 +1007,7 @@ class ConversationalSessionRepository:
                 claim_data["expected_session_state_version"]
             )
             processing_contract_version = str(claim_data["processing_contract_version"])
+            claim_token = str(claim_data["claim_token"])
         except (KeyError, TypeError, ValueError):
             return None
         if claim_data.get("processing_generation") != processing_generation:
@@ -892,6 +1025,7 @@ class ConversationalSessionRepository:
             source_transcript_version_id=claim_data.get("source_transcript_version_id"),
             expected_session_state_version=expected_session_state_version,
             processing_contract_version=processing_contract_version,
+            claim_token=claim_token,
         )
         return AttemptProcessingSnapshot(claim, attempt.attempt_state, evaluation.state)
 
@@ -905,6 +1039,7 @@ class ConversationalSessionRepository:
             "source_transcript_version_id": claim.source_transcript_version_id,
             "expected_session_state_version": claim.expected_session_state_version,
             "processing_contract_version": claim.processing_contract_version,
+            "claim_token": claim.claim_token,
         }
         try:
             async with self._session.begin_nested():
@@ -1025,38 +1160,82 @@ class ConversationalSessionRepository:
                         "reason_code", result.diagnostics.get("reason")
                     )
                     transcription = stage_by_name.get("transcription")
-                    forbidden = {
+                    downstream = {
                         "content_evaluation",
                         "evidence_grounding",
                         "follow_up_decision",
                         "coaching_enrichment",
                     }
-                    created_transcript = await self._session.scalar(
-                        select(InterviewTranscriptVersion.id).where(
-                            InterviewTranscriptVersion.recording_id
-                            == claim.recording_id,
-                            InterviewTranscriptVersion.processing_generation
-                            == claim.processing_generation,
+                    if result.transcript_version_id is None:
+                        created_transcript = await self._session.scalar(
+                            select(InterviewTranscriptVersion.id).where(
+                                InterviewTranscriptVersion.recording_id
+                                == claim.recording_id,
+                                InterviewTranscriptVersion.processing_generation
+                                == claim.processing_generation,
+                            )
                         )
-                    )
-                    if (
-                        attempt.recording_type != "audio"
-                        or result.transcript_version_id is not None
-                        or evaluation.transcript_version_id is not None
-                        or attempt.current_transcript_version_id is not None
-                        or created_transcript is not None
-                        or reason not in {"transcription_unavailable", "invalid_audio"}
-                        or transcription is None
-                        or transcription.stage_state
-                        not in {"unavailable", "failed_terminal"}
-                        or transcription.last_error_code != reason
-                        or any(
-                            name in forbidden
-                            and stage.stage_state in {"completed", "reused"}
-                            for name, stage in stage_by_name.items()
-                        )
-                    ):
-                        raise _StaleFinalisation
+                        if (
+                            attempt.recording_type != "audio"
+                            or evaluation.transcript_version_id is not None
+                            or attempt.current_transcript_version_id is not None
+                            or created_transcript is not None
+                            or reason
+                            not in {"transcription_unavailable", "invalid_audio"}
+                            or transcription is None
+                            or transcription.stage_state
+                            not in {"unavailable", "failed_terminal"}
+                            or transcription.last_error_code != reason
+                            or any(
+                                name in downstream
+                                and stage.stage_state in {"completed", "reused"}
+                                for name, stage in stage_by_name.items()
+                            )
+                        ):
+                            raise _StaleFinalisation
+                    else:
+                        content_evaluation = stage_by_name.get("content_evaluation")
+                        evaluator_reasons = {
+                            "coach_evaluation_unavailable",
+                            "coach_attempt_job_budget_exhausted",
+                            "coach_transcript_schema_invalid",
+                        }
+                        if (
+                            transcript is None
+                            or evaluation.transcript_version_id
+                            != result.transcript_version_id
+                            or attempt.current_transcript_version_id
+                            != result.transcript_version_id
+                            or (
+                                attempt.recording_type == "text"
+                                and result.transcript_version_id
+                                != claim.source_transcript_version_id
+                            )
+                            or (
+                                attempt.recording_type == "audio"
+                                and (
+                                    claim.source_transcript_version_id is not None
+                                    or transcription is None
+                                    or transcription.stage_state != "completed"
+                                )
+                            )
+                            or reason not in evaluator_reasons
+                            or content_evaluation is None
+                            or content_evaluation.stage_state
+                            not in {"unavailable", "failed_terminal"}
+                            or content_evaluation.last_error_code != reason
+                            or any(
+                                name
+                                in {
+                                    "evidence_grounding",
+                                    "follow_up_decision",
+                                    "coaching_enrichment",
+                                }
+                                and stage.stage_state in {"completed", "reused"}
+                                for name, stage in stage_by_name.items()
+                            )
+                        ):
+                            raise _StaleFinalisation
 
                 prior_current_id = attempt.current_evaluation_version_id
                 if (
@@ -1219,10 +1398,8 @@ class ConversationalSessionRepository:
             or attempt.question_id != question_id
             or attempt.attempt_state not in {"completed", "unavailable"}
             or attempt.evaluation_state not in {"completed", "unavailable"}
-            or attempt.current_transcript_version_id is None
             or evaluation is None
             or evaluation.recording_id != attempt_id
-            or evaluation.transcript_version_id != attempt.current_transcript_version_id
             or evaluation.state not in {"completed", "unavailable"}
             or evaluation.state != attempt.evaluation_state
             or ((evaluation.diagnostics_json or {}).get("processing_claim") or {}).get(
@@ -1231,16 +1408,126 @@ class ConversationalSessionRepository:
             != attempt.processing_generation
         ):
             return rejected()
-        transcript = await self._session.scalar(
-            select(InterviewTranscriptVersion.id).where(
-                InterviewTranscriptVersion.id == attempt.current_transcript_version_id,
-                InterviewTranscriptVersion.recording_id == attempt_id,
-                InterviewTranscriptVersion.processing_generation
-                == attempt.processing_generation,
-            )
-        )
-        if transcript is None:
+        if evaluation.transcript_version_id != attempt.current_transcript_version_id:
             return rejected()
+        if attempt.current_transcript_version_id is not None:
+            transcript = await self._session.scalar(
+                select(InterviewTranscriptVersion.id).where(
+                    InterviewTranscriptVersion.id
+                    == attempt.current_transcript_version_id,
+                    InterviewTranscriptVersion.recording_id == attempt_id,
+                    InterviewTranscriptVersion.processing_generation
+                    == attempt.processing_generation,
+                )
+            )
+            if transcript is None:
+                return rejected()
+            if attempt.attempt_state == "unavailable":
+                result_diagnostics = (evaluation.diagnostics_json or {}).get(
+                    "result"
+                ) or {}
+                reason = result_diagnostics.get(
+                    "reason_code", result_diagnostics.get("reason")
+                )
+                evaluator_reasons = {
+                    "coach_evaluation_unavailable",
+                    "coach_attempt_job_budget_exhausted",
+                    "coach_transcript_schema_invalid",
+                }
+                content_evaluation = await self._session.scalar(
+                    select(InterviewAttemptStage).where(
+                        InterviewAttemptStage.recording_id == attempt_id,
+                        InterviewAttemptStage.evaluation_version_id == evaluation_id,
+                        InterviewAttemptStage.stage_name == "content_evaluation",
+                        InterviewAttemptStage.stage_state.in_(
+                            ("unavailable", "failed_terminal")
+                        ),
+                        InterviewAttemptStage.last_error_code == reason,
+                    )
+                )
+                completed_downstream = await self._session.scalar(
+                    select(InterviewAttemptStage.id).where(
+                        InterviewAttemptStage.recording_id == attempt_id,
+                        InterviewAttemptStage.evaluation_version_id == evaluation_id,
+                        InterviewAttemptStage.stage_name.in_(
+                            (
+                                "evidence_grounding",
+                                "follow_up_decision",
+                                "coaching_enrichment",
+                            )
+                        ),
+                        InterviewAttemptStage.stage_state.in_(("completed", "reused")),
+                    )
+                )
+                transcription_completed = True
+                if attempt.recording_type == "audio":
+                    transcription_completed = (
+                        await self._session.scalar(
+                            select(InterviewAttemptStage.id).where(
+                                InterviewAttemptStage.recording_id == attempt_id,
+                                InterviewAttemptStage.evaluation_version_id
+                                == evaluation_id,
+                                InterviewAttemptStage.stage_name == "transcription",
+                                InterviewAttemptStage.stage_state == "completed",
+                            )
+                        )
+                        is not None
+                    )
+                if (
+                    reason not in evaluator_reasons
+                    or content_evaluation is None
+                    or completed_downstream is not None
+                    or not transcription_completed
+                ):
+                    return rejected()
+        elif attempt.attempt_state == "completed":
+            return rejected()
+        else:
+            result_diagnostics = (evaluation.diagnostics_json or {}).get("result") or {}
+            reason = result_diagnostics.get(
+                "reason_code", result_diagnostics.get("reason")
+            )
+            transcription = await self._session.scalar(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.recording_id == attempt_id,
+                    InterviewAttemptStage.evaluation_version_id == evaluation_id,
+                    InterviewAttemptStage.stage_name == "transcription",
+                    InterviewAttemptStage.stage_state.in_(
+                        ("unavailable", "failed_terminal")
+                    ),
+                    InterviewAttemptStage.last_error_code == reason,
+                )
+            )
+            created_transcript = await self._session.scalar(
+                select(InterviewTranscriptVersion.id).where(
+                    InterviewTranscriptVersion.recording_id == attempt_id,
+                    InterviewTranscriptVersion.processing_generation
+                    == attempt.processing_generation,
+                )
+            )
+            completed_downstream = await self._session.scalar(
+                select(InterviewAttemptStage.id).where(
+                    InterviewAttemptStage.recording_id == attempt_id,
+                    InterviewAttemptStage.evaluation_version_id == evaluation_id,
+                    InterviewAttemptStage.stage_name.in_(
+                        (
+                            "content_evaluation",
+                            "evidence_grounding",
+                            "follow_up_decision",
+                            "coaching_enrichment",
+                        )
+                    ),
+                    InterviewAttemptStage.stage_state.in_(("completed", "reused")),
+                )
+            )
+            if (
+                attempt.recording_type != "audio"
+                or reason not in {"transcription_unavailable", "invalid_audio"}
+                or transcription is None
+                or created_transcript is not None
+                or completed_downstream is not None
+            ):
+                return rejected()
 
         try:
             async with self._session.begin_nested():
