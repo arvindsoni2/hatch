@@ -512,6 +512,60 @@ async def test_request_hint_transfers_exact_order_to_new_attempt(
     assert capture_event.payload_json == {
         "hint_types": ["star_structure", "clarify_question"]
     }
+    hint_events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(
+                InterviewSessionEvent.session_id == session.id,
+                InterviewSessionEvent.command_id.in_(
+                    ["cmd-request_hint-0", "cmd-request_hint-1"]
+                ),
+            )
+            .order_by(InterviewSessionEvent.sequence_number)
+        )
+    ).all()
+    assert [
+        (
+            event.event_type,
+            event.actor_type,
+            event.command_id,
+            event.recording_id,
+            event.payload_json,
+        )
+        for event in hint_events
+    ] == [
+        (
+            "hint_requested",
+            "candidate",
+            "cmd-request_hint-0",
+            None,
+            {"hint_type": "star_structure"},
+        ),
+        (
+            "hint_presented",
+            "system",
+            "cmd-request_hint-0",
+            None,
+            {"hint_type": "star_structure"},
+        ),
+        (
+            "hint_requested",
+            "candidate",
+            "cmd-request_hint-1",
+            None,
+            {"hint_type": "clarify_question"},
+        ),
+        (
+            "hint_presented",
+            "system",
+            "cmd-request_hint-1",
+            None,
+            {"hint_type": "clarify_question"},
+        ),
+    ]
+    assert [event.sequence_number for event in hint_events] == list(
+        range(hint_events[0].sequence_number, hint_events[0].sequence_number + 4)
+    )
 
 
 @pytest.mark.asyncio
@@ -710,6 +764,88 @@ async def test_pause_resume_preserves_draft_and_keep_speaking(
     assert attempt is not None and attempt.attempt_state == "draft"
     assert resumed.state == "listening"
     assert session.resume_state is None and session.paused_at is None
+    lifecycle_events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(
+                InterviewSessionEvent.session_id == session.id,
+                InterviewSessionEvent.command_id.in_(["cmd-pause-2", "cmd-resume-3"]),
+            )
+            .order_by(InterviewSessionEvent.sequence_number)
+        )
+    ).all()
+    assert [
+        (
+            event.event_type,
+            event.actor_type,
+            event.command_id,
+            event.recording_id,
+            event.state_before,
+            event.state_after,
+        )
+        for event in lifecycle_events
+    ] == [
+        (
+            "session_paused",
+            "candidate",
+            "cmd-pause-2",
+            attempt.id,
+            "listening",
+            "paused",
+        ),
+        (
+            "answer_capture_paused",
+            "system",
+            "cmd-pause-2",
+            attempt.id,
+            "listening",
+            "paused",
+        ),
+        (
+            "session_resumed",
+            "candidate",
+            "cmd-resume-3",
+            attempt.id,
+            "paused",
+            "listening",
+        ),
+        (
+            "answer_capture_resumed",
+            "system",
+            "cmd-resume-3",
+            attempt.id,
+            "paused",
+            "listening",
+        ),
+    ]
+    assert [event.sequence_number for event in lifecycle_events] == list(
+        range(
+            lifecycle_events[0].sequence_number,
+            lifecycle_events[0].sequence_number + 4,
+        )
+    )
+    assert all(event.payload_json is None for event in lifecycle_events)
+
+    replayed_pause = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("pause", version=kept.state_version),
+    )
+    replayed_resume = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("resume", version=paused.state_version),
+    )
+    assert (replayed_pause, replayed_resume) == (paused, resumed)
+    assert (
+        await db_session.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.session_id == session.id,
+                InterviewSessionEvent.command_id.in_(["cmd-pause-2", "cmd-resume-3"]),
+            )
+        )
+        == 4
+    )
 
 
 @pytest.mark.asyncio
@@ -1006,32 +1142,51 @@ async def test_request_hint_while_listening_updates_only_active_attempt_and_repl
     assert attempt.hint_count == 1
     assert questions[0].pending_hint_count == question_pending_count
     assert questions[0].pending_hint_types_json is None
-    event = await db_session.scalar(
-        select(InterviewSessionEvent).where(
-            InterviewSessionEvent.session_id == session.id,
-            InterviewSessionEvent.command_id == request.command_id,
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(
+                InterviewSessionEvent.session_id == session.id,
+                InterviewSessionEvent.command_id == request.command_id,
+            )
+            .order_by(InterviewSessionEvent.sequence_number)
         )
-    )
-    assert event is not None
-    assert (
-        event.event_type,
-        event.actor_type,
-        event.state_before,
-        event.state_after,
-        event.state_version,
-        event.recording_id,
-        event.command_id,
-        event.payload_json,
-    ) == (
-        "hint_presented",
-        "system",
-        "listening",
-        "listening",
-        2,
-        attempt.id,
-        request.command_id,
-        {"hint_type": "clarify_question"},
-    )
+    ).all()
+    assert [
+        (
+            event.event_type,
+            event.actor_type,
+            event.state_before,
+            event.state_after,
+            event.state_version,
+            event.recording_id,
+            event.command_id,
+            event.payload_json,
+        )
+        for event in events
+    ] == [
+        (
+            "hint_requested",
+            "candidate",
+            "listening",
+            "listening",
+            2,
+            attempt.id,
+            request.command_id,
+            {"hint_type": "clarify_question"},
+        ),
+        (
+            "hint_presented",
+            "system",
+            "listening",
+            "listening",
+            2,
+            attempt.id,
+            request.command_id,
+            {"hint_type": "clarify_question"},
+        ),
+    ]
+    assert events[1].sequence_number == events[0].sequence_number + 1
     assert (
         await db_session.scalar(
             select(func.count(ConversationCommandResultRecord.id)).where(
@@ -1281,6 +1436,104 @@ async def test_shared_state_change_event_failure_rolls_back_pause_and_receipt(
     assert (persisted.conversation_state, persisted.state_version) == ("asking", 3)
     assert persisted.resume_state is None and persisted.paused_at is None
     assert await db_session.scalar(select(func.count(InterviewSessionEvent.id))) == 0
+    assert (
+        await db_session.scalar(
+            select(func.count(ConversationCommandResultRecord.id)).where(
+                ConversationCommandResultRecord.command_id == request.command_id
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command_type", ["pause", "resume", "request_hint"])
+async def test_listening_lifecycle_event_failure_rolls_back_all_command_effects(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    command_type: str,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=0,
+            command_id=f"seed-{command_type}-rollback",
+            payload={
+                "recording_type": "text",
+                "client_attempt_id": f"attempt-{command_type}-rollback",
+            },
+        ),
+    )
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    version = begun.state_version
+    expected_state = "listening"
+    expected_resume_state = None
+    if command_type == "resume":
+        session.conversation_state = "paused"
+        session.resume_state = "listening"
+        session.paused_at = datetime.utcnow()
+        session.state_version = 5
+        version = 5
+        expected_state = "paused"
+        expected_resume_state = "listening"
+        await db_session.commit()
+    baseline_events = await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id)).where(
+            InterviewSessionEvent.session_id == session.id
+        )
+    )
+
+    async def fail_events(**_: object) -> None:
+        raise ValueError("event payload must be content-free and bounded")
+
+    monkeypatch.setattr(service.repository, "append_session_events", fail_events)
+    request = command(
+        command_type,
+        version=version,
+        command_id=f"rollback-{command_type}-events",
+        payload=(
+            {"hint_type": "clarify_question"}
+            if command_type == "request_hint"
+            else None
+        ),
+    )
+    with pytest.raises(ConversationCommandError):
+        await service.execute(user_id="local", session_id=session.id, request=request)
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert (session.conversation_state, session.state_version) == (
+        expected_state,
+        version,
+    )
+    assert session.resume_state == expected_resume_state
+    assert (attempt.attempt_state, attempt.hint_count) == ("draft", 0)
+    assert (
+        await db_session.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.session_id == session.id
+            )
+        )
+        == baseline_events
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.command_id == request.command_id
+            )
+        )
+        == 0
+    )
     assert (
         await db_session.scalar(
             select(func.count(ConversationCommandResultRecord.id)).where(

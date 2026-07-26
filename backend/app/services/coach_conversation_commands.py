@@ -537,6 +537,13 @@ class ConversationCommandService:
             and session.recoverable_error_scope != "attempt_processing"
         ):
             raise ConversationCommandError("coach_conversation_invalid_state")
+        capture_attempt: SessionRecording | None = None
+        if prior == "listening":
+            capture_attempt = await self._require_active_attempt(
+                session, session.active_recording_id
+            )
+            if capture_attempt.attempt_state not in {"draft", "uploaded"}:
+                raise ConversationCommandError("coach_attempt_not_active")
         state_version = await self._change_session_state(
             session,
             request,
@@ -546,20 +553,33 @@ class ConversationCommandService:
                 "paused_at": datetime.utcnow(),
             },
         )
-        await self.repository.append_session_events(
-            session_id=session.id,
-            events=(
+        events = [
+            SessionEventInput(
+                event_type="session_paused",
+                actor_type="candidate",
+                state_version=state_version,
+                state_before=prior,
+                state_after="paused",
+                question_id=session.active_question_id,
+                recording_id=session.active_recording_id,
+                command_id=request.command_id,
+            )
+        ]
+        if capture_attempt is not None:
+            events.append(
                 SessionEventInput(
-                    event_type="session_paused",
-                    actor_type="candidate",
+                    event_type="answer_capture_paused",
+                    actor_type="system",
                     state_version=state_version,
-                    state_before=prior,
+                    state_before="listening",
                     state_after="paused",
-                    question_id=session.active_question_id,
-                    recording_id=session.active_recording_id,
+                    question_id=capture_attempt.question_id,
+                    recording_id=capture_attempt.id,
                     command_id=request.command_id,
-                ),
-            ),
+                )
+            )
+        await self.repository.append_session_events(
+            session_id=session.id, events=tuple(events)
         )
         return self._result(session, request)
 
@@ -575,6 +595,13 @@ class ConversationCommandService:
             "recoverable_error",
         }:
             raise ConversationCommandError("coach_conversation_invalid_state")
+        capture_attempt: SessionRecording | None = None
+        if resume_state == "listening":
+            capture_attempt = await self._require_active_attempt(
+                session, session.active_recording_id
+            )
+            if capture_attempt.attempt_state not in {"draft", "uploaded"}:
+                raise ConversationCommandError("coach_attempt_not_active")
         state_version = await self._change_session_state(
             session,
             request,
@@ -585,20 +612,33 @@ class ConversationCommandService:
             },
             required_state="paused",
         )
-        await self.repository.append_session_events(
-            session_id=session.id,
-            events=(
+        events = [
+            SessionEventInput(
+                event_type="session_resumed",
+                actor_type="candidate",
+                state_version=state_version,
+                state_before="paused",
+                state_after=resume_state,
+                question_id=session.active_question_id,
+                recording_id=session.active_recording_id,
+                command_id=request.command_id,
+            )
+        ]
+        if capture_attempt is not None:
+            events.append(
                 SessionEventInput(
-                    event_type="session_resumed",
-                    actor_type="candidate",
+                    event_type="answer_capture_resumed",
+                    actor_type="system",
                     state_version=state_version,
                     state_before="paused",
-                    state_after=resume_state,
-                    question_id=session.active_question_id,
-                    recording_id=session.active_recording_id,
+                    state_after="listening",
+                    question_id=capture_attempt.question_id,
+                    recording_id=capture_attempt.id,
                     command_id=request.command_id,
-                ),
-            ),
+                )
+            )
+        await self.repository.append_session_events(
+            session_id=session.id, events=tuple(events)
         )
         return self._result(session, request)
 
@@ -773,6 +813,17 @@ class ConversationCommandService:
         await self.repository.append_session_events(
             session_id=session.id,
             events=(
+                SessionEventInput(
+                    event_type="hint_requested",
+                    actor_type="candidate",
+                    state_version=state_version,
+                    state_before=session.conversation_state,
+                    state_after=session.conversation_state,
+                    question_id=question_id,
+                    recording_id=recording_id,
+                    command_id=request.command_id,
+                    payload_json={"hint_type": payload.hint_type},
+                ),
                 SessionEventInput(
                     event_type="hint_presented",
                     actor_type="system",
