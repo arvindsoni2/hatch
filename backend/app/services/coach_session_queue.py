@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from sqlalchemy import select
@@ -16,6 +17,14 @@ from ..schemas.coach import CreateSessionRequest
 from .async_job_service import AsyncJobService
 from .coach_service import CoachService
 from .coach_contracts import CoachDiagnostic, run_with_stage_deadline
+from .coach_session_plan import (
+    EvidenceSource,
+    SessionPlanBuilder,
+    SessionPlanError,
+    claim_session_setup,
+    fail_session_setup,
+    finalise_session_setup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +37,36 @@ async def queue_coach_session(
     deduplicate_application: bool = False,
 ) -> dict:
     """Create a visible setup session and generate its content in the background."""
+    if request.experience_version == "conversational_v1":
+        if not settings.HATCH_COACH_CONVERSATIONAL_ENABLED:
+            raise SessionPlanError("coach_conversation_not_enabled")
+        return await queue_conversational_session_setup(
+            request,
+            db,
+            deduplicate_application=deduplicate_application,
+        )
+    return await queue_legacy_coach_session(
+        request,
+        db,
+        service,
+        deduplicate_application=deduplicate_application,
+    )
+
+
+async def queue_legacy_coach_session(
+    request: CreateSessionRequest,
+    db: AsyncSession,
+    service: CoachService | None = None,
+    *,
+    deduplicate_application: bool = False,
+) -> dict:
+    """Preserve the legacy-v1 asynchronous creation path unchanged."""
     if deduplicate_application and request.application_id:
         result = await db.execute(
             select(InterviewSession)
             .where(
                 InterviewSession.application_id == request.application_id,
+                InterviewSession.experience_version == "legacy_v1",
                 InterviewSession.status != "abandoned",
             )
             .order_by(InterviewSession.created_at.desc())
@@ -145,4 +179,140 @@ async def queue_coach_session(
         "type": "coach_session",
         "session_id": stub.id,
         "created": True,
+    }
+
+
+async def queue_conversational_session_setup(
+    request: CreateSessionRequest,
+    db: AsyncSession,
+    *,
+    deduplicate_application: bool = False,
+) -> dict:
+    """Persist a fenced planning claim before dispatching its worker."""
+    if deduplicate_application and request.application_id:
+        result = await db.execute(
+            select(InterviewSession)
+            .where(
+                InterviewSession.application_id == request.application_id,
+                InterviewSession.experience_version == "conversational_v1",
+                InterviewSession.status != "abandoned",
+            )
+            .order_by(InterviewSession.created_at.desc())
+            .limit(1)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return {
+                "job_id": existing.setup_job_id,
+                "status": existing.status,
+                "type": "coach_session",
+                "session_id": existing.id,
+                "created": False,
+                "experience_version": existing.experience_version,
+            }
+
+    stub = InterviewSession(
+        application_id=request.application_id,
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db.add(stub)
+    await db.flush()
+    claim = await claim_session_setup(db, session_id=stub.id, request=request)
+    trace_context = get_telemetry().capture_trace_context()
+    await db.commit()
+
+    request_data = request.model_dump(mode="json")
+
+    async def _work() -> None:
+        from ..database import AsyncSessionLocal  # noqa: PLC0415
+
+        async with AsyncSessionLocal() as job_db:
+            try:
+                reconstructed = CreateSessionRequest.model_validate(request_data)
+                sources: list[EvidenceSource] = []
+                if reconstructed.jd_text:
+                    sources.append(
+                        EvidenceSource(
+                            evidence_id="job_description",
+                            source_type="job_posting",
+                            source_record_id=(
+                                reconstructed.application_id or claim.session_id
+                            ),
+                            source_record_version="1",
+                            source_path="planning_request/jd_text",
+                            snapshot_text=reconstructed.jd_text[:2000],
+                            approval_state="context_only",
+                        )
+                    )
+                build = SessionPlanBuilder.build(reconstructed, sources)
+                finalised = await finalise_session_setup(
+                    job_db,
+                    claim=claim,
+                    build=build,
+                )
+                if finalised:
+                    await job_db.commit()
+                else:
+                    await job_db.rollback()
+            except asyncio.CancelledError:
+                await job_db.rollback()
+                if await fail_session_setup(
+                    job_db,
+                    claim=claim,
+                    error_code="coach_setup_claim_expired",
+                    retryable=True,
+                ):
+                    await job_db.commit()
+                else:
+                    await job_db.rollback()
+                raise
+            except TimeoutError:
+                await job_db.rollback()
+                if await fail_session_setup(
+                    job_db,
+                    claim=claim,
+                    error_code="coach_setup_claim_expired",
+                    retryable=True,
+                ):
+                    await job_db.commit()
+                else:
+                    await job_db.rollback()
+            except Exception as exc:
+                logger.error(
+                    "Conversational Coach setup job %s failed: %s",
+                    claim.job_id,
+                    type(exc).__name__,
+                )
+                await job_db.rollback()
+                if await fail_session_setup(
+                    job_db,
+                    claim=claim,
+                    error_code="coach_contract_unsupported",
+                    retryable=False,
+                ):
+                    await job_db.commit()
+                else:
+                    await job_db.rollback()
+
+    AsyncJobService.run(
+        claim.job_id,
+        _work(),
+        trace_context=trace_context,
+        trace_attributes={
+            COACH_SESSION_ID: claim.session_id,
+            ASYNC_JOB_ID: claim.job_id,
+        },
+        telemetry_operation="session_create",
+    )
+    return {
+        "job_id": claim.job_id,
+        "status": "pending",
+        "type": "coach_session",
+        "session_id": claim.session_id,
+        "created": True,
+        "experience_version": "conversational_v1",
     }

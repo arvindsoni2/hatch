@@ -4,7 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.async_job import AsyncJob
@@ -17,6 +17,7 @@ from app.schemas.coach import (
 from app.services.coach_contracts import CoachDiagnostic
 from app.services.coach_service import CoachService
 from app.services.coach_session_queue import queue_coach_session
+from app.services.coach_session_plan import SessionPlanError
 from app.observability import TraceContextToken
 
 
@@ -233,3 +234,173 @@ async def test_create_cancellation_during_drills_rolls_back_questions_and_activa
     assert persisted is not None
     assert persisted.status == "setup"
     assert questions == []
+
+
+def _conversation_request() -> CreateSessionRequest:
+    return CreateSessionRequest.model_validate(
+        {
+            "company_name": "Example Ltd",
+            "role_title": "Architect",
+            "jd_text": "Design secure systems.",
+            "experience_version": "conversational_v1",
+            "conversational_config": {
+                "interview_type": "mixed",
+                "difficulty": "realistic",
+                "duration_minutes": 15,
+                "planned_question_count": 3,
+                "role_family": "solution_architecture",
+                "role_level": "senior",
+                "locale": "en-GB",
+                "focus_areas": ["architecture"],
+                "allowed_answer_modes": ["audio", "text"],
+                "evidence_selection": {
+                    "application_cv": "none",
+                    "master_cv": "exclude",
+                    "question_bank": "exclude",
+                    "selected_question_bank_record_ids": [],
+                    "company_research": "exclude",
+                    "draft_evidence_consent": False,
+                },
+                "retention": {
+                    "audio": "delete_after_processing",
+                    "transcript": "retain",
+                },
+            },
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversational_queue_is_fail_closed_while_flag_is_off(
+    db_session,
+) -> None:
+    with (
+        patch(
+            "app.services.coach_session_queue.settings.HATCH_COACH_CONVERSATIONAL_ENABLED",
+            False,
+        ),
+        pytest.raises(SessionPlanError, match="coach_conversation_not_enabled"),
+    ):
+        await queue_coach_session(_conversation_request(), db_session)
+
+    assert (
+        not (
+            await db_session.execute(
+                select(InterviewSession).where(
+                    InterviewSession.experience_version == "conversational_v1"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversational_deduplication_never_reuses_a_legacy_session(
+    db_session,
+) -> None:
+    legacy = InterviewSession(
+        application_id="application_1",
+        company_name="Example Ltd",
+        role_title="Architect",
+        config={},
+        status="setup",
+        experience_version="legacy_v1",
+    )
+    db_session.add(legacy)
+    await db_session.commit()
+    payload = _conversation_request().model_dump(mode="json")
+    payload["application_id"] = "application_1"
+    request = CreateSessionRequest.model_validate(payload)
+
+    with (
+        patch(
+            "app.services.coach_session_queue.settings.HATCH_COACH_CONVERSATIONAL_ENABLED",
+            True,
+        ),
+        patch("app.services.coach_session_queue.AsyncJobService.run") as run,
+    ):
+        result = await queue_coach_session(
+            request,
+            db_session,
+            deduplicate_application=True,
+        )
+
+    assert result["created"] is True
+    assert result["session_id"] != legacy.id
+    run.call_args.args[1].close()
+
+
+@pytest.mark.asyncio
+async def test_conversational_queue_claims_before_dispatch_and_worker_uses_fresh_session(
+    db_session,
+) -> None:
+    session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    with (
+        patch(
+            "app.services.coach_session_queue.settings.HATCH_COACH_CONVERSATIONAL_ENABLED",
+            True,
+        ),
+        patch("app.services.coach_session_queue.AsyncJobService.run") as run,
+        patch("app.database.AsyncSessionLocal", session_factory),
+    ):
+        result = await queue_coach_session(_conversation_request(), db_session)
+        db_session.expire_all()
+        claimed = await db_session.get(InterviewSession, result["session_id"])
+        assert claimed is not None
+        assert (claimed.status, claimed.conversation_state) == ("setup", "planning")
+        assert claimed.setup_generation == claimed.setup_attempt_count == 1
+        assert claimed.setup_job_id == result["job_id"]
+        assert claimed.setup_claim_token is not None
+        assert claimed.session_plan_json is None
+
+        await run.call_args.args[1]
+
+    db_session.expire_all()
+    completed = await db_session.get(InterviewSession, result["session_id"])
+    assert completed is not None
+    assert (completed.status, completed.conversation_state) == ("setup", "ready")
+    assert completed.session_plan_json is not None
+    assert (
+        await db_session.scalar(
+            select(func.count(SessionQuestion.id)).where(
+                SessionQuestion.session_id == result["session_id"]
+            )
+        )
+        == 3
+    )
+    assert result["experience_version"] == "conversational_v1"
+
+
+@pytest.mark.asyncio
+async def test_conversational_worker_cancellation_releases_setup_claim(
+    db_session,
+) -> None:
+    session_factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    with (
+        patch(
+            "app.services.coach_session_queue.settings.HATCH_COACH_CONVERSATIONAL_ENABLED",
+            True,
+        ),
+        patch("app.services.coach_session_queue.AsyncJobService.run") as run,
+        patch("app.database.AsyncSessionLocal", session_factory),
+        patch(
+            "app.services.coach_session_queue.SessionPlanBuilder.build",
+            side_effect=asyncio.CancelledError("shutdown"),
+        ),
+    ):
+        result = await queue_coach_session(_conversation_request(), db_session)
+        with pytest.raises(asyncio.CancelledError, match="shutdown"):
+            await run.call_args.args[1]
+
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, result["session_id"])
+    assert persisted is not None
+    assert (persisted.status, persisted.conversation_state) == (
+        "setup",
+        "recoverable_error",
+    )
+    assert persisted.recoverable_error_scope == "setup"
+    assert persisted.setup_job_id is None
+    assert persisted.setup_claim_token is None

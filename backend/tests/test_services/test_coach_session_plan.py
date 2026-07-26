@@ -4,10 +4,28 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import func, select
+
+from app.models.coach_session import (
+    CoachSessionEvidenceRecord,
+    InterviewSession,
+    InterviewSessionEvent,
+    SessionQuestion,
+)
+
+from app.services.coach_session_plan import (
+    EvidenceSource,
+    PlannedQuestion,
+    SessionPlanBuilder,
+    SessionPlanError,
+    claim_session_setup,
+    fail_session_setup,
+    finalise_session_setup,
+)
 
 from app.schemas.coach import (
     AnswerEvaluation,
@@ -544,3 +562,607 @@ def test_session_list_additions_remain_optional_for_legacy_rows() -> None:
     assert item.conversation_state is None
     assert item.session_level is None
     assert item.retention_summary is None
+
+
+def test_plan_builder_uses_duration_default_and_deterministic_mixed_distribution() -> (
+    None
+):
+    payload = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    payload["conversational_config"]["planned_question_count"] = None
+    payload["conversational_config"]["duration_minutes"] = 24
+    request = CreateSessionRequest.model_validate(payload)
+    questions = [
+        PlannedQuestion(text="Behaviour example", category="Behavioural"),
+        PlannedQuestion(text="System trade-off", category="Technical"),
+        PlannedQuestion(text="Stakeholder scenario", category="Situational"),
+        PlannedQuestion(text="Domain decision", category="Domain"),
+    ]
+
+    first = SessionPlanBuilder.build(
+        request,
+        sources=[],
+        questions=questions,
+        plan_id="plan_fixed",
+        created_at="2026-08-05T12:00:00Z",
+    )
+    second = SessionPlanBuilder.build(
+        request,
+        sources=[],
+        questions=list(reversed(questions)),
+        plan_id="plan_fixed",
+        created_at="2026-08-05T12:00:00Z",
+    )
+
+    assert first.plan.interview.planned_question_count == 4
+    assert [question.category for question in first.questions] == [
+        "behavioural",
+        "technical",
+        "situational",
+        "domain",
+    ]
+    assert first.compatibility_key == second.compatibility_key
+
+
+def test_plan_builder_normalizes_other_role_hash_and_exact_compatibility_components() -> (
+    None
+):
+    payload = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    payload["conversational_config"].update(
+        {
+            "interview_type": "behavioural",
+            "planned_question_count": 3,
+            "role_family": "other",
+            "role_family_label": "  Quantum\u00a0  RECRUITER  ",
+        }
+    )
+    request = CreateSessionRequest.model_validate(payload)
+    questions = [
+        PlannedQuestion(text=f"Question {number}", category="culture")
+        for number in range(1, 4)
+    ]
+
+    result = SessionPlanBuilder.build(
+        request,
+        sources=[],
+        questions=questions,
+        plan_id="plan_fixed",
+        created_at="2026-08-05T12:00:00Z",
+    )
+
+    # SHA-256 prefix of NFKC/casefold/trim/collapsed "quantum recruiter".
+    assert result.role_family_component == "other:a19da92fdf9eea05"
+    assert result.compatibility_key == (
+        "792b500427edc57f16d9c701272d8a00bafd8d8a1483b4fcc45e4ced51e36387"
+    )
+
+
+def test_plan_builder_orders_and_hashes_immutable_bounded_evidence() -> None:
+    payload = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    payload["conversational_config"]["planned_question_count"] = 3
+    payload["conversational_config"]["interview_type"] = "role_specific_verbal"
+    request = CreateSessionRequest.model_validate(payload)
+    sources = [
+        EvidenceSource(
+            evidence_id="evidence_b",
+            source_type="question_bank",
+            source_record_id="qb_2",
+            source_record_version="2",
+            source_path="question_bank/qb_2",
+            snapshot_text="Second\r\nrecord",
+            approval_state="reviewed_final",
+        ),
+        EvidenceSource(
+            evidence_id="evidence_a",
+            source_type="application_cv",
+            source_record_id="cv_1",
+            source_record_version="7",
+            source_path="application/cv_1",
+            snapshot_text="Cafe\u0301 delivery",
+            approval_state="approved",
+        ),
+    ]
+    questions = [
+        PlannedQuestion(text=f"Question {number}", category="technical")
+        for number in range(1, 4)
+    ]
+
+    result = SessionPlanBuilder.build(
+        request,
+        sources=sources,
+        questions=questions,
+        plan_id="plan_fixed",
+        created_at="2026-08-05T12:00:00Z",
+    )
+
+    assert [record.evidence_id for record in result.evidence_records] == [
+        "evidence_a",
+        "evidence_b",
+    ]
+    assert result.evidence_records[0].snapshot_text == "Café delivery"
+    assert result.evidence_records[1].snapshot_text == "Second\nrecord"
+    assert result.plan.evidence_snapshot.package_hash.startswith("sha256:")
+    assert result.plan.evidence_snapshot.package_hash == (
+        "sha256:7e3d4df5f499a09778ede6bdfaa4db57219271b61520187b2e43903c8c68d07a"
+    )
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        [
+            EvidenceSource(
+                evidence_id=f"record_{index}",
+                source_type="master_cv",
+                source_record_id=f"source_{index}",
+                source_record_version="1",
+                source_path=f"master/{index}",
+                snapshot_text="bounded",
+                approval_state="confirmed",
+            )
+            for index in range(31)
+        ],
+        [
+            EvidenceSource(
+                evidence_id="record",
+                source_type="master_cv",
+                source_record_id="source",
+                source_record_version="1",
+                source_path="master/record",
+                snapshot_text="x" * 2001,
+                approval_state="confirmed",
+            )
+        ],
+        [
+            EvidenceSource(
+                evidence_id=f"record_{index}",
+                source_type="master_cv",
+                source_record_id=f"source_{index}",
+                source_record_version="1",
+                source_path=f"master/{index}",
+                snapshot_text="x" * 2000,
+                approval_state="confirmed",
+            )
+            for index in range(21)
+        ],
+    ],
+    ids=["record-count", "record-codepoints", "package-codepoints"],
+)
+def test_plan_builder_rejects_evidence_above_v6_bounds(sources) -> None:
+    payload = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    payload["conversational_config"].update(
+        {"interview_type": "behavioural", "planned_question_count": 3}
+    )
+    request = CreateSessionRequest.model_validate(payload)
+
+    with pytest.raises(ValueError, match="evidence"):
+        SessionPlanBuilder.build(
+            request,
+            sources=sources,
+            questions=[
+                PlannedQuestion(text=f"Question {number}", category="behavioural")
+                for number in range(1, 4)
+            ],
+            plan_id="plan_fixed",
+            created_at="2026-08-05T12:00:00Z",
+        )
+
+
+def test_plan_builder_never_admits_draft_evidence_without_selected_consent() -> None:
+    payload = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    payload["conversational_config"].update(
+        {"interview_type": "behavioural", "planned_question_count": 3}
+    )
+    request = CreateSessionRequest.model_validate(payload)
+    draft = EvidenceSource(
+        evidence_id="draft_1",
+        source_type="question_bank",
+        source_record_id="question_1",
+        source_record_version="1",
+        source_path="question_bank/question_1",
+        snapshot_text="Draft candidate example.",
+        approval_state="draft",
+    )
+
+    with pytest.raises(ValueError, match="draft evidence"):
+        SessionPlanBuilder.build(
+            request,
+            [draft],
+            questions=[
+                PlannedQuestion(text=f"Question {number}", category="behavioural")
+                for number in range(1, 4)
+            ],
+            plan_id="plan_fixed",
+            created_at="2026-08-05T12:00:00Z",
+        )
+
+
+def _conversational_request(**config_overrides) -> CreateSessionRequest:
+    payload = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    payload["conversational_config"].update(config_overrides)
+    return CreateSessionRequest.model_validate(payload)
+
+
+def _three_question_build(request: CreateSessionRequest):
+    return SessionPlanBuilder.build(
+        request,
+        sources=[
+            EvidenceSource(
+                evidence_id="job_context",
+                source_type="job_posting",
+                source_record_id="request",
+                source_record_version="1",
+                source_path="request/jd_text",
+                snapshot_text="Design secure systems.",
+                approval_state="context_only",
+            )
+        ],
+        questions=[
+            PlannedQuestion(text=f"Question {number}", category="behavioural")
+            for number in range(1, 4)
+        ],
+        plan_id="plan_fixed",
+        created_at="2026-08-05T12:00:00Z",
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_finalises_plan_questions_and_evidence_before_ready(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    session_id = session.id
+    claim = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+    build = _three_question_build(request)
+
+    assert await finalise_session_setup(db_session, claim=claim, build=build) is True
+    await db_session.commit()
+    db_session.expire_all()
+
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert (persisted.status, persisted.conversation_state) == ("setup", "ready")
+    assert persisted.setup_generation == persisted.setup_attempt_count == 1
+    assert persisted.setup_job_id is None
+    assert persisted.setup_claim_token is None
+    assert persisted.session_plan_contract_version == "coach_session_plan_v1"
+    assert persisted.session_plan_json["evidence_snapshot"]["package_hash"] == (
+        build.plan.evidence_snapshot.package_hash
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(SessionQuestion.id)).where(
+                SessionQuestion.session_id == session_id
+            )
+        )
+        == 3
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(CoachSessionEvidenceRecord.id)).where(
+                CoachSessionEvidenceRecord.session_id == session_id
+            )
+        )
+        == 1
+    )
+    events = (
+        (
+            await db_session.execute(
+                select(InterviewSessionEvent.event_type)
+                .where(InterviewSessionEvent.session_id == session_id)
+                .order_by(InterviewSessionEvent.sequence_number)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert events == ["session_plan_started", "session_plan_completed"]
+
+
+@pytest.mark.asyncio
+async def test_stale_setup_worker_cannot_replace_a_new_generation(db_session) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    old_claim = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+    session.setup_generation = 2
+    session.setup_attempt_count = 2
+    session.setup_job_id = "new_job"
+    session.setup_claim_token = "new_token"
+    await db_session.flush()
+
+    assert (
+        await finalise_session_setup(
+            db_session, claim=old_claim, build=_three_question_build(request)
+        )
+        is False
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(SessionQuestion.id)).where(
+                SessionQuestion.session_id == session.id
+            )
+        )
+        == 0
+    )
+    assert session.session_plan_json is None
+
+
+@pytest.mark.asyncio
+async def test_finaliser_rejects_a_tampered_plan_snapshot_before_ready(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    session_id = session.id
+    claim = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+    tampered = _three_question_build(request)
+    tampered.plan.compatibility.key = "0" * 64
+
+    with pytest.raises(ValueError, match="compatibility"):
+        await finalise_session_setup(db_session, claim=claim, build=tampered)
+
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert persisted.conversation_state == "planning"
+    assert persisted.session_plan_json is None
+
+
+@pytest.mark.asyncio
+async def test_rebuild_keeps_old_audit_plan_until_matching_worker_succeeds(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        conversation_state="ready",
+        setup_generation=1,
+        setup_attempt_count=1,
+        session_plan_json={"plan_id": "old_plan"},
+        session_plan_contract_version="coach_session_plan_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    session_id = session.id
+
+    claim = await claim_session_setup(
+        db_session,
+        session_id=session.id,
+        request=request,
+        rebuild=True,
+    )
+
+    assert session.conversation_state == "planning"
+    assert session.session_plan_json == {"plan_id": "old_plan"}
+    assert session.setup_generation == session.setup_attempt_count == 2
+    assert await fail_session_setup(
+        db_session,
+        claim=claim,
+        error_code="coach_setup_claim_expired",
+        retryable=True,
+    )
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert persisted.session_plan_json == {"plan_id": "old_plan"}
+    assert (persisted.status, persisted.conversation_state) == (
+        "setup",
+        "recoverable_error",
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_claim_enforces_locale_budget_expiry_and_deletion_fences(
+    db_session,
+) -> None:
+    unsupported = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="fr-FR"
+    )
+    session = InterviewSession(
+        company_name=unsupported.company_name,
+        role_title=unsupported.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    with pytest.raises(SessionPlanError, match="coach_locale_unsupported"):
+        await claim_session_setup(
+            db_session, session_id=session.id, request=unsupported
+        )
+
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session.setup_attempt_count = session.setup_max_attempts = 3
+    session.conversation_state = "recoverable_error"
+    session.recoverable_error_scope = "setup"
+    with pytest.raises(SessionPlanError, match="coach_setup_retry_budget_exhausted"):
+        await claim_session_setup(db_session, session_id=session.id, request=request)
+
+    session.setup_attempt_count = 0
+    session.setup_generation = 0
+    session.conversation_state = None
+    session.recoverable_error_scope = None
+    session.deletion_state = "deleting"
+    with pytest.raises(SessionPlanError, match="coach_session_deletion_in_progress"):
+        await claim_session_setup(db_session, session_id=session.id, request=request)
+
+
+@pytest.mark.asyncio
+async def test_expired_or_deleting_setup_claim_cannot_finalise_or_fail(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+    )
+    db_session.add(session)
+    await db_session.flush()
+    claimed_at = datetime(2026, 8, 5, 12)
+    claim = await claim_session_setup(
+        db_session,
+        session_id=session.id,
+        request=request,
+        now=claimed_at,
+        lease_seconds=60,
+    )
+
+    assert not await finalise_session_setup(
+        db_session,
+        claim=claim,
+        build=_three_question_build(request),
+        now=claimed_at + timedelta(seconds=61),
+    )
+    assert not await fail_session_setup(
+        db_session,
+        claim=claim,
+        error_code="coach_setup_claim_expired",
+        retryable=True,
+        now=claimed_at + timedelta(seconds=61),
+    )
+    session.deletion_state = "deleting"
+    await db_session.flush()
+    assert not await finalise_session_setup(
+        db_session,
+        claim=claim,
+        build=_three_question_build(request),
+        now=claimed_at + timedelta(seconds=30),
+    )
+    assert session.session_plan_json is None
+
+
+@pytest.mark.asyncio
+async def test_exhausted_setup_failure_is_terminal_and_clears_ownership(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        setup_max_attempts=1,
+    )
+    db_session.add(session)
+    await db_session.flush()
+    claim = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+
+    assert await fail_session_setup(
+        db_session,
+        claim=claim,
+        error_code="coach_contract_unsupported",
+        retryable=True,
+    )
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, claim.session_id)
+    assert persisted is not None
+    assert (persisted.status, persisted.conversation_state) == ("failed", "failed")
+    assert persisted.setup_job_id is None
+    assert persisted.setup_claim_token is None
+    assert persisted.recoverable_error_code is None
+
+
+def test_compatibility_changes_only_for_the_six_exact_v6_components() -> None:
+    base = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    questions = [
+        PlannedQuestion(text=f"Question {number}", category="behavioural")
+        for number in range(1, 4)
+    ]
+    base_key = SessionPlanBuilder.build(
+        base,
+        [],
+        questions=questions,
+        plan_id="base",
+        created_at="2026-08-05T12:00:00Z",
+    ).compatibility_key
+
+    industry_payload = base.model_dump(mode="json")
+    industry_payload["conversational_config"]["industry"] = "finance"
+    industry_changed = CreateSessionRequest.model_validate(industry_payload)
+    assert (
+        SessionPlanBuilder.build(
+            industry_changed,
+            [],
+            questions=questions,
+            plan_id="industry",
+            created_at="2026-08-05T12:00:00Z",
+        ).compatibility_key
+        == base_key
+    )
+
+    for field, value in (
+        ("role_family", "general"),
+        ("role_level", "lead"),
+        ("difficulty", "challenging"),
+        ("locale", "en-US"),
+    ):
+        payload = base.model_dump(mode="json")
+        payload["conversational_config"][field] = value
+        changed = CreateSessionRequest.model_validate(payload)
+        assert (
+            SessionPlanBuilder.build(
+                changed,
+                [],
+                questions=questions,
+                plan_id=field,
+                created_at="2026-08-05T12:00:00Z",
+            ).compatibility_key
+            != base_key
+        )
