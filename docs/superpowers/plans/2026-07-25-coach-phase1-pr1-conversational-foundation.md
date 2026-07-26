@@ -260,41 +260,26 @@ Expected: FAIL during import because both conversational modules are absent.
 - [ ] **Step 3: Implement the immutable registry and settings**
 
 ```python
+from types import MappingProxyType
+from typing import Final, Mapping
+
 @dataclass(frozen=True)
 class TransitionRule:
-    states: frozenset[str]
-    statuses: frozenset[str]
+    projections: frozenset[tuple[str, str]]
 
-TRANSITIONS: dict[str, TransitionRule] = {
-    "start": TransitionRule(frozenset({"ready"}), frozenset({"setup"})),
-    "begin_answer": TransitionRule(frozenset({"asking"}), frozenset({"active"})),
-    "finish_answer": TransitionRule(frozenset({"listening"}), frozenset({"active"})),
-    "keep_speaking": TransitionRule(frozenset({"listening"}), frozenset({"active"})),
-    "pause": TransitionRule(frozenset({"asking", "listening", "awaiting_next_action", "coaching", "recoverable_error"}), frozenset({"active"})),
-    "resume": TransitionRule(frozenset({"paused"}), frozenset({"active"})),
-    "cancel_attempt": TransitionRule(frozenset({"listening"}), frozenset({"active"})),
-    "retry_answer": TransitionRule(frozenset({"awaiting_next_action", "coaching", "recoverable_error"}), frozenset({"active"})),
-    "retry_setup": TransitionRule(frozenset({"recoverable_error"}), frozenset({"setup"})),
-    "rebuild_plan": TransitionRule(frozenset({"ready"}), frozenset({"setup"})),
-    "retry_processing": TransitionRule(frozenset({"recoverable_error"}), frozenset({"active"})),
-    "retry_report": TransitionRule(frozenset({"recoverable_error", "completed"}), frozenset({"active", "completed"})),
-    "request_hint": TransitionRule(frozenset({"asking", "listening"}), frozenset({"active"})),
-    "request_coaching": TransitionRule(frozenset({"awaiting_next_action"}), frozenset({"active"})),
-    "return_to_review": TransitionRule(frozenset({"coaching"}), frozenset({"active"})),
-    "edit_transcript": TransitionRule(frozenset({"awaiting_next_action", "coaching"}), frozenset({"active"})),
-    "accept_attempt": TransitionRule(frozenset({"awaiting_next_action", "coaching"}), frozenset({"active"})),
-    "record_self_assessment": TransitionRule(frozenset({"awaiting_next_action", "coaching", "completed"}), frozenset({"active", "completed"})),
-    "update_retention": TransitionRule(frozenset({"ready", "asking", "listening", "awaiting_next_action", "coaching", "paused", "recoverable_error"}), frozenset({"setup", "active"})),
-    "skip_question": TransitionRule(frozenset({"asking"}), frozenset({"active"})),
-    "end_session": TransitionRule(frozenset({"asking", "awaiting_next_action", "coaching", "paused", "recoverable_error"}), frozenset({"active"})),
-    "delete_audio": TransitionRule(frozenset({"awaiting_next_action", "coaching", "paused", "recoverable_error", "completed"}), frozenset({"active", "completed"})),
-    "delete_transcript": TransitionRule(frozenset({"awaiting_next_action", "coaching", "recoverable_error", "completed"}), frozenset({"active", "completed"})),
+_TRANSITIONS: dict[str, TransitionRule] = {
+    "start": TransitionRule(frozenset({("ready", "setup")})),
+    "begin_answer": TransitionRule(frozenset({("asking", "active")})),
+    # Populate every remaining command from V6 Appendix A as exact
+    # (conversation_state, status) pairs. Never store independent state/status
+    # sets: their Cartesian product authorizes unlisted transitions.
 }
+TRANSITIONS: Final[Mapping[str, TransitionRule]] = MappingProxyType(_TRANSITIONS)
 ```
 
 This PR1 registry intentionally records the complete V6 coarse command contract, including completed-session `record_self_assessment`; do not pre-narrow the base contract in PR1. PR3 owns the temporary removal of `completed` from that rule and from `/live.allowed_commands` while no atomic reflection/report transaction exists. PR4 restores the original PR1/V6 rule only in the same task that implements atomic completed reflection persistence, report invalidation, and rebuild claim.
 
-Implement all Section 31.7 errors as `ErrorDefinition(http_status, retryable, message)` in one mapping, with command-defined state predicates layered over this coarse registry (setup/attempt/report scopes, paused draft resolution, acceptance pointer, retry limits). Add exact `Field` bounds/defaults from V6 Section 36 to `Settings`.
+Implement all Section 31.7 errors as `ErrorDefinition(http_status, retryable, message)` in one private dictionary exposed through a `Final[Mapping[...]]` `MappingProxyType`, with command-defined state predicates layered over this coarse registry (setup/attempt/report scopes, paused draft resolution, acceptance pointer, retry limits). Tests must cover every Appendix A projection, reject every unlisted state/status pair, reject mutation of both public registries, and lock each error's HTTP status and retryability. Add exact `Field` bounds/defaults from V6 Section 36 to `Settings`, testing model-field defaults independently of ambient environment.
 
 - [ ] **Step 4: Run GREEN and commit**
 
