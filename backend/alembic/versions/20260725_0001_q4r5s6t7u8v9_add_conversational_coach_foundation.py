@@ -114,6 +114,11 @@ _PYDANTIC_FLOAT_STRING = re.compile(
     r"|inf(?:inity)?|nan)$",
     re.IGNORECASE,
 )
+_RUST_CHAR_WHITESPACE = (
+    "\u0009\u000a\u000b\u000c\u000d\u0020\u0085\u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
 
 
 def _coerce_pydantic_integer(value: object) -> int | None:
@@ -268,7 +273,7 @@ def _is_valid_rubric(value: object) -> bool:
 
 def _parse_pydantic_float_string(value: str) -> float | None:
     """Snapshot pydantic-core 2.46.4 str_as_float for persisted JSON strings."""
-    normalized = value.strip()
+    normalized = value.strip(_RUST_CHAR_WHITESPACE)
     if _PYDANTIC_FLOAT_STRING.fullmatch(normalized):
         return float(normalized)
     if (

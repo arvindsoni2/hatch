@@ -180,6 +180,56 @@ BOOLEAN_COERCION_VALUES = (
     [],
 )
 FLOAT_STRING_FUZZ_ALPHABET = "01+-.eE_ "
+RUST_TRIM_WHITESPACE_CODEPOINTS = (
+    0x0009,
+    0x000A,
+    0x000B,
+    0x000C,
+    0x000D,
+    0x0020,
+    0x0085,
+    0x00A0,
+    0x1680,
+    *range(0x2000, 0x200B),
+    0x2028,
+    0x2029,
+    0x202F,
+    0x205F,
+    0x3000,
+)
+NON_RUST_TRIM_BOUNDARY_CODEPOINTS = (
+    0x0000,
+    0x0008,
+    0x000E,
+    0x001B,
+    0x001C,
+    0x001D,
+    0x001E,
+    0x001F,
+    0x007F,
+    0x180E,
+    0x200B,
+    0x2060,
+    0xFEFF,
+)
+FLOAT_WHITESPACE_FAMILY_CODEPOINTS = tuple(
+    sorted(
+        {
+            neighbor
+            for codepoint in (
+                *RUST_TRIM_WHITESPACE_CODEPOINTS,
+                *NON_RUST_TRIM_BOUNDARY_CODEPOINTS,
+            )
+            for neighbor in (codepoint - 1, codepoint, codepoint + 1)
+            if 0 <= neighbor <= 0x10FFFF
+        }
+    )
+)
+FLOAT_WHITESPACE_CASES = tuple(
+    (codepoint, placement)
+    for codepoint in FLOAT_WHITESPACE_FAMILY_CODEPOINTS
+    for placement in ("prefix", "suffix", "both")
+)
 
 
 def _coercion_case_id(case: tuple[tuple[str, ...], object]) -> str:
@@ -1041,6 +1091,56 @@ def test_migration_validator_matches_authority_for_ascii_float_string_grammar() 
                 mismatches.append(value)
 
     assert mismatches == []
+
+
+@pytest.mark.parametrize(
+    ("codepoint", "placement"),
+    FLOAT_WHITESPACE_CASES,
+    ids=[
+        f"U+{codepoint:04X}-{placement}"
+        for codepoint, placement in FLOAT_WHITESPACE_CASES
+    ],
+)
+def test_float_whitespace_snapshot_matches_direct_and_whole_resolver_authority(
+    codepoint: int, placement: str
+) -> None:
+    from pydantic import TypeAdapter, ValidationError
+
+    from app.services.coach_aggregation import _parse_completed
+
+    whitespace = chr(codepoint)
+    value = {
+        "prefix": f"{whitespace}1",
+        "suffix": f"1{whitespace}",
+        "both": f"{whitespace}1{whitespace}",
+    }[placement]
+    expected = codepoint in RUST_TRIM_WHITESPACE_CODEPOINTS
+    try:
+        authoritative_number = TypeAdapter(float).validate_python(value)
+    except ValidationError:
+        authoritative_number = None
+
+    module = _load_migration_module()
+    assert (authoritative_number is not None) is expected
+    assert module._parse_pydantic_float_string(value) == authoritative_number
+
+    payload = json.loads(CANONICAL_COMPLETED_EVALUATION_JSON)
+    payload["overall"] = value
+    recording = SimpleNamespace(
+        id="recording",
+        question_id="question",
+        evaluation_state="completed",
+        evaluation_json=json.dumps(payload, separators=(",", ":")),
+        created_at=datetime(2026, 7, 1),
+    )
+    authoritative_valid = _parse_completed(recording) is not None
+    assert authoritative_valid is expected
+    assert (
+        module._is_valid_legacy_completed_evaluation(
+            recording.evaluation_state, recording.evaluation_json
+        )
+        is authoritative_valid
+    )
 
 
 @pytest.mark.parametrize(
