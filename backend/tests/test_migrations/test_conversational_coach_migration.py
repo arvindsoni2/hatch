@@ -96,6 +96,22 @@ INTEGER_COERCION_FIELDS = (
     ("rubric", "diagnostic", "repair_count"),
     ("rubric", "diagnostic", "duration_ms"),
 )
+INTEGER_ZERO_GROUP_DECIMAL_VALUES = (
+    ("0__0.0", 0),
+    ("0___0.0", 0),
+    ("00__0.0", 0),
+    ("0__00.0", 0),
+    ("0__0.00", 0),
+    ("0__0_0.0", 0),
+    ("0_0__0.0", 0),
+    ("00__00.000", 0),
+    ("+0__0.0", 0),
+    ("-0__0.0", 0),
+    ("0__0.1", None),
+    ("0__0.0_0", None),
+    ("0__0.__0", None),
+    ("1__0.0", None),
+)
 FLOAT_COERCION_VALUES = (
     0,
     10,
@@ -1091,6 +1107,102 @@ def test_migration_validator_matches_authority_for_ascii_float_string_grammar() 
                 mismatches.append(value)
 
     assert mismatches == []
+
+
+def test_integer_parser_matches_authority_for_ascii_string_grammar_through_length_six() -> (
+    None
+):
+    from pydantic import TypeAdapter, ValidationError
+
+    module = _load_migration_module()
+    adapter = TypeAdapter(int)
+    mismatches: list[str] = []
+    for length in range(7):
+        for characters in itertools.product(FLOAT_STRING_FUZZ_ALPHABET, repeat=length):
+            value = "".join(characters)
+            try:
+                authoritative = adapter.validate_python(value)
+            except ValidationError:
+                authoritative = None
+            migration_number = module._coerce_pydantic_integer(value)
+            if migration_number != authoritative:
+                mismatches.append(value)
+
+    assert mismatches == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    INTEGER_COERCION_FIELDS,
+    ids=[".".join(path) for path in INTEGER_COERCION_FIELDS],
+)
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    INTEGER_ZERO_GROUP_DECIMAL_VALUES,
+    ids=[value for value, _ in INTEGER_ZERO_GROUP_DECIMAL_VALUES],
+)
+def test_repeated_underscore_zero_group_decimals_match_integer_authority_for_every_path(
+    path: tuple[str, ...], value: str, expected: int | None
+) -> None:
+    from pydantic import TypeAdapter, ValidationError
+
+    from app.services.coach_aggregation import _parse_completed
+
+    module = _load_migration_module()
+    try:
+        authoritative_number = TypeAdapter(int).validate_python(value)
+    except ValidationError:
+        authoritative_number = None
+    assert authoritative_number == expected
+    assert module._coerce_pydantic_integer(value) == authoritative_number
+
+    diagnostic = {
+        "stage": "answer_evaluation",
+        "outcome": "completed",
+        "execution_mode": "deterministic",
+        "attempt_count": 0,
+        "repair_count": 0,
+        "gate_codes": [],
+        "duration_ms": 0,
+    }
+    payload = {
+        "evaluation_state": "completed",
+        "scores": {
+            "relevance": 8,
+            "star_structure": 7,
+            "technical_depth": 9,
+            "conciseness": 6,
+            "communication": 8,
+            "impact_metrics": 7,
+        },
+        "overall": 7.5,
+        "diagnostic": diagnostic.copy(),
+        "rubric": {
+            "dimensions": {"relevance": {"score": 8}},
+            "diagnostic": diagnostic.copy(),
+        },
+        "retryable": False,
+    }
+    target = payload
+    for segment in path[:-1]:
+        target = target[segment]  # type: ignore[assignment,index]
+    target[path[-1]] = value  # type: ignore[index]
+    evaluation_json = json.dumps(payload, separators=(",", ":"))
+    recording = SimpleNamespace(
+        id="recording",
+        question_id="question",
+        evaluation_state="completed",
+        evaluation_json=evaluation_json,
+        created_at=datetime(2026, 7, 1),
+    )
+    authoritative_valid = _parse_completed(recording) is not None
+    assert authoritative_valid is (expected is not None)
+    assert (
+        module._is_valid_legacy_completed_evaluation(
+            recording.evaluation_state, recording.evaluation_json
+        )
+        is authoritative_valid
+    )
 
 
 @pytest.mark.parametrize(

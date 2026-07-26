@@ -150,6 +150,8 @@ def _coerce_pydantic_integer(value: object) -> int | None:
                 if not body.endswith("0"):
                     return None
                 integer_part = "0"
+            elif body[prefix_end - 1] == "0" and re.fullmatch(r"\.0+", remainder):
+                integer_part = "0"
             elif remainder.startswith("-") and outer_sign != "-":
                 magnitude = remainder[1:]
                 if magnitude.startswith("_"):
