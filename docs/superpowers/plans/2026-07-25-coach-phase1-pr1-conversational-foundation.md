@@ -28,6 +28,7 @@
 - Defaults locked in PR1: setup max attempts `3`; attempts/question `5` (valid 1-20); manual processing retries `2` (valid 0-5); progress groups `20` (valid 1-100); follow-ups/root `2`; transcript characters `30000`; evidence claims `20`; answer duration `600`; silence `4000/9000 ms`; audio failure retention `24 h`; default audio `delete_after_processing`; transcript `retain`.
 - Every implementation task follows RED -> minimal GREEN -> focused regression -> commit. Record exact command, exit status, pass/fail count, branch/base/head, migration head, and artifact paths; do not claim a gate without output.
 - Request specification-compliance review first. Request code-quality/security review only after compliance passes. Critical/high findings block merge and every medium finding needs disposition.
+- Owner disposition on 2026-07-26: the repository-wide fail-closed database-bootstrap branch is parked at `fe56665f5adaf5a2d376389a29fd729aea1caaf8` and is not a PR1 dependency. Historical no-op base revisions mean bare `alembic upgrade head` on an empty database remains unsupported. PR1 must not rewrite that history or rely on blank-chain replay. The repository-supported fresh-install path is current ORM metadata `create_all()` followed by `stamp head`; PR1 tests that path again after the new ORM graph exists. Migration compatibility is independently tested against copies reconstructed from a hash-locked, full-schema `p3q4r5s6t7u8` SQL snapshot captured before any PR1 ORM edit.
 
 ---
 
@@ -60,11 +61,37 @@ Expected: the local integration head equals its fetched remote, both authority h
 cd backend
 alembic heads
 alembic current
-coach_baseline_db="$(mktemp /tmp/hatch-coach-pr1-baseline.XXXXXX.db)"
-DATABASE_URL="sqlite+aiosqlite:///$coach_baseline_db" alembic upgrade head
-DATABASE_URL="sqlite+aiosqlite:///$coach_baseline_db" alembic current
+python - <<'PY'
+import asyncio
+import os
+import sqlite3
+import subprocess
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory(prefix="hatch-coach-pr1-baseline-") as directory:
+    database = Path(directory) / "baseline.db"
+    database_url = f"sqlite+aiosqlite:///{database}"
+    os.environ["DATABASE_URL"] = database_url
+
+    import app.models  # noqa: F401 — register every mapped table
+    from app.database import Base, engine
+
+    async def create_current_schema() -> None:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+
+    asyncio.run(create_current_schema())
+    environment = os.environ.copy()
+    subprocess.run(["alembic", "stamp", "head"], check=True, env=environment)
+    subprocess.run(["alembic", "current"], check=True, env=environment)
+    subprocess.run(["alembic", "check"], check=True, env=environment)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+PY
 python -m pytest -q --no-cov tests/test_services/test_coach_contracts.py tests/test_services/test_coach_reconciliation.py tests/test_services/test_coach_session_queue.py tests/test_routers/test_coach_router.py tests/test_routers/test_coach_async.py tests/test_migrations/test_coach_c1_migration.py
-rm -- "$coach_baseline_db"
 cd ../frontend
 npm run type-check
 npm test -- --run
@@ -73,7 +100,7 @@ cd ..
 make ci
 ```
 
-Expected: `alembic heads` reports exactly `p3q4r5s6t7u8`; record the repository database's pre-existing `alembic current` output without requiring it to be stamped. The disposable database upgrades to and reports current revision `p3q4r5s6t7u8`; focused legacy Coach tests, frontend checks, and `make ci` exit 0. Record Playwright availability separately; PR1 has no new browser E2E. If a baseline command fails, preserve its output and resolve or obtain owner disposition before attributing any later failure to PR1.
+Expected: `alembic heads` reports exactly `p3q4r5s6t7u8`; record the repository database's pre-existing `alembic current` output without requiring it to be stamped. The disposable current-metadata database is stamped at and reports revision `p3q4r5s6t7u8`, `alembic check` reports no drift, and SQLite integrity/foreign-key checks pass. This is baseline evidence only: Task 2 separately captures the complete pre-PR1 schema, reconstructs copyable baseline databases from it, exercises the PR1 migration, and repeats the supported fresh-install path against the new-head ORM metadata. Focused legacy Coach tests, frontend checks, and `make ci` exit 0. Record Playwright availability separately; PR1 has no new browser E2E. If a baseline command fails, preserve its output and resolve or obtain owner disposition before attributing any later failure to PR1.
 
 ## File structure and locked downstream interfaces
 
@@ -90,6 +117,7 @@ backend/app/services/coach_conversation_commands.py
 backend/app/services/coach_live_view.py
 backend/app/services/coach_session_plan.py
 backend/tests/test_migrations/test_conversational_coach_migration.py
+backend/tests/fixtures/coach/p3q4r5s6t7u8_schema.sql
 backend/tests/test_repositories/test_conversational_session_repository.py
 backend/tests/test_services/test_coach_conversation_state.py
 backend/tests/test_services/test_coach_conversation_commands.py
@@ -285,7 +313,7 @@ Expected: PASS; the commit contains no persistence/router change.
 
 **Interfaces:** Produces extended `InterviewSession`, `SessionQuestion`, `SessionRecording`; `ConversationCommandResultRecord`, `InterviewSessionEvent`, `CoachSessionEvidenceRecord`, `InterviewTranscriptVersion`, `InterviewAttemptEvaluation`, `InterviewAttemptStage`, and `InterviewAttemptUpload`.
 
-- [ ] **Step 1: Write RED migration tests for fresh/legacy/rollback/FKs**
+- [ ] **Step 1: Capture the full prior-head fixture, then write RED migration and fresh-install tests**
 
 ```python
 def test_upgrade_backfills_legacy_without_changing_report_or_scores(migrated_legacy_db):
@@ -303,7 +331,9 @@ def test_latest_terminal_legacy_skip_outranks_earlier_completion(migrated_legacy
     assert question["accepted_recording_id"] is None
 ```
 
-Also test zero/one/multiple attempts, equal timestamps ordered by ID, failed-only recordings -> `pending`, valid latest completed -> `answered`, unknown category unchanged, fresh `upgrade head`, `downgrade p3q4r5s6t7u8`, re-upgrade, and exactly one head.
+Before modifying ORM models, record the PR1 branch's source integration commit, create a disposable database from the complete current `Base.metadata`, stamp it at `p3q4r5s6t7u8`, and require `alembic check`, integrity and foreign-key checks to pass. Export the full SQL schema (including tables, constraints, indexes, triggers and `alembic_version`) to `backend/tests/fixtures/coach/p3q4r5s6t7u8_schema.sql` in canonical `sqlite_schema.type, sqlite_schema.name` order, with normalized LF endings, one semicolon-terminated statement per block, and a header containing the source integration SHA and revision. Record the resulting SQL SHA-256 in the test. The test reconstructs one immutable template database from that hash-checked full-schema snapshot and copies the template for each vector; it must assert the source revision is exactly `p3q4r5s6t7u8` before inserting representative legacy rows or invoking Alembic. Never regenerate this fixture from the post-PR1 ORM graph.
+
+Against independent copies of that full baseline database, test zero/one/multiple attempts, equal timestamps ordered by ID, failed-only recordings -> `pending`, valid latest completed -> `answered`, unknown category unchanged, `upgrade head`, `alembic current`, `downgrade p3q4r5s6t7u8`, re-upgrade, data preservation, foreign keys, integrity, and exactly one head. Also add a separate supported fresh-install test that starts with an empty disposable database, creates the complete post-PR1 ORM schema with `Base.metadata.create_all()`, stamps `q4r5s6t7u8v9`, and verifies `alembic current`, `alembic check`, integrity, foreign keys, plus every required PR1 table, column, constraint and index. Do not invoke the unsupported historical chain on a blank database.
 
 - [ ] **Step 2: Run RED**
 
@@ -337,16 +367,14 @@ cd backend
 python -m pytest -q --no-cov tests/test_migrations/test_conversational_coach_migration.py
 python -c 'from sqlalchemy.orm import configure_mappers; from app.models import *; configure_mappers()'
 alembic heads
-alembic upgrade head
-alembic current
 ```
 
-Expected: PASS; `heads/current` print only `q4r5s6t7u8v9`; foreign-key check is empty and legacy JSON/scores are byte-for-byte unchanged.
+Expected: PASS; `alembic heads`, the upgraded copies of the full prior-head fixture, and the supported fresh-install fixture report only `q4r5s6t7u8v9`; both fixture paths pass `alembic check`, integrity, and foreign-key checks, and legacy JSON/scores are byte-for-byte unchanged.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/models/coach_session.py app/models/__init__.py alembic/versions/20260725_0001_q4r5s6t7u8v9_add_conversational_coach_foundation.py tests/test_migrations/test_conversational_coach_migration.py
+git add app/models/coach_session.py app/models/__init__.py alembic/versions/20260725_0001_q4r5s6t7u8v9_add_conversational_coach_foundation.py tests/fixtures/coach/p3q4r5s6t7u8_schema.sql tests/test_migrations/test_conversational_coach_migration.py
 git commit -m "feat(coach): add conversational persistence foundation"
 ```
 
@@ -800,8 +828,7 @@ Expected: PASS with exact count recorded. Verify negative (safe ID/ownership/sta
 ```bash
 cd backend
 alembic heads
-alembic upgrade head
-alembic current
+python -m pytest -q --no-cov -s tests/test_migrations/test_conversational_coach_migration.py
 python -m pytest tests/ -v --tb=short
 cd ..
 python scripts/check_docs.py
@@ -810,7 +837,7 @@ git status --short
 git diff --check feature/coach-phase1-phase2...HEAD
 ```
 
-Expected: one head/current `q4r5s6t7u8v9`; full tests/docs/CI exit 0; no whitespace errors; only PR1-scoped files differ. Capture command output without transcript/evidence/raw IDs/paths/secrets.
+Expected: one script head `q4r5s6t7u8v9`; the migration test visibly runs `alembic current` and proves revision `q4r5s6t7u8v9` on upgraded copies of the hash-locked full `p3q4r5s6t7u8` fixture and on the supported fresh-install fixture. Full tests/docs/CI exit 0; no whitespace errors; only PR1-scoped files differ. Capture command output without transcript/evidence/raw IDs/paths/secrets.
 
 - [ ] **Step 3: Complete traceability with observed RED/GREEN evidence**
 
