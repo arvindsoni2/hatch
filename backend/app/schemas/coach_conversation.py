@@ -1,0 +1,813 @@
+"""Strict public schemas for the Phase 1 conversational Coach experience."""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from datetime import datetime
+from typing import Annotated, Any, Literal, TypeAlias
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+from typing_extensions import Self
+
+from ..services.coach_conversational_contracts import (
+    CONVERSATION_COMMAND_CONTRACT,
+    CONVERSATION_COMMAND_RESULT_CONTRACT,
+    DELIVERY_POLICY,
+    EVIDENCE_GROUNDING_CONTRACT,
+    ERROR_REGISTRY,
+    FOLLOW_UP_CONTRACT,
+    LIVE_VIEW_CONTRACT,
+    REPORT_CONTRACT,
+    RUBRIC_CONTRACT,
+)
+
+
+SAFE_TOKEN_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+SAFE_TOKEN_RE = re.compile(SAFE_TOKEN_PATTERN)
+LOCALE_RE = re.compile(
+    r"^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$"
+)
+INDUSTRY_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
+
+SafeToken: TypeAlias = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=64, pattern=SAFE_TOKEN_PATTERN),
+]
+NonNegativeInt: TypeAlias = Annotated[int, Field(ge=0)]
+
+ExperienceVersion = Literal["legacy_v1", "conversational_v1"]
+InterviewType = Literal["behavioural", "role_specific_verbal", "mixed"]
+ConversationalDifficulty = Literal["supportive", "realistic", "challenging"]
+RoleLevel = Literal[
+    "entry",
+    "mid",
+    "senior",
+    "lead",
+    "principal",
+    "manager",
+    "director",
+    "executive",
+    "unspecified",
+]
+RoleFamily = Literal[
+    "software_engineering",
+    "solution_architecture",
+    "enterprise_architecture",
+    "data_ai",
+    "cloud_devops_platform",
+    "cybersecurity",
+    "product_management",
+    "project_program_management",
+    "agile_delivery",
+    "business_analysis",
+    "consulting",
+    "operations",
+    "commercial",
+    "general",
+    "other",
+]
+FocusArea = Literal[
+    "leadership",
+    "stakeholder_management",
+    "delivery_execution",
+    "problem_solving",
+    "technical_depth",
+    "architecture",
+    "communication",
+    "commercial_awareness",
+    "culture_values",
+    "role_motivation",
+]
+AnswerMode = Literal["audio", "text"]
+AudioRetentionPolicy = Literal["delete_after_processing", "retain_until_deleted"]
+TranscriptRetentionPolicy = Literal["retain"]
+
+
+class StrictContractModel(BaseModel):
+    """Base for new contracts: reject unknown fields and non-JSON numbers."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+def _normalized_bounded_text(
+    value: str, *, field_name: str, minimum: int, maximum: int
+) -> str:
+    normalized = (
+        unicodedata.normalize("NFC", value).replace("\r\n", "\n").replace("\r", "\n")
+    )
+    normalized = normalized.strip()
+    if not minimum <= len(normalized) <= maximum:
+        raise ValueError(
+            f"{field_name} must contain between {minimum} and {maximum} Unicode code points"
+        )
+    return normalized
+
+
+def normalize_locale(value: str) -> str:
+    """Validate and canonicalize the intentionally constrained BCP-47 subset."""
+
+    value = value.strip()
+    if not LOCALE_RE.fullmatch(value):
+        raise ValueError("locale is outside the supported BCP-47 subset")
+    parts = value.split("-")
+    normalized = [parts[0].lower()]
+    cursor = 1
+    if cursor < len(parts) and len(parts[cursor]) == 4:
+        normalized.append(parts[cursor].title())
+        cursor += 1
+    if cursor < len(parts):
+        region = parts[cursor]
+        normalized.append(region if region.isdigit() else region.upper())
+    return "-".join(normalized)
+
+
+class EvidenceSelection(StrictContractModel):
+    application_cv: Literal["approved_only", "current_if_no_approved", "none"]
+    master_cv: Literal["include", "exclude"]
+    question_bank: Literal["reviewed_final_only", "include_drafts", "exclude"]
+    selected_question_bank_record_ids: Annotated[
+        list[SafeToken], Field(max_length=50)
+    ] = Field(default_factory=list)
+    company_research: Literal["include_if_fresh", "exclude"]
+    draft_evidence_consent: bool = False
+
+    @field_validator("selected_question_bank_record_ids")
+    @classmethod
+    def require_unique_record_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("selected question bank record identifiers must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def require_draft_consent(self) -> Self:
+        if self.question_bank == "include_drafts" and not self.draft_evidence_consent:
+            raise ValueError("coach_draft_evidence_consent_required")
+        return self
+
+
+class RetentionPolicy(StrictContractModel):
+    audio: AudioRetentionPolicy = "delete_after_processing"
+    transcript: TranscriptRetentionPolicy = "retain"
+
+
+class ConversationalConfig(StrictContractModel):
+    interview_type: InterviewType
+    difficulty: ConversationalDifficulty
+    duration_minutes: Annotated[int, Field(ge=10, le=90)] = 30
+    planned_question_count: Annotated[int, Field(ge=3, le=12)] | None = None
+    role_family: RoleFamily
+    role_family_label: str | None = None
+    role_level: RoleLevel
+    industry: str | None = None
+    locale: str = "en-GB"
+    focus_areas: Annotated[list[FocusArea], Field(max_length=6)] = Field(
+        default_factory=list
+    )
+    allowed_answer_modes: Annotated[list[AnswerMode], Field(min_length=1, max_length=2)]
+    evidence_selection: EvidenceSelection
+    retention: RetentionPolicy = Field(default_factory=RetentionPolicy)
+
+    @field_validator("locale")
+    @classmethod
+    def validate_locale(cls, value: str) -> str:
+        return normalize_locale(value)
+
+    @field_validator("role_family_label")
+    @classmethod
+    def normalize_role_family_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalized_bounded_text(
+            value, field_name="role_family_label", minimum=1, maximum=80
+        )
+
+    @field_validator("industry")
+    @classmethod
+    def validate_industry(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if not 1 <= len(value) <= 64 or not INDUSTRY_RE.fullmatch(value):
+            raise ValueError("industry must be a normalized slug of 1 to 64 characters")
+        return value
+
+    @field_validator("focus_areas", "allowed_answer_modes")
+    @classmethod
+    def require_unique_values(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("values must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def validate_role_family_label(self) -> Self:
+        if self.role_family == "other" and self.role_family_label is None:
+            raise ValueError("role_family_label is required for role_family other")
+        if self.role_family != "other" and self.role_family_label is not None:
+            raise ValueError("role_family_label is valid only for role_family other")
+        return self
+
+
+class EmptyCommandPayload(StrictContractModel):
+    pass
+
+
+class StartPayload(EmptyCommandPayload):
+    pass
+
+
+class BeginAnswerPayload(StrictContractModel):
+    recording_type: AnswerMode
+    client_attempt_id: SafeToken
+
+
+class FinishAnswerPayload(StrictContractModel):
+    attempt_id: SafeToken
+    transcript: str | None = None
+    upload_id: SafeToken | None = None
+
+    @field_validator("transcript")
+    @classmethod
+    def validate_transcript(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalized_bounded_text(
+            value, field_name="transcript", minimum=1, maximum=30_000
+        )
+
+    @model_validator(mode="after")
+    def require_one_answer_source(self) -> Self:
+        if (self.transcript is None) == (self.upload_id is None):
+            raise ValueError("exactly one of transcript or upload_id is required")
+        return self
+
+
+class KeepSpeakingPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
+class PausePayload(EmptyCommandPayload):
+    pass
+
+
+class ResumePayload(EmptyCommandPayload):
+    pass
+
+
+class CancelAttemptPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
+class RetryAnswerPayload(StrictContractModel):
+    question_id: SafeToken | None = None
+
+
+class RetrySetupPayload(EmptyCommandPayload):
+    pass
+
+
+class RebuildPlanPayload(StrictContractModel):
+    refresh_sources: Literal[True]
+
+
+class RetryProcessingPayload(EmptyCommandPayload):
+    pass
+
+
+class RetryReportPayload(EmptyCommandPayload):
+    pass
+
+
+class RequestHintPayload(StrictContractModel):
+    hint_type: Literal[
+        "star_structure",
+        "competency_reminder",
+        "experience_category",
+        "clarify_question",
+    ]
+
+
+class RequestCoachingPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
+class ReturnToReviewPayload(EmptyCommandPayload):
+    pass
+
+
+class EditTranscriptPayload(StrictContractModel):
+    attempt_id: SafeToken
+    transcript: str
+    edit_reason: Literal["transcription_error"]
+
+    @field_validator("transcript")
+    @classmethod
+    def validate_transcript(cls, value: str) -> str:
+        return _normalized_bounded_text(
+            value, field_name="transcript", minimum=1, maximum=30_000
+        )
+
+
+class AcceptAttemptPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
+class RecordSelfAssessmentPayload(StrictContractModel):
+    attempt_id: SafeToken
+    comfort_level: Literal["low", "medium", "high"]
+    felt_complete: bool
+    note: str | None = None
+
+    @field_validator("note")
+    @classmethod
+    def validate_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalized_bounded_text(
+            value, field_name="note", minimum=1, maximum=1_000
+        )
+
+
+class UpdateRetentionPayload(StrictContractModel):
+    audio: AudioRetentionPolicy
+
+
+class SkipQuestionPayload(EmptyCommandPayload):
+    pass
+
+
+class EndSessionPayload(StrictContractModel):
+    unaccepted_attempt_action: Literal[
+        "accept_attempt", "exclude_attempt", "not_applicable"
+    ]
+    attempt_id: SafeToken | None = None
+    paused_draft_action: Literal["discard_draft"] | None = None
+
+    @model_validator(mode="after")
+    def validate_attempt_selection(self) -> Self:
+        if (
+            self.unaccepted_attempt_action == "accept_attempt"
+            and self.attempt_id is None
+        ):
+            raise ValueError("accept_attempt requires attempt_id")
+        if (
+            self.unaccepted_attempt_action != "accept_attempt"
+            and self.attempt_id is not None
+        ):
+            raise ValueError("attempt_id is valid only when accepting an attempt")
+        return self
+
+
+class DeleteAudioPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
+class DeleteTranscriptPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
+CommandType = Literal[
+    "start",
+    "begin_answer",
+    "finish_answer",
+    "keep_speaking",
+    "pause",
+    "resume",
+    "cancel_attempt",
+    "retry_answer",
+    "retry_setup",
+    "rebuild_plan",
+    "retry_processing",
+    "retry_report",
+    "request_hint",
+    "request_coaching",
+    "return_to_review",
+    "edit_transcript",
+    "accept_attempt",
+    "record_self_assessment",
+    "update_retention",
+    "skip_question",
+    "end_session",
+    "delete_audio",
+    "delete_transcript",
+]
+
+CommandPayload = (
+    StartPayload
+    | BeginAnswerPayload
+    | FinishAnswerPayload
+    | KeepSpeakingPayload
+    | PausePayload
+    | ResumePayload
+    | CancelAttemptPayload
+    | RetryAnswerPayload
+    | RetrySetupPayload
+    | RebuildPlanPayload
+    | RetryProcessingPayload
+    | RetryReportPayload
+    | RequestHintPayload
+    | RequestCoachingPayload
+    | ReturnToReviewPayload
+    | EditTranscriptPayload
+    | AcceptAttemptPayload
+    | RecordSelfAssessmentPayload
+    | UpdateRetentionPayload
+    | SkipQuestionPayload
+    | EndSessionPayload
+    | DeleteAudioPayload
+    | DeleteTranscriptPayload
+)
+
+COMMAND_PAYLOAD_TYPES: dict[str, type[StrictContractModel]] = {
+    "start": StartPayload,
+    "begin_answer": BeginAnswerPayload,
+    "finish_answer": FinishAnswerPayload,
+    "keep_speaking": KeepSpeakingPayload,
+    "pause": PausePayload,
+    "resume": ResumePayload,
+    "cancel_attempt": CancelAttemptPayload,
+    "retry_answer": RetryAnswerPayload,
+    "retry_setup": RetrySetupPayload,
+    "rebuild_plan": RebuildPlanPayload,
+    "retry_processing": RetryProcessingPayload,
+    "retry_report": RetryReportPayload,
+    "request_hint": RequestHintPayload,
+    "request_coaching": RequestCoachingPayload,
+    "return_to_review": ReturnToReviewPayload,
+    "edit_transcript": EditTranscriptPayload,
+    "accept_attempt": AcceptAttemptPayload,
+    "record_self_assessment": RecordSelfAssessmentPayload,
+    "update_retention": UpdateRetentionPayload,
+    "skip_question": SkipQuestionPayload,
+    "end_session": EndSessionPayload,
+    "delete_audio": DeleteAudioPayload,
+    "delete_transcript": DeleteTranscriptPayload,
+}
+
+
+class ConversationCommandRequest(StrictContractModel):
+    command_id: SafeToken
+    command_type: CommandType
+    expected_state_version: NonNegativeInt
+    payload: CommandPayload
+    contract_version: Literal[CONVERSATION_COMMAND_CONTRACT]
+
+    @model_validator(mode="before")
+    @classmethod
+    def dispatch_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        command_type = value.get("command_type")
+        if not isinstance(command_type, str):
+            return value
+        payload_type = COMMAND_PAYLOAD_TYPES.get(command_type)
+        if payload_type is None:
+            return value
+        dispatched = dict(value)
+        dispatched["payload"] = payload_type.model_validate(value.get("payload"))
+        return dispatched
+
+
+ConversationCommandResultState = Literal[
+    "completed",
+    "accepted_processing",
+    "duplicate",
+    "invalid_state",
+    "version_conflict",
+    "idempotency_conflict",
+    "invalid_payload",
+    "resource_blocked",
+    "not_found",
+    "permission_denied",
+    "stale_claim",
+]
+
+
+class ConversationCommandResult(StrictContractModel):
+    command_id: SafeToken
+    result: ConversationCommandResultState
+    session_id: SafeToken
+    state: str
+    state_version: NonNegativeInt
+    active_question_id: SafeToken | None
+    active_attempt_id: SafeToken | None
+    async_job_id: SafeToken | None
+    allowed_commands: list[CommandType]
+    contract_version: Literal[CONVERSATION_COMMAND_RESULT_CONTRACT]
+
+
+QuestionCategory = Literal[
+    "behavioural", "situational", "culture", "technical", "domain", "commercial"
+]
+QuestionKind = Literal["planned", "adaptive_follow_up"]
+QuestionState = Literal["pending", "asked", "answered", "skipped"]
+
+
+class ConversationalQuestionRead(StrictContractModel):
+    id: SafeToken
+    text: Annotated[str, Field(min_length=1, max_length=10_000)]
+    category: QuestionCategory
+    difficulty: ConversationalDifficulty
+    question_kind: QuestionKind
+    question_state: QuestionState
+    root_question_id: SafeToken | None
+    parent_question_id: SafeToken | None
+    follow_up_depth: Annotated[int, Field(ge=0, le=2)]
+    attempts_created_count: Annotated[int, Field(ge=0, le=20)]
+    attempt_limit: Annotated[int, Field(ge=1, le=20)]
+    attempts_remaining: NonNegativeInt
+
+    @model_validator(mode="after")
+    def validate_attempt_budget(self) -> Self:
+        if self.attempts_created_count > self.attempt_limit:
+            raise ValueError("attempts_created_count exceeds the attempt limit")
+        expected = max(self.attempt_limit - self.attempts_created_count, 0)
+        if self.attempts_remaining != expected:
+            raise ValueError("attempts_remaining does not match the attempt budget")
+        return self
+
+
+class TranscriptVersionRead(StrictContractModel):
+    id: SafeToken
+    version_number: Annotated[int, Field(ge=1)]
+    transcript: Annotated[str, Field(max_length=30_000)] | None
+    source: Literal[
+        "transcription", "candidate_text", "candidate_edit", "recovered_transcription"
+    ]
+    edit_reason: str | None = None
+    created_by: Literal["system", "candidate"]
+    processing_generation: NonNegativeInt | None
+    created_at: datetime
+
+
+class InterviewAttemptRead(StrictContractModel):
+    id: SafeToken
+    question_id: SafeToken
+    recording_type: AnswerMode
+    attempt_number: Annotated[int, Field(ge=1)]
+    attempt_state: Literal[
+        "draft",
+        "uploaded",
+        "pending_processing",
+        "completed",
+        "recoverable_error",
+        "unavailable",
+        "invalid",
+        "cancelled",
+        "deleted",
+        "skipped",
+    ]
+    attempt_version: NonNegativeInt
+    processing_generation: NonNegativeInt
+    processing_retry_count: NonNegativeInt
+    processing_retry_limit: Annotated[int, Field(ge=0, le=5)]
+    processing_retries_remaining: NonNegativeInt
+    audio_retention_policy: AudioRetentionPolicy | None
+    audio_retention_state: (
+        Literal[
+            "not_applicable",
+            "temporary",
+            "retained",
+            "delete_pending",
+            "deleted",
+            "delete_failed",
+        ]
+        | None
+    )
+    transcript_version: TranscriptVersionRead | None
+
+    @model_validator(mode="after")
+    def validate_processing_retry_budget(self) -> Self:
+        expected = max(self.processing_retry_limit - self.processing_retry_count, 0)
+        if self.processing_retries_remaining != expected:
+            raise ValueError(
+                "processing_retries_remaining does not match the retry budget"
+            )
+        return self
+
+
+class ProcessingProjection(StrictContractModel):
+    job_id: SafeToken | None
+    stage: (
+        Literal[
+            "audio_persist",
+            "transcription",
+            "speech_analysis",
+            "content_evaluation",
+            "evidence_grounding",
+            "follow_up_decision",
+            "coaching_enrichment",
+            "audio_cleanup",
+        ]
+        | None
+    )
+    state: Literal[
+        "not_started",
+        "pending",
+        "running",
+        "completed",
+        "reused",
+        "not_applicable",
+        "unavailable",
+        "failed_retryable",
+        "failed_terminal",
+    ]
+    retryable: bool
+    retry_count: NonNegativeInt
+    retry_limit: Annotated[int, Field(ge=0, le=5)]
+    retries_remaining: NonNegativeInt
+
+    @model_validator(mode="after")
+    def validate_retry_budget(self) -> Self:
+        expected = max(self.retry_limit - self.retry_count, 0)
+        if self.retries_remaining != expected:
+            raise ValueError("retries_remaining does not match the retry budget")
+        return self
+
+
+class ProgressProjection(StrictContractModel):
+    planned_questions_total: Annotated[int, Field(ge=0, le=12)]
+    planned_questions_completed: Annotated[int, Field(ge=0, le=12)]
+    follow_ups_completed: Annotated[int, Field(ge=0, le=24)]
+    current_planned_position: Annotated[int, Field(ge=1, le=12)] | None
+
+    @model_validator(mode="after")
+    def validate_progress_counts(self) -> Self:
+        if self.planned_questions_completed > self.planned_questions_total:
+            raise ValueError("completed planned questions exceed the plan total")
+        if self.follow_ups_completed > self.planned_questions_total * 2:
+            raise ValueError("completed follow-ups exceed the per-root budget")
+        if (
+            self.current_planned_position is not None
+            and self.current_planned_position > self.planned_questions_total
+        ):
+            raise ValueError("current planned position exceeds the plan total")
+        return self
+
+
+class RetentionStatus(StrictContractModel):
+    audio_policy: AudioRetentionPolicy
+    current_audio_state: (
+        Literal[
+            "not_applicable",
+            "temporary",
+            "retained",
+            "delete_pending",
+            "deleted",
+            "delete_failed",
+        ]
+        | None
+    )
+
+
+class SilencePolicy(StrictContractModel):
+    warning_ms: Annotated[int, Field(ge=0, le=600_000)]
+    finish_prompt_ms: Annotated[int, Field(ge=0, le=600_000)]
+
+    @model_validator(mode="after")
+    def validate_threshold_order(self) -> Self:
+        if self.finish_prompt_ms < self.warning_ms:
+            raise ValueError("finish prompt cannot precede the silence warning")
+        return self
+
+
+class RecoverableErrorProjection(StrictContractModel):
+    code: Annotated[str, Field(min_length=1, max_length=128)]
+    scope: Literal[
+        "setup", "attempt_processing", "initial_report", "completed_report_rebuild"
+    ]
+    retryable: bool
+    details: Annotated[dict[str, str | int | bool | None], Field(max_length=20)] = (
+        Field(default_factory=dict)
+    )
+
+
+ConversationState = Literal[
+    "planning",
+    "ready",
+    "asking",
+    "listening",
+    "processing_answer",
+    "awaiting_next_action",
+    "coaching",
+    "asking_follow_up",
+    "advancing",
+    "paused",
+    "reporting",
+    "completed",
+    "recoverable_error",
+    "abandoned",
+    "failed",
+]
+
+
+class ConversationLiveView(StrictContractModel):
+    session_id: SafeToken
+    experience_version: Literal["conversational_v1"]
+    status: Literal["setup", "active", "completed", "abandoned", "failed"]
+    conversation_state: ConversationState
+    state_version: NonNegativeInt
+    activity_version: NonNegativeInt
+    retention_version: NonNegativeInt
+    active_question: ConversationalQuestionRead | None
+    root_question: ConversationalQuestionRead | None
+    active_attempt: InterviewAttemptRead | None
+    processing: ProcessingProjection
+    progress: ProgressProjection
+    retention: RetentionStatus
+    allowed_commands: list[CommandType]
+    silence_policy: SilencePolicy
+    recoverable_error: RecoverableErrorProjection | None
+    report_state: Literal[
+        "not_started", "building", "completed", "fallback", "failed", "invalidated"
+    ]
+    contract_version: Literal[LIVE_VIEW_CONTRACT]
+
+    @field_validator("allowed_commands")
+    @classmethod
+    def require_unique_allowed_commands(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("allowed_commands must be unique")
+        return value
+
+
+class ConversationError(StrictContractModel):
+    code: Annotated[str, Field(min_length=1, max_length=128)]
+    message: Annotated[str, Field(min_length=1, max_length=500)]
+    retryable: bool
+    current_state: ConversationState | None = None
+    current_state_version: NonNegativeInt | None = None
+    correlation_id: SafeToken
+    details: Annotated[dict[str, str | int | bool | None], Field(max_length=20)] = (
+        Field(default_factory=dict)
+    )
+
+    @field_validator("code")
+    @classmethod
+    def require_registered_error_code(cls, value: str) -> str:
+        if value not in ERROR_REGISTRY:
+            raise ValueError("unregistered conversational error code")
+        return value
+
+
+class ConversationErrorResponse(StrictContractModel):
+    error: ConversationError
+
+
+class PlanRole(StrictContractModel):
+    title: Annotated[str, Field(min_length=1, max_length=200)]
+    role_family: RoleFamily
+    role_family_label: Annotated[str, Field(min_length=1, max_length=80)] | None
+    role_level: RoleLevel
+    industry: Annotated[str, Field(min_length=1, max_length=64)] | None
+
+
+class PlanInterview(StrictContractModel):
+    type: InterviewType
+    difficulty: ConversationalDifficulty
+    duration_minutes: Annotated[int, Field(ge=10, le=90)]
+    planned_question_count: Annotated[int, Field(ge=3, le=12)]
+    focus_areas: Annotated[list[FocusArea], Field(max_length=6)]
+    locale: str
+    allowed_answer_modes: Annotated[list[AnswerMode], Field(min_length=1, max_length=2)]
+
+    _normalize_locale = field_validator("locale")(normalize_locale)
+
+
+class EvidenceSnapshot(StrictContractModel):
+    package_hash: Annotated[str, StringConstraints(pattern=r"^sha256:[a-f0-9]{64}$")]
+    record_count: Annotated[int, Field(ge=0, le=30)]
+    contract_version: Literal["coach_session_evidence_snapshot_v1"]
+
+
+class PlanContracts(StrictContractModel):
+    question_generation: Literal["coach_question_generation_v2"]
+    evaluation: Literal[RUBRIC_CONTRACT]
+    delivery: Literal[DELIVERY_POLICY]
+    evidence_grounding: Literal[EVIDENCE_GROUNDING_CONTRACT]
+    follow_up: Literal[FOLLOW_UP_CONTRACT]
+    report: Literal[REPORT_CONTRACT]
+
+
+class PlanCompatibility(StrictContractModel):
+    key: SafeToken
+    version: Literal["coach_progress_compatibility_v1"]
+
+
+class ConversationalSessionPlan(StrictContractModel):
+    plan_id: SafeToken
+    role: PlanRole
+    interview: PlanInterview
+    evidence_selection: EvidenceSelection
+    evidence_snapshot: EvidenceSnapshot
+    contracts: PlanContracts
+    retention: RetentionPolicy
+    compatibility: PlanCompatibility
+    created_at: datetime

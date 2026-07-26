@@ -1,13 +1,31 @@
 """Pydantic schemas for the Coach module — sessions, questions, evaluations, feedback."""
+
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing_extensions import Self
 
 from ..services.coach_contracts import CoachDiagnostic
+from .coach_conversation import ConversationalConfig as ConversationalConfig
+from .coach_conversation import (
+    ConversationCommandRequest as ConversationCommandRequest,
+)
+from .coach_conversation import ConversationCommandResult as ConversationCommandResult
+from .coach_conversation import ConversationErrorResponse as ConversationErrorResponse
+from .coach_conversation import ConversationLiveView as ConversationLiveView
+from .coach_conversation import (
+    ConversationalQuestionRead as ConversationalQuestionRead,
+)
+from .coach_conversation import (
+    ConversationalSessionPlan as ConversationalSessionPlan,
+)
+from .coach_conversation import InterviewAttemptRead as InterviewAttemptRead
+from .coach_conversation import RetentionPolicy as RetentionPolicy
+from .coach_conversation import RetentionStatus as RetentionStatus
+from .coach_conversation import TranscriptVersionRead as TranscriptVersionRead
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +57,7 @@ class VoiceToneResult(BaseModel):
     valence   — positive vs negative affect (0=negative, 1=positive)
     dominance — assertiveness / confidence (0=submissive, 1=dominant)
     """
+
     arousal: float = Field(default=0.0, ge=0.0, le=1.0)
     valence: float = Field(default=0.0, ge=0.0, le=1.0)
     dominance: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -65,6 +84,57 @@ class CreateSessionRequest(BaseModel):
     jd_text: str | None = None
     interview_date: str | None = None  # ISO date string, stored in config JSON
     config: SessionConfig = Field(default_factory=SessionConfig)
+    experience_version: Literal["legacy_v1", "conversational_v1"] = "legacy_v1"
+    conversational_config: ConversationalConfig | None = None
+
+    @field_validator("company_name", "role_title")
+    @classmethod
+    def normalize_identity_text(cls, value: str, info) -> str:
+        value = value.strip()
+        if not 1 <= len(value) <= 200:
+            raise ValueError(
+                f"{info.field_name} must contain 1 to 200 Unicode code points"
+            )
+        return value
+
+    @field_validator("jd_text")
+    @classmethod
+    def normalize_job_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not 1 <= len(value) <= 100_000:
+            raise ValueError("jd_text must contain 1 to 100000 Unicode code points")
+        return value
+
+    @field_validator("interview_date")
+    @classmethod
+    def validate_interview_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(
+                "interview_date must be an ISO YYYY-MM-DD calendar date"
+            ) from exc
+        if parsed.isoformat() != value:
+            raise ValueError("interview_date must be an ISO YYYY-MM-DD calendar date")
+        return value
+
+    @model_validator(mode="after")
+    def validate_experience_dispatch(self) -> Self:
+        if self.experience_version == "legacy_v1":
+            if self.conversational_config is not None:
+                raise ValueError("legacy_v1 does not accept conversational_config")
+            return self
+        if self.conversational_config is None:
+            raise ValueError("conversational_v1 requires conversational_config")
+        if self.jd_text is None and self.application_id is None:
+            raise ValueError(
+                "jd_text is required when no linked application is supplied"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +165,9 @@ class SubmitAnswerRequest(BaseModel):
     speech_metrics: SpeechMetrics | None = None
     video_metrics: VideoMetrics | None = None
     duration_ms: int = 0
-    audio_uri: str | None = None  # server-populated for audio submissions; not user-provided
+    audio_uri: str | None = (
+        None  # server-populated for audio submissions; not user-provided
+    )
 
     @field_validator("transcript")
     @classmethod
@@ -116,9 +188,12 @@ ScoreBand = Literal["strong", "good", "needs_work", "weak"]
 
 class RubricDimension(BaseModel):
     """One dimension in the session rubric — score + band + evidence + drill."""
+
     score: int = Field(default=0, ge=0, le=10)
     score_band: ScoreBand = "needs_work"
-    evidence: list[str] = Field(default_factory=list, description="1-2 concrete examples from the answer")
+    evidence: list[str] = Field(
+        default_factory=list, description="1-2 concrete examples from the answer"
+    )
     drill: str = ""  # recommended practice drill for improvement
 
 
@@ -131,6 +206,7 @@ class SessionRubric(BaseModel):
     - vocal_confidence: only when VoiceToneResult is available
     - presence: only when face data is available (Phase D opt-in)
     """
+
     dimensions: dict[str, RubricDimension] = Field(default_factory=dict)
     focus_for_next_session: str = ""
     diagnostic: CoachDiagnostic | None = None
@@ -196,24 +272,27 @@ class SessionQuestionRead(BaseModel):
 
 class TechnicalDrill(BaseModel):
     """A worked-example drill for a technical question."""
+
     question_id: str
     question_text: str
-    walkthrough: str       # worked example
-    drill_prompt: str      # "explain your approach out loud" prompt
+    walkthrough: str  # worked example
+    drill_prompt: str  # "explain your approach out loud" prompt
     category: str
 
 
 class ProgressTrendItem(BaseModel):
     """Per-session progress data for a session chain."""
+
     session_id: str
     created_at: datetime
     overall_score: float | None
-    rubric_scores: dict[str, int]   # dim_name → score
+    rubric_scores: dict[str, int]  # dim_name → score
     focus_areas: list[str]
 
 
 class PlanFollowUpResponse(BaseModel):
     """Response after planning a follow-up session."""
+
     followup_session_id: str
     focus_areas: list[str]
     message: str
@@ -230,7 +309,9 @@ class SessionResponse(BaseModel):
     overall_score: float | None = None
     questions: list[SessionQuestionRead] = Field(default_factory=list)
     created_at: datetime
-    interview_date: str | None = None  # set for manual sessions without an application_id
+    interview_date: str | None = (
+        None  # set for manual sessions without an application_id
+    )
     # Phase C fields
     coach_mode: str | None = None
     rubric: SessionRubric | None = None
@@ -250,6 +331,10 @@ class SessionListItem(BaseModel):
     overall_score: float | None = None
     created_at: datetime
     started_at: datetime | None = None
+    experience_version: Literal["legacy_v1", "conversational_v1"] | None = None
+    conversation_state: str | None = None
+    session_level: str | None = None
+    retention_summary: dict | None = None
 
 
 # ---------------------------------------------------------------------------
