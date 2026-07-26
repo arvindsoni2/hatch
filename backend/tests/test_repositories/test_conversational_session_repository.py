@@ -466,7 +466,7 @@ async def test_attempt_reservation_is_monotonic_snapshotted_and_transfers_hints(
         assert session.active_recording_id == reservation.attempt.id
         assert session.conversation_state == "listening"
         assert session.state_version == 5
-        assert session.activity_version == 1
+        assert session.activity_version == 0
 
 
 @pytest.mark.asyncio
@@ -699,7 +699,7 @@ async def test_concurrent_fifth_and_sixth_reservations_create_only_fifth(
         assert question is not None and session is not None
         assert question.attempts_created_count == 5
         assert await db.scalar(select(func.count(SessionRecording.id))) == 5
-        assert (session.state_version, session.activity_version) == (5, 1)
+        assert (session.state_version, session.activity_version) == (5, 0)
 
 
 @pytest.mark.asyncio
@@ -736,7 +736,7 @@ async def test_concurrent_begin_creates_at_most_one_active_attempt(
         assert len(attempts) == 1
         assert attempts[0].attempt_number == 1
         assert session is not None
-        assert (session.state_version, session.activity_version) == (5, 1)
+        assert (session.state_version, session.activity_version) == (5, 0)
 
 
 @pytest.mark.asyncio
@@ -924,7 +924,12 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript.id,
-                diagnostics={"code": "ok"},
+                diagnostics={
+                    "diagnostics": {
+                        "stages": ["audio_persist", "audio_cleanup"],
+                        "state": "not_started",
+                    }
+                },
             ),
         )
         assert changed is False
@@ -948,7 +953,7 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript.id,
-                diagnostics={"code": "ok"},
+                diagnostics={},
             ),
         )
         assert changed is False
@@ -978,7 +983,7 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript.id,
-                diagnostics={"code": "ok"},
+                diagnostics={},
             ),
         )
         assert changed is False
@@ -999,7 +1004,7 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript.id,
-                diagnostics={"code": "ok"},
+                diagnostics={},
             ),
         )
         assert changed is False
@@ -1023,7 +1028,7 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript.id,
-                diagnostics={"code": "ok"},
+                diagnostics={},
             ),
         )
         assert changed is False
@@ -1034,7 +1039,7 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript.id,
-                diagnostics={"code": "ok"},
+                diagnostics={},
             ),
         )
         assert changed is True
@@ -1337,7 +1342,7 @@ async def test_processing_finaliser_rejects_audio_hash_and_edit_races(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript_id,
-                diagnostics={"code": "ok"},
+                diagnostics={},
             ),
         )
         assert changed is False
@@ -1402,7 +1407,7 @@ async def test_processing_finalisation_supersedes_prior_current_evaluation(
                 evaluation_state="completed",
                 evaluation_json={"answer_level": "strong"},
                 transcript_version_id=transcript_id,
-                diagnostics={"code": "ok"},
+                diagnostics={},
             ),
         )
         assert changed is True
@@ -1422,11 +1427,17 @@ async def test_processing_finalisation_supersedes_prior_current_evaluation(
         {"evidence": "private evidence text"},
         {"path": "/home/candidate/private"},
         {"secret": "api_key=secret-value"},
+        {"code": "ok"},
+        {"code": "safe_but_unknown"},
+        {"error": "safe_but_unknown"},
+        {"error_code": "safe_but_unknown"},
         {"reason_code": "safe_but_unknown"},
         {
             "diagnostics": {
                 "diagnostics": {
-                    "diagnostics": {"diagnostics": {"diagnostics": {"code": "ok"}}}
+                    "diagnostics": {
+                        "diagnostics": {"code": "coach_evaluation_unavailable"}
+                    }
                 }
             }
         },
@@ -1455,7 +1466,11 @@ async def test_processing_finalisation_supersedes_prior_current_evaluation(
         "evidence",
         "path",
         "secret",
+        "noncanonical_ok",
         "unknown_code",
+        "unknown_error",
+        "unknown_error_code",
+        "unknown_reason_code",
         "deep",
         "wide",
         "oversize",
@@ -2182,10 +2197,10 @@ async def test_event_payload_does_not_persist_raw_candidate_content(
         ("actor_type", "api_key_secret"),
         ("state_before", "transcript_content"),
         ("state_after", "/private/path"),
-        ("question_id", "evidence_secret"),
+        ("question_id", "/private/path"),
         ("question_id", "q" * 37),
-        ("recording_id", "private_path"),
-        ("command_id", "api_key_secret"),
+        ("recording_id", "secret=value"),
+        ("command_id", "api_key=secret"),
         ("command_id", "c" * 65),
         ("state_version", -1),
         ("state_version", True),
@@ -2223,6 +2238,33 @@ async def test_event_envelope_is_validated_before_sequence_allocation(
         assert session is not None
         assert session.event_version == 0
         assert await db.scalar(select(func.count(InterviewSessionEvent.id))) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_id", ("transcript.edit:01", "content.release:1", "api_key_secret")
+)
+async def test_event_envelope_accepts_schema_valid_opaque_tokens(
+    repository_database, command_id
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        (event_row,) = await ConversationalSessionRepository(db).append_session_events(
+            session_id="session-1",
+            events=(
+                SessionEventInput(
+                    "session_started",
+                    "system",
+                    4,
+                    state_before="ready",
+                    state_after="asking",
+                    question_id="evidence_secret",
+                    recording_id="private_path",
+                    command_id=command_id,
+                ),
+            ),
+        )
+        assert event_row.command_id == command_id
 
 
 @pytest.mark.asyncio

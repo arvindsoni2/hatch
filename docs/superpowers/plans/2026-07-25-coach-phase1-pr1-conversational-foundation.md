@@ -463,7 +463,7 @@ async def test_concurrent_sixth_attempt_creates_none(repository, asking_question
     assert await repository.attempt_count(asking_question_at_limit.id) == 5
 ```
 
-Also prove same command ID/different hash conflicts, rollback leaves no receipt/event/mutation, N events allocate contiguous unique sequences through `event_version`, duplicate client attempt precedes `listening` and limit validation, same client ID/different question/type conflicts, concurrent begin creates at most one active attempt, attempt numbers are contiguous, cancellation/deletion never refunds the monotonic budget, safe parent ownership, and a stale processing finaliser returns `False` with no current-pointer mutation.
+Also prove same command ID/different hash conflicts, rollback leaves no receipt/event/mutation, N events allocate contiguous unique sequences through `event_version`, duplicate client attempt precedes `listening` and limit validation, same client ID/different question/type conflicts, concurrent begin creates at most one active attempt, attempt numbers are contiguous, cancellation/deletion never refunds the monotonic budget, safe parent ownership, and a stale processing finaliser returns `False` with no current-pointer mutation. Per V6 Section 21.11, draft reservation increments `state_version` once but does not increment `activity_version`; attempt submission is the report-input mutation that increments `activity_version`.
 
 - [ ] **Step 2: Run RED**
 
@@ -486,7 +486,7 @@ def canonical_request_hash(request: ConversationCommandRequest, *, session_id: s
     return hashlib.sha256(encoded).hexdigest()
 ```
 
-Use conditional `UPDATE` row counts, not `SELECT FOR UPDATE` or `max()+1`. Reserve attempts by atomically incrementing `attempts_created_count WHERE attempts_created_count < configured_limit`, use its committed value as `attempt_number`, then insert the attempt, snapshot retention/retry limit, transfer/reset pending hints, set active IDs/listening, increment state/activity once, allocate events, and persist the receipt in one transaction. Implement version-row creation with unique version allocation and current-pointer/claim predicates. Repository methods flush but the outer command service owns commit/rollback.
+Use conditional `UPDATE` row counts, not `SELECT FOR UPDATE` or `max()+1`. Reserve attempts by atomically incrementing `attempts_created_count WHERE attempts_created_count < configured_limit`, use its committed value as `attempt_number`, then insert the attempt, snapshot retention/retry limit, transfer/reset pending hints, set active IDs/listening, increment `state_version` once without changing `activity_version`, allocate events, and persist the receipt in one transaction. Increment `activity_version` later when the attempt is submitted and becomes a report input, as required by V6 Section 21.11. Implement version-row creation with unique version allocation and current-pointer/claim predicates. Repository methods flush but the outer command service owns commit/rollback.
 
 - [ ] **Step 4: Run GREEN and commit**
 

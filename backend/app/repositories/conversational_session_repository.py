@@ -31,7 +31,7 @@ from ..models.coach_session import (
     SessionQuestion,
     SessionRecording,
 )
-from ..schemas.coach_conversation import ConversationCommandRequest
+from ..schemas.coach_conversation import ConversationCommandRequest, SAFE_TOKEN_RE
 from ..services.coach_conversational_contracts import ERROR_REGISTRY
 
 
@@ -279,30 +279,24 @@ _CONVERSATIONAL_EVENT_TYPES = frozenset(
         "session_abandoned",
     }
 )
-_FORBIDDEN_ENVELOPE_ID_FRAGMENTS = (
-    "api_key",
-    "content",
-    "evidence",
-    "path",
-    "secret",
-    "transcript",
-)
 _PROCESSING_REASON_CODES = frozenset(ERROR_REGISTRY) | frozenset(
     {"transcription_unavailable", "invalid_audio"}
 )
-_PROCESSING_DIAGNOSTIC_CODES = _PROCESSING_REASON_CODES | frozenset({"ok"})
 _PROCESSING_STAGES = frozenset(
     {
+        "audio_persist",
         "transcription",
         "speech_analysis",
         "content_evaluation",
         "evidence_grounding",
         "follow_up_decision",
         "coaching_enrichment",
+        "audio_cleanup",
     }
 )
 _PROCESSING_DIAGNOSTIC_STATES = frozenset(
     {
+        "not_started",
         "pending",
         "running",
         "completed",
@@ -432,12 +426,10 @@ def _validate_processing_diagnostics(
                 if not isinstance(value, dict):
                     raise invalid
                 pending.append(value)
-            elif key in {"reason", "reason_code"}:
-                reason_count += 1
+            elif key in {"code", "error", "error_code", "reason", "reason_code"}:
+                if key in {"reason", "reason_code"}:
+                    reason_count += 1
                 if value not in _PROCESSING_REASON_CODES:
-                    raise invalid
-            elif key == "code":
-                if value not in _PROCESSING_DIAGNOSTIC_CODES:
                     raise invalid
             elif key == "reason_codes":
                 if not isinstance(value, list) or any(
@@ -470,10 +462,7 @@ def _validate_event_envelope(*, session_id: object, event: SessionEventInput) ->
             or _SAFE_EVENT_ID.fullmatch(value) is None
         ):
             return False
-        folded = value.casefold()
-        return not any(
-            fragment in folded for fragment in _FORBIDDEN_ENVELOPE_ID_FRAGMENTS
-        )
+        return True
 
     if not valid_id(session_id, maximum=36):
         raise invalid
@@ -499,7 +488,10 @@ def _validate_event_envelope(*, session_id: object, event: SessionEventInput) ->
         raise invalid
     if not valid_id(event.recording_id, maximum=36, optional=True):
         raise invalid
-    if not valid_id(event.command_id, maximum=64, optional=True):
+    if event.command_id is not None and (
+        not isinstance(event.command_id, str)
+        or SAFE_TOKEN_RE.fullmatch(event.command_id) is None
+    ):
         raise invalid
 
 
@@ -843,7 +835,6 @@ class ConversationalSessionRepository:
                         conversation_state="listening",
                         active_recording_id=attempt.id,
                         state_version=InterviewSession.state_version + 1,
-                        activity_version=InterviewSession.activity_version + 1,
                         last_activity_at=datetime.utcnow(),
                     )
                 )
