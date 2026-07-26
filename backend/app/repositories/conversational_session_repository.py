@@ -20,6 +20,7 @@ from sqlalchemy import and_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..models.coach_session import (
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
@@ -31,6 +32,7 @@ from ..models.coach_session import (
     SessionRecording,
 )
 from ..schemas.coach_conversation import ConversationCommandRequest
+from ..services.coach_conversational_contracts import ERROR_REGISTRY
 
 
 class ConversationalRepositoryError(RuntimeError):
@@ -163,6 +165,7 @@ _EVENT_ENUM_KEYS = frozenset(
     {
         "reason",
         "reason_code",
+        "code",
         "error",
         "error_code",
         "contract",
@@ -201,6 +204,115 @@ _SAFE_EVENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 _EVENT_PAYLOAD_MAX_DEPTH = 4
 _EVENT_PAYLOAD_MAX_ITEMS = 64
 _EVENT_PAYLOAD_MAX_BYTES = 1024
+_EVENT_ACTORS = frozenset({"candidate", "system", "worker", "reconciler", "migration"})
+_CONVERSATION_STATES = frozenset(
+    {
+        "planning",
+        "ready",
+        "asking",
+        "listening",
+        "processing_answer",
+        "awaiting_next_action",
+        "coaching",
+        "asking_follow_up",
+        "advancing",
+        "paused",
+        "reporting",
+        "completed",
+        "recoverable_error",
+        "abandoned",
+        "failed",
+    }
+)
+_CONVERSATIONAL_EVENT_TYPES = frozenset(
+    {
+        "session_plan_started",
+        "session_plan_completed",
+        "session_plan_failed",
+        "session_plan_retry_requested",
+        "session_plan_rebuild_requested",
+        "session_plan_rebuilt",
+        "session_plan_claim_expired",
+        "session_started",
+        "question_presented",
+        "answer_capture_started",
+        "silence_warning_presented",
+        "keep_speaking_selected",
+        "hint_requested",
+        "hint_presented",
+        "answer_capture_paused",
+        "answer_capture_resumed",
+        "answer_capture_cancelled",
+        "answer_submitted",
+        "attempt_processing_started",
+        "attempt_processing_retry_requested",
+        "attempt_processing_completed",
+        "attempt_processing_failed",
+        "transcript_edited",
+        "coaching_requested",
+        "coaching_presented",
+        "attempt_retried",
+        "attempt_accepted",
+        "unaccepted_attempts_excluded",
+        "follow_up_suppressed_session_end",
+        "self_assessment_recorded",
+        "retention_policy_updated",
+        "question_skipped",
+        "follow_up_created",
+        "follow_up_presented",
+        "question_advanced",
+        "session_paused",
+        "session_resumed",
+        "report_claimed",
+        "report_completed",
+        "report_fallback_completed",
+        "report_rebuild_claimed",
+        "report_rebuild_completed",
+        "report_rebuild_failed",
+        "audio_cleanup_claimed",
+        "audio_deleted",
+        "audio_delete_failed",
+        "transcript_deleted",
+        "hard_deletion_requested",
+        "hard_deletion_failed",
+        "hard_deletion_claim_expired",
+        "session_abandoned",
+    }
+)
+_FORBIDDEN_ENVELOPE_ID_FRAGMENTS = (
+    "api_key",
+    "content",
+    "evidence",
+    "path",
+    "secret",
+    "transcript",
+)
+_PROCESSING_REASON_CODES = frozenset(ERROR_REGISTRY) | frozenset(
+    {"transcription_unavailable", "invalid_audio"}
+)
+_PROCESSING_DIAGNOSTIC_CODES = _PROCESSING_REASON_CODES | frozenset({"ok"})
+_PROCESSING_STAGES = frozenset(
+    {
+        "transcription",
+        "speech_analysis",
+        "content_evaluation",
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+    }
+)
+_PROCESSING_DIAGNOSTIC_STATES = frozenset(
+    {
+        "pending",
+        "running",
+        "completed",
+        "reused",
+        "not_applicable",
+        "unavailable",
+        "failed_retryable",
+        "failed_terminal",
+    }
+)
 
 
 def _validate_event_payload(value: object) -> None:
@@ -210,19 +322,6 @@ def _validate_event_payload(value: object) -> None:
         return
     if not isinstance(value, dict):
         raise invalid
-    try:
-        encoded = json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as error:
-        raise invalid from error
-    if len(encoded) > _EVENT_PAYLOAD_MAX_BYTES:
-        raise invalid
-
     budget = [0]
     for nested_key, nested in value.items():
         if not isinstance(nested_key, str):
@@ -234,6 +333,18 @@ def _validate_event_payload(value: object) -> None:
             budget=budget,
             invalid=invalid,
         )
+    try:
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, RecursionError) as error:
+        raise invalid from error
+    if len(encoded) > _EVENT_PAYLOAD_MAX_BYTES:
+        raise invalid
 
 
 def _validate_event_payload_value(
@@ -299,6 +410,99 @@ def _validate_event_payload_value(
     raise invalid
 
 
+def _validate_processing_diagnostics(
+    diagnostics: object, *, evaluation_state: str
+) -> None:
+    invalid = ValueError(
+        "processing diagnostics must be canonical, content-free and bounded"
+    )
+    try:
+        _validate_event_payload(diagnostics)
+    except (TypeError, ValueError, RecursionError) as error:
+        raise invalid from error
+    if not isinstance(diagnostics, dict):
+        raise invalid
+
+    reason_count = 0
+    pending: list[dict[str, object]] = [diagnostics]
+    while pending:
+        current = pending.pop()
+        for key, value in current.items():
+            if key == "diagnostics":
+                if not isinstance(value, dict):
+                    raise invalid
+                pending.append(value)
+            elif key in {"reason", "reason_code"}:
+                reason_count += 1
+                if value not in _PROCESSING_REASON_CODES:
+                    raise invalid
+            elif key == "code":
+                if value not in _PROCESSING_DIAGNOSTIC_CODES:
+                    raise invalid
+            elif key == "reason_codes":
+                if not isinstance(value, list) or any(
+                    code not in _PROCESSING_REASON_CODES for code in value
+                ):
+                    raise invalid
+            elif key == "stage":
+                if value not in _PROCESSING_STAGES:
+                    raise invalid
+            elif key == "stages":
+                if not isinstance(value, list) or any(
+                    stage not in _PROCESSING_STAGES for stage in value
+                ):
+                    raise invalid
+            elif key == "state" and value not in _PROCESSING_DIAGNOSTIC_STATES:
+                raise invalid
+    if evaluation_state == "unavailable" and reason_count != 1:
+        raise invalid
+
+
+def _validate_event_envelope(*, session_id: object, event: SessionEventInput) -> None:
+    invalid = ValueError("event envelope is invalid")
+
+    def valid_id(value: object, *, maximum: int, optional: bool = False) -> bool:
+        if value is None:
+            return optional
+        if (
+            not isinstance(value, str)
+            or len(value) > maximum
+            or _SAFE_EVENT_ID.fullmatch(value) is None
+        ):
+            return False
+        folded = value.casefold()
+        return not any(
+            fragment in folded for fragment in _FORBIDDEN_ENVELOPE_ID_FRAGMENTS
+        )
+
+    if not valid_id(session_id, maximum=36):
+        raise invalid
+    if not isinstance(event.event_type, str) or event.event_type not in (
+        _CONVERSATIONAL_EVENT_TYPES
+    ):
+        raise invalid
+    if not isinstance(event.actor_type, str) or event.actor_type not in _EVENT_ACTORS:
+        raise invalid
+    if isinstance(event.state_version, bool) or not isinstance(
+        event.state_version, int
+    ):
+        raise invalid
+    if not 0 <= event.state_version <= 1_000_000_000:
+        raise invalid
+    if any(
+        state is not None
+        and (not isinstance(state, str) or state not in _CONVERSATION_STATES)
+        for state in (event.state_before, event.state_after)
+    ):
+        raise invalid
+    if not valid_id(event.question_id, maximum=36, optional=True):
+        raise invalid
+    if not valid_id(event.recording_id, maximum=36, optional=True):
+        raise invalid
+    if not valid_id(event.command_id, maximum=64, optional=True):
+        raise invalid
+
+
 class _StaleFinalisation(Exception):
     pass
 
@@ -306,8 +510,23 @@ class _StaleFinalisation(Exception):
 class ConversationalSessionRepository:
     """SQLite-safe conditional transaction primitives for Coach Phase 1."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        max_transcript_characters: int | None = None,
+    ) -> None:
         self._session = session
+        configured_limit = (
+            settings.HATCH_COACH_MAX_TRANSCRIPT_CHARACTERS
+            if max_transcript_characters is None
+            else max_transcript_characters
+        )
+        if isinstance(configured_limit, bool) or not isinstance(configured_limit, int):
+            raise ValueError("transcript code-point limit must be a positive integer")
+        if configured_limit < 1:
+            raise ValueError("transcript code-point limit must be a positive integer")
+        self._max_transcript_characters = configured_limit
 
     async def get_command_result(
         self, *, session_id: str, command_id: str
@@ -455,6 +674,7 @@ class ConversationalSessionRepository:
         if not events:
             return ()
         for event in events:
+            _validate_event_envelope(session_id=session_id, event=event)
             _validate_event_payload(event.payload_json)
 
         allocation = await self._session.execute(
@@ -551,6 +771,22 @@ class ConversationalSessionRepository:
         pending_hint_count = question.pending_hint_count
         pending_hint_types = tuple(question.pending_hint_types_json or ())
         try:
+            transaction_lock = await self._session.execute(
+                update(InterviewSession)
+                .where(
+                    InterviewSession.id == session_id,
+                    InterviewSession.experience_version == "conversational_v1",
+                    InterviewSession.status == "active",
+                    InterviewSession.conversation_state == "asking",
+                    InterviewSession.active_question_id == question_id,
+                    InterviewSession.active_recording_id.is_(None),
+                    InterviewSession.state_version == expected_state_version,
+                    InterviewSession.deletion_state == "not_requested",
+                )
+                .values(state_version=InterviewSession.state_version)
+            )
+            if transaction_lock.rowcount != 1:
+                raise _StaleFinalisation
             async with self._session.begin_nested():
                 counter = await self._session.execute(
                     update(SessionQuestion)
@@ -607,6 +843,7 @@ class ConversationalSessionRepository:
                         conversation_state="listening",
                         active_recording_id=attempt.id,
                         state_version=InterviewSession.state_version + 1,
+                        activity_version=InterviewSession.activity_version + 1,
                         last_activity_at=datetime.utcnow(),
                     )
                 )
@@ -638,6 +875,8 @@ class ConversationalSessionRepository:
         )
         if not normalised:
             raise ValueError("transcript must not be empty")
+        if len(normalised) > self._max_transcript_characters:
+            raise ValueError("transcript exceeds configured code-point limit")
         attempt = await self._session.get(SessionRecording, recording_id)
         if (
             attempt is None
@@ -733,6 +972,8 @@ class ConversationalSessionRepository:
         )
         if not normalised:
             raise ValueError("transcript must not be empty")
+        if len(normalised) > self._max_transcript_characters:
+            raise ValueError("transcript exceeds configured code-point limit")
         attempt = await self._session.scalar(
             select(SessionRecording).where(
                 SessionRecording.id == recording_id,
@@ -1032,6 +1273,9 @@ class ConversationalSessionRepository:
     async def finalise_attempt_processing(
         self, *, claim: AttemptProcessingClaim, result: AttemptProcessingResult
     ) -> bool:
+        _validate_processing_diagnostics(
+            result.diagnostics, evaluation_state=result.evaluation_state
+        )
         claim_snapshot = {
             "processing_generation": claim.processing_generation,
             "job_deadline_at": claim.deadline_at.isoformat(),
