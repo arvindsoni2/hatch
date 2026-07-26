@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    GetJsonSchemaHandler,
+    TypeAdapter,
+    create_model,
+    field_validator,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 from typing_extensions import Self
 
 from ..services.coach_contracts import CoachDiagnostic
@@ -87,6 +98,19 @@ class CreateSessionRequest(BaseModel):
     experience_version: Literal["legacy_v1", "conversational_v1"] = "legacy_v1"
     conversational_config: ConversationalConfig | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def forbid_conversational_top_level_extensions(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if value.get("experience_version") != "conversational_v1":
+            return value
+        unknown_fields = set(value) - set(cls.model_fields)
+        if unknown_fields:
+            names = ", ".join(sorted(str(field) for field in unknown_fields))
+            raise ValueError(f"conversational_v1 rejects unknown fields: {names}")
+        return value
+
     @field_validator("company_name", "role_title")
     @classmethod
     def normalize_identity_text(cls, value: str, info) -> str:
@@ -135,6 +159,45 @@ class CreateSessionRequest(BaseModel):
                 "jd_text is required when no linked application is supplied"
             )
         return self
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        return handler(_CREATE_SESSION_REQUEST_SCHEMA.core_schema)
+
+
+_CREATE_SESSION_COMMON_FIELDS: dict[str, tuple[Any, Any]] = {
+    "application_id": (str | None, None),
+    "company_name": (str, ...),
+    "role_title": (str, ...),
+    "jd_text": (str | None, None),
+    "interview_date": (str | None, None),
+    "config": (SessionConfig, Field(default_factory=SessionConfig)),
+}
+
+LegacyCreateSessionRequest = create_model(
+    "LegacyCreateSessionRequest",
+    __config__=ConfigDict(
+        extra="allow",
+        json_schema_extra={"not": {"required": ["conversational_config"]}},
+    ),
+    **_CREATE_SESSION_COMMON_FIELDS,
+    experience_version=(Literal["legacy_v1"], "legacy_v1"),
+)
+ConversationalCreateSessionRequest = create_model(
+    "ConversationalCreateSessionRequest",
+    __config__=ConfigDict(extra="forbid"),
+    **_CREATE_SESSION_COMMON_FIELDS,
+    experience_version=(Literal["conversational_v1"], ...),
+    conversational_config=(ConversationalConfig, ...),
+)
+_CREATE_SESSION_REQUEST_SCHEMA = TypeAdapter(
+    Annotated[
+        LegacyCreateSessionRequest | ConversationalCreateSessionRequest,
+        Field(discriminator="experience_version"),
+    ]
+)
 
 
 # ---------------------------------------------------------------------------

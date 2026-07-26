@@ -5,16 +5,21 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, Union
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
     StringConstraints,
+    TypeAdapter,
+    create_model,
     field_validator,
     model_validator,
 )
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 from typing_extensions import Self
 
 from ..services.coach_conversational_contracts import (
@@ -456,6 +461,29 @@ COMMAND_PAYLOAD_TYPES: dict[str, type[StrictContractModel]] = {
     "delete_transcript": DeleteTranscriptPayload,
 }
 
+COMMAND_ENVELOPE_TYPES: dict[str, type[StrictContractModel]] = {}
+for _command_type, _payload_type in COMMAND_PAYLOAD_TYPES.items():
+    _envelope_name = f"{_payload_type.__name__.removesuffix('Payload')}CommandEnvelope"
+    _envelope_type = create_model(
+        _envelope_name,
+        __base__=StrictContractModel,
+        __module__=__name__,
+        command_id=(SafeToken, ...),
+        command_type=(Literal[_command_type], ...),
+        expected_state_version=(NonNegativeInt, ...),
+        payload=(_payload_type, ...),
+        contract_version=(Literal[CONVERSATION_COMMAND_CONTRACT], ...),
+    )
+    COMMAND_ENVELOPE_TYPES[_command_type] = _envelope_type
+    globals()[_envelope_name] = _envelope_type
+
+_COMMAND_ENVELOPE_SCHEMA = TypeAdapter(
+    Annotated[
+        Union[tuple(COMMAND_ENVELOPE_TYPES.values())],  # type: ignore[valid-type]
+        Field(discriminator="command_type"),
+    ]
+)
+
 
 class ConversationCommandRequest(StrictContractModel):
     command_id: SafeToken
@@ -478,6 +506,12 @@ class ConversationCommandRequest(StrictContractModel):
         dispatched = dict(value)
         dispatched["payload"] = payload_type.model_validate(value.get("payload"))
         return dispatched
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        return handler(_COMMAND_ENVELOPE_SCHEMA.core_schema)
 
 
 ConversationCommandResultState = Literal[
@@ -825,13 +859,22 @@ class RegisteredErrorMetadata(StrictContractModel):
         return value
 
 
+class EmptyErrorDetails(StrictContractModel):
+    """Public PR1 errors intentionally expose no free-form diagnostic content."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        allow_inf_nan=False,
+        json_schema_extra={"maxProperties": 0},
+    )
+
+
 class RecoverableErrorProjection(RegisteredErrorMetadata):
     scope: Literal[
         "setup", "attempt_processing", "initial_report", "completed_report_rebuild"
     ]
-    details: Annotated[dict[str, str | int | bool | None], Field(max_length=20)] = (
-        Field(default_factory=dict)
-    )
+    details: EmptyErrorDetails = Field(default_factory=EmptyErrorDetails)
 
 
 class ConversationLiveView(StrictContractModel):
@@ -874,9 +917,7 @@ class ConversationError(RegisteredErrorMetadata):
     current_state: ConversationState | None = None
     current_state_version: NonNegativeInt | None = None
     correlation_id: SafeToken
-    details: Annotated[dict[str, str | int | bool | None], Field(max_length=20)] = (
-        Field(default_factory=dict)
-    )
+    details: EmptyErrorDetails = Field(default_factory=EmptyErrorDetails)
 
 
 class ConversationErrorResponse(StrictContractModel):

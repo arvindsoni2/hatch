@@ -50,6 +50,13 @@ from app.services.coach_conversational_contracts import ERROR_REGISTRY
 COMMAND_CONTRACT = "coach_conversation_command_v1"
 
 
+def resolve_local_schema_ref(schema: dict, candidate: dict) -> dict:
+    reference = candidate.get("$ref")
+    if reference is None:
+        return candidate
+    return schema["$defs"][reference.rsplit("/", 1)[-1]]
+
+
 def command(command_type: str, payload: dict | None = None) -> dict:
     return {
         "command_id": "01JEXAMPLE0000000000000000",
@@ -133,6 +140,24 @@ def test_all_23_commands_dispatch_to_a_strict_typed_payload(
         )
 
 
+def test_command_wrapper_preserves_constructor_dump_and_hash_input_semantics() -> None:
+    payload = command("retry_answer", {"question_id": None})
+
+    validated = ConversationCommandRequest.model_validate(payload)
+    constructed = ConversationCommandRequest(**payload)
+    canonical_options = {
+        "mode": "json",
+        "exclude_unset": False,
+        "exclude_none": False,
+    }
+
+    assert validated.command_type == "retry_answer"
+    assert constructed.payload.question_id is None
+    assert validated.model_dump(**canonical_options) == constructed.model_dump(
+        **canonical_options
+    )
+
+
 def test_command_envelope_forbids_extra_fields_and_mismatched_payloads() -> None:
     with pytest.raises(ValidationError):
         ConversationCommandRequest.model_validate({**command("start"), "unknown": True})
@@ -140,6 +165,64 @@ def test_command_envelope_forbids_extra_fields_and_mismatched_payloads() -> None
         ConversationCommandRequest.model_validate(
             command("accept_attempt", {"hint_type": "star_structure"})
         )
+
+
+def test_command_json_schema_discriminates_all_envelope_branches() -> None:
+    schema = ConversationCommandRequest.model_json_schema()
+    discriminator = schema["discriminator"]
+
+    assert discriminator["propertyName"] == "command_type"
+    assert set(discriminator["mapping"]) == {
+        command_type for command_type, _, _ in COMMAND_CASES
+    }
+    assert len(schema["oneOf"]) == 23
+
+    resolved_branches = [
+        resolve_local_schema_ref(schema, candidate) for candidate in schema["oneOf"]
+    ]
+    branches = {
+        branch["properties"]["command_type"]["const"]: branch
+        for branch in resolved_branches
+    }
+    for command_type, _, payload_type in COMMAND_CASES:
+        branch = branches[command_type]
+        mapped_branch = resolve_local_schema_ref(
+            schema, {"$ref": discriminator["mapping"][command_type]}
+        )
+        assert mapped_branch == branch
+        assert branch["additionalProperties"] is False
+        assert set(branch["required"]) == {
+            "command_id",
+            "command_type",
+            "expected_state_version",
+            "payload",
+            "contract_version",
+        }
+        assert branch["properties"]["payload"] == {
+            "$ref": f"#/$defs/{payload_type.__name__}"
+        }
+
+
+def test_command_openapi_preserves_envelope_discriminator() -> None:
+    from fastapi import FastAPI
+
+    test_app = FastAPI()
+
+    @test_app.post("/commands")
+    async def submit_command(
+        request: ConversationCommandRequest,
+    ) -> ConversationCommandRequest:
+        return request
+
+    schema = test_app.openapi()["components"]["schemas"]["ConversationCommandRequest"]
+
+    assert schema["discriminator"]["propertyName"] == "command_type"
+    assert len(schema["discriminator"]["mapping"]) == 23
+    assert all(
+        reference.startswith("#/components/schemas/")
+        for reference in schema["discriminator"]["mapping"].values()
+    )
+    assert len(schema["oneOf"]) == 23
 
 
 def test_malformed_command_discriminator_returns_validation_error() -> None:
@@ -407,6 +490,46 @@ def test_error_response_accepts_only_the_central_safe_error_registry() -> None:
                 }
             }
         )
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"traceback": "Traceback: /srv/app/secrets.py"},
+        {"path": "/home/user/private.env"},
+        {"secret": "token-value"},
+        {"message": "x" * 100_000},
+        {f"key_{index}": index for index in range(100)},
+        {"nested": {"authorization": "Bearer secret"}},
+    ],
+    ids=["stack", "path", "secret", "unbounded-string", "large-map", "nested"],
+)
+def test_public_error_details_reject_all_content(details: dict) -> None:
+    error = {
+        "code": "coach_conversation_invalid_state",
+        "correlation_id": "correlation_1",
+        "details": details,
+    }
+
+    with pytest.raises(ValidationError):
+        ConversationErrorResponse.model_validate({"error": error})
+    with pytest.raises(ValidationError):
+        RecoverableErrorProjection.model_validate(
+            {
+                "code": "coach_conversation_invalid_state",
+                "scope": "attempt_processing",
+                "details": details,
+            }
+        )
+
+
+def test_public_error_details_schema_is_content_free_and_bounded() -> None:
+    schema = ConversationErrorResponse.model_json_schema()
+    details_schema = schema["$defs"]["EmptyErrorDetails"]
+
+    assert details_schema["additionalProperties"] is False
+    assert details_schema["maxProperties"] == 0
+    assert details_schema["properties"] == {}
 
 
 @pytest.mark.parametrize("coerced", ["1", 1.0, True])

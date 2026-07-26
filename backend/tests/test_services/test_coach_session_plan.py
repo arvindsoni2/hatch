@@ -50,12 +50,90 @@ VALID_CONVERSATIONAL_REQUEST = {
 }
 
 
+def resolve_local_schema_ref(schema: dict, candidate: dict) -> dict:
+    reference = candidate.get("$ref")
+    if reference is None:
+        return candidate
+    return schema["$defs"][reference.rsplit("/", 1)[-1]]
+
+
 def test_omitted_experience_preserves_legacy_request() -> None:
     request = CreateSessionRequest(company_name="Example", role_title="Architect")
 
     assert request.experience_version == "legacy_v1"
     assert request.conversational_config is None
     assert request.config.question_count == 10
+
+
+def test_creation_extra_field_policy_dispatches_by_experience() -> None:
+    explicit_legacy = {
+        "company_name": "Example",
+        "role_title": "Architect",
+        "experience_version": "legacy_v1",
+        "legacy_extension": {"preserved_by_legacy_client": True},
+    }
+    omitted_legacy = {
+        "company_name": "Example",
+        "role_title": "Architect",
+        "legacy_extension": "accepted",
+    }
+    conversational = copy.deepcopy(VALID_CONVERSATIONAL_REQUEST)
+    conversational["unknown_top_level"] = "must not be ignored"
+
+    assert CreateSessionRequest.model_validate(explicit_legacy).experience_version == (
+        "legacy_v1"
+    )
+    assert CreateSessionRequest.model_validate(omitted_legacy).experience_version == (
+        "legacy_v1"
+    )
+    with pytest.raises(ValidationError, match="unknown_top_level"):
+        CreateSessionRequest.model_validate(conversational)
+
+
+def test_creation_json_schema_publishes_correlated_experience_branches() -> None:
+    schema = CreateSessionRequest.model_json_schema()
+
+    assert schema["discriminator"]["propertyName"] == "experience_version"
+    assert set(schema["discriminator"]["mapping"]) == {
+        "legacy_v1",
+        "conversational_v1",
+    }
+    assert len(schema["oneOf"]) == 2
+    resolved_branches = [
+        resolve_local_schema_ref(schema, candidate) for candidate in schema["oneOf"]
+    ]
+    branches = {
+        branch["properties"]["experience_version"]["const"]: branch
+        for branch in resolved_branches
+    }
+    legacy = branches["legacy_v1"]
+    conversational = branches["conversational_v1"]
+
+    assert legacy["additionalProperties"] is True
+    assert legacy["not"] == {"required": ["conversational_config"]}
+    assert "experience_version" not in legacy["required"]
+    assert conversational["additionalProperties"] is False
+    assert {"experience_version", "conversational_config"} <= set(
+        conversational["required"]
+    )
+    assert conversational["properties"]["conversational_config"] == {
+        "$ref": "#/$defs/ConversationalConfig"
+    }
+    for experience_version, reference in schema["discriminator"]["mapping"].items():
+        mapped_branch = resolve_local_schema_ref(schema, {"$ref": reference})
+        assert (
+            mapped_branch["properties"]["experience_version"]["const"]
+            == experience_version
+        )
+
+
+def test_creation_openapi_preserves_correlated_experience_schema() -> None:
+    from app.main import app
+
+    schema = app.openapi()["components"]["schemas"]["CreateSessionRequest"]
+
+    assert schema["discriminator"]["propertyName"] == "experience_version"
+    assert len(schema["oneOf"]) == 2
 
 
 def test_conversational_request_normalizes_bounded_text_and_locale() -> None:
