@@ -1144,6 +1144,134 @@ def test_float_whitespace_snapshot_matches_direct_and_whole_resolver_authority(
 
 
 @pytest.mark.parametrize(
+    "path",
+    INTEGER_COERCION_FIELDS,
+    ids=[".".join(path) for path in INTEGER_COERCION_FIELDS],
+)
+def test_integer_whitespace_snapshot_matches_authority_for_every_integer_path(
+    path: tuple[str, ...],
+) -> None:
+    from pydantic import TypeAdapter, ValidationError
+
+    from app.services.coach_aggregation import _parse_completed
+
+    module = _load_migration_module()
+    adapter = TypeAdapter(int)
+    diagnostic = {
+        "stage": "answer_evaluation",
+        "outcome": "completed",
+        "execution_mode": "deterministic",
+        "attempt_count": 0,
+        "repair_count": 0,
+        "gate_codes": [],
+        "duration_ms": 0,
+    }
+    payload = {
+        "evaluation_state": "completed",
+        "scores": {
+            "relevance": 8,
+            "star_structure": 7,
+            "technical_depth": 9,
+            "conciseness": 6,
+            "communication": 8,
+            "impact_metrics": 7,
+        },
+        "overall": 7.5,
+        "diagnostic": diagnostic.copy(),
+        "rubric": {
+            "dimensions": {"relevance": {"score": 8}},
+            "diagnostic": diagnostic.copy(),
+        },
+        "retryable": False,
+    }
+    target = payload
+    for segment in path[:-1]:
+        target = target[segment]  # type: ignore[assignment,index]
+    mismatches: list[str] = []
+    for codepoint, placement in FLOAT_WHITESPACE_CASES:
+        boundary = chr(codepoint)
+        value = {
+            "prefix": f"{boundary}1",
+            "suffix": f"1{boundary}",
+            "both": f"{boundary}1{boundary}",
+        }[placement]
+        expected = codepoint in RUST_TRIM_WHITESPACE_CODEPOINTS
+        try:
+            authoritative_number = adapter.validate_python(value)
+        except ValidationError:
+            authoritative_number = None
+        migration_number = module._coerce_pydantic_integer(value)
+        target[path[-1]] = value  # type: ignore[index]
+        evaluation_json = json.dumps(payload, separators=(",", ":"))
+        recording = SimpleNamespace(
+            id="recording",
+            question_id="question",
+            evaluation_state="completed",
+            evaluation_json=evaluation_json,
+            created_at=datetime(2026, 7, 1),
+        )
+        authoritative_valid = _parse_completed(recording) is not None
+        migration_valid = module._is_valid_legacy_completed_evaluation(
+            recording.evaluation_state, recording.evaluation_json
+        )
+        if not (
+            (authoritative_number is not None) is expected
+            and migration_number == authoritative_number
+            and authoritative_valid is expected
+            and migration_valid is authoritative_valid
+        ):
+            mismatches.append(f"U+{codepoint:04X}-{placement}")
+
+    assert mismatches == []
+
+
+def test_boolean_aliases_remain_untrimmed_across_whitespace_family() -> None:
+    from pydantic import TypeAdapter, ValidationError
+
+    from app.services.coach_aggregation import _parse_completed
+
+    module = _load_migration_module()
+    adapter = TypeAdapter(bool)
+    payload = json.loads(CANONICAL_COMPLETED_EVALUATION_JSON)
+    mismatches: list[str] = []
+    for alias in ("1", "true", "t", "yes"):
+        for codepoint, placement in FLOAT_WHITESPACE_CASES:
+            boundary = chr(codepoint)
+            value = {
+                "prefix": f"{boundary}{alias}",
+                "suffix": f"{alias}{boundary}",
+                "both": f"{boundary}{alias}{boundary}",
+            }[placement]
+            try:
+                adapter.validate_python(value)
+                authoritative_boolean = True
+            except ValidationError:
+                authoritative_boolean = False
+            payload["retryable"] = value
+            evaluation_json = json.dumps(payload, separators=(",", ":"))
+            recording = SimpleNamespace(
+                id="recording",
+                question_id="question",
+                evaluation_state="completed",
+                evaluation_json=evaluation_json,
+                created_at=datetime(2026, 7, 1),
+            )
+            authoritative_valid = _parse_completed(recording) is not None
+            migration_valid = module._is_valid_legacy_completed_evaluation(
+                recording.evaluation_state, recording.evaluation_json
+            )
+            if (
+                authoritative_boolean
+                or module._is_pydantic_boolean(value)
+                or authoritative_valid
+                or migration_valid
+            ):
+                mismatches.append(f"{alias}-U+{codepoint:04X}-{placement}")
+
+    assert mismatches == []
+
+
+@pytest.mark.parametrize(
     ("table", "backfill_marker"),
     [
         ("session_questions", "UPDATE session_questions AS question"),

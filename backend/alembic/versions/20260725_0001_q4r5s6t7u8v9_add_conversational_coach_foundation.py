@@ -121,6 +121,10 @@ _RUST_CHAR_WHITESPACE = (
 )
 
 
+def _trim_rust_whitespace(value: str) -> str:
+    return value.strip(_RUST_CHAR_WHITESPACE)
+
+
 def _coerce_pydantic_integer(value: object) -> int | None:
     """Mirror Pydantic v2 lax integers for JSON-native persisted values."""
     if isinstance(value, int):
@@ -128,7 +132,7 @@ def _coerce_pydantic_integer(value: object) -> int | None:
     if isinstance(value, float):
         return int(value) if math.isfinite(value) and value.is_integer() else None
     if isinstance(value, str):
-        normalized = value.strip()
+        normalized = _trim_rust_whitespace(value)
         if _PYDANTIC_INTEGER_STRING.fullmatch(normalized):
             integer_part = normalized.partition(".")[0].replace("_", "")
         else:
@@ -273,7 +277,7 @@ def _is_valid_rubric(value: object) -> bool:
 
 def _parse_pydantic_float_string(value: str) -> float | None:
     """Snapshot pydantic-core 2.46.4 str_as_float for persisted JSON strings."""
-    normalized = value.strip(_RUST_CHAR_WHITESPACE)
+    normalized = _trim_rust_whitespace(value)
     if _PYDANTIC_FLOAT_STRING.fullmatch(normalized):
         return float(normalized)
     if (
