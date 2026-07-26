@@ -37,6 +37,9 @@ LOCALE_RE = re.compile(
     r"^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?(?:-(?:[A-Za-z]{2}|[0-9]{3}))?$"
 )
 INDUSTRY_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
+RFC3339_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 SafeToken: TypeAlias = Annotated[
     str,
@@ -978,3 +981,25 @@ class ConversationalSessionPlan(StrictContractModel):
     retention: RetentionPolicy
     compatibility: PlanCompatibility
     created_at: datetime
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def parse_canonical_created_at(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        if not RFC3339_DATETIME_RE.fullmatch(value) or value.endswith("-00:00"):
+            raise ValueError("created_at must be a canonical RFC3339 datetime")
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("created_at must be a valid RFC3339 datetime") from exc
+
+    @field_validator("created_at")
+    @classmethod
+    def require_timezone_aware_created_at(cls, value: datetime) -> datetime:
+        offset = value.utcoffset() if value.tzinfo is not None else None
+        if offset is None:
+            raise ValueError("created_at must include a timezone offset")
+        if offset.total_seconds() % 60:
+            raise ValueError("created_at timezone offset must use whole minutes")
+        return value

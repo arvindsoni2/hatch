@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timezone
+import json
+from datetime import date, datetime, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -252,50 +253,52 @@ def test_creation_enforces_date_codepoint_and_numeric_bounds(
         CreateSessionRequest.model_validate(payload)
 
 
+def valid_session_plan_payload() -> dict:
+    return {
+        "plan_id": "plan_01",
+        "role": {
+            "title": "Senior Solution Architect",
+            "role_family": "solution_architecture",
+            "role_family_label": None,
+            "role_level": "senior",
+            "industry": "technology",
+        },
+        "interview": {
+            "type": "mixed",
+            "difficulty": "realistic",
+            "duration_minutes": 30,
+            "planned_question_count": 6,
+            "focus_areas": ["architecture"],
+            "locale": "en-GB",
+            "allowed_answer_modes": ["audio", "text"],
+        },
+        "evidence_selection": VALID_CONVERSATIONAL_REQUEST["conversational_config"][
+            "evidence_selection"
+        ],
+        "evidence_snapshot": {
+            "package_hash": "sha256:" + "a" * 64,
+            "record_count": 12,
+            "contract_version": "coach_session_evidence_snapshot_v1",
+        },
+        "contracts": {
+            "question_generation": "coach_question_generation_v2",
+            "evaluation": "coach_conversational_rubric_v1",
+            "delivery": "coach_delivery_policy_v1",
+            "evidence_grounding": "coach_evidence_grounding_v1",
+            "follow_up": "coach_follow_up_v1",
+            "report": "coach_conversational_report_v1",
+        },
+        "retention": {"audio": "delete_after_processing", "transcript": "retain"},
+        "compatibility": {
+            "key": "compatibility_01",
+            "version": "coach_progress_compatibility_v1",
+        },
+        "created_at": "2026-08-05T12:00:00Z",
+    }
+
+
 def test_session_plan_exposes_source_selection_retention_and_contracts() -> None:
-    plan = ConversationalSessionPlan.model_validate(
-        {
-            "plan_id": "plan_01",
-            "role": {
-                "title": "Senior Solution Architect",
-                "role_family": "solution_architecture",
-                "role_family_label": None,
-                "role_level": "senior",
-                "industry": "technology",
-            },
-            "interview": {
-                "type": "mixed",
-                "difficulty": "realistic",
-                "duration_minutes": 30,
-                "planned_question_count": 6,
-                "focus_areas": ["architecture"],
-                "locale": "en-GB",
-                "allowed_answer_modes": ["audio", "text"],
-            },
-            "evidence_selection": VALID_CONVERSATIONAL_REQUEST["conversational_config"][
-                "evidence_selection"
-            ],
-            "evidence_snapshot": {
-                "package_hash": "sha256:" + "a" * 64,
-                "record_count": 12,
-                "contract_version": "coach_session_evidence_snapshot_v1",
-            },
-            "contracts": {
-                "question_generation": "coach_question_generation_v2",
-                "evaluation": "coach_conversational_rubric_v1",
-                "delivery": "coach_delivery_policy_v1",
-                "evidence_grounding": "coach_evidence_grounding_v1",
-                "follow_up": "coach_follow_up_v1",
-                "report": "coach_conversational_report_v1",
-            },
-            "retention": {"audio": "delete_after_processing", "transcript": "retain"},
-            "compatibility": {
-                "key": "compatibility_01",
-                "version": "coach_progress_compatibility_v1",
-            },
-            "created_at": datetime(2026, 8, 5, 12, tzinfo=timezone.utc),
-        }
-    )
+    plan = ConversationalSessionPlan.model_validate(valid_session_plan_payload())
 
     assert plan.contracts.delivery == "coach_delivery_policy_v1"
     assert plan.evidence_snapshot.record_count == 12
@@ -303,6 +306,94 @@ def test_session_plan_exposes_source_selection_retention_and_contracts() -> None
         ConversationalSessionPlan.model_validate(
             {**plan.model_dump(mode="json"), "unknown": "not allowed"}
         )
+
+
+def test_session_plan_accepts_created_at_from_loaded_json_and_direct_json() -> None:
+    serialized = json.dumps(valid_session_plan_payload())
+
+    loaded = ConversationalSessionPlan.model_validate(json.loads(serialized))
+    direct = ConversationalSessionPlan.model_validate_json(serialized)
+
+    assert loaded.created_at == datetime(2026, 8, 5, 12, tzinfo=timezone.utc)
+    assert direct.created_at == loaded.created_at
+
+
+def test_session_plan_json_dump_round_trips_created_at() -> None:
+    original = ConversationalSessionPlan.model_validate(valid_session_plan_payload())
+    dumped = original.model_dump(mode="json")
+    serialized = original.model_dump_json()
+    restored_from_dump = ConversationalSessionPlan.model_validate(dumped)
+    restored = ConversationalSessionPlan.model_validate_json(serialized)
+
+    assert restored_from_dump == original
+    assert restored == original
+    assert dumped["created_at"] == "2026-08-05T12:00:00Z"
+    assert json.loads(serialized)["created_at"] == "2026-08-05T12:00:00Z"
+
+
+@pytest.mark.parametrize(
+    "created_at",
+    [
+        "not-a-datetime",
+        "2026-08-05",
+        "2026-08-05 12:00:00Z",
+        "20260805T120000Z",
+        "2026-08-05T12:00:00z",
+        "2026-08-05T12:00:00.1234567Z",
+        "2026-02-30T12:00:00Z",
+        "2026-08-05T12:00:00+24:00",
+        "2026-08-05T12:00:00-00:00",
+        1_786_000_000,
+        1_786_000_000.0,
+        True,
+        date(2026, 8, 5),
+        datetime(2026, 8, 5, 12),
+    ],
+    ids=[
+        "malformed",
+        "date-only-string",
+        "space-separator",
+        "basic-iso",
+        "lowercase-zone",
+        "excess-fraction",
+        "invalid-calendar-date-time",
+        "invalid-zone-offset",
+        "unknown-local-offset",
+        "integer-timestamp",
+        "float-timestamp",
+        "boolean",
+        "date-object",
+        "naive-datetime",
+    ],
+)
+def test_session_plan_rejects_noncanonical_or_non_datetime_created_at(
+    created_at: object,
+) -> None:
+    payload = valid_session_plan_payload()
+    payload["created_at"] = created_at
+
+    with pytest.raises(ValidationError):
+        ConversationalSessionPlan.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "created_at",
+    [
+        "2026-08-05T12:00:00Z",
+        "2026-08-05T12:00:00.123456Z",
+        "2026-08-05T17:30:00+05:30",
+    ],
+)
+def test_session_plan_accepts_canonical_timezone_aware_created_at(
+    created_at: str,
+) -> None:
+    payload = valid_session_plan_payload()
+    payload["created_at"] = created_at
+
+    parsed = ConversationalSessionPlan.model_validate(payload)
+
+    assert parsed.created_at.tzinfo is not None
+    assert parsed.created_at.utcoffset() is not None
 
 
 def test_legacy_numeric_evaluation_and_report_fixtures_keep_their_meaning() -> None:
