@@ -279,7 +279,8 @@ _CONVERSATIONAL_EVENT_TYPES = frozenset(
         "session_abandoned",
     }
 )
-_PROCESSING_REASON_CODES = frozenset(ERROR_REGISTRY) | frozenset(
+_PROCESSING_ERROR_CODES = frozenset(ERROR_REGISTRY)
+_PROCESSING_REASON_CODES = _PROCESSING_ERROR_CODES | frozenset(
     {"transcription_unavailable", "invalid_audio"}
 )
 _PROCESSING_STAGES = frozenset(
@@ -426,9 +427,11 @@ def _validate_processing_diagnostics(
                 if not isinstance(value, dict):
                     raise invalid
                 pending.append(value)
-            elif key in {"code", "error", "error_code", "reason", "reason_code"}:
-                if key in {"reason", "reason_code"}:
-                    reason_count += 1
+            elif key in {"code", "error", "error_code"}:
+                if value not in _PROCESSING_ERROR_CODES:
+                    raise invalid
+            elif key in {"reason", "reason_code"}:
+                reason_count += 1
                 if value not in _PROCESSING_REASON_CODES:
                     raise invalid
             elif key == "reason_codes":

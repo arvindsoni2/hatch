@@ -928,6 +928,10 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
                     "diagnostics": {
                         "stages": ["audio_persist", "audio_cleanup"],
                         "state": "not_started",
+                        "reason_codes": [
+                            "transcription_unavailable",
+                            "invalid_audio",
+                        ],
                     }
                 },
             ),
@@ -1053,8 +1057,9 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reason_key", ("reason", "reason_code"))
 async def test_pretranscription_unavailable_finalisation_requires_exact_diagnostic(
-    repository_database,
+    repository_database, reason_key
 ) -> None:
     await _seed_session(repository_database)
     claim, _ = await _claim_attempt_for_finalisation(
@@ -1107,7 +1112,7 @@ async def test_pretranscription_unavailable_finalisation_requires_exact_diagnost
                 evaluation_state="unavailable",
                 evaluation_json={},
                 transcript_version_id=None,
-                diagnostics={"reason_code": "transcription_unavailable"},
+                diagnostics={reason_key: "transcription_unavailable"},
             ),
         )
         assert changed is True
@@ -1428,6 +1433,9 @@ async def test_processing_finalisation_supersedes_prior_current_evaluation(
         {"path": "/home/candidate/private"},
         {"secret": "api_key=secret-value"},
         {"code": "ok"},
+        {"code": "transcription_unavailable"},
+        {"error": "invalid_audio"},
+        {"error_code": "transcription_unavailable"},
         {"code": "safe_but_unknown"},
         {"error": "safe_but_unknown"},
         {"error_code": "safe_but_unknown"},
@@ -1467,6 +1475,9 @@ async def test_processing_finalisation_supersedes_prior_current_evaluation(
         "path",
         "secret",
         "noncanonical_ok",
+        "internal_reason_as_code",
+        "internal_reason_as_error",
+        "internal_reason_as_error_code",
         "unknown_code",
         "unknown_error",
         "unknown_error_code",
