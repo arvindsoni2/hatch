@@ -108,6 +108,12 @@ _PYDANTIC_INTEGER_STRING = re.compile(r"^[+-]?[0-9]+(?:_[0-9]+)*(?:\.0+)?$")
 _PYDANTIC_UNSIGNED_INTEGER_REMAINDER = re.compile(
     r"^(?:0|[1-9][0-9]*(?:_[0-9]+)*)(?:\.0+)?$"
 )
+_PYDANTIC_FLOAT_STRING = re.compile(
+    r"^[+-]?(?:"
+    r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+    r"|inf(?:inity)?|nan)$",
+    re.IGNORECASE,
+)
 
 
 def _coerce_pydantic_integer(value: object) -> int | None:
@@ -260,8 +266,29 @@ def _is_valid_rubric(value: object) -> bool:
     return diagnostic is None or _is_valid_diagnostic(diagnostic)
 
 
+def _parse_pydantic_float_string(value: str) -> float | None:
+    """Snapshot pydantic-core 2.46.4 str_as_float for persisted JSON strings."""
+    normalized = value.strip()
+    if _PYDANTIC_FLOAT_STRING.fullmatch(normalized):
+        return float(normalized)
+    if (
+        value.startswith("_")
+        or value.endswith("_")
+        or "_" not in value
+        or "__" in value
+    ):
+        return None
+    normalized = value.replace("_", "")
+    if not _PYDANTIC_FLOAT_STRING.fullmatch(normalized):
+        return None
+    return float(normalized)
+
+
 def _coerce_finite_number(value: object) -> float | None:
-    """Mirror Pydantic's finite numeric coercion without importing app runtime."""
+    """Mirror Pydantic's finite float coercion without importing app runtime."""
+    if isinstance(value, str):
+        number = _parse_pydantic_float_string(value)
+        return number if number is not None and math.isfinite(number) else None
     try:
         number = float(value)  # type: ignore[arg-type]
     except (OverflowError, TypeError, ValueError):

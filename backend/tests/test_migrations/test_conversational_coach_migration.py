@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -103,6 +104,9 @@ FLOAT_COERCION_VALUES = (
     0.0,
     10.0,
     10.5,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
     True,
     False,
     None,
@@ -111,9 +115,29 @@ FLOAT_COERCION_VALUES = (
     "10.0",
     "10e0",
     "1e1",
+    "0_.1",
+    "1._0",
+    "1e_0",
+    "0_e1",
+    "+_1",
+    "._1",
+    "0_1",
+    "0_1 ",
+    " 0_1",
+    "0__1",
+    "_1",
+    "1_",
     "10.5",
     "nan",
+    "NaN",
     "inf",
+    "Infinity",
+    "+infinity",
+    "-inf",
+    "\t1\n",
+    "٠.١",
+    "０.１",
+    "𝟘.𝟙",
     " 8 ",
     "",
     10**400,
@@ -155,6 +179,7 @@ BOOLEAN_COERCION_VALUES = (
     {},
     [],
 )
+FLOAT_STRING_FUZZ_ALPHABET = "01+-.eE_ "
 
 
 def _coercion_case_id(case: tuple[tuple[str, ...], object]) -> str:
@@ -990,6 +1015,34 @@ def test_migration_validator_matches_authority_for_every_coercion_field(
     )
 
 
+def test_migration_validator_matches_authority_for_ascii_float_string_grammar() -> None:
+    from app.services.coach_aggregation import _parse_completed
+
+    module = _load_migration_module()
+    payload = json.loads(CANONICAL_COMPLETED_EVALUATION_JSON)
+    recording = SimpleNamespace(
+        id="recording",
+        question_id="question",
+        evaluation_state="completed",
+        evaluation_json="",
+        created_at=datetime(2026, 7, 1),
+    )
+    mismatches: list[str] = []
+    for length in range(6):
+        for characters in itertools.product(FLOAT_STRING_FUZZ_ALPHABET, repeat=length):
+            value = "".join(characters)
+            payload["overall"] = value
+            recording.evaluation_json = json.dumps(payload, separators=(",", ":"))
+            authoritative = _parse_completed(recording) is not None
+            migration_valid = module._is_valid_legacy_completed_evaluation(
+                recording.evaluation_state, recording.evaluation_json
+            )
+            if migration_valid is not authoritative:
+                mismatches.append(value)
+
+    assert mismatches == []
+
+
 @pytest.mark.parametrize(
     ("table", "backfill_marker"),
     [
@@ -1223,6 +1276,57 @@ def test_malformed_completed_legacy_evaluations_remain_pending(
         assert connection.execute(
             "SELECT question_state FROM session_questions WHERE id='malformed-question'"
         ).fetchone() == ("pending",)
+
+
+def test_upgrade_classifies_pydantic_float_string_families(
+    prior_head_db: Path,
+) -> None:
+    cases = (
+        ("0_.1", "answered"),
+        ("1._0", "answered"),
+        ("1e_0", "answered"),
+        (" 1 ", "answered"),
+        ("0_1 ", "pending"),
+        (" 0_1", "pending"),
+        ("٠.١", "pending"),
+        ("０.１", "pending"),
+        ("𝟘.𝟙", "pending"),
+        ("nan", "pending"),
+        ("inf", "pending"),
+    )
+    with sqlite3.connect(prior_head_db) as connection:
+        for index, (overall, _expected_state) in enumerate(cases):
+            session_id = f"float-session-{index}"
+            question_id = f"float-question-{index}"
+            evaluation = json.loads(CANONICAL_COMPLETED_EVALUATION_JSON)
+            evaluation["overall"] = overall
+            _insert_session(connection, session_id)
+            _insert_question(connection, session_id, question_id)
+            _insert_recording(
+                connection,
+                recording_id=f"float-recording-{index}",
+                session_id=session_id,
+                question_id=question_id,
+                created_at=f"2026-07-01 10:00:{index:02d}",
+                evaluation_state="completed",
+                evaluation_json=json.dumps(evaluation, separators=(",", ":")),
+            )
+
+    _upgrade(prior_head_db)
+    with sqlite3.connect(prior_head_db) as connection:
+        actual = dict(
+            connection.execute(
+                """
+                SELECT id, question_state
+                FROM session_questions
+                WHERE id LIKE 'float-question-%'
+                """
+            ).fetchall()
+        )
+    assert actual == {
+        f"float-question-{index}": expected_state
+        for index, (_overall, expected_state) in enumerate(cases)
+    }
 
 
 def test_upgrade_adds_exact_foundation_schema_constraints_and_indexes(
