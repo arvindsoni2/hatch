@@ -1159,6 +1159,8 @@ async def claim_session_setup(
     supported_locales: Sequence[str] = ("en-GB",),
     now: datetime | None = None,
     lease_seconds: int = DEFAULT_SETUP_LEASE_SECONDS,
+    expected_state_version: int | None = None,
+    candidate_command_id: str | None = None,
 ) -> SetupClaim:
     """Claim one initial, retry, or candidate-requested rebuild generation."""
     current = await db.get(InterviewSession, session_id)
@@ -1166,6 +1168,11 @@ async def claim_session_setup(
         raise SessionPlanError("coach_conversation_invalid_state")
     await db.flush()
     await db.refresh(current)
+    if (
+        expected_state_version is not None
+        and current.state_version != expected_state_version
+    ):
+        raise SessionPlanError("coach_conversation_version_conflict")
     if current.deletion_state != "not_requested":
         raise SessionPlanError("coach_session_deletion_in_progress")
     if current.setup_job_id is not None or current.setup_claim_token is not None:
@@ -1257,6 +1264,11 @@ async def claim_session_setup(
             InterviewSession.setup_job_id.is_(None),
             InterviewSession.setup_claim_token.is_(None),
             InterviewSession.deletion_state == "not_requested",
+            *(
+                (InterviewSession.state_version == expected_state_version,)
+                if expected_state_version is not None
+                else ()
+            ),
         )
         .values(**values)
         .returning(InterviewSession.setup_generation, InterviewSession.state_version)
@@ -1281,6 +1293,7 @@ async def claim_session_setup(
         state_before=prior_state,
         state_after="planning",
         state_version=state_version,
+        candidate_command_id=candidate_command_id,
     )
     await db.flush()
     return SetupClaim(
@@ -1661,6 +1674,7 @@ async def _append_setup_events(
     state_before: str | None,
     state_after: str,
     state_version: int,
+    candidate_command_id: str | None = None,
 ) -> None:
     if not event_types:
         return
@@ -1684,7 +1698,25 @@ async def _append_setup_events(
                 state_version=state_version,
                 actor_type="worker"
                 if event_type.endswith(("completed", "rebuilt", "failed"))
-                else "system",
+                else (
+                    "candidate"
+                    if event_type
+                    in {
+                        "session_plan_retry_requested",
+                        "session_plan_rebuild_requested",
+                    }
+                    and candidate_command_id is not None
+                    else "system"
+                ),
+                command_id=(
+                    candidate_command_id
+                    if event_type
+                    in {
+                        "session_plan_retry_requested",
+                        "session_plan_rebuild_requested",
+                    }
+                    else None
+                ),
                 payload_json=None,
             )
             for offset, event_type in enumerate(event_types)

@@ -2,16 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-import pytest
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from pathlib import Path
 
+import pytest
+import pytest_asyncio
+from sqlalchemy import event, func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.database import Base
 from app.models.coach_session import (
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
+    InterviewAttemptStage,
     InterviewSession,
     InterviewSessionEvent,
+    InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
@@ -21,6 +33,26 @@ from app.services.coach_conversation_commands import (
     ConversationCommandError,
     ConversationCommandService,
 )
+
+
+@pytest_asyncio.fixture
+async def command_database(tmp_path: Path):
+    database = tmp_path / "commands.sqlite3"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{database}")
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _configure_sqlite(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield factory
+    await engine.dispose()
 
 
 def command(
@@ -60,6 +92,12 @@ async def seed_session(
         retention_policy_json={
             "audio": "delete_after_processing",
             "transcript": "retain",
+        },
+        session_plan_json={
+            "retention": {
+                "audio": "delete_after_processing",
+                "transcript": "retain",
+            }
         },
         planning_request_json={
             "company_name": "Example",
@@ -109,6 +147,34 @@ async def seed_session(
     db.add_all([session, *questions])
     await db.commit()
     return session, questions
+
+
+async def seed_command_database(
+    factory: async_sessionmaker[AsyncSession], *, session_id: str
+) -> None:
+    async with factory() as db:
+        db.add(
+            InterviewSession(
+                id=session_id,
+                company_name="Example",
+                role_title="Architect",
+                experience_version="conversational_v1",
+                status="setup",
+                conversation_state="ready",
+                state_version=0,
+                retention_policy_json={
+                    "audio": "delete_after_processing",
+                    "transcript": "retain",
+                },
+                session_plan_json={
+                    "retention": {
+                        "audio": "delete_after_processing",
+                        "transcript": "retain",
+                    }
+                },
+            )
+        )
+        await db.commit()
 
 
 @pytest.mark.asyncio
@@ -168,6 +234,83 @@ async def test_duplicate_receipt_precedes_stale_version_and_replays_after_restar
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_different_commands_have_one_winner_and_fresh_conflict(
+    command_database: async_sessionmaker[AsyncSession],
+) -> None:
+    session_id = "concurrent-different"
+    await seed_command_database(command_database, session_id=session_id)
+    requests = (
+        command(
+            "update_retention",
+            version=0,
+            command_id="retain-a",
+            payload={"audio": "retain_until_deleted"},
+        ),
+        command(
+            "update_retention",
+            version=0,
+            command_id="retain-b",
+            payload={"audio": "delete_after_processing"},
+        ),
+    )
+
+    async def execute(request: ConversationCommandRequest):
+        async with command_database() as db:
+            return await ConversationCommandService(db).execute(
+                user_id="local", session_id=session_id, request=request
+            )
+
+    outcomes = await asyncio.gather(
+        *(execute(request) for request in requests), return_exceptions=True
+    )
+
+    successes = [outcome for outcome in outcomes if not isinstance(outcome, Exception)]
+    failures = [outcome for outcome in outcomes if isinstance(outcome, Exception)]
+    assert len(successes) == len(failures) == 1
+    assert isinstance(failures[0], ConversationCommandError)
+    assert failures[0].code == "coach_conversation_version_conflict"
+    assert failures[0].current_state_version == 1
+    assert failures[0].current_state == "ready"
+    async with command_database() as db:
+        assert (
+            await db.scalar(select(func.count(ConversationCommandResultRecord.id))) == 1
+        )
+        persisted = await db.get(InterviewSession, session_id)
+        assert persisted is not None and persisted.state_version == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_commands_durably_replay_one_receipt(
+    command_database: async_sessionmaker[AsyncSession],
+) -> None:
+    session_id = "concurrent-identical"
+    await seed_command_database(command_database, session_id=session_id)
+    request = command(
+        "update_retention",
+        version=0,
+        command_id="retain-once",
+        payload={"audio": "retain_until_deleted"},
+    )
+
+    async def execute():
+        async with command_database() as db:
+            return await ConversationCommandService(db).execute(
+                user_id="local", session_id=session_id, request=request
+            )
+
+    first, second = await asyncio.gather(execute(), execute())
+
+    assert first == second
+    async with command_database() as db:
+        assert (
+            await db.scalar(select(func.count(ConversationCommandResultRecord.id))) == 1
+        )
+        persisted = await db.get(InterviewSession, session_id)
+        assert persisted is not None
+        assert (persisted.state_version, persisted.retention_version) == (1, 1)
 
 
 @pytest.mark.asyncio
@@ -232,6 +375,37 @@ async def test_deterministic_stub_never_emits_scores(db_session: AsyncSession) -
     assert evaluation is not None
     assert evaluation.state == "unavailable"
     assert evaluation.answer_level is None
+    assert evaluation.version_number == 1
+    assert evaluation.rubric_json == {
+        "answer_level": "not_assessed",
+        "contract_version": "coach_conversational_rubric_v1",
+    }
+    transcript = await db_session.get(
+        InterviewTranscriptVersion, evaluation.transcript_version_id
+    )
+    assert transcript is not None
+    assert (
+        transcript.version_number,
+        transcript.source,
+        transcript.created_by,
+        transcript.processing_generation,
+    ) == (1, "candidate_text", "candidate", 1)
+    stages = (
+        await db_session.scalars(
+            select(InterviewAttemptStage)
+            .where(InterviewAttemptStage.recording_id == attempt.id)
+            .order_by(InterviewAttemptStage.id)
+        )
+    ).all()
+    assert {stage.stage_name: stage.stage_state for stage in stages} == {
+        "audio_persist": "not_applicable",
+        "transcription": "not_applicable",
+        "speech_analysis": "not_applicable",
+        "content_evaluation": "unavailable",
+        "evidence_grounding": "not_applicable",
+        "follow_up_decision": "not_applicable",
+        "coaching_enrichment": "not_applicable",
+    }
     assert "score" not in json.dumps(evaluation.rubric_json or {})
 
 
@@ -344,7 +518,101 @@ async def test_retention_changes_future_attempts_only(db_session: AsyncSession) 
     assert old_attempt.audio_retention_policy == "delete_after_processing"
     assert new_attempt.audio_retention_policy == "retain_until_deleted"
     assert (session.retention_version, session.session_plan_amendment_version) == (1, 1)
+    assert session.session_plan_json["retention"] == {
+        "audio": "retain_until_deleted",
+        "transcript": "retain",
+    }
+    assert session.state_version == 4
     assert session.activity_version == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "status", "scope"),
+    [
+        ("ready", "setup", None),
+        ("asking", "active", None),
+        ("listening", "active", None),
+        ("awaiting_next_action", "active", None),
+        ("coaching", "active", None),
+        ("paused", "active", None),
+        ("recoverable_error", "setup", "setup"),
+        ("recoverable_error", "active", "attempt_processing"),
+    ],
+)
+async def test_update_retention_binds_every_legal_v6_projection(
+    db_session: AsyncSession, state: str, status: str, scope: str | None
+) -> None:
+    session, _ = await seed_session(db_session, state=state, status=status, version=6)
+    session.recoverable_error_scope = scope
+    if state == "paused":
+        session.resume_state = "asking"
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "update_retention",
+            version=6,
+            payload={"audio": "retain_until_deleted"},
+        ),
+    )
+
+    await db_session.refresh(session)
+    assert (result.state, result.state_version) == (state, 7)
+    assert session.recoverable_error_scope == scope
+    assert (
+        session.retention_version,
+        session.session_plan_amendment_version,
+        session.activity_version,
+    ) == (1, 1, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["setup", "initial_report"])
+async def test_pause_rejects_nonresumable_recoverable_error_scopes(
+    db_session: AsyncSession, scope: str
+) -> None:
+    session, _ = await seed_session(
+        db_session, state="recoverable_error", status="active", version=4
+    )
+    session.recoverable_error_scope = scope
+    await db_session.commit()
+    request = command("pause", version=4)
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local", session_id=session.id, request=request
+        )
+
+    assert raised.value.code == "coach_conversation_invalid_state"
+    await db_session.refresh(session)
+    assert (session.conversation_state, session.state_version) == (
+        "recoverable_error",
+        4,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pause_accepts_attempt_processing_recoverable_scope(
+    db_session: AsyncSession,
+) -> None:
+    session, _ = await seed_session(
+        db_session, state="recoverable_error", status="active", version=4
+    )
+    session.recoverable_error_scope = "attempt_processing"
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("pause", version=4),
+    )
+
+    assert (result.state, result.state_version) == ("paused", 5)
+    await db_session.refresh(session)
+    assert session.resume_state == "recoverable_error"
 
 
 @pytest.mark.asyncio
@@ -496,6 +764,60 @@ async def test_retry_setup_claim_dispatches_only_after_commit(
     assert result.state == "planning"
     assert result.result == "accepted_processing"
     assert observed == [(result.async_job_id, "pending")]
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(InterviewSessionEvent.session_id == session.id)
+            .order_by(InterviewSessionEvent.sequence_number)
+        )
+    ).all()
+    assert [
+        (event.event_type, event.actor_type, event.command_id) for event in events
+    ] == [
+        ("session_plan_retry_requested", "candidate", "cmd-retry_setup-2"),
+        ("session_plan_started", "system", None),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_type", [RuntimeError, ValueError])
+async def test_setup_dispatch_failure_preserves_durable_accepted_result(
+    db_session: AsyncSession, failure_type: type[Exception]
+) -> None:
+    session, _ = await seed_session(
+        db_session, state="recoverable_error", status="setup", version=2
+    )
+    session.recoverable_error_scope = "setup"
+    session.recoverable_error_code = "coach_setup_claim_expired"
+    session.setup_attempt_count = 1
+    await db_session.commit()
+    dispatched = 0
+
+    async def fail_dispatch(_job_id: str) -> None:
+        nonlocal dispatched
+        dispatched += 1
+        raise failure_type("secret dispatcher detail")
+
+    request = command("retry_setup", version=2, command_id="durable-setup")
+    result = await ConversationCommandService(
+        db_session, after_commit=fail_dispatch
+    ).execute(user_id="local", session_id=session.id, request=request)
+    replay = await ConversationCommandService(
+        db_session, after_commit=fail_dispatch
+    ).execute(user_id="local", session_id=session.id, request=request)
+
+    assert result == replay
+    assert result.result == "accepted_processing"
+    assert dispatched == 1
+    job = await db_session.get(AsyncJob, result.async_job_id)
+    assert job is not None and job.status == "pending"
+    receipt = await db_session.scalar(
+        select(ConversationCommandResultRecord).where(
+            ConversationCommandResultRecord.session_id == session.id,
+            ConversationCommandResultRecord.command_id == request.command_id,
+        )
+    )
+    assert receipt is not None and receipt.result_state == "accepted_processing"
 
 
 @pytest.mark.asyncio
@@ -546,6 +868,68 @@ async def test_event_failure_rolls_back_state_and_receipt(
     persisted = await db_session.get(InterviewSession, session_id)
     assert persisted is not None and persisted.conversation_state == "ready"
     assert await db_session.scalar(select(func.count(InterviewSessionEvent.id))) == 0
+    assert (
+        await db_session.scalar(select(func.count(ConversationCommandResultRecord.id)))
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_receipt_completion_failure_rolls_back_whole_command(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, _ = await seed_session(db_session)
+    session_id = session.id
+    service = ConversationCommandService(db_session)
+
+    async def fail_completion(**_: object) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        service.repository, "complete_conversation_command", fail_completion
+    )
+    with pytest.raises(ConversationCommandError) as raised:
+        await service.execute(
+            user_id="local",
+            session_id=session_id,
+            request=command("start", version=0),
+        )
+
+    assert raised.value.code == "coach_conversation_invalid_state"
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert (persisted.conversation_state, persisted.state_version) == ("ready", 0)
+    assert await db_session.scalar(select(func.count(InterviewSessionEvent.id))) == 0
+    assert (
+        await db_session.scalar(select(func.count(ConversationCommandResultRecord.id)))
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_unrelated_integrity_error_is_not_misreported_as_idempotency_conflict(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, _ = await seed_session(db_session)
+    session_id = session.id
+    service = ConversationCommandService(db_session)
+    database_error = IntegrityError("insert event", {}, RuntimeError("constraint"))
+
+    async def fail_events(**_: object) -> None:
+        raise database_error
+
+    monkeypatch.setattr(service.repository, "append_session_events", fail_events)
+    with pytest.raises(IntegrityError) as raised:
+        await service.execute(
+            user_id="local",
+            session_id=session_id,
+            request=command("start", version=0),
+        )
+
+    assert raised.value is database_error
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert (persisted.conversation_state, persisted.state_version) == ("ready", 0)
     assert (
         await db_session.scalar(select(func.count(ConversationCommandResultRecord.id)))
         == 0
@@ -678,6 +1062,19 @@ async def test_rebuild_plan_reuses_fenced_setup_claim(db_session: AsyncSession) 
     assert result.state == "planning" and result.async_job_id == session.setup_job_id
     assert result.result == "accepted_processing"
     assert (session.setup_generation, session.setup_attempt_count) == (1, 2)
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(InterviewSessionEvent.session_id == session.id)
+            .order_by(InterviewSessionEvent.sequence_number)
+        )
+    ).all()
+    assert [
+        (event.event_type, event.actor_type, event.command_id) for event in events
+    ] == [
+        ("session_plan_rebuild_requested", "candidate", "cmd-rebuild_plan-7"),
+        ("session_plan_started", "system", None),
+    ]
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable
@@ -50,6 +51,7 @@ from .coach_conversational_contracts import (
 from .coach_session_plan import SessionPlanError, claim_session_setup
 
 PROCESSING_CONTRACT = "coach_processing_v1"
+logger = logging.getLogger(__name__)
 
 
 class ConversationCommandError(ValueError):
@@ -149,9 +151,6 @@ class ConversationCommandService:
             if not completed:
                 raise ConversationCommandError("coach_conversation_invalid_state")
             await self.db.commit()
-            if self._post_commit_job_id is not None and self.after_commit is not None:
-                await self.after_commit(self._post_commit_job_id)
-            return result
         except ConversationVersionConflict as error:
             await self.db.rollback()
             raise ConversationCommandError(
@@ -178,18 +177,29 @@ class ConversationCommandService:
             duplicate = await self.repository.get_command_result(
                 session_id=session_id, command_id=request.command_id
             )
-            if duplicate is not None and duplicate.request_hash == request_hash:
-                if duplicate.result_json is not None:
-                    return ConversationCommandResult.model_validate(
-                        duplicate.result_json
-                    )
-            raise ConversationCommandError(
-                "coach_command_idempotency_conflict"
-            ) from error
+            if duplicate is None:
+                raise
+            if duplicate.request_hash != request_hash:
+                raise ConversationCommandError(
+                    "coach_command_idempotency_conflict"
+                ) from error
+            if duplicate.result_json is None:
+                raise ConversationCommandError(
+                    "coach_conversation_invalid_state"
+                ) from error
+            return ConversationCommandResult.model_validate(duplicate.result_json)
         except (ConversationalRepositoryError, ValueError) as error:
             await self.db.rollback()
             code = str(error)
             raise ConversationCommandError(code) from error
+        if self._post_commit_job_id is not None and self.after_commit is not None:
+            try:
+                await self.after_commit(self._post_commit_job_id)
+            except Exception as error:  # noqa: BLE001 - durable work remains pending
+                logger.error(
+                    "Coach post-commit dispatch failed: %s", type(error).__name__
+                )
+        return result
 
     async def _dispatch(
         self, session: InterviewSession, request: ConversationCommandRequest
@@ -711,6 +721,8 @@ class ConversationCommandService:
                 self.db,
                 session_id=session.id,
                 rebuild=request.command_type == "rebuild_plan",
+                expected_state_version=request.expected_state_version,
+                candidate_command_id=request.command_id,
             )
         except SessionPlanError as error:
             raise ConversationCommandError(error.code) from error
@@ -784,11 +796,14 @@ class ConversationCommandService:
     ) -> ConversationCommandResult:
         policy = dict(session.retention_policy_json or {})
         policy.update({"audio": payload.audio, "transcript": "retain"})
+        amended_plan = dict(session.session_plan_json or {})
+        amended_plan["retention"] = policy
         state_version = await self._change_session_state(
             session,
             request,
             values={
                 "retention_policy_json": policy,
+                "session_plan_json": amended_plan,
                 "retention_version": InterviewSession.retention_version + 1,
                 "session_plan_amendment_version": (
                     InterviewSession.session_plan_amendment_version + 1

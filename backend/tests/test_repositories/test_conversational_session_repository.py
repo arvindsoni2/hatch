@@ -354,6 +354,49 @@ async def test_concurrent_identical_command_is_claimed_once(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_different_commands_serialize_before_version_check(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    requests = (
+        _command(command_id="different-a"),
+        _command(command_id="different-b"),
+    )
+
+    async def claim_and_advance(request: ConversationCommandRequest):
+        try:
+            async with repository_database.begin() as db:
+                repository = ConversationalSessionRepository(db)
+                claim = await repository.claim_conversation_command(
+                    session_id="session-1",
+                    request=request,
+                    request_hash=canonical_request_hash(
+                        request, session_id="session-1"
+                    ),
+                )
+                session = await db.get(InterviewSession, "session-1")
+                assert session is not None
+                session.state_version += 1
+                session.conversation_state = "listening"
+                await repository.complete_conversation_command(
+                    claim=claim,
+                    result={"result": "completed"},
+                )
+            return "completed"
+        except ConversationVersionConflict as error:
+            return (error.current_state_version, error.current_state)
+
+    outcomes = await asyncio.gather(*(claim_and_advance(item) for item in requests))
+
+    assert outcomes.count("completed") == 1
+    assert outcomes.count((5, "listening")) == 1
+    async with repository_database() as db:
+        assert (
+            await db.scalar(select(func.count(ConversationCommandResultRecord.id))) == 1
+        )
+
+
+@pytest.mark.asyncio
 async def test_new_stale_command_creates_no_receipt(repository_database) -> None:
     await _seed_session(repository_database)
     stale = _command(expected_state_version=3)

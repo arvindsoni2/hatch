@@ -552,13 +552,34 @@ class ConversationalSessionRepository:
                 raise CommandIdempotencyConflict("coach_command_idempotency_conflict")
             return self._command_claim(existing, duplicate=True)
 
-        session_row = await self._session.get(InterviewSession, session_id)
-        if session_row is None:
+        serialized = await self._session.execute(
+            update(InterviewSession)
+            .where(InterviewSession.id == session_id)
+            .values(state_version=InterviewSession.state_version)
+            .returning(
+                InterviewSession.state_version,
+                InterviewSession.conversation_state,
+            )
+        )
+        current = serialized.one_or_none()
+        if current is None:
             raise ConversationalRepositoryError("coach_session_not_found")
-        if session_row.state_version != request.expected_state_version:
+
+        # A competing transaction may have completed this exact command while
+        # this transaction waited for SQLite's writer lock.
+        existing = await self.get_command_result(
+            session_id=session_id, command_id=request.command_id
+        )
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise CommandIdempotencyConflict("coach_command_idempotency_conflict")
+            return self._command_claim(existing, duplicate=True)
+
+        current_state_version, current_state = current
+        if current_state_version != request.expected_state_version:
             raise ConversationVersionConflict(
-                current_state_version=session_row.state_version,
-                current_state=session_row.conversation_state,
+                current_state_version=current_state_version,
+                current_state=current_state,
             )
 
         receipt_id = str(uuid.uuid4())

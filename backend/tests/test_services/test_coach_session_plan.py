@@ -1087,6 +1087,37 @@ async def test_rebuild_keeps_old_audit_plan_until_matching_worker_succeeds(
 
 
 @pytest.mark.asyncio
+async def test_setup_retry_claim_rechecks_expected_state_version(db_session) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        conversation_state="recoverable_error",
+        state_version=4,
+        setup_generation=1,
+        setup_attempt_count=1,
+        recoverable_error_scope="setup",
+        planning_request_json=request.model_dump(mode="json"),
+    )
+    db_session.add(session)
+    await db_session.flush()
+
+    with pytest.raises(SessionPlanError, match="coach_conversation_version_conflict"):
+        await claim_session_setup(
+            db_session,
+            session_id=session.id,
+            expected_state_version=3,
+        )
+
+    assert (session.setup_generation, session.setup_attempt_count) == (1, 1)
+
+
+@pytest.mark.asyncio
 async def test_setup_claim_enforces_locale_budget_expiry_and_deletion_fences(
     db_session,
 ) -> None:
