@@ -294,7 +294,7 @@ async def test_capabilities_truthfully_describes_conversation_and_video_support(
 async def test_capabilities_publish_the_literal_conversational_contract(
     client, monkeypatch
 ) -> None:
-    """Dropping or renaming a V6 field would leave clients with a false capability view."""
+    """Advertising unimplemented PR1 media or turn detection would mislead clients."""
     monkeypatch.setattr(settings, "HATCH_COACH_CONVERSATIONAL_ENABLED", False)
     monkeypatch.setattr(settings, "HATCH_COACH_AUTO_TURN_DETECTION_ENABLED", True)
 
@@ -313,17 +313,39 @@ async def test_capabilities_publish_the_literal_conversational_contract(
     )} == {
         "conversational_interview": False,
         "typed_answers": True,
-        "audio_upload": True,
-        "automatic_turn_detection": "browser",
+        "audio_upload": False,
+        "automatic_turn_detection": "none",
         "audio_retention_default": "delete_after_processing",
         "video_analysis_for_conversational": False,
         "contract_version": "coach_capabilities_v2",
     }
     assert capabilities["transcription"] == {
-        "available": True,
-        "provider_type": "local",
+        "available": False,
+        "provider_type": "none",
     }
     assert capabilities["evaluation"] == {
+        "available": False,
+        "provider_type": "none",
+    }
+
+
+@pytest.mark.asyncio
+async def test_capabilities_fail_closed_when_profile_loading_fails(
+    client, monkeypatch
+) -> None:
+    """A profile-load fallback must not advertise profile-derived capabilities."""
+    monkeypatch.setattr(
+        "app.agents.tools.profile_loader.load_profile",
+        lambda: (_ for _ in ()).throw(RuntimeError("profile unavailable")),
+    )
+
+    response = await client.get("/api/coach/capabilities")
+
+    assert response.status_code == 200
+    capabilities = response.json()
+    assert capabilities["face_analysis"] is False
+    assert capabilities["tts"] is False
+    assert capabilities["transcription"] == {
         "available": False,
         "provider_type": "none",
     }
