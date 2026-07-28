@@ -9,7 +9,6 @@ from collections import defaultdict
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
-from urllib.parse import parse_qsl
 
 from fastapi import FastAPI
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -227,19 +226,13 @@ class ConversationalRawPathBoundaryMiddleware(BaseHTTPMiddleware):
 
     _PREFIX = b"/api/coach/sessions/"
     _SUFFIXES = {"POST": b"/commands", "GET": b"/live"}
-    _ENCODED_SEPARATORS = (b"%252f", b"%255c", b"%2f", b"%5c")
 
     async def dispatch(self, request: StarletteRequest, call_next):
         suffix = self._SUFFIXES.get(request.method)
         raw_path = request.scope.get("raw_path", b"")
         if isinstance(raw_path, bytes) and suffix is not None:
-            candidate = raw_path.split(b"?", 1)[0].lower()
-            normalized = candidate
-            has_encoded_separator = False
-            for encoded_separator in self._ENCODED_SEPARATORS:
-                if encoded_separator in normalized:
-                    has_encoded_separator = True
-                    normalized = normalized.replace(encoded_separator, b"/")
+            candidate = raw_path.split(b"?", 1)[0]
+            normalized, has_encoded_separator = _normalize_encoded_separators(candidate)
             if (
                 has_encoded_separator
                 and normalized.startswith(self._PREFIX)
@@ -253,27 +246,115 @@ class ConversationalRawPathBoundaryMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-_MAX_CREATE_CLASSIFICATION_BYTES = 128 * 1024
-_MAX_CREATE_FORM_FIELDS = 32
+def _normalize_encoded_separators(raw_path: bytes) -> tuple[bytes, bool]:
+    """Collapse any nested percent-encoded slash or backslash in one pass."""
+    normalized = bytearray()
+    found = False
+    cursor = 0
+    while cursor < len(raw_path):
+        if raw_path[cursor] != ord("%"):
+            normalized.append(raw_path[cursor])
+            cursor += 1
+            continue
+        terminal_start = cursor + 1
+        while raw_path[terminal_start : terminal_start + 2] == b"25":
+            terminal_start += 2
+        terminal = raw_path[terminal_start : terminal_start + 2].lower()
+        if terminal in (b"2f", b"5c"):
+            normalized.append(ord("/"))
+            found = True
+            cursor = terminal_start + 2
+            continue
+        normalized.extend(raw_path[cursor:terminal_start])
+        cursor = terminal_start
+    if not found:
+        return raw_path, False
+    return bytes(normalized), True
 
 
 def _request_media_type(request: StarletteRequest) -> str:
     return request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
 
 
-def _bounded_raw_body(body: object) -> bytes | None:
+def _validation_body_bytes(body: object) -> bytes | None:
     if isinstance(body, bytes):
-        raw_body = body
-    elif isinstance(body, str):
+        return body
+    if isinstance(body, str):
         try:
-            raw_body = body.encode("utf-8")
+            return body.encode("utf-8")
         except UnicodeEncodeError:
             return None
-    else:
-        return None
-    if len(raw_body) > _MAX_CREATE_CLASSIFICATION_BYTES:
-        return None
-    return raw_body
+    return None
+
+
+def _hex_value(character: int) -> int | None:
+    if ord("0") <= character <= ord("9"):
+        return character - ord("0")
+    lowered = character | 0x20
+    if ord("a") <= lowered <= ord("f"):
+        return lowered - ord("a") + 10
+    return None
+
+
+def _form_component_equals(
+    raw_body: bytes, start: int, end: int, expected: bytes
+) -> bool:
+    """Compare one form component after strict, allocation-free decoding."""
+    raw_cursor = start
+    expected_cursor = 0
+    while raw_cursor < end:
+        character = raw_body[raw_cursor]
+        if character == ord("%"):
+            if raw_cursor + 2 >= end:
+                return False
+            high = _hex_value(raw_body[raw_cursor + 1])
+            low = _hex_value(raw_body[raw_cursor + 2])
+            if high is None or low is None:
+                return False
+            character = high * 16 + low
+            raw_cursor += 3
+        else:
+            if character == ord("+"):
+                character = ord(" ")
+            raw_cursor += 1
+        if expected_cursor >= len(expected) or character != expected[expected_cursor]:
+            return False
+        expected_cursor += 1
+    return expected_cursor == len(expected)
+
+
+def _single_conversational_form_discriminator(raw_body: bytes) -> bool:
+    """Find exactly one v1 form discriminator without parsing unrelated values."""
+    discriminator_count = 0
+    discriminator_matches = False
+    field_start = 0
+    while field_start <= len(raw_body):
+        field_end = raw_body.find(b"&", field_start)
+        if field_end == -1:
+            field_end = len(raw_body)
+        equals_at = raw_body.find(b"=", field_start, field_end)
+        if equals_at == -1:
+            key_end = field_end
+            value_start = field_end
+        else:
+            key_end = equals_at
+            value_start = equals_at + 1
+        if _form_component_equals(
+            raw_body, field_start, key_end, b"experience_version"
+        ):
+            discriminator_count += 1
+            if discriminator_count > 1:
+                return False
+            discriminator_matches = _form_component_equals(
+                raw_body,
+                value_start,
+                field_end,
+                b"conversational_v1",
+            )
+        if field_end == len(raw_body):
+            break
+        field_start = field_end + 1
+    return discriminator_count == 1 and discriminator_matches
 
 
 def _conversational_create_discriminator(
@@ -284,7 +365,7 @@ def _conversational_create_discriminator(
     parsed_body: object = body
     if media_type == "application/json" or media_type.endswith("+json"):
         if not isinstance(parsed_body, Mapping):
-            raw_body = _bounded_raw_body(parsed_body)
+            raw_body = _validation_body_bytes(parsed_body)
             if raw_body is None:
                 return False
             try:
@@ -296,7 +377,7 @@ def _conversational_create_discriminator(
             and parsed_body.get("experience_version") == "conversational_v1"
         )
 
-    raw_body = _bounded_raw_body(parsed_body)
+    raw_body = _validation_body_bytes(parsed_body)
     if raw_body is None:
         return False
     if media_type != "application/x-www-form-urlencoded":
@@ -310,20 +391,7 @@ def _conversational_create_discriminator(
                     possible_json.get("experience_version")
                     == "conversational_v1"
                 )
-    try:
-        fields = parse_qsl(
-            raw_body.decode("utf-8"),
-            keep_blank_values=True,
-            encoding="utf-8",
-            errors="strict",
-            max_num_fields=_MAX_CREATE_FORM_FIELDS,
-        )
-    except (UnicodeDecodeError, ValueError):
-        return False
-    discriminators = [
-        value for name, value in fields if name == "experience_version"
-    ]
-    return discriminators == ["conversational_v1"]
+    return _single_conversational_form_discriminator(raw_body)
 
 
 def _is_malformed_conversational_create(

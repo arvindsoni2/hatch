@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.config import settings
-from app.main import app
+from app.main import _normalize_encoded_separators, app
 from app.models.coach_session import InterviewSession, SessionRecording
 
 from app.schemas.coach_conversation import (
@@ -223,6 +223,125 @@ async def test_encoded_separator_placements_use_canonical_route_error(
     assert response.json()["error"]["code"] == "coach_contract_unsupported"
     assert response.json()["error"]["details"] == {}
     assert "private-route-canary" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "target"),
+    [
+        ("POST", "/api%25252Fcoach/sessions/private-route-canary/commands"),
+        ("GET", "/api/coach%25255Csessions/private-route-canary/live"),
+        (
+            "POST",
+            "/api/coach/sessions/private-route-canary%25252Fextra%25252Fcommands",
+        ),
+        (
+            "GET",
+            "/api/coach/sessions/private-route-canary%25255Cextra%25255Clive",
+        ),
+        ("POST", "/api/coach/sessions/private-route-canary%25252Fcommands"),
+        ("GET", "/api/coach/sessions/private-route-canary%25255Clive"),
+    ],
+)
+async def test_nested_encoded_separator_placements_use_canonical_route_error(
+    client, method, target
+):
+    """Triple-nested separators in prefix, ID, or suffix must reach the boundary."""
+    request = client.build_request(
+        method,
+        target,
+        json=command("start") if method == "POST" else None,
+    )
+
+    response = await client.send(request)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert response.json()["error"]["details"] == {}
+    assert "private-route-canary" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "suffix", "terminal"),
+    [("POST", "commands", "2F"), ("GET", "live", "5c")],
+)
+async def test_deeply_nested_encoded_separators_use_canonical_route_error(
+    client, method, suffix, terminal
+):
+    """A structural boundary must not have a reviewer-incrementable decode depth."""
+    encoded_separator = "%" + "25" * 48 + terminal
+    target = f"/api/coach/sessions/private-route-canary{encoded_separator}{suffix}"
+    request = client.build_request(
+        method,
+        target,
+        json=command("start") if method == "POST" else None,
+    )
+
+    response = await client.send(request)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert response.json()["error"]["details"] == {}
+    assert "private-route-canary" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "expected_status"),
+    [
+        ("/api/coach/sessions/id%25252541/not-a-conversation-route", 404),
+        ("/api/coach/sessions/id%25252F/not-a-conversation-route", 404),
+        ("/unrelated%25252Fpath/live", 404),
+        ("/api/coach/sessions/id%25252541/commands", 405),
+        ("/api/coach/sessions/id%25252F/commands", 405),
+    ],
+)
+async def test_nested_separator_boundary_preserves_benign_and_unrelated_misses(
+    client, target, expected_status
+):
+    """Benign encodings, unrelated suffixes, and wrong methods stay with the router."""
+    response = await client.get(target)
+
+    assert response.status_code == expected_status
+    assert response.json() == {
+        "detail": "Not Found" if expected_status == 404 else "Method Not Allowed"
+    }
+
+
+@pytest.mark.parametrize(
+    "raw_path",
+    [
+        b"/api/coach/sessions/id%20/live",
+        b"/api/coach/sessions/id%2520/live",
+        b"/api/coach/sessions/id%2E/live",
+        b"/api/coach/sessions/id%252E/live",
+        b"/api/coach/sessions/id%41/live",
+        b"/api/coach/sessions/id%2541/live",
+        b"/api/coach/sessions/id%25/live",
+        b"/api/coach/sessions/id%252/live",
+        b"/api/coach/sessions/id%2G/live",
+        b"/api/coach/sessions/id%5D/live",
+        b"/api/coach/sessions/id%255D/live",
+    ],
+)
+def test_nested_separator_normalizer_leaves_benign_percent_values_unchanged(
+    raw_path,
+):
+    """Broad percent decoding would alter benign request-target bytes."""
+    normalized, found = _normalize_encoded_separators(raw_path)
+
+    assert normalized == raw_path
+    assert found is False
+
+
+@pytest.mark.asyncio
+async def test_nested_separator_boundary_preserves_literal_route_case(client):
+    """Lowercasing the whole raw path would capture an unrelated uppercase route."""
+    response = await client.get("/API/COACH/SESSIONS/private-route-canary%25252Flive")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
 
 
 @pytest.mark.asyncio

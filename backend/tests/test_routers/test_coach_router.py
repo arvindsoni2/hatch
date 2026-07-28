@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlencode
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -364,6 +365,187 @@ async def test_form_encoded_conversational_create_redacts_all_client_canaries(
     for canary in ("top-level-form-private-token", "nested-form-private-token"):
         assert canary not in response.text
         assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_form_create_classification_has_no_field_count_bypass(
+    client, caplog
+) -> None:
+    """Adding a 33rd field must not exhaust the v1 redaction discriminator."""
+    fields = [(f"padding_{index}", "x") for index in range(30)]
+    fields.extend(
+        [
+            ("experience_version", "conversational_v1"),
+            ("company_name", "Bearer field-count-private-token"),
+            ("role_title", "Architect"),
+        ]
+    )
+
+    response = await client.post(
+        "/api/coach/sessions",
+        content=urlencode(fields).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert len(fields) == 33
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert response.json()["error"]["details"] == {}
+    assert "field-count-private-token" not in response.text
+    assert "field-count-private-token" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_form_create_classification_scans_the_final_field(client, caplog) -> None:
+    """Padding before the sole v1 discriminator must not expose the body."""
+    fields = [
+        ("company_name", "Bearer final-field-private-token"),
+        ("role_title", "Architect"),
+        *((f"padding_{index}", "x") for index in range(40)),
+        ("experience_version", "conversational_v1"),
+    ]
+
+    response = await client.post(
+        "/api/coach/sessions",
+        content=urlencode(fields).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert fields[-1] == ("experience_version", "conversational_v1")
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert "final-field-private-token" not in response.text
+    assert "final-field-private-token" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_form_create_classification_scans_the_full_schema_ceiling(
+    client, caplog
+) -> None:
+    """A maximum-codepoint JD may encode above any arbitrary raw-byte cutoff."""
+    canary = "schema-ceiling-private-token"
+    large_jd = "\N{POUND SIGN}" * (100_000 - len(canary)) + canary
+    fields = [
+        ("company_name", "Example Co"),
+        ("role_title", "Architect"),
+        ("jd_text", large_jd),
+        ("experience_version", "conversational_v1"),
+    ]
+    encoded = urlencode(fields).encode()
+
+    response = await client.post(
+        "/api/coach/sessions",
+        content=encoded,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert len(large_jd) == 100_000
+    assert len(encoded) > 128 * 1024
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert canary not in response.text
+    assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "discriminators",
+    [
+        ("conversational_v1", "conversational_v1"),
+        ("legacy_v1", "conversational_v1"),
+    ],
+    ids=["duplicate-same", "duplicate-conflicting"],
+)
+async def test_form_create_classification_preserves_ambiguous_duplicates(
+    client, discriminators
+) -> None:
+    """Accepting either duplicate discriminator would guess the request contract."""
+    fields = [
+        ("experience_version", discriminators[0]),
+        ("company_name", "duplicate-discriminator-private-token"),
+        ("experience_version", discriminators[1]),
+    ]
+
+    response = await client.post(
+        "/api/coach/sessions",
+        content=urlencode(fields).encode(),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == "model_attributes_type"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"experience_version=conversational_v1%ZZ",
+        b"experience_version=conversational_v1&experience_version=%",
+        b"experience_version=%E2%28%A1",
+    ],
+    ids=["bad-hex", "malformed-duplicate", "invalid-utf8"],
+)
+async def test_form_create_classification_preserves_malformed_discriminators(
+    client, content
+) -> None:
+    """A malformed discriminator is ambiguous and retains framework validation."""
+    response = await client.post(
+        "/api/coach/sessions",
+        content=content + b"&company_name=malformed-discriminator-private-token",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == "model_attributes_type"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unrelated_field",
+    [
+        b"company_name=encoded-discriminator-private-token%ZZ",
+        b"company_name=encoded-discriminator-private-token%FF",
+        (
+            b"company_name=encoded-discriminator-private-token%26"
+            b"experience_version%3Dlegacy_v1"
+        ),
+    ],
+    ids=["malformed-percent", "invalid-utf8", "encoded-delimiters"],
+)
+async def test_form_create_classification_decodes_only_discriminator_components(
+    client, caplog, unrelated_field
+) -> None:
+    """Encoded key/value bytes must identify v1 without decoding unrelated values."""
+    response = await client.post(
+        "/api/coach/sessions",
+        content=(unrelated_field + b"&%65xperience%5Fversion=conversational%5fv1"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert "encoded-discriminator-private-token" not in response.text
+    assert "encoded-discriminator-private-token" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_form_create_classification_counts_encoded_duplicate_names(
+    client,
+) -> None:
+    """Counting raw spellings would miss a percent-encoded duplicate key alias."""
+    response = await client.post(
+        "/api/coach/sessions",
+        content=(
+            b"experience_version=conversational_v1&"
+            b"experience%5fversion=conversational_v1&"
+            b"company_name=encoded-duplicate-private-token"
+        ),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["type"] == "model_attributes_type"
 
 
 @pytest.mark.asyncio
