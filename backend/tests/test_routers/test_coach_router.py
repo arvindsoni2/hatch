@@ -6,8 +6,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import func, select
 
 from app.main import app
+from app.config import settings
+from app.models.coach_session import InterviewSession, SessionRecording
 from app.schemas.coach import (
     AnswerEvaluation,
     CompanyResearchResponse,
@@ -74,6 +77,11 @@ SAMPLE_RESEARCH = CompanyResearchResponse(
 )
 
 
+def close_queued_work(_job_id, work, **_kwargs) -> None:
+    """Keep the real create transaction while preventing a test worker escape."""
+    work.close()
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -105,6 +113,171 @@ async def test_submit_answer_unknown_session_does_not_queue_work(client) -> None
         json={"transcript": "In my previous role at a FTSE 100 company...", "duration_ms": 60000},
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_rejects_conversational_session_without_mutation(
+    client, db_session
+) -> None:
+    """Removing the experience guard would create a legacy recording."""
+    session = InterviewSession(
+        id="conversation_submit_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="conversational_v1",
+        conversation_state="asking",
+        state_version=1,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    response = await client.post(
+        f"/api/coach/sessions/{session.id}/submit-answer",
+        params={"question_id": "question_1"},
+        json={"transcript": "synthetic"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_conversational_command_required"
+    assert (
+        await db_session.scalar(
+            select(func.count(SessionRecording.id)).where(
+                SessionRecording.session_id == session.id
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_end_and_retry_reject_conversational_session_before_side_effects(
+    client, db_session
+) -> None:
+    """Removing either guard would let a legacy lifecycle flow mutate this row."""
+    session = InterviewSession(
+        id="conversation_lifecycle_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        conversation_state="ready",
+        state_version=0,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    end_response = await client.post(f"/api/coach/sessions/{session.id}/end")
+    retry_response = await client.post(f"/api/coach/sessions/{session.id}/retry")
+
+    assert end_response.status_code == 409
+    assert (
+        end_response.json()["error"]["code"] == "coach_conversational_command_required"
+    )
+    assert retry_response.status_code == 409
+    assert (
+        retry_response.json()["error"]["code"]
+        == "coach_conversational_session_retry_unsupported"
+    )
+    await db_session.refresh(session)
+    assert (session.status, session.conversation_state) == ("setup", "ready")
+
+
+@pytest.mark.asyncio
+async def test_flag_off_rejects_new_conversation_but_preserves_legacy_create(
+    client, monkeypatch
+) -> None:
+    """Incorrect feature dispatch would either admit v1 or break the legacy 202."""
+    monkeypatch.setattr(settings, "HATCH_COACH_CONVERSATIONAL_ENABLED", False)
+    conversational = await client.post(
+        "/api/coach/sessions",
+        json={
+            "company_name": "Example Co",
+            "role_title": "Architect",
+            "jd_text": "Build resilient systems.",
+            "experience_version": "conversational_v1",
+            "conversational_config": {
+                "interview_type": "mixed",
+                "difficulty": "realistic",
+                "duration_minutes": 30,
+                "planned_question_count": 6,
+                "role_family": "solution_architecture",
+                "role_level": "senior",
+                "industry": "technology",
+                "locale": "en-GB",
+                "focus_areas": ["architecture"],
+                "allowed_answer_modes": ["text"],
+                "evidence_selection": {
+                    "application_cv": "none",
+                    "master_cv": "exclude",
+                    "question_bank": "exclude",
+                    "company_research": "exclude",
+                    "draft_evidence_consent": False,
+                },
+            },
+        },
+    )
+    with patch(
+        "app.services.coach_session_queue.AsyncJobService.run",
+        side_effect=close_queued_work,
+    ):
+        legacy = await client.post(
+            "/api/coach/sessions",
+            json={"company_name": "Example Co", "role_title": "Architect"},
+        )
+
+    assert conversational.status_code == 403
+    assert conversational.json()["error"]["code"] == "coach_conversation_not_enabled"
+    assert legacy.status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_capabilities_truthfully_describes_conversation_and_video_support(
+    client, monkeypatch
+) -> None:
+    """Omitting the feature flag or claiming video support must fail this test."""
+    monkeypatch.setattr(settings, "HATCH_COACH_CONVERSATIONAL_ENABLED", False)
+
+    response = await client.get("/api/coach/capabilities")
+
+    assert response.status_code == 200
+    assert response.json()["conversational"] is False
+    assert response.json()["video_analysis_for_conversational"] is False
+
+
+@pytest.mark.asyncio
+async def test_session_list_additively_exposes_conversational_summary(
+    client, db_session
+) -> None:
+    """Dropping the persisted mode or retention summary would hide live routing data."""
+    session = InterviewSession(
+        id="conversation_summary_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        conversation_state="ready",
+        retention_policy_json={
+            "audio": "delete_after_processing",
+            "transcript": "retain",
+        },
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    response = await client.get("/api/coach/sessions")
+
+    assert response.status_code == 200
+    summary = next(item for item in response.json() if item["id"] == session.id)
+    assert summary["experience_version"] == "conversational_v1"
+    assert summary["conversation_state"] == "ready"
+    assert summary["retention_summary"] == {
+        "audio": "delete_after_processing",
+        "transcript": "retain",
+    }
 
 
 @pytest.mark.asyncio

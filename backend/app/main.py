@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
@@ -33,6 +35,7 @@ from .routers.interviews import router as interviews_router
 from .routers.interviews_ical import router as interviews_ical_router
 from .routers.jobs import health_router, router as jobs_router
 from .routers.coach import router as coach_router
+from .routers.coach_conversation import router as coach_conversation_router
 from .routers.settings import router as settings_router
 from .routers.system import router as system_router
 from .routers.tailor import router as tailor_router
@@ -416,6 +419,21 @@ def create_app() -> FastAPI:
     instrument_fastapi_app(app, telemetry)
     app.state.app_lock_session_factory = AsyncSessionLocal
 
+    @app.exception_handler(RequestValidationError)
+    async def redact_conversational_command_validation(
+        request: StarletteRequest, error: RequestValidationError
+    ) -> JSONResponse:
+        """Keep strict conversational command validation free of client echoes."""
+        if request.url.path.startswith("/api/coach/sessions/") and request.url.path.endswith(
+            "/commands"
+        ):
+            from .routers.coach_conversation import (  # noqa: PLC0415
+                conversation_error_response,
+            )
+
+            return conversation_error_response("coach_contract_unsupported")
+        return await request_validation_exception_handler(request, error)
+
     # CORS — origins from ALLOWED_ORIGINS env var (comma-separated), defaults to localhost
     _origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
     if "*" in _origins:
@@ -457,6 +475,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(tailor_router)
     app.include_router(coach_router)
+    app.include_router(coach_conversation_router)
     app.include_router(digest_router)
     app.include_router(emails_router)
     app.include_router(ghost_router)

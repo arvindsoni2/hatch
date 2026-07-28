@@ -382,6 +382,9 @@ class SessionResponse(BaseModel):
     parent_session_id: str | None = None
     focus_areas: list[str] | None = None
     technical_drills: list[TechnicalDrill] = Field(default_factory=list)
+    experience_version: Literal["legacy_v1", "conversational_v1"] | None = None
+    conversation_state: str | None = None
+    retention_summary: dict | None = None
 
 
 class SessionListItem(BaseModel):

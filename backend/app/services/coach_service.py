@@ -812,6 +812,13 @@ class CoachService:
             questions=[SessionQuestionRead.model_validate(q) for q in questions],
             created_at=session.created_at,
             interview_date=cfg.get("interview_date"),
+            experience_version=session.experience_version,
+            conversation_state=session.conversation_state,
+            retention_summary=(
+                dict(session.retention_policy_json)
+                if session.retention_policy_json is not None
+                else None
+            ),
         )
 
     @trace_workflow(

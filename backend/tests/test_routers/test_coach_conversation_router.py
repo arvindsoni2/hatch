@@ -8,7 +8,12 @@ from datetime import datetime, timezone
 from itertools import product
 
 import pytest
+import pytest_asyncio
 from pydantic import ValidationError
+from sqlalchemy import func, select
+
+from app.config import settings
+from app.models.coach_session import InterviewSession, SessionRecording
 
 from app.schemas.coach_conversation import (
     AcceptAttemptPayload,
@@ -48,6 +53,158 @@ from app.services.coach_conversational_contracts import ERROR_REGISTRY
 
 
 COMMAND_CONTRACT = "coach_conversation_command_v1"
+
+
+@pytest_asyncio.fixture
+async def seeded_asking_session(db_session):
+    """A real conversational row whose stale command must be rejected."""
+    session = InterviewSession(
+        id="conversation_asking_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="conversational_v1",
+        conversation_state="asking",
+        state_version=2,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    return session
+
+
+@pytest_asyncio.fixture
+async def seeded_conversational_session(db_session):
+    """A persisted conversational session that legacy mutations must not touch."""
+    session = InterviewSession(
+        id="conversation_ready_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        conversation_state="ready",
+        state_version=0,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    return session
+
+
+async def recording_count(db_session, session_id: str) -> int:
+    return int(
+        await db_session.scalar(
+            select(func.count(SessionRecording.id)).where(
+                SessionRecording.session_id == session_id
+            )
+        )
+        or 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_command_route_returns_canonical_conflict(client, seeded_asking_session):
+    """Changing the version fence must make this route test fail."""
+    response = await client.post(
+        f"/api/coach/sessions/{seeded_asking_session.id}/commands",
+        json={
+            "command_id": "01JEXAMPLE0000000000000000",
+            "command_type": "begin_answer",
+            "expected_state_version": 0,
+            "payload": {"recording_type": "text", "client_attempt_id": "attempt_1"},
+            "contract_version": COMMAND_CONTRACT,
+        },
+    )
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "coach_conversation_version_conflict"
+    assert set(error) >= {
+        "message",
+        "retryable",
+        "current_state",
+        "current_state_version",
+        "correlation_id",
+        "details",
+    }
+    assert error["details"] == {}
+
+
+@pytest.mark.asyncio
+async def test_live_route_remains_available_for_existing_conversation_when_flag_off(
+    client, seeded_conversational_session, monkeypatch
+):
+    """Removing the live route or incorrectly gating reads must fail this test."""
+    monkeypatch.setattr(settings, "HATCH_COACH_CONVERSATIONAL_ENABLED", False)
+
+    response = await client.get(
+        f"/api/coach/sessions/{seeded_conversational_session.id}/live"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["experience_version"] == "conversational_v1"
+
+
+@pytest.mark.asyncio
+async def test_command_route_rejects_unsafe_session_id(client):
+    """Removing the shared safe-ID guard must make this test fail."""
+    response = await client.post(
+        "/api/coach/sessions/unsafe%20id/commands",
+        json={
+            "command_id": "01JEXAMPLE0000000000000000",
+            "command_type": "start",
+            "expected_state_version": 0,
+            "payload": {},
+            "contract_version": COMMAND_CONTRACT,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "session_id" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_command_route_redacts_malformed_contract_details(client):
+    """Returning framework validation details would expose this canary string."""
+    response = await client.post(
+        "/api/coach/sessions/conversation_asking_1/commands",
+        json={
+            "command_id": "01JEXAMPLE0000000000000000",
+            "command_type": "start",
+            "expected_state_version": 0,
+            "payload": {"canary": "Bearer private-token"},
+            "contract_version": "coach_conversation_command_v2",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert "private-token" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_live_route_hides_unknown_and_legacy_sessions_behind_one_safe_conflict(
+    client, db_session
+):
+    """Leaking existence or legacy mode would make these two results diverge."""
+    legacy = InterviewSession(
+        id="legacy_live_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="legacy_v1",
+    )
+    db_session.add(legacy)
+    await db_session.commit()
+
+    unknown = await client.get("/api/coach/sessions/unknown_live_1/live")
+    legacy_response = await client.get(f"/api/coach/sessions/{legacy.id}/live")
+
+    for response in (unknown, legacy_response):
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "coach_conversation_invalid_state"
+        assert response.json()["error"]["details"] == {}
 
 
 def resolve_local_schema_ref(schema: dict, candidate: dict) -> dict:

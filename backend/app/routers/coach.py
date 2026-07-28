@@ -250,7 +250,16 @@ async def create_session(
     async job uses its own DB session (not the request session) to avoid accessing
     a closed connection after the HTTP response has been sent.
     """
-    return await queue_coach_session(request, db, svc)
+    try:
+        return await queue_coach_session(request, db, svc)
+    except Exception as error:
+        from ..services.coach_session_plan import SessionPlanError  # noqa: PLC0415
+
+        if not isinstance(error, SessionPlanError):
+            raise
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response(error.code)
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
@@ -317,6 +326,12 @@ async def retry_session(
     session = await repo.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response(
+            "coach_conversational_session_retry_unsupported"
+        )
 
     config = dict(session.config or {})
     session_config_keys = set(SessionConfig.model_fields.keys())
@@ -407,6 +422,11 @@ async def submit_answer(
     from ..repositories.session_repository import SessionRepository
     from ..services.coach_reconciliation import reconcile_session
 
+    session = await SessionRepository(db).get_session(session_id)
+    if session is not None and session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
     await reconcile_session(db, session_id)
     async_job = await AsyncJobService.create(db, "submit_answer")
     trace_context = get_telemetry().capture_trace_context()
@@ -519,6 +539,14 @@ async def submit_audio(
     _require_safe_id(session_id, "session_id")
     _require_safe_id(question_id, "question_id")
 
+    from ..repositories.session_repository import SessionRepository
+
+    session = await SessionRepository(db).get_session(session_id)
+    if session is not None and session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
+
     ct = (audio.content_type or "").split(";")[0].strip().lower()
     if not ct.startswith("audio/"):
         raise HTTPException(
@@ -540,7 +568,6 @@ async def submit_audio(
         except Exception:
             logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
 
-    from ..repositories.session_repository import SessionRepository
     from ..services.coach_reconciliation import reconcile_session
 
     await reconcile_session(db, session_id)
@@ -656,8 +683,15 @@ async def end_session(
     from ..repositories.session_repository import SessionRepository
     from ..services.coach_reconciliation import reconcile_session
 
-    await reconcile_session(db, session_id)
     repository = SessionRepository(db)
+    session = await repository.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
+    await reconcile_session(db, session_id)
     session = await repository.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -900,9 +934,16 @@ async def get_capabilities() -> dict:
         return {
             "face_analysis": profile.perception.face.enabled,
             "tts": profile.perception.tts.provider != "none",
+            "conversational": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
+            "video_analysis_for_conversational": False,
         }
     except Exception:
-        return {"face_analysis": False, "tts": False}
+        return {
+            "face_analysis": False,
+            "tts": False,
+            "conversational": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
+            "video_analysis_for_conversational": False,
+        }
 
 
 # ---------------------------------------------------------------------------

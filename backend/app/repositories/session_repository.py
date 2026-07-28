@@ -103,6 +103,13 @@ class SessionRepository:
                 overall_score=r.overall_score,
                 created_at=r.created_at,
                 started_at=r.started_at,
+                experience_version=r.experience_version,
+                conversation_state=r.conversation_state,
+                retention_summary=(
+                    dict(r.retention_policy_json)
+                    if r.retention_policy_json is not None
+                    else None
+                ),
             )
             for r in rows
         ]
