@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..models.async_job import AsyncJob
 from ..models.coach_session import (
@@ -33,6 +34,9 @@ TRANSCRIPT_BOUND_STAGES = frozenset(
         "follow_up_decision",
         "coaching_enrichment",
     }
+)
+_DEADLINE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)?$"
 )
 
 
@@ -67,12 +71,17 @@ def _parse_claim(evaluation: InterviewAttemptEvaluation) -> ProcessingSnapshot |
         )
     ):
         return None
+    deadline_text = claim["job_deadline_at"]
+    if _DEADLINE_RE.fullmatch(deadline_text) is None:
+        return None
     try:
-        deadline = datetime.fromisoformat(claim["job_deadline_at"])
+        deadline = datetime.fromisoformat(deadline_text.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
     if deadline.tzinfo is not None:
-        return None
+        if deadline.utcoffset() != timezone.utc.utcoffset(deadline):
+            return None
+        deadline = deadline.astimezone(timezone.utc).replace(tzinfo=None)
     return ProcessingSnapshot(
         claim=claim,
         deadline=deadline,

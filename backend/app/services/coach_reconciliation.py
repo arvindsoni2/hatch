@@ -555,6 +555,8 @@ async def _reconcile_processing_answer(
     if attempt.recording_type == "text" and transcript_id is None:
         return 0
     active_names = {stage.stage_name for stage in active_stages}
+    if transcript_id is None and active_names & TRANSCRIPT_BOUND_STAGES:
+        return 0
     pretranscription_audio = (
         attempt.recording_type == "audio"
         and transcript_id is None
@@ -1106,15 +1108,75 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             == processing_attempt.processing_generation,
             claim_value("processing_contract_version") == "coach_processing_v1",
         )
+
+        def canonical_utc_deadline(value):
+            value_length = func.length(value)
+            body = case(
+                (
+                    func.substr(value, -1) == "Z",
+                    func.substr(value, 1, value_length - 1),
+                ),
+                (
+                    func.substr(value, -6) == "+00:00",
+                    func.substr(value, 1, value_length - 6),
+                ),
+                else_=value,
+            )
+            body_length = func.length(body)
+            base = func.substr(body, 1, 19)
+            fraction = case(
+                (body_length == 19, literal("")),
+                (
+                    and_(
+                        body_length.between(21, 26),
+                        func.substr(body, 20, 1) == ".",
+                    ),
+                    func.substr(body, 21),
+                ),
+                else_=None,
+            )
+            normalized_base = (
+                func.substr(base, 1, 10)
+                .concat(literal("T"))
+                .concat(func.substr(base, 12, 8))
+            )
+            base_digits = (
+                func.substr(base, 1, 4)
+                .concat(func.substr(base, 6, 2))
+                .concat(func.substr(base, 9, 2))
+                .concat(func.substr(base, 12, 2))
+                .concat(func.substr(base, 15, 2))
+                .concat(func.substr(base, 18, 2))
+            )
+            valid = and_(
+                value.is_not(None),
+                func.length(base) == 19,
+                func.substr(base, 5, 1) == "-",
+                func.substr(base, 8, 1) == "-",
+                func.substr(base, 11, 1).in_(("T", " ")),
+                func.substr(base, 14, 1) == ":",
+                func.substr(base, 17, 1) == ":",
+                ~base_digits.op("GLOB")("*[^0-9]*"),
+                fraction.is_not(None),
+                ~fraction.op("GLOB")("*[^0-9]*"),
+                func.strftime(
+                    "%Y-%m-%dT%H:%M:%S", func.julianday(base)
+                ).is_not_distinct_from(normalized_base),
+            )
+            padded_fraction = fraction.concat(
+                func.substr(literal("000000"), 1, 6 - func.length(fraction))
+            )
+            return case(
+                (
+                    valid,
+                    normalized_base.concat(literal(".")).concat(padded_fraction),
+                ),
+                else_=None,
+            )
+
         claim_deadline = claim_value("job_deadline_at")
-        claim_deadline_tail = func.substr(claim_deadline, 11)
-        claim_deadline_julian = func.julianday(claim_deadline)
-        exact_naive_deadline = and_(
-            claim_deadline_julian.is_not(None),
-            ~claim_deadline_tail.like("%+%"),
-            ~claim_deadline_tail.like("%-%"),
-            ~func.lower(claim_deadline_tail).like("%z%"),
-        )
+        canonical_claim_deadline = canonical_utc_deadline(claim_deadline)
+        exact_deadline = canonical_claim_deadline.is_not(None)
         exact_source = or_(
             and_(
                 processing_attempt.recording_type == "text",
@@ -1158,8 +1220,8 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                     processing_attempt.processing_generation
                 ),
                 invalid_stage.claim_token.is_distinct_from(claim_value("claim_token")),
-                func.julianday(invalid_stage.job_deadline_at).is_distinct_from(
-                    claim_deadline_julian
+                canonical_utc_deadline(invalid_stage.job_deadline_at).is_distinct_from(
+                    canonical_claim_deadline
                 ),
                 ~exact_stage_source,
             ),
@@ -1171,7 +1233,8 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             processing_stage.expected_processing_generation
             == processing_attempt.processing_generation,
             processing_stage.claim_token == claim_value("claim_token"),
-            func.julianday(processing_stage.job_deadline_at) == claim_deadline_julian,
+            canonical_utc_deadline(processing_stage.job_deadline_at)
+            == canonical_claim_deadline,
             or_(
                 and_(
                     processing_stage.stage_name.in_(TRANSCRIPT_BOUND_STAGES),
@@ -1213,6 +1276,12 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             form_stage.stage_name == "content_evaluation",
             form_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
         )
+        active_transcript_bound_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name.in_(TRANSCRIPT_BOUND_STAGES),
+            form_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
+        )
         pending_processing_form_is_actionable = and_(
             pending_processing_is_actionable,
             or_(
@@ -1224,8 +1293,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                         and_(
                             processing_attempt.recording_type == "audio",
                             processing_attempt.current_transcript_version_id.is_(None),
-                            active_transcription_stage,
-                            ~created_current_generation_transcript,
+                            ~active_transcript_bound_stage,
                         ),
                     ),
                 ),
@@ -1363,7 +1431,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             processing_evaluation.async_job_id == processing_job.id,
             processing_job.type == "coach_attempt_processing",
             exact_claim_shape,
-            exact_naive_deadline,
+            exact_deadline,
             exact_source,
             selected_stage_is_exact,
             ~malformed_owned_stage,
