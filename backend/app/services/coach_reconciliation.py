@@ -1151,6 +1151,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             valid = and_(
                 value.is_not(None),
                 func.length(base) == 19,
+                func.substr(base, 1, 4) != "0000",
                 func.substr(base, 5, 1) == "-",
                 func.substr(base, 8, 1) == "-",
                 func.substr(base, 11, 1).in_(("T", " ")),
@@ -1294,6 +1295,10 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                             processing_attempt.recording_type == "audio",
                             processing_attempt.current_transcript_version_id.is_(None),
                             ~active_transcript_bound_stage,
+                            or_(
+                                ~active_transcription_stage,
+                                ~created_current_generation_transcript,
+                            ),
                         ),
                     ),
                 ),

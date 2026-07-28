@@ -1526,7 +1526,12 @@ async def test_startup_deadline_comparison_is_semantic(
 
 
 async def _pending_audio_claim_with_active_stage(
-    db_session, *, now: datetime, stage_name: str, source: str | None = None
+    db_session,
+    *,
+    now: datetime,
+    stage_name: str,
+    source: str | None = None,
+    created_current_generation: bool = False,
 ):
     session, _, attempt, evaluation, stage, _ = await _processing_claim(
         db_session, deadline=now - timedelta(minutes=1), retries=1, limit=2
@@ -1547,7 +1552,8 @@ async def _pending_audio_claim_with_active_stage(
     evaluation.diagnostics_json = diagnostics
     stage.stage_name = stage_name
     stage.source_transcript_version_id = source
-    transcript.processing_generation = attempt.processing_generation - 1
+    if not created_current_generation:
+        transcript.processing_generation = attempt.processing_generation - 1
     await db_session.commit()
     return session
 
@@ -1582,6 +1588,49 @@ async def test_startup_selector_admits_each_retryable_audio_pretranscription_sta
 
     assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
     assert selected_results == [(session_id, 1)]
+
+
+@pytest.mark.asyncio
+async def test_startup_transcription_with_current_generation_transcript_is_excluded(
+    db_session, monkeypatch
+) -> None:
+    from app.services import coach_reconciliation as reconciliation
+
+    now = datetime.utcnow()
+    malformed = await _pending_audio_claim_with_active_stage(
+        db_session,
+        now=now,
+        stage_name="transcription",
+        created_current_generation=True,
+    )
+    malformed.created_at = now - timedelta(days=2)
+    malformed_id = malformed.id
+    assert await reconcile_conversational_session(db_session, malformed_id, now) == 0
+    actionable, _, _, _, _, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(minutes=1), retries=1, limit=2
+    )
+    actionable.created_at = now - timedelta(days=1)
+    actionable_id = actionable.id
+    await db_session.commit()
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr(reconciliation, "AsyncSessionLocal", factory)
+    original = reconciliation.reconcile_conversational_session
+    selected_results: list[tuple[str, int]] = []
+
+    async def tracking_reconcile(db, selected_id: str) -> int:
+        result = await original(db, selected_id)
+        selected_results.append((selected_id, result))
+        return result
+
+    monkeypatch.setattr(
+        reconciliation, "reconcile_conversational_session", tracking_reconcile
+    )
+
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
+    assert selected_results == [(actionable_id, 1)]
+    assert malformed_id not in {selected_id for selected_id, _ in selected_results}
 
 
 @pytest.mark.asyncio
@@ -1756,6 +1805,67 @@ async def test_startup_deadline_rejects_invalid_utc_forms_before_limit(
     )
 
     assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
+    assert selected_results == [(actionable_id, 1)]
+    assert malformed_id not in {selected_id for selected_id, _ in selected_results}
+
+
+@pytest.mark.asyncio
+async def test_startup_raw_matching_year_zero_deadlines_fail_closed_before_limit(
+    db_session, monkeypatch
+) -> None:
+    from app.services import coach_reconciliation as reconciliation
+
+    now = datetime.utcnow()
+    malformed, _, _, evaluation, stage, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(minutes=5), retries=1, limit=2
+    )
+    malformed.created_at = now - timedelta(days=2)
+    malformed_id = malformed.id
+    claim = dict(evaluation.diagnostics_json["processing_claim"])
+    claim["job_deadline_at"] = "0000-01-01T10:11:12.123456"
+    evaluation_id = evaluation.id
+    stage_id = stage.id
+    actionable, _, _, _, _, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(minutes=1), retries=1, limit=2
+    )
+    actionable.created_at = now - timedelta(days=1)
+    actionable_id = actionable.id
+    await db_session.flush()
+    await db_session.execute(
+        text(
+            "UPDATE interview_attempt_evaluations "
+            "SET diagnostics_json = :diagnostics WHERE id = :evaluation_id"
+        ),
+        {
+            "diagnostics": json.dumps({"processing_claim": claim}),
+            "evaluation_id": evaluation_id,
+        },
+    )
+    await db_session.execute(
+        text(
+            "UPDATE interview_attempt_stages "
+            "SET job_deadline_at = :deadline WHERE id = :stage_id"
+        ),
+        {"deadline": "0000-01-01 10:11:12.123456", "stage_id": stage_id},
+    )
+    await db_session.commit()
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr(reconciliation, "AsyncSessionLocal", factory)
+    original = reconciliation.reconcile_conversational_session
+    selected_results: list[tuple[str, int]] = []
+
+    async def tracking_reconcile(db, selected_id: str) -> int:
+        result = await original(db, selected_id)
+        selected_results.append((selected_id, result))
+        return result
+
+    monkeypatch.setattr(
+        reconciliation, "reconcile_conversational_session", tracking_reconcile
+    )
+
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
     assert selected_results == [(actionable_id, 1)]
     assert malformed_id not in {selected_id for selected_id, _ in selected_results}
 
