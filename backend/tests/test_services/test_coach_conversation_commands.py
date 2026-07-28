@@ -1467,6 +1467,62 @@ async def test_command_result_uses_contextual_allowed_command_projection(
 
 
 @pytest.mark.asyncio
+async def test_paused_result_and_live_view_advertise_any_eligible_audio_target(
+    db_session: AsyncSession,
+) -> None:
+    from app.services.coach_live_view import CoachLiveViewService
+
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=3
+    )
+    session.active_question_id = questions[0].id
+    session.active_root_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    historical = SessionQuestion(
+        session_id=session.id,
+        question_num=3,
+        text="Historical question",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=3,
+        question_kind="planned",
+        question_state="answered",
+        asked_sequence=1,
+    )
+    db_session.add(historical)
+    await db_session.flush()
+    db_session.add(
+        SessionRecording(
+            session_id=session.id,
+            question_id=historical.id,
+            recording_type="audio",
+            attempt_number=1,
+            attempt_kind="primary",
+            attempt_state="completed",
+            evaluation_state="completed",
+            processing_generation=1,
+            processing_retry_count=0,
+            processing_retry_limit=2,
+            audio_retention_policy="retain_until_deleted",
+            audio_retention_state="retained",
+        )
+    )
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("pause", version=3, command_id="pause-with-historical-audio"),
+    )
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+
+    assert "delete_audio" in result.allowed_commands
+    assert result.allowed_commands == view.allowed_commands
+
+
+@pytest.mark.asyncio
 async def test_command_service_fails_closed_before_scope_incompatible_dispatch(
     db_session: AsyncSession,
 ) -> None:

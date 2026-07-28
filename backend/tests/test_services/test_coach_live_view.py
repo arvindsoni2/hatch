@@ -7,10 +7,12 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from app.models.async_job import AsyncJob
 from app.models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewSession,
+    InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
@@ -228,6 +230,101 @@ async def test_live_does_not_reconcile_non_stale_processing_claim(db_session) ->
 
 
 @pytest.mark.asyncio
+async def test_live_processing_rejects_stale_stage_transcript_ownership(
+    db_session,
+) -> None:
+    session, question = await _ready_session(db_session)
+    now = datetime.utcnow()
+    session.status = "active"
+    session.conversation_state = "processing_answer"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    question.question_state = "asked"
+    job = AsyncJob(type="coach_attempt_processing", status="running")
+    db_session.add(job)
+    await db_session.flush()
+    attempt = SessionRecording(
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        transcript="bounded",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="pending_processing",
+        evaluation_state="pending",
+        processing_generation=1,
+        processing_retry_count=0,
+        processing_retry_limit=2,
+        async_job_id=job.id,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="not_applicable",
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+    transcript = InterviewTranscriptVersion(
+        recording_id=attempt.id,
+        version_number=1,
+        transcript="bounded",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=1,
+    )
+    db_session.add(transcript)
+    await db_session.flush()
+    attempt.current_transcript_version_id = transcript.id
+    deadline = now + timedelta(minutes=5)
+    claim_token = "live-exact-token"
+    evaluation = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="pending",
+        evaluation_contract_version="coach_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+        async_job_id=job.id,
+        diagnostics_json={
+            "processing_claim": {
+                "processing_generation": 1,
+                "job_deadline_at": deadline.isoformat(),
+                "source_audio_content_hash": None,
+                "source_transcript_version_id": transcript.id,
+                "expected_session_state_version": session.state_version - 1,
+                "processing_contract_version": "coach_processing_v1",
+                "claim_token": claim_token,
+            }
+        },
+    )
+    db_session.add(evaluation)
+    await db_session.flush()
+    attempt.current_evaluation_version_id = evaluation.id
+    session.active_recording_id = attempt.id
+    db_session.add(
+        InterviewAttemptStage(
+            recording_id=attempt.id,
+            evaluation_version_id=evaluation.id,
+            stage_name="content_evaluation",
+            stage_state="running",
+            attempt_count=1,
+            repair_count=0,
+            job_id=job.id,
+            claim_token=claim_token,
+            expected_processing_generation=1,
+            source_transcript_version_id="stale-private-transcript",
+            job_deadline_at=deadline,
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(CoachLiveViewError) as raised:
+        await CoachLiveViewService(db_session).get_live_view(
+            user_id="local", session_id=session.id
+        )
+    assert raised.value.code == "coach_conversation_invalid_state"
+    assert "stale-private-transcript" not in str(raised.value)
+
+
+@pytest.mark.asyncio
 async def test_live_rejects_asking_with_submitted_attempt_still_processing(
     db_session,
 ) -> None:
@@ -403,6 +500,139 @@ async def test_live_contextual_commands_are_scope_and_report_compatible(
     assert "retry_processing" not in view.allowed_commands
     assert "retry_answer" not in view.allowed_commands
     assert "end_session" not in view.allowed_commands
+
+
+@pytest.mark.asyncio
+async def test_active_review_ignores_transcripts_from_other_questions(
+    db_session,
+) -> None:
+    session, question = await _ready_session(db_session)
+    session.status = "active"
+    session.conversation_state = "awaiting_next_action"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    question.question_state = "asked"
+    active = SessionRecording(
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="unavailable",
+        evaluation_state="unavailable",
+        processing_generation=1,
+        processing_retry_count=0,
+        processing_retry_limit=2,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="not_applicable",
+    )
+    db_session.add(active)
+    await db_session.flush()
+    active_evaluation = InterviewAttemptEvaluation(
+        recording_id=active.id,
+        version_number=1,
+        state="unavailable",
+        evaluation_contract_version="coach_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add(active_evaluation)
+    await db_session.flush()
+    active.current_evaluation_version_id = active_evaluation.id
+    session.active_recording_id = active.id
+    historical_question = SessionQuestion(
+        session_id=session.id,
+        question_num=2,
+        text="Historical question",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=2,
+        question_kind="planned",
+        question_state="answered",
+        asked_sequence=1,
+    )
+    db_session.add(historical_question)
+    await db_session.flush()
+    historical = SessionRecording(
+        session_id=session.id,
+        question_id=historical_question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="completed",
+        evaluation_state="completed",
+        processing_generation=1,
+        processing_retry_count=0,
+        processing_retry_limit=2,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="not_applicable",
+    )
+    db_session.add(historical)
+    await db_session.flush()
+    transcript = InterviewTranscriptVersion(
+        recording_id=historical.id,
+        version_number=1,
+        transcript="historical private transcript",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=1,
+    )
+    db_session.add(transcript)
+    await db_session.flush()
+    historical.current_transcript_version_id = transcript.id
+    await db_session.commit()
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+
+    assert "edit_transcript" not in view.allowed_commands
+    assert "delete_transcript" not in view.allowed_commands
+
+
+@pytest.mark.asyncio
+async def test_completed_session_allows_session_wide_transcript_deletion(
+    db_session,
+) -> None:
+    session, question = await _ready_session(db_session)
+    session.status = "completed"
+    session.conversation_state = "completed"
+    session.report_state = "fallback"
+    attempt = SessionRecording(
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="completed",
+        evaluation_state="completed",
+        processing_generation=1,
+        processing_retry_count=0,
+        processing_retry_limit=2,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="not_applicable",
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+    transcript = InterviewTranscriptVersion(
+        recording_id=attempt.id,
+        version_number=1,
+        transcript="privacy deletion target",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=1,
+    )
+    db_session.add(transcript)
+    await db_session.flush()
+    attempt.current_transcript_version_id = transcript.id
+    await db_session.commit()
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+
+    assert "delete_transcript" in view.allowed_commands
+    assert "edit_transcript" not in view.allowed_commands
 
 
 @pytest.mark.asyncio

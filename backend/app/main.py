@@ -83,19 +83,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     logger.info("Database ready.")
 
-    # Recover Coach-owned claims before the application is marked ready.
-    try:
-        from .services.coach_reconciliation import (  # noqa: PLC0415
-            reconcile_stale_coach_state,
-        )
-
-        # One bounded entry point covers legacy and conversational Coach claims.
-        recovered = await reconcile_stale_coach_state(batch_size=100)
-        if recovered:
-            logger.warning("Recovered %d stale Coach async states.", recovered)
-    except Exception:
-        logger.exception("Coach startup reconciliation failed; lazy recovery remains enabled.")
-
     # Reset any jobs left in "running" state from a previous crash
     from sqlalchemy import update as _sa_update  # noqa: PLC0415
     from .models.async_job import AsyncJob as _AsyncJob  # noqa: PLC0415
@@ -119,6 +106,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 _apps.rowcount,
             )
         await _db.commit()
+
+    # Recover Coach-owned claims only after the global restart fence makes every
+    # abandoned running job terminal and visible to the shared reconciler.
+    try:
+        from .services.coach_reconciliation import (  # noqa: PLC0415
+            reconcile_stale_coach_state,
+        )
+
+        # One bounded entry point covers legacy and conversational Coach claims.
+        recovered = await reconcile_stale_coach_state(batch_size=100)
+        if recovered:
+            logger.warning("Recovered %d stale Coach async states.", recovered)
+    except Exception:
+        logger.exception(
+            "Coach startup reconciliation failed; lazy recovery remains enabled."
+        )
 
     # Build a long-lived DB session for the scheduler's JobService
     scheduler_session = AsyncSessionLocal()

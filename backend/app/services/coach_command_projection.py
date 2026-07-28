@@ -70,16 +70,16 @@ async def contextual_allowed_commands(
         )
         or 0
     )
-    transcript_targets = int(
-        await db.scalar(
-            select(func.count(SessionRecording.id)).where(
-                SessionRecording.session_id == session.id,
-                SessionRecording.current_transcript_version_id.is_not(None),
-                SessionRecording.attempt_state != "deleted",
-            )
-        )
-        or 0
+    transcript_target_query = select(func.count(SessionRecording.id)).where(
+        SessionRecording.session_id == session.id,
+        SessionRecording.current_transcript_version_id.is_not(None),
+        SessionRecording.attempt_state != "deleted",
     )
+    if session.status != "completed":
+        transcript_target_query = transcript_target_query.where(
+            SessionRecording.question_id == session.active_question_id
+        )
+    transcript_targets = int(await db.scalar(transcript_target_query) or 0)
     audio_targets = int(
         await db.scalar(
             select(func.count(SessionRecording.id)).where(
@@ -168,8 +168,6 @@ async def contextual_allowed_commands(
             "recoverable_error",
         }:
             remove("resume", "end_session")
-        if attempt is None or attempt.attempt_state in {"draft", "uploaded"}:
-            remove("delete_audio")
 
     if session.conversation_state == "completed" and not (
         session.report_state == "failed"

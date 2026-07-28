@@ -10,6 +10,7 @@ from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
@@ -32,6 +33,7 @@ from ..schemas.coach_conversation import (
 )
 from .coach_command_projection import contextual_allowed_commands
 from .coach_conversational_contracts import ERROR_REGISTRY, LIVE_VIEW_CONTRACT
+from .coach_processing_snapshot import exact_processing_snapshot
 from .coach_reconciliation import reconcile_conversational_session
 
 
@@ -303,6 +305,39 @@ class CoachLiveViewService:
             or attempt.current_evaluation_version_id is None
         ):
             raise CoachLiveViewError("coach_conversation_invalid_state")
+        if state == "processing_answer" and attempt is not None:
+            evaluation = await self.db.get(
+                InterviewAttemptEvaluation, attempt.current_evaluation_version_id
+            )
+            job = await self.db.get(AsyncJob, attempt.async_job_id)
+            stages = (
+                list(
+                    (
+                        await self.db.scalars(
+                            select(InterviewAttemptStage).where(
+                                InterviewAttemptStage.recording_id == attempt.id,
+                                InterviewAttemptStage.evaluation_version_id
+                                == attempt.current_evaluation_version_id,
+                            )
+                        )
+                    ).all()
+                )
+                if evaluation is not None
+                else []
+            )
+            if (
+                evaluation is None
+                or job is None
+                or exact_processing_snapshot(
+                    session=session,
+                    attempt=attempt,
+                    evaluation=evaluation,
+                    job=job,
+                    stages=stages,
+                )
+                is None
+            ):
+                raise CoachLiveViewError("coach_conversation_invalid_state")
         if state == "awaiting_next_action":
             if (
                 question is None

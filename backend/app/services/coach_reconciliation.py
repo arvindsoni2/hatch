@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from ..config import settings
 from ..database import AsyncSessionLocal
@@ -27,6 +27,11 @@ from ..repositories.conversational_session_repository import (
 )
 from ..repositories.session_repository import SessionRepository
 from .coach_contracts import CoachDiagnostic, failed_answer_payload
+from .coach_processing_snapshot import (
+    TRANSCRIPT_BOUND_STAGES,
+    ProcessingSnapshot,
+    exact_processing_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,88 +271,10 @@ def _terminal_attempt_state(value: str | None) -> bool:
     return value in {"completed", "unavailable"}
 
 
-_CLAIM_KEYS = frozenset(
-    {
-        "processing_generation",
-        "job_deadline_at",
-        "source_audio_content_hash",
-        "source_transcript_version_id",
-        "expected_session_state_version",
-        "processing_contract_version",
-        "claim_token",
-    }
-)
 _ACTIVE_STAGE_STATES = frozenset({"pending", "running"})
 _TERMINAL_STAGE_STATES = frozenset(
     {"completed", "reused", "not_applicable", "unavailable", "failed_terminal"}
 )
-
-
-def _strict_processing_claim(
-    evaluation: InterviewAttemptEvaluation,
-) -> tuple[Mapping[str, object], datetime] | None:
-    diagnostics = evaluation.diagnostics_json
-    if not isinstance(diagnostics, Mapping):
-        return None
-    claim = diagnostics.get("processing_claim")
-    if not isinstance(claim, Mapping) or frozenset(claim) != _CLAIM_KEYS:
-        return None
-    if (
-        type(claim.get("processing_generation")) is not int
-        or type(claim.get("expected_session_state_version")) is not int
-        or not isinstance(claim.get("job_deadline_at"), str)
-        or not isinstance(claim.get("processing_contract_version"), str)
-        or not isinstance(claim.get("claim_token"), str)
-        or not claim.get("claim_token")
-        or (
-            claim.get("source_audio_content_hash") is not None
-            and not isinstance(claim.get("source_audio_content_hash"), str)
-        )
-        or (
-            claim.get("source_transcript_version_id") is not None
-            and not isinstance(claim.get("source_transcript_version_id"), str)
-        )
-    ):
-        return None
-    try:
-        deadline = datetime.fromisoformat(claim["job_deadline_at"])
-    except (TypeError, ValueError):
-        return None
-    if deadline.tzinfo is not None:
-        return None
-    return claim, deadline
-
-
-async def _current_claim_stages(
-    db: AsyncSession,
-    *,
-    attempt: SessionRecording,
-    evaluation: InterviewAttemptEvaluation,
-    job_id: str,
-    claim: Mapping[str, object],
-    deadline: datetime,
-) -> list[InterviewAttemptStage] | None:
-    stages = list(
-        (
-            await db.scalars(
-                select(InterviewAttemptStage).where(
-                    InterviewAttemptStage.recording_id == attempt.id,
-                    InterviewAttemptStage.evaluation_version_id == evaluation.id,
-                )
-            )
-        ).all()
-    )
-    generation = claim["processing_generation"]
-    token = claim["claim_token"]
-    if not stages or any(
-        stage.job_id != job_id
-        or stage.expected_processing_generation != generation
-        or stage.job_deadline_at != deadline
-        or stage.claim_token != token
-        for stage in stages
-    ):
-        return None
-    return stages
 
 
 async def _terminal_processing_form_is_valid(
@@ -356,14 +283,14 @@ async def _terminal_processing_form_is_valid(
     attempt: SessionRecording,
     evaluation: InterviewAttemptEvaluation,
     stages: list[InterviewAttemptStage],
-    claim: Mapping[str, object],
+    snapshot: ProcessingSnapshot,
 ) -> bool:
     if any(stage.stage_state not in _TERMINAL_STAGE_STATES for stage in stages):
         return False
     stage_by_name = {stage.stage_name: stage for stage in stages}
     transcript_id = evaluation.transcript_version_id
     result = evaluation.diagnostics_json.get("result")
-    if not isinstance(result, Mapping):
+    if not isinstance(result, dict):
         return False
     reason = result.get("reason_code", result.get("code"))
     if evaluation.state == "completed":
@@ -460,50 +387,30 @@ async def _reconcile_processing_answer(
     )
     job_id = attempt.async_job_id or (evaluation.async_job_id if evaluation else None)
     job = await db.get(AsyncJob, job_id) if job_id else None
-    parsed_claim = (
-        _strict_processing_claim(evaluation) if evaluation is not None else None
+    stages = list(
+        (
+            await db.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.recording_id == attempt.id,
+                    InterviewAttemptStage.evaluation_version_id
+                    == attempt.current_evaluation_version_id,
+                )
+            )
+        ).all()
     )
-    claim = parsed_claim[0] if parsed_claim is not None else None
-    deadline = parsed_claim[1] if parsed_claim is not None else None
-    stages = (
-        await _current_claim_stages(
-            db,
+    snapshot = (
+        exact_processing_snapshot(
+            session=session,
             attempt=attempt,
             evaluation=evaluation,
-            job_id=job_id,
-            claim=claim,
-            deadline=deadline,
+            job=job,
+            stages=stages,
         )
-        if evaluation is not None
-        and job_id is not None
-        and claim is not None
-        and deadline is not None
+        if evaluation is not None and job is not None
         else None
     )
-    claim_matches = bool(
-        claim is not None
-        and stages is not None
-        and job is not None
-        and job.type == "coach_attempt_processing"
-        and evaluation is not None
-        and evaluation.id == attempt.current_evaluation_version_id
-        and evaluation.async_job_id == job_id
-        and claim["processing_generation"] == attempt.processing_generation
-        and claim["source_audio_content_hash"] == attempt.audio_content_hash
-        and claim["expected_session_state_version"] == session.state_version
-        and claim["processing_contract_version"] == "coach_processing_v1"
-        and (
-            (
-                attempt.recording_type == "text"
-                and claim["source_transcript_version_id"]
-                == attempt.current_transcript_version_id
-            )
-            or (
-                attempt.recording_type == "audio"
-                and claim["source_transcript_version_id"] is None
-            )
-        )
-    )
+    claim = snapshot.claim if snapshot is not None else None
+    deadline = snapshot.deadline if snapshot is not None else None
 
     # A worker may commit the terminal attempt/evaluation immediately before losing
     # its final session transition. Repair only that exact current generation.
@@ -512,8 +419,7 @@ async def _reconcile_processing_answer(
         and _terminal_attempt_state(attempt.attempt_state)
         and attempt.evaluation_state == attempt.attempt_state
         and evaluation.state == attempt.attempt_state
-        and claim_matches
-        and stages is not None
+        and snapshot is not None
         and job is not None
         and job.status == "done"
         and await _terminal_processing_form_is_valid(
@@ -521,13 +427,60 @@ async def _reconcile_processing_answer(
             attempt=attempt,
             evaluation=evaluation,
             stages=stages,
-            claim=claim,
+            snapshot=snapshot,
         )
     ):
         terminal_exists = exists().where(
             InterviewAttemptEvaluation.id == evaluation.id,
             InterviewAttemptEvaluation.recording_id == attempt.id,
             InterviewAttemptEvaluation.state == evaluation.state,
+            InterviewAttemptEvaluation.async_job_id == job.id,
+            InterviewAttemptEvaluation.transcript_version_id
+            == snapshot.transcript_version_id,
+            InterviewAttemptEvaluation.diagnostics_json["processing_claim"][
+                "claim_token"
+            ].as_string()
+            == claim["claim_token"],
+        )
+        terminal_attempt_exists = exists().where(
+            SessionRecording.id == attempt.id,
+            SessionRecording.session_id == session.id,
+            SessionRecording.current_evaluation_version_id == evaluation.id,
+            SessionRecording.current_transcript_version_id
+            == snapshot.transcript_version_id,
+            SessionRecording.processing_generation == attempt.processing_generation,
+            SessionRecording.audio_content_hash == attempt.audio_content_hash,
+            SessionRecording.attempt_state == attempt.attempt_state,
+            SessionRecording.evaluation_state == attempt.evaluation_state,
+            SessionRecording.async_job_id.is_(None),
+        )
+        terminal_stage_count = (
+            select(func.count(InterviewAttemptStage.id))
+            .where(
+                InterviewAttemptStage.recording_id == attempt.id,
+                InterviewAttemptStage.evaluation_version_id == evaluation.id,
+                InterviewAttemptStage.job_id == job.id,
+                InterviewAttemptStage.claim_token == claim["claim_token"],
+                InterviewAttemptStage.expected_processing_generation
+                == attempt.processing_generation,
+                InterviewAttemptStage.job_deadline_at == snapshot.deadline,
+                InterviewAttemptStage.stage_state.in_(_TERMINAL_STAGE_STATES),
+                or_(
+                    and_(
+                        InterviewAttemptStage.stage_name.in_(TRANSCRIPT_BOUND_STAGES),
+                        InterviewAttemptStage.source_transcript_version_id
+                        == snapshot.transcript_version_id,
+                    ),
+                    and_(
+                        InterviewAttemptStage.stage_name.not_in(
+                            TRANSCRIPT_BOUND_STAGES
+                        ),
+                        InterviewAttemptStage.source_transcript_version_id.is_(None),
+                    ),
+                ),
+            )
+            .correlate(InterviewSession)
+            .scalar_subquery()
         )
         changed = await db.execute(
             update(InterviewSession)
@@ -540,6 +493,8 @@ async def _reconcile_processing_answer(
                 InterviewSession.active_recording_id == attempt.id,
                 InterviewSession.deletion_state == "not_requested",
                 terminal_exists,
+                terminal_attempt_exists,
+                terminal_stage_count == len(stages),
             )
             .values(
                 conversation_state="awaiting_next_action",
@@ -576,8 +531,7 @@ async def _reconcile_processing_answer(
     if (
         evaluation is None
         or attempt.attempt_state != "pending_processing"
-        or not claim_matches
-        or stages is None
+        or snapshot is None
         or deadline is None
         or job is None
     ):
@@ -631,9 +585,7 @@ async def _reconcile_processing_answer(
         else "coach_evaluation_unavailable"
     )
     terminal_reason = (
-        "transcription_unavailable"
-        if pretranscription_audio
-        else "coach_evaluation_unavailable"
+        "transcription_unavailable" if pretranscription_audio else session_error_code
     )
     stage_error_code = session_error_code if retryable else terminal_reason
     stage_change = await db.execute(
@@ -647,6 +599,17 @@ async def _reconcile_processing_answer(
             == attempt.processing_generation,
             InterviewAttemptStage.stage_state.in_(_ACTIVE_STAGE_STATES),
             InterviewAttemptStage.job_deadline_at == deadline,
+            or_(
+                and_(
+                    InterviewAttemptStage.stage_name.in_(TRANSCRIPT_BOUND_STAGES),
+                    InterviewAttemptStage.source_transcript_version_id
+                    == evaluation.transcript_version_id,
+                ),
+                and_(
+                    InterviewAttemptStage.stage_name.not_in(TRANSCRIPT_BOUND_STAGES),
+                    InterviewAttemptStage.source_transcript_version_id.is_(None),
+                ),
+            ),
         )
         .values(
             stage_state=stage_state,
@@ -664,6 +627,8 @@ async def _reconcile_processing_answer(
             SessionRecording.current_evaluation_version_id == evaluation.id,
             SessionRecording.processing_generation == attempt.processing_generation,
             SessionRecording.async_job_id == attempt.async_job_id,
+            SessionRecording.current_transcript_version_id
+            == evaluation.transcript_version_id,
             SessionRecording.attempt_state == "pending_processing",
             SessionRecording.evaluation_state == "pending",
         )
@@ -680,6 +645,12 @@ async def _reconcile_processing_answer(
             InterviewAttemptEvaluation.id == evaluation.id,
             InterviewAttemptEvaluation.recording_id == attempt.id,
             InterviewAttemptEvaluation.async_job_id == evaluation.async_job_id,
+            InterviewAttemptEvaluation.transcript_version_id
+            == snapshot.transcript_version_id,
+            InterviewAttemptEvaluation.diagnostics_json["processing_claim"][
+                "claim_token"
+            ].as_string()
+            == claim["claim_token"],
             InterviewAttemptEvaluation.state == "pending",
         )
         .values(
@@ -1025,9 +996,59 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
     now = datetime.utcnow()
     total = 0
     async with AsyncSessionLocal() as db:
+        grace_cutoff = now - timedelta(
+            seconds=settings.HATCH_COACH_STALE_JOB_GRACE_SECONDS
+        )
+        legacy_answer_cutoff = grace_cutoff - timedelta(
+            seconds=settings.HATCH_COACH_TIMEOUT_ANSWER_SUBMIT_JOB_SECONDS
+        )
+        legacy_report_cutoff = grace_cutoff - timedelta(
+            seconds=settings.HATCH_COACH_TIMEOUT_SESSION_END_JOB_SECONDS
+        )
         pending_legacy_attempt = exists().where(
             SessionRecording.session_id == InterviewSession.id,
             SessionRecording.evaluation_state == "pending",
+            or_(
+                and_(
+                    ~exists().where(AsyncJob.id == SessionRecording.async_job_id),
+                    SessionRecording.created_at <= grace_cutoff,
+                ),
+                exists().where(
+                    AsyncJob.id == SessionRecording.async_job_id,
+                    or_(
+                        and_(
+                            AsyncJob.status.in_(("pending", "running")),
+                            AsyncJob.updated_at <= legacy_answer_cutoff,
+                        ),
+                        and_(
+                            AsyncJob.status.in_(("failed", "done")),
+                            AsyncJob.updated_at <= grace_cutoff,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        due_legacy_report = and_(
+            InterviewSession.report_state == "building",
+            or_(
+                and_(
+                    ~exists().where(AsyncJob.id == InterviewSession.report_job_id),
+                    InterviewSession.report_started_at <= grace_cutoff,
+                ),
+                exists().where(
+                    AsyncJob.id == InterviewSession.report_job_id,
+                    or_(
+                        and_(
+                            AsyncJob.status.in_(("pending", "running")),
+                            AsyncJob.updated_at <= legacy_report_cutoff,
+                        ),
+                        and_(
+                            AsyncJob.status.in_(("failed", "done")),
+                            AsyncJob.updated_at <= grace_cutoff,
+                        ),
+                    ),
+                ),
+            ),
         )
         due_processing_claim = exists().where(
             SessionRecording.session_id == InterviewSession.id,
@@ -1035,6 +1056,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             SessionRecording.current_evaluation_version_id
             == InterviewAttemptEvaluation.id,
             InterviewAttemptEvaluation.async_job_id == AsyncJob.id,
+            AsyncJob.type == "coach_attempt_processing",
             InterviewAttemptStage.recording_id == SessionRecording.id,
             InterviewAttemptStage.evaluation_version_id
             == InterviewAttemptEvaluation.id,
@@ -1042,6 +1064,90 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                 InterviewAttemptStage.job_deadline_at < now,
                 AsyncJob.status.in_(("failed", "done")),
             ),
+        )
+        prior = aliased(SessionQuestion)
+        accepted = aliased(SessionRecording)
+        candidate = aliased(SessionQuestion)
+        valid_answered_prior = exists().where(
+            prior.id == InterviewSession.active_question_id,
+            prior.session_id == InterviewSession.id,
+            prior.question_state == "answered",
+            prior.accepted_recording_id == accepted.id,
+            accepted.session_id == InterviewSession.id,
+            accepted.question_id == prior.id,
+            accepted.accepted_at.is_not(None),
+        )
+        valid_skipped_prior = exists().where(
+            prior.id == InterviewSession.active_question_id,
+            prior.session_id == InterviewSession.id,
+            prior.question_state == "skipped",
+            prior.accepted_recording_id.is_(None),
+        )
+        planned_candidate_count = (
+            select(func.count(candidate.id))
+            .where(
+                candidate.session_id == InterviewSession.id,
+                candidate.question_state == "pending",
+                candidate.question_kind == "planned",
+            )
+            .correlate(InterviewSession)
+            .scalar_subquery()
+        )
+        valid_report_claim = and_(
+            InterviewSession.report_state == "building",
+            InterviewSession.report_build_reason == "initial_completion",
+            InterviewSession.report_started_at.is_not(None),
+            InterviewSession.report_contract_version
+            == "coach_conversational_report_v1",
+            exists().where(
+                AsyncJob.id == InterviewSession.report_job_id,
+                AsyncJob.type == "coach_conversational_report",
+                AsyncJob.status.in_(("pending", "running")),
+            ),
+        )
+        actionable_advancing = and_(
+            InterviewSession.conversation_state == "advancing",
+            or_(valid_answered_prior, valid_skipped_prior),
+            or_(
+                planned_candidate_count == 1,
+                and_(planned_candidate_count == 0, valid_report_claim),
+            ),
+        )
+        follow_up_candidate_count = (
+            select(func.count(candidate.id))
+            .select_from(prior)
+            .join(accepted, accepted.id == prior.accepted_recording_id)
+            .join(
+                candidate,
+                and_(
+                    candidate.session_id == InterviewSession.id,
+                    candidate.question_state == "pending",
+                    candidate.question_kind == "adaptive_follow_up",
+                    candidate.parent_question_id == InterviewSession.active_question_id,
+                    candidate.root_question_id
+                    == InterviewSession.active_root_question_id,
+                    candidate.follow_up_source_recording_id == accepted.id,
+                    candidate.follow_up_source_transcript_version_id
+                    == accepted.current_transcript_version_id,
+                    candidate.source_deleted.is_(False),
+                ),
+            )
+            .where(
+                prior.id == InterviewSession.active_question_id,
+                prior.session_id == InterviewSession.id,
+                prior.question_state == "answered",
+                accepted.session_id == InterviewSession.id,
+                accepted.question_id == prior.id,
+                accepted.accepted_at.is_not(None),
+                accepted.attempt_state.not_in(("deleted", "cancelled", "invalid")),
+                accepted.current_transcript_version_id.is_not(None),
+            )
+            .correlate(InterviewSession)
+            .scalar_subquery()
+        )
+        actionable_follow_up = and_(
+            InterviewSession.conversation_state == "asking_follow_up",
+            follow_up_candidate_count == 1,
         )
         candidate_rows = list(
             (
@@ -1054,7 +1160,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                                 != "conversational_v1",
                                 or_(
                                     pending_legacy_attempt,
-                                    InterviewSession.report_state == "building",
+                                    due_legacy_report,
                                 ),
                             ),
                             and_(
@@ -1070,12 +1176,8 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                                         InterviewSession.setup_claim_token.is_not(None),
                                         InterviewSession.setup_claim_expires_at < now,
                                     ),
-                                    InterviewSession.conversation_state.in_(
-                                        (
-                                            "asking_follow_up",
-                                            "advancing",
-                                        )
-                                    ),
+                                    actionable_advancing,
+                                    actionable_follow_up,
                                     and_(
                                         InterviewSession.conversation_state
                                         == "processing_answer",

@@ -7,7 +7,8 @@ import json
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from fastapi import FastAPI
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -22,6 +23,8 @@ from app.models.coach_session import (
     SessionRecording,
 )
 from app.repositories.session_repository import SessionRepository
+from app.schemas.coach_conversation import ConversationCommandRequest
+from app.services.coach_conversation_commands import ConversationCommandService
 from app.services.coach_reconciliation import (
     reconcile_conversational_session,
     reconcile_job,
@@ -272,6 +275,23 @@ async def _processing_claim(
     return session, question, attempt, evaluation, stage, job
 
 
+def _finish_answer_command(
+    *, attempt_id: str, version: int
+) -> ConversationCommandRequest:
+    return ConversationCommandRequest.model_validate(
+        {
+            "command_id": "finish-answer-reconciliation",
+            "command_type": "finish_answer",
+            "expected_state_version": version,
+            "payload": {
+                "attempt_id": attempt_id,
+                "transcript": "A bounded answer from the real command flow.",
+            },
+            "contract_version": "coach_conversation_command_v1",
+        }
+    )
+
+
 async def _add_accepted_question(db_session, session, now: datetime) -> None:
     question = SessionQuestion(
         session_id=session.id,
@@ -324,6 +344,81 @@ async def test_processing_claim_within_deadline_is_noop(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_real_finish_answer_terminal_claim_reconciles_after_state_increment(
+    db_session,
+) -> None:
+    session = await _conversational_session(db_session, state="asking")
+    question = SessionQuestion(
+        session_id=session.id,
+        question_num=1,
+        text="Explain a migration.",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=1,
+        question_kind="planned",
+        question_state="asked",
+        asked_sequence=1,
+        attempts_created_count=0,
+    )
+    db_session.add(question)
+    await db_session.flush()
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    await db_session.commit()
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=ConversationCommandRequest.model_validate(
+            {
+                "command_id": "begin-answer-reconciliation",
+                "command_type": "begin_answer",
+                "expected_state_version": session.state_version,
+                "payload": {
+                    "recording_type": "text",
+                    "client_attempt_id": "real-finish-answer",
+                },
+                "contract_version": "coach_conversation_command_v1",
+            }
+        ),
+    )
+    assert begun.active_attempt_id is not None
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    result = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_finish_answer_command(
+            attempt_id=attempt.id, version=begun.state_version
+        ),
+    )
+    await db_session.refresh(session)
+    evaluation = await db_session.get(
+        InterviewAttemptEvaluation, attempt.current_evaluation_version_id
+    )
+    assert evaluation is not None
+    claim = evaluation.diagnostics_json["processing_claim"]
+    assert claim["expected_session_state_version"] + 2 == session.state_version
+    assert result.state == session.conversation_state == "awaiting_next_action"
+    session.conversation_state = "processing_answer"
+    session.state_version = claim["expected_session_state_version"] + 1
+    session.activity_version -= 1
+    await db_session.execute(
+        delete(InterviewSessionEvent).where(
+            InterviewSessionEvent.session_id == session.id,
+            InterviewSessionEvent.event_type == "attempt_processing_failed",
+        )
+    )
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id) == 1
+    assert await reconcile_conversational_session(db_session, session.id) == 0
+    await db_session.refresh(session)
+    assert session.conversation_state == "awaiting_next_action"
+    assert await _event_count(db_session, session.id, "attempt_processing_failed") == 1
+
+
+@pytest.mark.asyncio
 async def test_expired_processing_claim_becomes_recoverable_without_retry_spend(
     db_session,
 ) -> None:
@@ -367,6 +462,10 @@ async def test_expired_processing_claim_at_retry_limit_becomes_unavailable(
     assert attempt.evaluation_state == "unavailable"
     assert evaluation.state == "unavailable"
     assert stage.stage_state == "failed_terminal"
+    assert stage.last_error_code == "coach_attempt_job_budget_exhausted"
+    assert evaluation.diagnostics_json["result"] == {
+        "reason_code": "coach_attempt_job_budget_exhausted"
+    }
     assert attempt.processing_retry_count == 2
 
 
@@ -434,7 +533,6 @@ async def test_terminal_evaluation_from_superseded_generation_is_noop(
         ("claim_token", "stale-token"),
         ("processing_contract_version", "stale-contract"),
         ("source_transcript_version_id", "stale-transcript"),
-        ("expected_session_state_version", 999),
     ],
 )
 async def test_missed_terminal_transition_requires_full_claim_snapshot(
@@ -485,6 +583,7 @@ async def test_expired_processing_fences_every_owned_active_stage_atomically(
         job_id=stage.job_id,
         claim_token=stage.claim_token,
         expected_processing_generation=stage.expected_processing_generation,
+        source_transcript_version_id=evaluation.transcript_version_id,
         job_deadline_at=stage.job_deadline_at,
     )
     db_session.add(sibling)
@@ -495,6 +594,27 @@ async def test_expired_processing_fences_every_owned_active_stage_atomically(
     await db_session.refresh(sibling)
     assert stage.stage_state == sibling.stage_state == "failed_retryable"
     assert stage.claim_token is sibling.claim_token is None
+
+
+@pytest.mark.asyncio
+async def test_expired_processing_with_stale_stage_transcript_source_is_noop(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, stage, job = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=1, limit=2
+    )
+    stage.source_transcript_version_id = "stale-private-source"
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    for row in (session, attempt, evaluation, stage, job):
+        await db_session.refresh(row)
+    assert session.conversation_state == "processing_answer"
+    assert attempt.attempt_state == "pending_processing"
+    assert evaluation.state == "pending"
+    assert stage.stage_state == "running"
+    assert job.status == "running"
 
 
 @pytest.mark.asyncio
@@ -1048,6 +1168,134 @@ async def test_startup_limit_is_applied_after_stale_candidate_filter(
     db_session.expire_all()
     recovered = await db_session.get(InterviewSession, stale_id)
     assert recovered is not None
+    assert recovered.conversation_state == "recoverable_error"
+
+
+@pytest.mark.asyncio
+async def test_startup_batch_one_skips_invalid_transient_on_repeated_runs(
+    db_session, monkeypatch
+) -> None:
+    now = datetime.utcnow()
+    invalid = await _conversational_session(db_session, state="advancing")
+    invalid.created_at = now - timedelta(days=2)
+    await db_session.commit()
+    stale = await _conversational_session(db_session, state="planning", status="setup")
+    stale.created_at = now - timedelta(days=1)
+    job = AsyncJob(type="coach_session_setup", status="failed")
+    db_session.add(job)
+    await db_session.flush()
+    stale.setup_generation = 1
+    stale.setup_attempt_count = 1
+    stale.setup_job_id = job.id
+    stale.setup_claim_token = "actionable-startup-token"
+    stale.setup_claim_expires_at = now - timedelta(minutes=1)
+    stale_id = stale.id
+    await db_session.commit()
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr("app.services.coach_reconciliation.AsyncSessionLocal", factory)
+
+    assert await reconcile_stale_coach_state(batch_size=1) == 1
+    assert await reconcile_stale_coach_state(batch_size=1) == 0
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, stale_id)
+    assert recovered is not None
+    assert recovered.conversation_state == "recoverable_error"
+
+
+@pytest.mark.asyncio
+async def test_startup_batch_one_skips_live_legacy_attempt_for_due_report(
+    db_session, monkeypatch
+) -> None:
+    now = datetime.utcnow()
+    live, live_question = await _session_with_question(db_session)
+    live.created_at = now - timedelta(days=2)
+    live_job = AsyncJob(type="submit_answer", status="running", updated_at=now)
+    db_session.add(live_job)
+    await db_session.flush()
+    db_session.add(
+        SessionRecording(
+            session_id=live.id,
+            question_id=live_question.id,
+            recording_type="text",
+            attempt_number=1,
+            attempt_kind="primary",
+            evaluation_state="pending",
+            async_job_id=live_job.id,
+        )
+    )
+    await db_session.commit()
+    due, _ = await _session_with_question(db_session)
+    due.created_at = now - timedelta(days=1)
+    report_job = AsyncJob(
+        type="end_coach_session",
+        status="failed",
+        updated_at=now - timedelta(days=1),
+    )
+    db_session.add(report_job)
+    await db_session.flush()
+    due.report_state = "building"
+    due.report_job_id = report_job.id
+    due.report_started_at = now - timedelta(days=1)
+    due_id = due.id
+    await db_session.commit()
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr("app.services.coach_reconciliation.AsyncSessionLocal", factory)
+
+    assert await reconcile_stale_coach_state(batch_size=1) == 1
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, due_id)
+    assert recovered is not None
+    assert recovered.report_state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_startup_resets_running_jobs_before_coach_reconciliation(
+    db_session, monkeypatch
+) -> None:
+    from app import main as app_main
+
+    now = datetime.utcnow()
+    session, _, _, _, _, job = await _processing_claim(
+        db_session, deadline=now + timedelta(minutes=5), retries=1, limit=2
+    )
+    session_id = session.id
+    await db_session.commit()
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+
+    async def no_init() -> None:
+        return None
+
+    class Scheduler:
+        def start(self) -> None:
+            return None
+
+        def shutdown(self, *, wait: bool) -> None:
+            assert wait is False
+
+    monkeypatch.setattr(app_main, "init_db", no_init)
+    monkeypatch.setattr(app_main, "AsyncSessionLocal", factory)
+    monkeypatch.setattr("app.services.coach_reconciliation.AsyncSessionLocal", factory)
+    monkeypatch.setattr(app_main, "JobRepository", lambda session: object())
+    monkeypatch.setattr(app_main, "JobService", lambda repository: object())
+    monkeypatch.setattr(app_main, "ApplicationRepository", lambda session: object())
+    monkeypatch.setattr(app_main, "ReminderService", lambda *args, **kwargs: object())
+    monkeypatch.setattr(app_main, "LLMClient", lambda: object())
+    monkeypatch.setattr(app_main, "EmailGenerator", lambda client: object())
+    monkeypatch.setattr(
+        app_main, "create_scheduler", lambda *args, **kwargs: Scheduler()
+    )
+    monkeypatch.setattr(app_main, "load_runtime", lambda: {"ai_mode": "not_configured"})
+    monkeypatch.setattr(app_main.settings, "DIGEST_ENABLED", False)
+    monkeypatch.setattr(app_main, "shutdown_telemetry", lambda **kwargs: None)
+
+    async with app_main.lifespan(FastAPI()):
+        pass
+
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, session_id)
+    await db_session.refresh(job)
+    assert recovered is not None
+    assert job.status == "failed"
     assert recovered.conversation_state == "recoverable_error"
 
 
