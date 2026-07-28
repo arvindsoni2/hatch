@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from app.main import app
 from app.config import settings
+from app.models.async_job import AsyncJob
 from app.models.coach_session import InterviewSession, SessionRecording
 from app.schemas.coach import (
     AnswerEvaluation,
@@ -186,6 +187,48 @@ async def test_legacy_end_and_retry_reject_conversational_session_before_side_ef
 
 
 @pytest.mark.asyncio
+async def test_legacy_submit_audio_rejects_conversation_before_media_or_job_side_effects(
+    client, db_session, monkeypatch, tmp_path
+) -> None:
+    """Moving the guard below media handling would create files, jobs, or recordings."""
+    session = InterviewSession(
+        id="conversation_audio_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="conversational_v1",
+        conversation_state="asking",
+        state_version=1,
+    )
+    db_session.add(session)
+    await db_session.commit()
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    response = await client.post(
+        f"/api/coach/sessions/{session.id}/submit-audio",
+        data={"question_id": "question_1"},
+        files={"audio": ("answer.txt", b"not-audio", "text/plain")},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_conversational_command_required"
+    assert await db_session.scalar(
+        select(func.count(SessionRecording.id)).where(
+            SessionRecording.session_id == session.id
+        )
+    ) == 0
+    assert await db_session.scalar(select(func.count(AsyncJob.id))) == 0
+    assert not (tmp_path / "recordings" / session.id).exists()
+    await db_session.refresh(session)
+    assert (session.status, session.conversation_state, session.state_version) == (
+        "active",
+        "asking",
+        1,
+    )
+
+
+@pytest.mark.asyncio
 async def test_flag_off_rejects_new_conversation_but_preserves_legacy_create(
     client, monkeypatch
 ) -> None:
@@ -245,6 +288,45 @@ async def test_capabilities_truthfully_describes_conversation_and_video_support(
     assert response.status_code == 200
     assert response.json()["conversational"] is False
     assert response.json()["video_analysis_for_conversational"] is False
+
+
+@pytest.mark.asyncio
+async def test_capabilities_publish_the_literal_conversational_contract(
+    client, monkeypatch
+) -> None:
+    """Dropping or renaming a V6 field would leave clients with a false capability view."""
+    monkeypatch.setattr(settings, "HATCH_COACH_CONVERSATIONAL_ENABLED", False)
+    monkeypatch.setattr(settings, "HATCH_COACH_AUTO_TURN_DETECTION_ENABLED", True)
+
+    response = await client.get("/api/coach/capabilities")
+
+    assert response.status_code == 200
+    capabilities = response.json()
+    assert {key: capabilities[key] for key in (
+        "conversational_interview",
+        "typed_answers",
+        "audio_upload",
+        "automatic_turn_detection",
+        "audio_retention_default",
+        "video_analysis_for_conversational",
+        "contract_version",
+    )} == {
+        "conversational_interview": False,
+        "typed_answers": True,
+        "audio_upload": True,
+        "automatic_turn_detection": "browser",
+        "audio_retention_default": "delete_after_processing",
+        "video_analysis_for_conversational": False,
+        "contract_version": "coach_capabilities_v2",
+    }
+    assert capabilities["transcription"] == {
+        "available": True,
+        "provider_type": "local",
+    }
+    assert capabilities["evaluation"] == {
+        "available": False,
+        "provider_type": "none",
+    }
 
 
 @pytest.mark.asyncio

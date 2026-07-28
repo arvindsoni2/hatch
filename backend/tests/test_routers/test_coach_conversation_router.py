@@ -146,10 +146,13 @@ async def test_live_route_remains_available_for_existing_conversation_when_flag_
 
 
 @pytest.mark.asyncio
-async def test_command_route_rejects_unsafe_session_id(client):
-    """Removing the shared safe-ID guard must make this test fail."""
-    response = await client.post(
-        "/api/coach/sessions/unsafe%20id/commands",
+@pytest.mark.parametrize("unsafe_session_id", ["unsafe%20id", "%2e%2e"])
+async def test_command_and_live_routes_redact_unsafe_session_ids(
+    client, unsafe_session_id
+):
+    """Bypassing the canonical boundary would leak the raw unsafe ID or detail body."""
+    command = await client.post(
+        f"/api/coach/sessions/{unsafe_session_id}/commands",
         json={
             "command_id": "01JEXAMPLE0000000000000000",
             "command_type": "start",
@@ -158,9 +161,13 @@ async def test_command_route_rejects_unsafe_session_id(client):
             "contract_version": COMMAND_CONTRACT,
         },
     )
+    live = await client.get(f"/api/coach/sessions/{unsafe_session_id}/live")
 
-    assert response.status_code == 400
-    assert "session_id" in response.json()["detail"]
+    for response in (command, live):
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "coach_contract_unsupported"
+        assert response.json()["error"]["details"] == {}
+        assert unsafe_session_id.replace("%", "") not in response.text
 
 
 @pytest.mark.asyncio

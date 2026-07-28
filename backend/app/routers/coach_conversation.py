@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +65,15 @@ def conversation_error_response(
     )
 
 
+def require_safe_conversation_session_id(session_id: str) -> JSONResponse | None:
+    """Apply the shared ID semantics without exposing legacy validation details."""
+    try:
+        _require_safe_id(session_id, "session_id")
+    except HTTPException:
+        return conversation_error_response("coach_contract_unsupported")
+    return None
+
+
 @router.post(
     "/sessions/{session_id}/commands",
     response_model=ConversationCommandResult,
@@ -76,7 +85,9 @@ async def execute_command(
     db: AsyncSession = Depends(get_db),
 ) -> ConversationCommandResult | JSONResponse:
     """Execute one version-fenced conversational command."""
-    _require_safe_id(session_id, "session_id")
+    safe_id_error = require_safe_conversation_session_id(session_id)
+    if safe_id_error is not None:
+        return safe_id_error
     try:
         return await ConversationCommandService(db).execute(
             user_id="local", session_id=session_id, request=request
@@ -99,7 +110,9 @@ async def get_live(
     db: AsyncSession = Depends(get_db),
 ) -> ConversationLiveView | JSONResponse:
     """Return the reconciled, privacy-bounded live conversational projection."""
-    _require_safe_id(session_id, "session_id")
+    safe_id_error = require_safe_conversation_session_id(session_id)
+    if safe_id_error is not None:
+        return safe_id_error
     try:
         return await CoachLiveViewService(db).get_live_view(
             user_id="local", session_id=session_id

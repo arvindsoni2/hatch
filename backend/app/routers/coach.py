@@ -927,23 +927,43 @@ async def get_progress_trend(
 @router.get("/capabilities")
 async def get_capabilities() -> dict:
     """Return which perception capabilities are enabled per profile.yaml."""
+    asr_provider = "faster_whisper"
     try:
         from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
 
         profile = load_profile()
-        return {
-            "face_analysis": profile.perception.face.enabled,
-            "tts": profile.perception.tts.provider != "none",
-            "conversational": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
-            "video_analysis_for_conversational": False,
-        }
+        face_analysis = profile.perception.face.enabled
+        tts = profile.perception.tts.provider != "none"
+        asr_provider = profile.perception.asr.provider
     except Exception:
-        return {
-            "face_analysis": False,
-            "tts": False,
-            "conversational": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
-            "video_analysis_for_conversational": False,
-        }
+        face_analysis = False
+        tts = False
+
+    transcription_provider_type = {
+        "faster_whisper": "local",
+        "qwen3_asr": "local",
+        "deepgram": "cloud",
+        "web_speech": "none",
+    }.get(asr_provider, "none")
+    return {
+        "face_analysis": face_analysis,
+        "tts": tts,
+        "conversational": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
+        "conversational_interview": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
+        "typed_answers": True,
+        "audio_upload": True,
+        "automatic_turn_detection": (
+            "browser" if settings.HATCH_COACH_AUTO_TURN_DETECTION_ENABLED else "none"
+        ),
+        "transcription": {
+            "available": transcription_provider_type != "none",
+            "provider_type": transcription_provider_type,
+        },
+        "evaluation": {"available": False, "provider_type": "none"},
+        "audio_retention_default": "delete_after_processing",
+        "video_analysis_for_conversational": False,
+        "contract_version": "coach_capabilities_v2",
+    }
 
 
 # ---------------------------------------------------------------------------
