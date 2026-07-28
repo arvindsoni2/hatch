@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -13,12 +13,18 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.models.async_job import AsyncJob
 from app.models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from app.repositories.session_repository import SessionRepository
+from app.services.coach_reconciliation import reconcile_session
 from app.observability import TraceContextToken
 
 
 async def _timeout(awaitable, _seconds):
     awaitable.close()
     raise TimeoutError
+
+
+def _close_queued_work(_job_id, work, **_kwargs) -> None:
+    """Keep route-side claim behavior real while preventing fixture-lifetime work."""
+    work.close()
 
 
 async def _seed_active_question(db_session, session_id: str, question_id: str) -> None:
@@ -104,6 +110,85 @@ async def test_submit_answer_returns_202(client, db_session):
     }
     assert run.call_args.kwargs["telemetry_operation"] == "answer_submit"
     run.call_args.args[1].close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_reconciles_stale_answer_claim_before_reserving_retry(
+    client, db_session
+):
+    """Removing answer reconciliation would leave the stale legacy claim running and unfenced."""
+    session_id = "legacy-stale-answer"
+    question_id = "legacy-stale-answer-question"
+    await _seed_active_question(db_session, session_id, question_id)
+    old = datetime.utcnow() - timedelta(days=1)
+    stale_job = AsyncJob(
+        id="legacy-stale-answer-job",
+        type="submit_answer",
+        status="running",
+        created_at=old,
+        updated_at=old,
+    )
+    stale_recording = SessionRecording(
+        id="legacy-stale-answer-recording",
+        session_id=session_id,
+        question_id=question_id,
+        recording_type="text",
+        transcript="Stale legacy answer",
+        evaluation_state="pending",
+        async_job_id=stale_job.id,
+        created_at=old,
+    )
+    db_session.add_all([stale_job, stale_recording])
+    await db_session.commit()
+
+    with patch(
+        "app.routers.coach.AsyncJobService.run",
+        side_effect=_close_queued_work,
+    ):
+        response = await client.post(
+            f"/api/coach/sessions/{session_id}/submit-answer",
+            params={"question_id": question_id},
+            json={"transcript": "Replacement legacy answer"},
+        )
+
+    assert response.status_code == 202
+    await db_session.refresh(stale_job)
+    await db_session.refresh(stale_recording)
+    stale_payload = json.loads(stale_recording.evaluation_json)
+    assert stale_job.status == "failed"
+    assert stale_job.error == "stale_async_job_recovered"
+    assert stale_recording.evaluation_state == "failed"
+    assert stale_payload["reason_code"] == "stale_async_job_recovered"
+    assert stale_payload["diagnostic"]["gate_codes"] == ["coach_async_job_failed"]
+    recordings = (
+        await db_session.execute(
+            select(SessionRecording).where(SessionRecording.session_id == session_id)
+        )
+    ).scalars().all()
+    assert len(recordings) == 2
+    next_attempt = next(
+        recording
+        for recording in recordings
+        if recording.id != stale_recording.id
+    )
+    assert (next_attempt.evaluation_state, next_attempt.transcript) == (
+        "pending",
+        "Replacement legacy answer",
+    )
+    assert next_attempt.async_job_id == response.json()["job_id"]
+    replacement_job = await db_session.get(AsyncJob, response.json()["job_id"])
+    assert replacement_job is not None
+    assert (replacement_job.type, replacement_job.status) == (
+        "submit_answer",
+        "pending",
+    )
+    assert not await SessionRepository(db_session).finalize_answer_attempt(
+        stale_recording.id,
+        stale_job.id,
+        evaluation_state="completed",
+        evaluation_json='{"overall": 10}',
+    )
+    assert await reconcile_session(db_session, session_id) == 0
 
 
 @pytest.mark.asyncio
@@ -239,6 +324,66 @@ async def test_end_session_returns_202(client, db_session):
     }
     assert run.call_args.kwargs["telemetry_operation"] == "session_end"
     run.call_args.args[1].close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_end_reconciles_stale_report_claim_before_reclaiming(
+    client, db_session
+):
+    """Removing report reconciliation would reuse a stale legacy report job instead of fencing it."""
+    session_id = "legacy-stale-report"
+    await _seed_active_question(db_session, session_id, "legacy-stale-report-question")
+    old = datetime.utcnow() - timedelta(days=1)
+    stale_job = AsyncJob(
+        id="legacy-stale-report-job",
+        type="end_session",
+        status="running",
+        created_at=old,
+        updated_at=old,
+    )
+    session = await db_session.get(InterviewSession, session_id)
+    assert session is not None
+    session.report_state = "building"
+    session.report_job_id = stale_job.id
+    session.report_started_at = old
+    db_session.add(stale_job)
+    await db_session.commit()
+
+    with patch(
+        "app.routers.coach.AsyncJobService.run",
+        side_effect=_close_queued_work,
+    ):
+        response = await client.post(f"/api/coach/sessions/{session_id}/end")
+
+    assert response.status_code == 202
+    assert response.json()["job_id"] != stale_job.id
+    await db_session.refresh(session)
+    await db_session.refresh(stale_job)
+    assert (stale_job.status, stale_job.error) == (
+        "failed",
+        "stale_async_job_recovered",
+    )
+    assert (session.status, session.report_state) == ("active", "building")
+    assert session.report_job_id == response.json()["job_id"]
+    assert session.report_started_at is not None
+    replacement_job = await db_session.get(AsyncJob, response.json()["job_id"])
+    assert replacement_job is not None
+    assert (replacement_job.type, replacement_job.status) == ("end_session", "pending")
+    report_stage = session.diagnostics["stages"]["session_report"]
+    assert report_stage["reason_code"] == "stale_async_job_recovered"
+    assert report_stage["final"]["gate_codes"] == ["coach_async_job_failed"]
+    assert not await SessionRepository(db_session).finalize_report_claim(
+        session_id,
+        stale_job.id,
+        report_json={},
+        rubric={},
+        overall_score=None,
+        feedback_summary="",
+        report_state="fallback",
+        report_diagnostic={},
+        aggregation_diagnostic={},
+    )
+    assert await reconcile_session(db_session, session_id) == 0
 
 
 @pytest.mark.asyncio

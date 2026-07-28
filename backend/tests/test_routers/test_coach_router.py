@@ -1343,7 +1343,10 @@ async def test_legacy_retry_abandons_source_and_queues_a_new_legacy_session(
     assert source.status == "abandoned"
     assert replacement is not None
     assert replacement.id != source.id
-    assert replacement.experience_version == "legacy_v1"
+    assert (replacement.experience_version, replacement.conversation_state) == (
+        "legacy_v1",
+        None,
+    )
     assert replacement.application_id == source.application_id
     assert replacement.parent_session_id is None
 
