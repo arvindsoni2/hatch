@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias, Union
 
@@ -166,6 +167,18 @@ class EvidenceSelection(StrictContractModel):
 class RetentionPolicy(StrictContractModel):
     audio: AudioRetentionPolicy = "delete_after_processing"
     transcript: TranscriptRetentionPolicy = "retain"
+
+
+def project_retention_summary(value: object) -> dict[str, str] | None:
+    """Return only a complete, contract-valid persisted retention summary."""
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        return RetentionPolicy.model_validate(
+            {field: value[field] for field in ("audio", "transcript") if field in value}
+        ).model_dump(mode="json")
+    except ValueError:
+        return None
 
 
 class ConversationalConfig(StrictContractModel):

@@ -5,6 +5,7 @@ import logging
 import logging.config
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -219,6 +220,42 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class ConversationalRawPathBoundaryMiddleware(BaseHTTPMiddleware):
+    """Reject only encoded-separator command/live paths before route matching."""
+
+    _PREFIX = b"/api/coach/sessions/"
+    _SUFFIXES = {"POST": b"/commands", "GET": b"/live"}
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        suffix = self._SUFFIXES.get(request.method)
+        raw_path = request.scope.get("raw_path", b"")
+        if isinstance(raw_path, bytes) and suffix is not None:
+            candidate = raw_path.split(b"?", 1)[0].lower()
+            if (
+                candidate.startswith(self._PREFIX)
+                and candidate.endswith(suffix)
+                and b"%2f" in candidate
+            ):
+                from .routers.coach_conversation import (  # noqa: PLC0415
+                    conversation_error_response,
+                )
+
+                return conversation_error_response("coach_contract_unsupported")
+        return await call_next(request)
+
+
+def _is_malformed_conversational_create(
+    request: StarletteRequest, error: RequestValidationError
+) -> bool:
+    """Classify only the v1 conversational create discriminator without echoing input."""
+    return (
+        request.method == "POST"
+        and request.url.path == "/api/coach/sessions"
+        and isinstance(error.body, Mapping)
+        and error.body.get("experience_version") == "conversational_v1"
+    )
+
+
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
@@ -424,9 +461,10 @@ def create_app() -> FastAPI:
         request: StarletteRequest, error: RequestValidationError
     ) -> JSONResponse:
         """Keep strict conversational command validation free of client echoes."""
-        if request.url.path.startswith("/api/coach/sessions/") and request.url.path.endswith(
-            "/commands"
-        ):
+        if (
+            request.url.path.startswith("/api/coach/sessions/")
+            and request.url.path.endswith("/commands")
+        ) or _is_malformed_conversational_create(request, error):
             from .routers.coach_conversation import (  # noqa: PLC0415
                 conversation_error_response,
             )
@@ -456,6 +494,7 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Accept", "Authorization"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(ConversationalRawPathBoundaryMiddleware)
     app.add_middleware(AISetupGateMiddleware)
     app.add_middleware(AppLockMiddleware)
     app.add_middleware(AuthMiddleware, token=settings.HATCH_AUTH_TOKEN)

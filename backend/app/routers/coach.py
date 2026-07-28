@@ -11,9 +11,10 @@ from typing import Optional
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from ..config import settings
 from ..database import get_db
@@ -519,14 +520,31 @@ async def submit_answer(
 _MAX_AUDIO_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
-@router.post("/sessions/{session_id}/submit-audio", status_code=202)
+@router.post(
+    "/sessions/{session_id}/submit-audio",
+    status_code=202,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["question_id", "audio"],
+                        "properties": {
+                            "question_id": {"type": "string"},
+                            "audio": {"type": "string", "format": "binary"},
+                            "face_summary": {"type": "string"},
+                        },
+                    }
+                }
+            },
+        }
+    },
+)
 async def submit_audio(
     session_id: str,
-    question_id: str = Form(...),
-    audio: UploadFile = File(...),
-    face_summary: Optional[str] = Form(
-        default=None
-    ),  # JSON-encoded FaceSummary (Phase D)
+    request: Request,
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
 ) -> dict:
@@ -537,7 +555,6 @@ async def submit_audio(
     Poll /api/async-jobs/{job_id} for the AnswerEvaluation result.
     """
     _require_safe_id(session_id, "session_id")
-    _require_safe_id(question_id, "question_id")
 
     from ..repositories.session_repository import SessionRepository
 
@@ -547,26 +564,37 @@ async def submit_audio(
 
         return conversation_error_response("coach_conversational_command_required")
 
-    ct = (audio.content_type or "").split(";")[0].strip().lower()
-    if not ct.startswith("audio/"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Audio files only. Got content-type: {ct!r}",
-        )
+    form = await request.form()
+    try:
+        question_id = form.get("question_id")
+        audio = form.get("audio")
+        face_summary = form.get("face_summary")
+        if not isinstance(question_id, str) or not isinstance(audio, UploadFile):
+            raise HTTPException(status_code=422, detail="question_id and audio are required")
+        _require_safe_id(question_id, "question_id")
 
-    audio_bytes = await audio.read()
-    if len(audio_bytes) > _MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="Audio file exceeds 50 MB limit")
+        ct = (audio.content_type or "").split(";")[0].strip().lower()
+        if not ct.startswith("audio/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Audio files only. Got content-type: {ct!r}",
+            )
 
-    # Parse face_summary JSON if provided (Phase D)
-    face_summary_dict: dict | None = None
-    if face_summary:
-        import json as _json  # noqa: PLC0415
+        audio_bytes = await audio.read()
+        if len(audio_bytes) > _MAX_AUDIO_BYTES:
+            raise HTTPException(status_code=413, detail="Audio file exceeds 50 MB limit")
 
-        try:
-            face_summary_dict = _json.loads(face_summary)
-        except Exception:
-            logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
+        # Parse face_summary JSON if provided (Phase D)
+        face_summary_dict: dict | None = None
+        if isinstance(face_summary, str) and face_summary:
+            import json as _json  # noqa: PLC0415
+
+            try:
+                face_summary_dict = _json.loads(face_summary)
+            except Exception:
+                logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
+    finally:
+        await form.close()
 
     from ..services.coach_reconciliation import reconcile_session
 

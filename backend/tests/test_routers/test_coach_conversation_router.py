@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from app.config import settings
+from app.main import app
 from app.models.coach_session import InterviewSession, SessionRecording
 
 from app.schemas.coach_conversation import (
@@ -168,6 +169,35 @@ async def test_command_and_live_routes_redact_unsafe_session_ids(
         assert response.json()["error"]["code"] == "coach_contract_unsupported"
         assert response.json()["error"]["details"] == {}
         assert unsafe_session_id.replace("%", "") not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "suffix"), [("POST", "commands"), ("GET", "live")])
+@pytest.mark.parametrize("encoded_session_id", ["%2F", "%2e%2e%2Fsecret"])
+async def test_encoded_slash_command_and_live_paths_use_canonical_error(
+    client, method, suffix, encoded_session_id
+):
+    """A route-miss 404 for an encoded separator would bypass the safe-ID boundary."""
+    request = client.build_request(
+        method,
+        f"/api/coach/sessions/{encoded_session_id}/{suffix}",
+        json=command("start") if method == "POST" else None,
+    )
+    response = await client.send(request)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert response.json()["error"]["details"] == {}
+    assert "secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_encoded_slash_boundary_leaves_unrelated_route_misses_unchanged(client):
+    """Broad raw-path interception would replace unrelated framework 404 responses."""
+    response = await client.get("/api/coach/sessions/%2F/not-a-conversation-route")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}
 
 
 @pytest.mark.asyncio
@@ -387,6 +417,20 @@ def test_command_openapi_preserves_envelope_discriminator() -> None:
         for reference in schema["discriminator"]["mapping"].values()
     )
     assert len(schema["oneOf"]) == 23
+
+
+def test_command_and_live_openapi_document_canonical_error_models() -> None:
+    """Omitting a canonical error response would document FastAPI's default shape."""
+    paths = app.openapi()["paths"]
+    for method, path in (
+        ("post", "/api/coach/sessions/{session_id}/commands"),
+        ("get", "/api/coach/sessions/{session_id}/live"),
+    ):
+        responses = paths[path][method]["responses"]
+        for status in ("400", "409", "422", "503"):
+            assert responses[status]["content"]["application/json"]["schema"] == {
+                "$ref": "#/components/schemas/ConversationErrorResponse"
+            }
 
 
 def test_malformed_command_discriminator_returns_validation_error() -> None:

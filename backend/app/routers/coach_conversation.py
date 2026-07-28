@@ -25,6 +25,11 @@ from .coach import _require_safe_id
 
 router = APIRouter(prefix="/api/coach", tags=["coach"])
 
+CANONICAL_ERROR_RESPONSES = {
+    status: {"model": ConversationErrorResponse}
+    for status in sorted({definition.http_status for definition in ERROR_REGISTRY.values()})
+}
+
 
 def conversation_error_response(
     code: str,
@@ -77,7 +82,7 @@ def require_safe_conversation_session_id(session_id: str) -> JSONResponse | None
 @router.post(
     "/sessions/{session_id}/commands",
     response_model=ConversationCommandResult,
-    responses={409: {"model": ConversationErrorResponse}},
+    responses=CANONICAL_ERROR_RESPONSES,
 )
 async def execute_command(
     session_id: str,
@@ -103,7 +108,7 @@ async def execute_command(
 @router.get(
     "/sessions/{session_id}/live",
     response_model=ConversationLiveView,
-    responses={409: {"model": ConversationErrorResponse}},
+    responses=CANONICAL_ERROR_RESPONSES,
 )
 async def get_live(
     session_id: str,

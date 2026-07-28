@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import func, select
+from starlette.requests import Request as StarletteRequest
 
 from app.main import app
 from app.config import settings
@@ -229,6 +230,39 @@ async def test_legacy_submit_audio_rejects_conversation_before_media_or_job_side
 
 
 @pytest.mark.asyncio
+async def test_conversational_submit_audio_rejects_before_multipart_form_parsing(
+    client, db_session, monkeypatch
+) -> None:
+    """Binding multipart before the experience guard would call this parser sentinel."""
+    session = InterviewSession(
+        id="conversation_audio_parser_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="conversational_v1",
+        conversation_state="asking",
+        state_version=1,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    async def fail_if_form_is_parsed(_request):
+        raise AssertionError("multipart form parsing must not run for conversational audio")
+
+    monkeypatch.setattr(StarletteRequest, "form", fail_if_form_is_parsed)
+
+    response = await client.post(
+        f"/api/coach/sessions/{session.id}/submit-audio",
+        data={"question_id": "question_1"},
+        files={"audio": ("answer.webm", b"not-audio", "audio/webm")},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_conversational_command_required"
+
+
+@pytest.mark.asyncio
 async def test_flag_off_rejects_new_conversation_but_preserves_legacy_create(
     client, monkeypatch
 ) -> None:
@@ -274,6 +308,50 @@ async def test_flag_off_rejects_new_conversation_but_preserves_legacy_create(
     assert conversational.status_code == 403
     assert conversational.json()["error"]["code"] == "coach_conversation_not_enabled"
     assert legacy.status_code == 202
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "experience_version": "conversational_v1",
+            "company_name": "Bearer top-level-private-token",
+            "role_title": "Architect",
+            "conversational_config": {"nested_canary": "Bearer nested-private-token"},
+        },
+        {
+            "experience_version": "conversational_v1",
+            "company_name": "Example Co",
+            "role_title": "Architect",
+            "top_level_canary": "Bearer top-level-private-token",
+        },
+    ],
+)
+async def test_malformed_conversational_create_redacts_all_client_canaries(
+    client, caplog, payload
+) -> None:
+    """Returning FastAPI validation details would reflect malformed conversational input."""
+    response = await client.post("/api/coach/sessions", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert response.json()["error"]["details"] == {}
+    for canary in ("top-level-private-token", "nested-private-token"):
+        assert canary not in response.text
+        assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_malformed_legacy_create_keeps_framework_validation_behavior(client) -> None:
+    """Classifying every malformed create as conversational would break legacy clients."""
+    response = await client.post(
+        "/api/coach/sessions",
+        json={"company_name": "Example Co", "role_title": ["not", "a", "string"]},
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
 
 
 @pytest.mark.asyncio
@@ -382,6 +460,55 @@ async def test_session_list_additively_exposes_conversational_summary(
         "audio": "delete_after_processing",
         "transcript": "retain",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retention_policy", "expected_summary"),
+    [
+        (
+            {"audio": "retain_until_deleted", "transcript": "retain"},
+            {"audio": "retain_until_deleted", "transcript": "retain"},
+        ),
+        (
+            {
+                "audio": "delete_after_processing",
+                "transcript": "retain",
+                "private_canary": "Bearer retention-private-token",
+            },
+            {"audio": "delete_after_processing", "transcript": "retain"},
+        ),
+        (["Bearer retention-private-token"], None),
+        ({"audio": "unapproved", "transcript": "retain"}, None),
+    ],
+)
+async def test_list_and_detail_project_only_bounded_retention_summaries(
+    client, db_session, retention_policy, expected_summary
+) -> None:
+    """Copying persisted retention JSON would expose extra or malformed private data."""
+    session = InterviewSession(
+        id="conversation_retention_projection_1",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        conversation_state="ready",
+        retention_policy_json=retention_policy,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    listed = await client.get("/api/coach/sessions")
+    detail = await client.get(f"/api/coach/sessions/{session.id}")
+
+    assert listed.status_code == 200
+    assert detail.status_code == 200
+    list_summary = next(item for item in listed.json() if item["id"] == session.id)
+    assert list_summary["retention_summary"] == expected_summary
+    assert detail.json()["retention_summary"] == expected_summary
+    assert "retention-private-token" not in listed.text
+    assert "retention-private-token" not in detail.text
 
 
 @pytest.mark.asyncio
