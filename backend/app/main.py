@@ -1,6 +1,7 @@
 """JobPilot FastAPI application entry point."""
 from __future__ import annotations
 
+import json
 import logging
 import logging.config
 import time
@@ -8,6 +9,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -225,16 +227,23 @@ class ConversationalRawPathBoundaryMiddleware(BaseHTTPMiddleware):
 
     _PREFIX = b"/api/coach/sessions/"
     _SUFFIXES = {"POST": b"/commands", "GET": b"/live"}
+    _ENCODED_SEPARATORS = (b"%252f", b"%255c", b"%2f", b"%5c")
 
     async def dispatch(self, request: StarletteRequest, call_next):
         suffix = self._SUFFIXES.get(request.method)
         raw_path = request.scope.get("raw_path", b"")
         if isinstance(raw_path, bytes) and suffix is not None:
             candidate = raw_path.split(b"?", 1)[0].lower()
+            normalized = candidate
+            has_encoded_separator = False
+            for encoded_separator in self._ENCODED_SEPARATORS:
+                if encoded_separator in normalized:
+                    has_encoded_separator = True
+                    normalized = normalized.replace(encoded_separator, b"/")
             if (
-                candidate.startswith(self._PREFIX)
-                and candidate.endswith(suffix)
-                and b"%2f" in candidate
+                has_encoded_separator
+                and normalized.startswith(self._PREFIX)
+                and normalized.endswith(suffix)
             ):
                 from .routers.coach_conversation import (  # noqa: PLC0415
                     conversation_error_response,
@@ -244,6 +253,79 @@ class ConversationalRawPathBoundaryMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+_MAX_CREATE_CLASSIFICATION_BYTES = 128 * 1024
+_MAX_CREATE_FORM_FIELDS = 32
+
+
+def _request_media_type(request: StarletteRequest) -> str:
+    return request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+
+
+def _bounded_raw_body(body: object) -> bytes | None:
+    if isinstance(body, bytes):
+        raw_body = body
+    elif isinstance(body, str):
+        try:
+            raw_body = body.encode("utf-8")
+        except UnicodeEncodeError:
+            return None
+    else:
+        return None
+    if len(raw_body) > _MAX_CREATE_CLASSIFICATION_BYTES:
+        return None
+    return raw_body
+
+
+def _conversational_create_discriminator(
+    request: StarletteRequest, body: object
+) -> bool:
+    """Recognize one bounded, unambiguous v1 discriminator without retaining content."""
+    media_type = _request_media_type(request)
+    parsed_body: object = body
+    if media_type == "application/json" or media_type.endswith("+json"):
+        if not isinstance(parsed_body, Mapping):
+            raw_body = _bounded_raw_body(parsed_body)
+            if raw_body is None:
+                return False
+            try:
+                parsed_body = json.loads(raw_body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return False
+        return (
+            isinstance(parsed_body, Mapping)
+            and parsed_body.get("experience_version") == "conversational_v1"
+        )
+
+    raw_body = _bounded_raw_body(parsed_body)
+    if raw_body is None:
+        return False
+    if media_type != "application/x-www-form-urlencoded":
+        try:
+            possible_json = json.loads(raw_body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+        else:
+            if isinstance(possible_json, Mapping):
+                return (
+                    possible_json.get("experience_version")
+                    == "conversational_v1"
+                )
+    try:
+        fields = parse_qsl(
+            raw_body.decode("utf-8"),
+            keep_blank_values=True,
+            encoding="utf-8",
+            errors="strict",
+            max_num_fields=_MAX_CREATE_FORM_FIELDS,
+        )
+    except (UnicodeDecodeError, ValueError):
+        return False
+    discriminators = [
+        value for name, value in fields if name == "experience_version"
+    ]
+    return discriminators == ["conversational_v1"]
+
+
 def _is_malformed_conversational_create(
     request: StarletteRequest, error: RequestValidationError
 ) -> bool:
@@ -251,8 +333,7 @@ def _is_malformed_conversational_create(
     return (
         request.method == "POST"
         and request.url.path == "/api/coach/sessions"
-        and isinstance(error.body, Mapping)
-        and error.body.get("experience_version") == "conversational_v1"
+        and _conversational_create_discriminator(request, error.body)
     )
 
 
@@ -486,6 +567,7 @@ def create_app() -> FastAPI:
             "SECURITY: ALLOWED_ORIGINS includes non-loopback origins but HATCH_AUTH_TOKEN is "
             "empty. Set HATCH_AUTH_TOKEN to protect your API from unauthenticated access."
         )
+    app.add_middleware(ConversationalRawPathBoundaryMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
@@ -494,7 +576,6 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "Accept", "Authorization"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(ConversationalRawPathBoundaryMiddleware)
     app.add_middleware(AISetupGateMiddleware)
     app.add_middleware(AppLockMiddleware)
     app.add_middleware(AuthMiddleware, token=settings.HATCH_AUTH_TOKEN)

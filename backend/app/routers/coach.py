@@ -12,7 +12,11 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import UploadFile as FastAPIUploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
@@ -520,6 +524,36 @@ async def submit_answer(
 _MAX_AUDIO_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+class _LegacySubmitAudioForm(BaseModel):
+    """Typed legacy multipart contract, validated only after the experience fence."""
+
+    question_id: str
+    audio: FastAPIUploadFile
+    face_summary: str | None = None
+
+
+def _validate_legacy_submit_audio_form(form) -> _LegacySubmitAudioForm:
+    values = {
+        name: value
+        for name in _LegacySubmitAudioForm.model_fields
+        if (value := form.get(name)) is not None
+        and not (isinstance(value, str) and value == "")
+    }
+    try:
+        return _LegacySubmitAudioForm.model_validate(values)
+    except ValidationError as error:
+        validation_errors = []
+        for validation_error in error.errors(include_url=False):
+            item = dict(validation_error)
+            item["loc"] = ("body", *item["loc"])
+            if item["type"] == "missing":
+                item["input"] = None
+            elif isinstance(item.get("input"), UploadFile):
+                item["input"] = jsonable_encoder(item["input"])
+            validation_errors.append(item)
+        raise RequestValidationError(validation_errors, body=form) from error
+
+
 @router.post(
     "/sessions/{session_id}/submit-audio",
     status_code=202,
@@ -566,11 +600,10 @@ async def submit_audio(
 
     form = await request.form()
     try:
-        question_id = form.get("question_id")
-        audio = form.get("audio")
-        face_summary = form.get("face_summary")
-        if not isinstance(question_id, str) or not isinstance(audio, UploadFile):
-            raise HTTPException(status_code=422, detail="question_id and audio are required")
+        validated_form = _validate_legacy_submit_audio_form(form)
+        question_id = validated_form.question_id
+        audio = validated_form.audio
+        face_summary = validated_form.face_summary
         _require_safe_id(question_id, "question_id")
 
         ct = (audio.content_type or "").split(";")[0].strip().lower()

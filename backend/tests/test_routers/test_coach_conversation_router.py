@@ -192,12 +192,66 @@ async def test_encoded_slash_command_and_live_paths_use_canonical_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "target"),
+    [
+        ("POST", "/api/coach/sessions/%2Fcommands"),
+        ("POST", "/api/coach/sessions/private-route-canary%2f%2fcommands"),
+        ("POST", "/api/coach/sessions/private-route-canary%5Ccommands"),
+        ("POST", "/api/coach/sessions/private-route-canary%252Fcommands"),
+        ("POST", "/api/coach/sessions%2Fprivate-route-canary/commands"),
+        ("GET", "/api/coach/sessions/%2Flive"),
+        ("GET", "/api/coach/sessions/private-route-canary%2f%2flive"),
+        ("GET", "/api/coach/sessions/private-route-canary%5Clive"),
+        ("GET", "/api/coach/sessions/private-route-canary%252Flive"),
+        ("GET", "/api/coach/sessions%2Fprivate-route-canary/live"),
+    ],
+)
+async def test_encoded_separator_placements_use_canonical_route_error(
+    client, method, target
+):
+    """A separator before the suffix or route ID boundary must not become a 404/405."""
+    request = client.build_request(
+        method,
+        target,
+        json=command("start") if method == "POST" else None,
+    )
+
+    response = await client.send(request)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert response.json()["error"]["details"] == {}
+    assert "private-route-canary" not in response.text
+
+
+@pytest.mark.asyncio
 async def test_encoded_slash_boundary_leaves_unrelated_route_misses_unchanged(client):
     """Broad raw-path interception would replace unrelated framework 404 responses."""
     response = await client.get("/api/coach/sessions/%2F/not-a-conversation-route")
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Not Found"}
+
+
+@pytest.mark.asyncio
+async def test_raw_path_error_retains_cors_and_security_headers(client):
+    """Returning outside CORS/security would strip required headers from the early 400."""
+    response = await client.post(
+        "/api/coach/sessions/%2F/commands",
+        json=command("start"),
+        headers={"Origin": "http://localhost:3000"},
+    )
+
+    assert response.status_code == 400
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    assert (
+        "frame-ancestors 'none'"
+        in response.headers["content-security-policy-report-only"]
+    )
 
 
 @pytest.mark.asyncio

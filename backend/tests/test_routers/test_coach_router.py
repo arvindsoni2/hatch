@@ -7,12 +7,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import func, select
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.requests import Request as StarletteRequest
 
 from app.main import app
 from app.config import settings
 from app.models.async_job import AsyncJob
-from app.models.coach_session import InterviewSession, SessionRecording
+from app.models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from app.schemas.coach import (
     AnswerEvaluation,
     CompanyResearchResponse,
@@ -343,6 +344,94 @@ async def test_malformed_conversational_create_redacts_all_client_canaries(
 
 
 @pytest.mark.asyncio
+async def test_form_encoded_conversational_create_redacts_all_client_canaries(
+    client, caplog
+) -> None:
+    """Treating a form body as opaque bytes would reflect both canaries in FastAPI's 422."""
+    response = await client.post(
+        "/api/coach/sessions",
+        data={
+            "experience_version": "conversational_v1",
+            "company_name": "Bearer top-level-form-private-token",
+            "role_title": "Architect",
+            "conversational_config": '{"nested":"Bearer nested-form-private-token"}',
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert response.json()["error"]["details"] == {}
+    for canary in ("top-level-form-private-token", "nested-form-private-token"):
+        assert canary not in response.text
+        assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_form_create_classification_covers_the_maximum_jd_length(client) -> None:
+    """An allowed-size JD must not push the v1 discriminator past the safety bound."""
+    large_jd = "x" * 99_976 + "large-form-private-token"
+
+    response = await client.post(
+        "/api/coach/sessions",
+        data={
+            "experience_version": "conversational_v1",
+            "company_name": "Example Co",
+            "role_title": "Architect",
+            "jd_text": large_jd,
+        },
+    )
+
+    assert len(large_jd) == 100_000
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_contract_unsupported"
+    assert "large-form-private-token" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "content_type", "expected_status"),
+    [
+        (
+            b"experience_version=legacy_v1&company_name=legacy-form-private-token",
+            "application/x-www-form-urlencoded",
+            422,
+        ),
+        (
+            b"company_name=missing-discriminator-private-token",
+            "application/x-www-form-urlencoded",
+            422,
+        ),
+        (
+            b"experience_version=conversational_v1&company_name=wrong-type-private-token",
+            "text/plain",
+            400,
+        ),
+        (
+            b"experience_version=legacy_v1&experience_version=conversational_v1",
+            "application/x-www-form-urlencoded",
+            422,
+        ),
+    ],
+)
+async def test_create_redaction_does_not_guess_legacy_or_ambiguous_raw_bodies(
+    client, content, content_type, expected_status
+) -> None:
+    """Fail closed for a recognized v1 body without guessing legacy/ambiguous inputs."""
+    response = await client.post(
+        "/api/coach/sessions",
+        content=content,
+        headers={"Content-Type": content_type},
+    )
+
+    assert response.status_code == expected_status
+    if expected_status == 400:
+        assert response.json()["error"]["code"] == "coach_contract_unsupported"
+        assert "wrong-type-private-token" not in response.text
+    else:
+        assert response.json()["detail"][0]["type"] == "model_attributes_type"
+
+
+@pytest.mark.asyncio
 async def test_malformed_legacy_create_keeps_framework_validation_behavior(client) -> None:
     """Classifying every malformed create as conversational would break legacy clients."""
     response = await client.post(
@@ -352,6 +441,172 @@ async def test_malformed_legacy_create_keeps_framework_validation_behavior(clien
 
     assert response.status_code == 422
     assert "detail" in response.json()
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_audio_missing_file_keeps_typed_validation_body(client) -> None:
+    """Replacing typed File validation with a string detail breaks legacy clients."""
+    response = await client.post(
+        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        data={"question_id": "question-1"},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "audio"],
+                "msg": "Field required",
+                "input": None,
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_audio_json_keeps_both_missing_field_errors(client) -> None:
+    """A non-multipart body must retain the former File/Form validation order and shape."""
+    response = await client.post(
+        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        json={"question_id": "question-1"},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": [
+            {
+                "type": "missing",
+                "loc": ["body", "question_id"],
+                "msg": "Field required",
+                "input": None,
+            },
+            {
+                "type": "missing",
+                "loc": ["body", "audio"],
+                "msg": "Field required",
+                "input": None,
+            },
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_audio_rejects_text_in_the_file_field(client) -> None:
+    """Accepting a plain form string as audio would bypass typed UploadFile validation."""
+    response = await client.post(
+        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        data={"question_id": "question-1", "audio": "not-a-file"},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": [
+            {
+                "type": "value_error",
+                "loc": ["body", "audio"],
+                "msg": "Value error, Expected UploadFile, received: <class 'str'>",
+                "input": "not-a-file",
+                "ctx": {"error": {}},
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_audio_rejects_file_shaped_face_summary(
+    client, monkeypatch
+) -> None:
+    """Ignoring a non-string face_summary regresses the former typed Form contract."""
+    closed_uploads = []
+    original_close = StarletteUploadFile.close
+
+    async def track_close(upload):
+        closed_uploads.append(upload.filename)
+        await original_close(upload)
+
+    monkeypatch.setattr(StarletteUploadFile, "close", track_close)
+    response = await client.post(
+        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        data={"question_id": "question-1"},
+        files={
+            "audio": ("answer.wav", b"RIFF", "audio/wav"),
+            "face_summary": ("face.json", b"{}", "application/json"),
+        },
+    )
+
+    assert response.status_code == 422
+    error = response.json()["detail"]
+    assert len(error) == 1
+    assert {key: error[0][key] for key in ("type", "loc", "msg")} == {
+        "type": "string_type",
+        "loc": ["body", "face_summary"],
+        "msg": "Input should be a valid string",
+    }
+    assert error[0]["input"]["filename"] == "face.json"
+    assert error[0]["input"]["size"] == 2
+    assert error[0]["input"]["headers"]["content-type"] == "application/json"
+    assert closed_uploads == ["answer.wav", "face.json"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_audio_preserves_the_size_limit(client, monkeypatch) -> None:
+    """Compatibility parsing must not skip the established audio-size fence."""
+    monkeypatch.setattr("app.routers.coach._MAX_AUDIO_BYTES", 3)
+
+    response = await client.post(
+        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        data={"question_id": "question-1"},
+        files={"audio": ("answer.wav", b"RIFF", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "Audio file exceeds 50 MB limit"}
+
+
+@pytest.mark.asyncio
+async def test_legacy_submit_audio_happy_path_still_returns_202(
+    client, db_session, monkeypatch, tmp_path
+) -> None:
+    """Compatibility validation must continue to admit the legacy multipart contract."""
+    session_id = "legacy-audio-happy"
+    question_id = "legacy-question-happy"
+    db_session.add(
+        InterviewSession(
+            id=session_id,
+            company_name="Example Co",
+            role_title="Architect",
+            config={"question_count": 1},
+            status="active",
+            experience_version="legacy_v1",
+        )
+    )
+    db_session.add(
+        SessionQuestion(
+            id=question_id,
+            session_id=session_id,
+            question_num=1,
+            text="Tell me about a delivery challenge.",
+            category="Behavioural",
+            difficulty="medium",
+            order_in_session=1,
+        )
+    )
+    await db_session.commit()
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    with patch(
+        "app.routers.coach.AsyncJobService.run",
+        side_effect=close_queued_work,
+    ):
+        response = await client.post(
+            f"/api/coach/sessions/{session_id}/submit-audio",
+            data={"question_id": question_id, "face_summary": "{}"},
+            files={"audio": ("answer.wav", b"RIFF", "audio/wav")},
+        )
+
+    assert response.status_code == 202
+    assert response.json()["type"] == "submit_audio"
 
 
 @pytest.mark.asyncio
