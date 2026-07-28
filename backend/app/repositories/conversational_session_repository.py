@@ -32,7 +32,11 @@ from ..models.coach_session import (
     SessionRecording,
 )
 from ..schemas.coach_conversation import ConversationCommandRequest, SAFE_TOKEN_RE
-from ..services.coach_conversational_contracts import ERROR_REGISTRY
+from ..services.coach_conversational_contracts import (
+    AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS,
+    ERROR_REGISTRY,
+    TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS,
+)
 
 
 class ConversationalRepositoryError(RuntimeError):
@@ -282,7 +286,7 @@ _CONVERSATIONAL_EVENT_TYPES = frozenset(
 )
 _PROCESSING_ERROR_CODES = frozenset(ERROR_REGISTRY)
 _PROCESSING_REASON_CODES = _PROCESSING_ERROR_CODES | frozenset(
-    {"transcription_unavailable", "invalid_audio"}
+    AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS
 )
 _PROCESSING_STAGES = frozenset(
     {
@@ -1445,8 +1449,7 @@ class ConversationalSessionRepository:
                             or evaluation.transcript_version_id is not None
                             or attempt.current_transcript_version_id is not None
                             or created_transcript is not None
-                            or reason
-                            not in {"transcription_unavailable", "invalid_audio"}
+                            or reason not in AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS
                             or transcription is None
                             or transcription.stage_state
                             not in {"unavailable", "failed_terminal"}
@@ -1460,11 +1463,6 @@ class ConversationalSessionRepository:
                             raise _StaleFinalisation
                     else:
                         content_evaluation = stage_by_name.get("content_evaluation")
-                        evaluator_reasons = {
-                            "coach_evaluation_unavailable",
-                            "coach_attempt_job_budget_exhausted",
-                            "coach_transcript_schema_invalid",
-                        }
                         if (
                             transcript is None
                             or evaluation.transcript_version_id
@@ -1484,7 +1482,7 @@ class ConversationalSessionRepository:
                                     or transcription.stage_state != "completed"
                                 )
                             )
-                            or reason not in evaluator_reasons
+                            or reason not in TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS
                             or content_evaluation is None
                             or content_evaluation.stage_state
                             not in {"unavailable", "failed_terminal"}
@@ -1695,11 +1693,6 @@ class ConversationalSessionRepository:
                     "reason_code",
                     result_diagnostics.get("reason", result_diagnostics.get("code")),
                 )
-                evaluator_reasons = {
-                    "coach_evaluation_unavailable",
-                    "coach_attempt_job_budget_exhausted",
-                    "coach_transcript_schema_invalid",
-                }
                 content_evaluation = await self._session.scalar(
                     select(InterviewAttemptStage).where(
                         InterviewAttemptStage.recording_id == attempt_id,
@@ -1740,7 +1733,7 @@ class ConversationalSessionRepository:
                         is not None
                     )
                 if (
-                    reason not in evaluator_reasons
+                    reason not in TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS
                     or content_evaluation is None
                     or completed_downstream is not None
                     or not transcription_completed
@@ -1788,7 +1781,7 @@ class ConversationalSessionRepository:
             )
             if (
                 attempt.recording_type != "audio"
-                or reason not in {"transcription_unavailable", "invalid_audio"}
+                or reason not in AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS
                 or transcription is None
                 or created_transcript is not None
                 or completed_downstream is not None

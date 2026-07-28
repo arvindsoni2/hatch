@@ -18,6 +18,17 @@ REPORT_CONTRACT = "coach_conversational_report_v1"
 PROGRESS_CONTRACT = "coach_conversational_progress_v2"
 DELIVERY_POLICY = "coach_delivery_policy_v1"
 
+TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS: Final[frozenset[str]] = frozenset(
+    {
+        "coach_evaluation_unavailable",
+        "coach_attempt_job_budget_exhausted",
+        "coach_transcript_schema_invalid",
+    }
+)
+AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS: Final[frozenset[str]] = frozenset(
+    {"transcription_unavailable", "invalid_audio"}
+)
+
 
 @dataclass(frozen=True)
 class ErrorDefinition:

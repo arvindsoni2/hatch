@@ -528,6 +528,41 @@ async def test_terminal_evaluation_from_superseded_generation_is_noop(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("coach_evaluation_unavailable", 1),
+        ("coach_attempt_job_budget_exhausted", 1),
+        ("coach_transcript_schema_invalid", 1),
+        ("coach_followup_duplicate", 0),
+    ],
+)
+async def test_terminal_unavailable_missed_transition_uses_shared_reason_authority(
+    db_session, reason: str, expected: int
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, stage, job = await _processing_claim(
+        db_session, deadline=now + timedelta(minutes=1), retries=2, limit=2
+    )
+    attempt.attempt_state = attempt.evaluation_state = "unavailable"
+    attempt.async_job_id = None
+    evaluation.state = "unavailable"
+    evaluation.diagnostics_json["result"] = {"reason_code": reason}
+    stage.stage_state = "failed_terminal"
+    stage.last_error_code = reason
+    job.status = "done"
+    await db_session.commit()
+
+    assert (
+        await reconcile_conversational_session(db_session, session.id, now) == expected
+    )
+    await db_session.refresh(session)
+    assert session.conversation_state == (
+        "awaiting_next_action" if expected else "processing_answer"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("claim_key", "bad_value"),
     [
         ("claim_token", "stale-token"),
@@ -770,6 +805,78 @@ async def test_transient_state_presents_existing_next_question_once(
     assert next_question.question_state == "asked"
     assert next_question.asked_sequence == 2
     assert await _event_count(db_session, session.id, "question_presented") == 1
+
+
+async def _advancing_with_two_planned_questions(db_session, now: datetime):
+    session = await _conversational_session(db_session, state="advancing")
+    prior = SessionQuestion(
+        session_id=session.id,
+        question_num=1,
+        text="First question",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=1,
+        question_kind="planned",
+        question_state="answered",
+        asked_sequence=1,
+    )
+    db_session.add(prior)
+    await db_session.flush()
+    accepted = SessionRecording(
+        session_id=session.id,
+        question_id=prior.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="completed",
+        evaluation_state="completed",
+        processing_generation=1,
+        processing_retry_count=0,
+        processing_retry_limit=2,
+        accepted_at=now,
+    )
+    db_session.add(accepted)
+    await db_session.flush()
+    prior.accepted_recording_id = accepted.id
+    later = SessionQuestion(
+        session_id=session.id,
+        question_num=3,
+        text="Third question",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=3,
+        question_kind="planned",
+        question_state="pending",
+    )
+    first = SessionQuestion(
+        session_id=session.id,
+        question_num=2,
+        text="Second question",
+        category="behavioural",
+        difficulty="realistic",
+        order_in_session=2,
+        question_kind="planned",
+        question_state="pending",
+    )
+    db_session.add_all((later, first))
+    session.active_question_id = prior.id
+    session.active_root_question_id = prior.id
+    await db_session.commit()
+    return session, first, later
+
+
+@pytest.mark.asyncio
+async def test_advancing_selects_first_of_multiple_remaining_planned_questions(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session, first, later = await _advancing_with_two_planned_questions(db_session, now)
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    for row in (session, first, later):
+        await db_session.refresh(row)
+    assert session.active_question_id == first.id
+    assert first.question_state == "asked"
+    assert later.question_state == "pending"
 
 
 @pytest.mark.asyncio
@@ -1246,6 +1353,108 @@ async def test_startup_batch_one_skips_live_legacy_attempt_for_due_report(
     recovered = await db_session.get(InterviewSession, due_id)
     assert recovered is not None
     assert recovered.report_state == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "claim_generation_type",
+        "claim_extra_key",
+        "claim_token_type",
+        "claim_contract",
+        "claim_deadline",
+        "stage_source",
+    ],
+)
+@pytest.mark.parametrize("newer_kind", ["setup", "processing"])
+async def test_startup_prelimit_excludes_malformed_processing_snapshot(
+    db_session, monkeypatch, malformation: str, newer_kind: str
+) -> None:
+    from app.services import coach_reconciliation as reconciliation
+
+    now = datetime.utcnow()
+    malformed, _, _, evaluation, stage, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(minutes=5), retries=1, limit=2
+    )
+    malformed.created_at = now - timedelta(days=2)
+    claim = dict(evaluation.diagnostics_json["processing_claim"])
+    if malformation == "claim_generation_type":
+        claim["processing_generation"] = "2"
+    elif malformation == "claim_extra_key":
+        claim["private_extra_key"] = "must-fail-closed"
+    elif malformation == "claim_token_type":
+        claim["claim_token"] = 7
+    elif malformation == "claim_contract":
+        claim["processing_contract_version"] = "stale-contract"
+    elif malformation == "claim_deadline":
+        claim["job_deadline_at"] = (now - timedelta(days=1)).isoformat()
+    else:
+        stage.source_transcript_version_id = "stale-transcript-source"
+    evaluation.diagnostics_json = {"processing_claim": claim}
+    malformed_id = malformed.id
+    await db_session.commit()
+
+    if newer_kind == "setup":
+        actionable = await _conversational_session(
+            db_session, state="planning", status="setup"
+        )
+        setup_job = AsyncJob(type="coach_session", status="failed")
+        db_session.add(setup_job)
+        await db_session.flush()
+        actionable.setup_generation = 1
+        actionable.setup_attempt_count = 1
+        actionable.setup_max_attempts = 2
+        actionable.setup_job_id = setup_job.id
+        actionable.setup_claim_token = "newer-actionable-setup"
+        actionable.setup_claim_expires_at = now - timedelta(minutes=1)
+    else:
+        actionable, _, _, _, _, _ = await _processing_claim(
+            db_session, deadline=now - timedelta(minutes=1), retries=1, limit=2
+        )
+    actionable.created_at = now - timedelta(days=1)
+    actionable_id = actionable.id
+    await db_session.commit()
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr(reconciliation, "AsyncSessionLocal", factory)
+    original = reconciliation.reconcile_conversational_session
+    seen: list[str] = []
+
+    async def tracking_reconcile(db, session_id: str) -> int:
+        seen.append(session_id)
+        return await original(db, session_id)
+
+    monkeypatch.setattr(
+        reconciliation, "reconcile_conversational_session", tracking_reconcile
+    )
+
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
+    assert actionable_id in seen
+    assert malformed_id not in seen
+
+
+@pytest.mark.asyncio
+async def test_startup_treats_multiple_planned_questions_as_actionable(
+    db_session, monkeypatch
+) -> None:
+    now = datetime.utcnow()
+    session, first, later = await _advancing_with_two_planned_questions(db_session, now)
+    session_id, first_id, later_id = session.id, first.id, later.id
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr("app.services.coach_reconciliation.AsyncSessionLocal", factory)
+
+    assert await reconcile_stale_coach_state(batch_size=1) == 1
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, session_id)
+    recovered_first = await db_session.get(SessionQuestion, first_id)
+    recovered_later = await db_session.get(SessionQuestion, later_id)
+    assert recovered is not None
+    assert recovered_first is not None and recovered_later is not None
+    assert recovered.active_question_id == first_id
+    assert recovered_first.question_state == "asked"
+    assert recovered_later.question_state == "pending"
 
 
 @pytest.mark.asyncio
