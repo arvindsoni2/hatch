@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.database import Base
 from app.models.async_job import AsyncJob
 from app.models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewSession,
     InterviewSessionEvent,
+    InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
@@ -212,8 +215,20 @@ async def _processing_claim(
     )
     db_session.add(attempt)
     await db_session.flush()
+    transcript = InterviewTranscriptVersion(
+        recording_id=attempt.id,
+        version_number=1,
+        transcript="bounded answer",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=2,
+    )
+    db_session.add(transcript)
+    await db_session.flush()
+    attempt.current_transcript_version_id = transcript.id
     evaluation = InterviewAttemptEvaluation(
         recording_id=attempt.id,
+        transcript_version_id=transcript.id,
         version_number=1,
         state="pending",
         evaluation_contract_version="coach_rubric_v1",
@@ -224,6 +239,18 @@ async def _processing_claim(
     db_session.add(evaluation)
     await db_session.flush()
     attempt.current_evaluation_version_id = evaluation.id
+    claim_token = "stage-token"
+    evaluation.diagnostics_json = {
+        "processing_claim": {
+            "processing_generation": 2,
+            "job_deadline_at": deadline.isoformat(),
+            "source_audio_content_hash": None,
+            "source_transcript_version_id": transcript.id,
+            "expected_session_state_version": session.state_version,
+            "processing_contract_version": "coach_processing_v1",
+            "claim_token": claim_token,
+        }
+    }
     stage = InterviewAttemptStage(
         recording_id=attempt.id,
         evaluation_version_id=evaluation.id,
@@ -232,8 +259,9 @@ async def _processing_claim(
         attempt_count=1,
         repair_count=0,
         job_id=job.id,
-        claim_token="stage-token",
+        claim_token=claim_token,
         expected_processing_generation=2,
+        source_transcript_version_id=transcript.id,
         job_deadline_at=deadline,
     )
     db_session.add(stage)
@@ -352,10 +380,9 @@ async def test_terminal_evaluation_missed_transition_moves_to_awaiting_once(
     )
     attempt.attempt_state = "completed"
     attempt.evaluation_state = "completed"
+    attempt.async_job_id = None
     evaluation.state = "completed"
-    evaluation.diagnostics_json = {
-        "processing_claim": {"processing_generation": attempt.processing_generation}
-    }
+    evaluation.diagnostics_json["result"] = {"code": "completed"}
     stage.stage_state = "completed"
     job.status = "done"
     await db_session.commit()
@@ -364,6 +391,7 @@ async def test_terminal_evaluation_missed_transition_moves_to_awaiting_once(
     assert await reconcile_conversational_session(db_session, session.id, now) == 0
     await db_session.refresh(session)
     assert session.conversation_state == "awaiting_next_action"
+    assert (session.state_version, session.activity_version) == (4, 2)
     assert (
         await _event_count(db_session, session.id, "attempt_processing_completed") == 1
     )
@@ -379,9 +407,13 @@ async def test_terminal_evaluation_from_superseded_generation_is_noop(
     )
     attempt.attempt_state = "completed"
     attempt.evaluation_state = "completed"
+    attempt.async_job_id = None
     evaluation.state = "completed"
     evaluation.diagnostics_json = {
-        "processing_claim": {"processing_generation": attempt.processing_generation - 1}
+        "processing_claim": {
+            **evaluation.diagnostics_json["processing_claim"],
+            "processing_generation": attempt.processing_generation - 1,
+        }
     }
     stage.stage_state = "completed"
     job.status = "done"
@@ -393,6 +425,138 @@ async def test_terminal_evaluation_from_superseded_generation_is_noop(
     assert (
         await _event_count(db_session, session.id, "attempt_processing_completed") == 0
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("claim_key", "bad_value"),
+    [
+        ("claim_token", "stale-token"),
+        ("processing_contract_version", "stale-contract"),
+        ("source_transcript_version_id", "stale-transcript"),
+        ("expected_session_state_version", 999),
+    ],
+)
+async def test_missed_terminal_transition_requires_full_claim_snapshot(
+    db_session, claim_key: str, bad_value: object
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, stage, job = await _processing_claim(
+        db_session, deadline=now + timedelta(minutes=1), retries=0, limit=2
+    )
+    attempt.attempt_state = attempt.evaluation_state = "completed"
+    attempt.async_job_id = None
+    evaluation.state = "completed"
+    evaluation.diagnostics_json["result"] = {"code": "completed"}
+    evaluation.diagnostics_json["processing_claim"][claim_key] = bad_value
+    stage.stage_state = "completed"
+    stage.claim_token = None
+    job.status = "done"
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    await db_session.refresh(session)
+    assert (
+        session.conversation_state,
+        session.state_version,
+        session.activity_version,
+    ) == (
+        "processing_answer",
+        3,
+        1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_expired_processing_fences_every_owned_active_stage_atomically(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, stage, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=1, limit=2
+    )
+    sibling = InterviewAttemptStage(
+        recording_id=attempt.id,
+        evaluation_version_id=evaluation.id,
+        stage_name="evidence_grounding",
+        stage_state="pending",
+        attempt_count=0,
+        repair_count=0,
+        job_id=stage.job_id,
+        claim_token=stage.claim_token,
+        expected_processing_generation=stage.expected_processing_generation,
+        job_deadline_at=stage.job_deadline_at,
+    )
+    db_session.add(sibling)
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    await db_session.refresh(stage)
+    await db_session.refresh(sibling)
+    assert stage.stage_state == sibling.stage_state == "failed_retryable"
+    assert stage.claim_token is sibling.claim_token is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_budget_audio_pretranscription_uses_exact_unavailable_form(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, stage, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=2, limit=2
+    )
+    attempt.recording_type = "audio"
+    attempt.audio_content_hash = "audio-hash"
+    transcript = await db_session.get(
+        InterviewTranscriptVersion, attempt.current_transcript_version_id
+    )
+    attempt.current_transcript_version_id = None
+    evaluation.transcript_version_id = None
+    await db_session.flush()
+    assert transcript is not None
+    await db_session.delete(transcript)
+    evaluation.diagnostics_json["processing_claim"]["source_audio_content_hash"] = (
+        "audio-hash"
+    )
+    evaluation.diagnostics_json["processing_claim"]["source_transcript_version_id"] = (
+        None
+    )
+    stage.stage_name = "transcription"
+    stage.source_transcript_version_id = None
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    await db_session.refresh(evaluation)
+    assert evaluation.state == "unavailable"
+    assert evaluation.transcript_version_id is None
+    assert evaluation.diagnostics_json["result"] == {
+        "reason_code": "transcription_unavailable"
+    }
+
+
+@pytest.mark.asyncio
+async def test_terminal_budget_typed_null_transcript_is_corrupt_noop(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, _, _, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=2, limit=2
+    )
+    assert attempt.recording_type == "text"
+    attempt.current_transcript_version_id = None
+    evaluation = await db_session.get(
+        InterviewAttemptEvaluation, attempt.current_evaluation_version_id
+    )
+    assert evaluation is not None
+    evaluation.transcript_version_id = None
+    evaluation.diagnostics_json["processing_claim"]["source_transcript_version_id"] = (
+        None
+    )
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    await db_session.refresh(session)
+    assert session.conversation_state == "processing_answer"
 
 
 @pytest.mark.asyncio
@@ -432,6 +596,17 @@ async def test_transient_state_presents_existing_next_question_once(
     )
     db_session.add(accepted)
     await db_session.flush()
+    accepted_transcript = InterviewTranscriptVersion(
+        recording_id=accepted.id,
+        version_number=1,
+        transcript="accepted answer",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=1,
+    )
+    db_session.add(accepted_transcript)
+    await db_session.flush()
+    accepted.current_transcript_version_id = accepted_transcript.id
     prior.accepted_recording_id = accepted.id
     if transient == "asking_follow_up":
         next_question = SessionQuestion(
@@ -447,6 +622,8 @@ async def test_transient_state_presents_existing_next_question_once(
             parent_question_id=prior.id,
             follow_up_depth=1,
             follow_up_reason="measurable_result",
+            follow_up_source_recording_id=accepted.id,
+            follow_up_source_transcript_version_id=accepted_transcript.id,
         )
     else:
         next_question = SessionQuestion(
@@ -516,6 +693,127 @@ async def test_transient_without_persisted_acceptance_is_noop(db_session) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", ["recording", "transcript", "deleted"])
+async def test_follow_up_reconciliation_requires_current_accepted_source(
+    db_session, mismatch: str
+) -> None:
+    now = datetime.utcnow()
+    session = await _conversational_session(db_session, state="asking_follow_up")
+    prior = SessionQuestion(
+        session_id=session.id,
+        question_num=1,
+        text="Root",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=1,
+        question_kind="planned",
+        question_state="answered",
+        asked_sequence=1,
+    )
+    db_session.add(prior)
+    await db_session.flush()
+    accepted = SessionRecording(
+        session_id=session.id,
+        question_id=prior.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="completed",
+        evaluation_state="completed",
+        accepted_at=now,
+    )
+    db_session.add(accepted)
+    await db_session.flush()
+    transcript = InterviewTranscriptVersion(
+        recording_id=accepted.id,
+        version_number=1,
+        transcript="accepted source",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=1,
+    )
+    db_session.add(transcript)
+    await db_session.flush()
+    accepted.current_transcript_version_id = transcript.id
+    prior.accepted_recording_id = accepted.id
+    follow_up = SessionQuestion(
+        session_id=session.id,
+        question_num=2,
+        text="Specific follow-up",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=2,
+        question_kind="adaptive_follow_up",
+        question_state="pending",
+        root_question_id=prior.id,
+        parent_question_id=prior.id,
+        follow_up_depth=1,
+        follow_up_reason="measurable_result",
+        follow_up_source_recording_id=(
+            "stale-recording" if mismatch == "recording" else accepted.id
+        ),
+        follow_up_source_transcript_version_id=(
+            "stale-transcript" if mismatch == "transcript" else transcript.id
+        ),
+        source_deleted=mismatch == "deleted",
+    )
+    db_session.add(follow_up)
+    session.active_question_id = prior.id
+    session.active_root_question_id = prior.id
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    await db_session.refresh(follow_up)
+    assert follow_up.question_state == "pending"
+
+
+@pytest.mark.asyncio
+async def test_follow_up_reconciliation_rejects_duplicate_pending_candidates(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session = await _conversational_session(db_session, state="asking_follow_up")
+    await _add_accepted_question(db_session, session, now)
+    prior = await db_session.get(SessionQuestion, session.active_question_id)
+    assert prior is not None and prior.accepted_recording_id is not None
+    accepted = await db_session.get(SessionRecording, prior.accepted_recording_id)
+    assert accepted is not None
+    transcript = InterviewTranscriptVersion(
+        recording_id=accepted.id,
+        version_number=1,
+        transcript="source",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=1,
+    )
+    db_session.add(transcript)
+    await db_session.flush()
+    accepted.current_transcript_version_id = transcript.id
+    for index in (2, 3):
+        db_session.add(
+            SessionQuestion(
+                session_id=session.id,
+                question_num=index,
+                text=f"Follow-up {index}",
+                category="technical",
+                difficulty="realistic",
+                order_in_session=index,
+                question_kind="adaptive_follow_up",
+                question_state="pending",
+                root_question_id=prior.id,
+                parent_question_id=prior.id,
+                follow_up_depth=1,
+                follow_up_reason="measurable_result",
+                follow_up_source_recording_id=accepted.id,
+                follow_up_source_transcript_version_id=transcript.id,
+            )
+        )
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+
+
+@pytest.mark.asyncio
 async def test_advancing_without_question_or_existing_report_claim_fails_closed(
     db_session,
 ) -> None:
@@ -562,6 +860,8 @@ async def test_advancing_finishes_existing_report_claim_once(db_session) -> None
     session.report_state = "building"
     session.report_build_reason = "initial_completion"
     session.report_job_id = job.id
+    session.report_started_at = datetime.utcnow()
+    session.report_contract_version = "coach_conversational_report_v1"
     await db_session.commit()
 
     assert (
@@ -579,6 +879,34 @@ async def test_advancing_finishes_existing_report_claim_once(db_session) -> None
     await db_session.refresh(session)
     assert session.conversation_state == "reporting"
     assert await _event_count(db_session, session.id, "report_claimed") == 1
+
+
+@pytest.mark.asyncio
+async def test_advancing_rejects_wrong_report_job_type_or_missing_snapshot(
+    db_session,
+) -> None:
+    for job_type, started_at in (
+        ("submit_answer", datetime.utcnow()),
+        ("coach_conversational_report", None),
+    ):
+        session = await _conversational_session(db_session, state="advancing")
+        await _add_accepted_question(db_session, session, datetime.utcnow())
+        job = AsyncJob(type=job_type, status="pending")
+        db_session.add(job)
+        await db_session.flush()
+        session.report_state = "building"
+        session.report_build_reason = "initial_completion"
+        session.report_job_id = job.id
+        session.report_started_at = started_at
+        session.report_contract_version = "coach_conversational_report_v1"
+        await db_session.commit()
+
+        assert (
+            await reconcile_conversational_session(
+                db_session, session.id, datetime.utcnow()
+            )
+            == 0
+        )
 
 
 @pytest.mark.asyncio
@@ -676,6 +1004,86 @@ async def test_startup_reconciliation_uses_shared_conversational_routine(
     recovered = await db_session.get(InterviewSession, session_id)
     assert recovered is not None
     assert recovered.conversation_state == "recoverable_error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch_size", [0, -1, 101, True])
+async def test_startup_reconciliation_rejects_invalid_batch_size(batch_size) -> None:
+    with pytest.raises(ValueError, match="batch_size"):
+        await reconcile_stale_coach_state(batch_size=batch_size)
+
+
+@pytest.mark.asyncio
+async def test_startup_limit_is_applied_after_stale_candidate_filter(
+    db_session, monkeypatch
+) -> None:
+    now = datetime.utcnow()
+    live = await _conversational_session(db_session, state="planning", status="setup")
+    live_job = AsyncJob(type="coach_session_setup", status="running")
+    db_session.add(live_job)
+    await db_session.flush()
+    live.setup_job_id = live_job.id
+    live.setup_claim_token = "live-token"
+    live.setup_claim_expires_at = now + timedelta(days=1)
+    await db_session.commit()
+    stale = await _conversational_session(db_session, state="planning", status="setup")
+    stale_job = AsyncJob(type="coach_session_setup", status="running")
+    db_session.add(stale_job)
+    await db_session.flush()
+    stale.setup_job_id = stale_job.id
+    stale.setup_claim_token = "stale-token"
+    stale.setup_claim_expires_at = now - timedelta(days=1)
+    stale_id = stale.id
+    await db_session.commit()
+    fresh_session_factory = async_sessionmaker(
+        bind=db_session.bind,
+        expire_on_commit=False,
+    )
+    monkeypatch.setattr(
+        "app.services.coach_reconciliation.AsyncSessionLocal",
+        fresh_session_factory,
+    )
+
+    assert await reconcile_stale_coach_state(batch_size=1) == 1
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, stale_id)
+    assert recovered is not None
+    assert recovered.conversation_state == "recoverable_error"
+
+
+@pytest.mark.asyncio
+async def test_file_backed_concurrent_reconciliation_is_exactly_once(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "coach-reconciliation.sqlite3"
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{database_path}",
+        connect_args={"timeout": 10},
+    )
+    factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    now = datetime.utcnow()
+    async with factory() as seed:
+        session, _, _, _, _, _ = await _processing_claim(
+            seed, deadline=now - timedelta(seconds=1), retries=1, limit=2
+        )
+        session_id = session.id
+
+    async def recover() -> int:
+        async with factory() as worker:
+            return await reconcile_conversational_session(worker, session_id, now)
+
+    try:
+        results = await asyncio.gather(recover(), recover())
+        assert sorted(results) == [0, 1]
+        async with factory() as verifier:
+            assert (
+                await _event_count(verifier, session_id, "attempt_processing_failed")
+                == 1
+            )
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
+
 from pydantic import ValidationError
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +30,7 @@ from ..schemas.coach_conversation import (
     TranscriptVersionRead,
     VALID_STATUS_STATE_PAIRS,
 )
-from .coach_conversation_state import allowed_commands
+from .coach_command_projection import contextual_allowed_commands
 from .coach_conversational_contracts import ERROR_REGISTRY, LIVE_VIEW_CONTRACT
 from .coach_reconciliation import reconcile_conversational_session
 
@@ -71,9 +74,14 @@ class CoachLiveViewService:
                     select(SessionQuestion)
                     .where(SessionQuestion.session_id == session.id)
                     .order_by(SessionQuestion.order_in_session, SessionQuestion.id)
+                    .limit(37)
                 )
             ).all()
         )
+        if len(questions) > 36:
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        await self._validate_projection_json(session, questions, active_attempt)
+        projected_commands = await contextual_allowed_commands(self.db, session)
         try:
             return ConversationLiveView(
                 session_id=session.id,
@@ -100,7 +108,7 @@ class CoachLiveViewService:
                         else None
                     ),
                 ),
-                allowed_commands=list(allowed_commands(session)),
+                allowed_commands=list(projected_commands),
                 silence_policy=SilencePolicy(
                     warning_ms=settings.HATCH_COACH_SILENCE_WARNING_MS,
                     finish_prompt_ms=settings.HATCH_COACH_SILENCE_FINISH_PROMPT_MS,
@@ -111,6 +119,108 @@ class CoachLiveViewService:
             )
         except ValidationError as error:
             raise CoachLiveViewError("coach_conversation_invalid_state") from error
+
+    @staticmethod
+    def _bounded_json(value: object, *, root: type | tuple[type, ...]) -> bool:
+        if not isinstance(value, root):
+            return False
+        items = 0
+
+        def visit(node: object, depth: int) -> bool:
+            nonlocal items
+            if depth > 8 or items > 512:
+                return False
+            if node is None or type(node) in {str, int, float, bool}:
+                items += 1
+                return True
+            if isinstance(node, Mapping):
+                items += len(node)
+                return all(
+                    isinstance(key, str) and visit(child, depth + 1)
+                    for key, child in node.items()
+                )
+            if isinstance(node, list):
+                items += len(node)
+                return all(visit(child, depth + 1) for child in node)
+            return False
+
+        if not visit(value, 0):
+            return False
+        try:
+            return (
+                len(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
+                <= 65_536
+            )
+        except (TypeError, ValueError, RecursionError):
+            return False
+
+    async def _validate_projection_json(
+        self,
+        session: InterviewSession,
+        questions: list[SessionQuestion],
+        attempt: SessionRecording | None,
+    ) -> None:
+        mapping_values = (
+            session.retention_policy_json,
+            session.recoverable_error_context_json,
+            *(question.follow_up_context_json for question in questions),
+            *(question.follow_up_generation_json for question in questions),
+        )
+        if any(
+            value is not None and not self._bounded_json(value, root=Mapping)
+            for value in mapping_values
+        ):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        if any(
+            question.pending_hint_types_json is not None
+            and (
+                not self._bounded_json(question.pending_hint_types_json, root=list)
+                or not all(
+                    isinstance(item, str) for item in question.pending_hint_types_json
+                )
+            )
+            for question in questions
+        ):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        if attempt is None:
+            return
+        if attempt.self_assessment_json is not None and not self._bounded_json(
+            attempt.self_assessment_json, root=Mapping
+        ):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        if attempt.current_evaluation_version_id is None:
+            return
+        evaluation = await self.db.get(
+            InterviewAttemptEvaluation, attempt.current_evaluation_version_id
+        )
+        if evaluation is None:
+            return
+        if any(
+            value is not None and not self._bounded_json(value, root=Mapping)
+            for value in (
+                evaluation.rubric_json,
+                evaluation.evidence_findings_json,
+                evaluation.coaching_json,
+                evaluation.follow_up_proposal_json,
+                evaluation.diagnostics_json,
+                evaluation.model_route_json,
+            )
+        ):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        stages = (
+            await self.db.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.recording_id == attempt.id,
+                    InterviewAttemptStage.evaluation_version_id == evaluation.id,
+                )
+            )
+        ).all()
+        if any(
+            stage.diagnostics_json is not None
+            and not self._bounded_json(stage.diagnostics_json, root=Mapping)
+            for stage in stages
+        ):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
 
     async def _load_safe_owned_session(
         self, user_id: str, session_id: str

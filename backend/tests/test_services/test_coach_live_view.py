@@ -321,3 +321,156 @@ async def test_processing_projection_prefers_current_running_stage(db_session) -
 
     assert projection.stage == "content_evaluation"
     assert projection.state == "running"
+
+
+@pytest.mark.asyncio
+async def test_live_contextual_commands_hide_ineligible_review_actions(
+    db_session,
+) -> None:
+    """A coarse review state must not advertise retry/accept after acceptance."""
+    session, question = await _ready_session(db_session)
+    session.status = "active"
+    session.conversation_state = "awaiting_next_action"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    question.question_state = "answered"
+    attempt = SessionRecording(
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="completed",
+        evaluation_state="completed",
+        processing_generation=1,
+        processing_retry_limit=2,
+        accepted_at=datetime.utcnow(),
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+    evaluation = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        version_number=1,
+        state="completed",
+        evaluation_contract_version="coach_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add(evaluation)
+    await db_session.flush()
+    attempt.current_evaluation_version_id = evaluation.id
+    question.accepted_recording_id = attempt.id
+    question.last_accepted_generation = question.acceptance_generation
+    session.active_recording_id = attempt.id
+    await db_session.commit()
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+
+    assert "retry_answer" not in view.allowed_commands
+    assert "accept_attempt" not in view.allowed_commands
+
+
+@pytest.mark.asyncio
+async def test_live_contextual_commands_are_scope_and_report_compatible(
+    db_session,
+) -> None:
+    """Recoverable and completed projections expose only matching recovery work."""
+    session, _ = await _ready_session(db_session)
+    session.status = "completed"
+    session.conversation_state = "completed"
+    session.report_state = "failed"
+    session.report_build_reason = "initial_completion"
+    await db_session.commit()
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+    assert "retry_report" not in view.allowed_commands
+
+    session.status = "active"
+    session.conversation_state = "recoverable_error"
+    session.report_state = "not_started"
+    session.report_build_reason = None
+    session.recoverable_error_scope = "initial_report"
+    session.recoverable_error_code = "coach_report_conversational_snapshot_stale"
+    await db_session.commit()
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+    assert "retry_report" in view.allowed_commands
+    assert "retry_processing" not in view.allowed_commands
+    assert "retry_answer" not in view.allowed_commands
+    assert "end_session" not in view.allowed_commands
+
+
+@pytest.mark.asyncio
+async def test_live_rejects_question_overflow_before_materializing_projection(
+    db_session,
+) -> None:
+    session, _ = await _ready_session(db_session)
+    db_session.add_all(
+        SessionQuestion(
+            session_id=session.id,
+            question_num=index,
+            text="bounded",
+            category="technical",
+            difficulty="realistic",
+            order_in_session=index,
+            question_kind="planned",
+            question_state="pending",
+        )
+        for index in range(2, 38)
+    )
+    await db_session.commit()
+
+    with pytest.raises(CoachLiveViewError) as raised:
+        await CoachLiveViewService(db_session).get_live_view(
+            user_id="local", session_id=session.id
+        )
+    assert raised.value.code == "coach_conversation_invalid_state"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "malformed"),
+    [
+        ("retention_policy_json", ["private-retention-canary"]),
+        ("recoverable_error_context_json", ["private-error-canary"]),
+    ],
+)
+async def test_live_malformed_json_containers_fail_closed_without_leakage(
+    db_session, field: str, malformed: list[str]
+) -> None:
+    session, _ = await _ready_session(db_session)
+    setattr(session, field, malformed)
+    await db_session.commit()
+
+    with pytest.raises(CoachLiveViewError) as raised:
+        await CoachLiveViewService(db_session).get_live_view(
+            user_id="local", session_id=session.id
+        )
+    assert raised.value.code == "coach_conversation_invalid_state"
+    assert "private" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_live_rejects_deep_diagnostic_json_without_recursion_failure(
+    db_session,
+) -> None:
+    session, _ = await _ready_session(db_session)
+    nested: dict[str, object] = {}
+    cursor = nested
+    for _ in range(20):
+        child: dict[str, object] = {}
+        cursor["child"] = child
+        cursor = child
+    session.recoverable_error_context_json = nested
+    await db_session.commit()
+
+    with pytest.raises(CoachLiveViewError) as raised:
+        await CoachLiveViewService(db_session).get_live_view(
+            user_id="local", session_id=session.id
+        )
+    assert raised.value.code == "coach_conversation_invalid_state"

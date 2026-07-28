@@ -42,7 +42,8 @@ from ..schemas.coach_conversation import (
     UpdateRetentionPayload,
 )
 from .async_job_service import AsyncJobService
-from .coach_conversation_state import allowed_commands, require_transition
+from .coach_command_projection import contextual_allowed_commands
+from .coach_conversation_state import require_transition
 from .coach_conversational_contracts import (
     CONVERSATION_COMMAND_RESULT_CONTRACT,
     ERROR_REGISTRY,
@@ -346,7 +347,7 @@ class ConversationCommandService:
             ),
         )
         await self.db.refresh(session)
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _begin_answer(
         self,
@@ -396,7 +397,7 @@ class ConversationCommandService:
                     ),
                 ),
             )
-        return self._result(
+        return await self._result(
             session,
             request,
             result="duplicate" if reservation.is_duplicate else "completed",
@@ -497,7 +498,7 @@ class ConversationCommandService:
         job.status = "done"
         job.result_json = '{"status":"unavailable"}'
         await self.db.refresh(session)
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _keep_speaking(
         self,
@@ -526,7 +527,7 @@ class ConversationCommandService:
                 ),
             ),
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _pause(
         self, session: InterviewSession, request: ConversationCommandRequest
@@ -581,7 +582,7 @@ class ConversationCommandService:
         await self.repository.append_session_events(
             session_id=session.id, events=tuple(events)
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _resume(
         self, session: InterviewSession, request: ConversationCommandRequest
@@ -640,7 +641,7 @@ class ConversationCommandService:
         await self.repository.append_session_events(
             session_id=session.id, events=tuple(events)
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _cancel_attempt(
         self,
@@ -674,7 +675,7 @@ class ConversationCommandService:
                 ),
             ),
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _retry_answer(
         self,
@@ -751,7 +752,7 @@ class ConversationCommandService:
                 ),
             ),
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _claim_setup(
         self, session: InterviewSession, request: ConversationCommandRequest
@@ -768,7 +769,7 @@ class ConversationCommandService:
             raise ConversationCommandError(error.code) from error
         await self.db.refresh(session)
         self._post_commit_job_id = claim.job_id
-        return self._result(
+        return await self._result(
             session,
             request,
             result="accepted_processing",
@@ -837,7 +838,7 @@ class ConversationCommandService:
                 ),
             ),
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _update_retention(
         self,
@@ -875,7 +876,7 @@ class ConversationCommandService:
                 ),
             ),
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _skip_question(
         self, session: InterviewSession, request: ConversationCommandRequest
@@ -960,7 +961,7 @@ class ConversationCommandService:
                 ),
             ),
         )
-        return self._result(session, request)
+        return await self._result(session, request)
 
     async def _require_active_attempt(
         self, session: InterviewSession, attempt_id: str | None
@@ -1019,8 +1020,8 @@ class ConversationCommandService:
             )
         await self.db.flush()
 
-    @staticmethod
-    def _result(
+    async def _result(
+        self,
         session: InterviewSession,
         request: ConversationCommandRequest,
         *,
@@ -1042,7 +1043,9 @@ class ConversationCommandService:
                     else session.active_recording_id
                 ),
                 "async_job_id": async_job_id,
-                "allowed_commands": list(allowed_commands(session)),
+                "allowed_commands": list(
+                    await contextual_allowed_commands(self.db, session)
+                ),
                 "contract_version": CONVERSATION_COMMAND_RESULT_CONTRACT,
             }
         )

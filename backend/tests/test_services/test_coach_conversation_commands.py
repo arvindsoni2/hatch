@@ -1447,6 +1447,54 @@ async def test_shared_state_change_event_failure_rolls_back_pause_and_receipt(
 
 
 @pytest.mark.asyncio
+async def test_command_result_uses_contextual_allowed_command_projection(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=3
+    )
+    session.active_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("pause", version=3, command_id="contextual-pause"),
+    )
+
+    assert result.allowed_commands == ["resume", "update_retention", "end_session"]
+
+
+@pytest.mark.asyncio
+async def test_command_service_fails_closed_before_scope_incompatible_dispatch(
+    db_session: AsyncSession,
+) -> None:
+    session, _ = await seed_session(
+        db_session, state="recoverable_error", status="active", version=3
+    )
+    session.recoverable_error_scope = "initial_report"
+    session.recoverable_error_code = "coach_report_conversational_snapshot_stale"
+    await db_session.commit()
+    request = command("pause", version=3, command_id="scope-mismatch")
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local", session_id=session.id, request=request
+        )
+
+    assert raised.value.code == "coach_conversation_invalid_state"
+    assert (
+        await db_session.scalar(
+            select(func.count(ConversationCommandResultRecord.id)).where(
+                ConversationCommandResultRecord.command_id == request.command_id
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("command_type", ["pause", "resume", "request_hint"])
 async def test_listening_lifecycle_event_failure_rolls_back_all_command_effects(
     db_session: AsyncSession,
