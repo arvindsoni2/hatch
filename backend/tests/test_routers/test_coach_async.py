@@ -95,6 +95,7 @@ async def test_submit_answer_returns_202(client, db_session):
         )
     ).scalar_one()
     assert session.activity_version == 1
+    assert (session.experience_version, session.conversation_state) == ("legacy_v1", None)
     run.assert_called_once()
     assert isinstance(run.call_args.kwargs["trace_context"], TraceContextToken)
     assert run.call_args.kwargs["trace_attributes"] == {
@@ -230,6 +231,7 @@ async def test_end_session_returns_202(client, db_session):
     ).scalar_one()
     assert session.report_state == "building"
     assert session.report_job_id == data["job_id"]
+    assert (session.experience_version, session.conversation_state) == ("legacy_v1", None)
     assert isinstance(run.call_args.kwargs["trace_context"], TraceContextToken)
     assert run.call_args.kwargs["trace_attributes"] == {
         "hatch.coach.session_id": "session-end",

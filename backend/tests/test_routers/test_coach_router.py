@@ -1,6 +1,8 @@
 """Integration tests for /api/coach router — create session, submit answer, end session, 404 handling."""
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
 from unittest.mock import AsyncMock, patch
@@ -21,6 +23,7 @@ from app.schemas.coach import (
     SessionFeedbackReport,
     SessionResponse,
 )
+from app.services.coach_aggregation import resolve_canonical_attempts
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -310,6 +313,80 @@ async def test_flag_off_rejects_new_conversation_but_preserves_legacy_create(
     assert conversational.status_code == 403
     assert conversational.json()["error"]["code"] == "coach_conversation_not_enabled"
     assert legacy.status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_omitted_experience_creation_persists_legacy_v1_stub(
+    client, db_session
+) -> None:
+    """Changing the omitted-version dispatch branch would route a legacy create elsewhere."""
+    with patch(
+        "app.services.coach_session_queue.AsyncJobService.run",
+        side_effect=close_queued_work,
+    ):
+        response = await client.post(
+            "/api/coach/sessions",
+            json={"company_name": "Legacy Co", "role_title": "Engineer"},
+        )
+
+    assert response.status_code == 202
+    session = await db_session.get(InterviewSession, response.json()["session_id"])
+    assert session is not None
+    assert (session.experience_version, session.conversation_state) == (
+        "legacy_v1",
+        None,
+    )
+
+
+def test_legacy_canonical_resolver_selects_latest_valid_completed_attempt() -> None:
+    """Selecting the latest terminal row instead would discard the legacy completed score."""
+    question = SessionQuestion(
+        id="legacy-resolver-question",
+        session_id="legacy-resolver-session",
+        question_num=1,
+        text="Describe a delivery.",
+        category="Behavioural",
+        difficulty="medium",
+        order_in_session=1,
+    )
+    completed = SessionRecording(
+        id="legacy-resolver-completed",
+        session_id="legacy-resolver-session",
+        question_id=question.id,
+        recording_type="video",
+        evaluation_state="completed",
+        created_at=datetime(2026, 7, 1, 9, 0, 0),
+        evaluation_json=json.dumps(
+            {
+                "evaluation_state": "completed",
+                "scores": {
+                    "relevance": 8,
+                    "star_structure": 7,
+                    "technical_depth": 9,
+                    "conciseness": 6,
+                    "communication": 8,
+                    "impact_metrics": 7,
+                },
+                "overall": 7.5,
+            }
+        ),
+    )
+    later_unavailable = SessionRecording(
+        id="legacy-resolver-unavailable",
+        session_id="legacy-resolver-session",
+        question_id=question.id,
+        recording_type="video",
+        evaluation_state="unavailable",
+        created_at=datetime(2026, 7, 1, 9, 5, 0),
+    )
+
+    resolved = resolve_canonical_attempts([question], [completed, later_unavailable])
+
+    assert len(resolved) == 1
+    assert resolved[0].recording is completed
+    assert resolved[0].evaluation is not None
+    assert resolved[0].evaluation.overall == 7.5
+    assert resolved[0].latest_terminal_state == "unavailable"
 
 
 @pytest.mark.asyncio
@@ -1084,6 +1161,191 @@ async def test_get_session_report_with_mock_service(client) -> None:
     data = response.json()
     assert data["session_id"] == "session-uuid-001"
     assert data["overall_score"] == 7.5
+
+
+@pytest.mark.asyncio
+async def test_legacy_report_snapshot_remains_json_identical(client, db_session) -> None:
+    """Regenerating or extending a stored legacy report would change its response JSON."""
+    session_id = "legacy-report-fixture"
+    expected_json = {
+        "session_id": session_id,
+        "report_state": "completed",
+        "diagnostic": None,
+        "overall_score": 7.5,
+        "question_count_total": 0,
+        "question_count_evaluated": 0,
+        "question_count_skipped": 0,
+        "question_count_unavailable": 0,
+        "question_count_unanswered": 0,
+        "category_scores": {"Technical": 8.0, "Behavioural": 7.0},
+        "executive_summary": "Strong performance with clear STAR responses.",
+        "strengths": ["Technical depth", "Quantified outcomes"],
+        "improvement_areas": ["Reduce hedging language"],
+        "coaching_points": ["Practice the STAR framework daily"],
+        "practice_plan": [
+            {
+                "day": 1,
+                "focus": "STAR Structure",
+                "activity": "Practice 3 STAR answers",
+                "resource": None,
+            }
+        ],
+        "question_evaluations": [],
+    }
+    session = InterviewSession(
+        id=session_id,
+        company_name="Legacy Co",
+        role_title="Architect",
+        config={},
+        status="completed",
+        experience_version="legacy_v1",
+        overall_score=7.5,
+        report_state="completed",
+        report_json=expected_json,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    response = await client.get(f"/api/coach/sessions/{session_id}/report")
+
+    assert response.status_code == 200
+    assert response.json() == expected_json
+
+
+@pytest.mark.asyncio
+async def test_legacy_video_recording_remains_report_readable(client, db_session) -> None:
+    """Rejecting historical video rows would turn an existing completed report into a 422."""
+    session = InterviewSession(
+        id="legacy-video-report",
+        company_name="Legacy Co",
+        role_title="Architect",
+        config={},
+        status="completed",
+        experience_version="legacy_v1",
+    )
+    question = SessionQuestion(
+        id="legacy-video-question",
+        session_id=session.id,
+        question_num=1,
+        text="Walk through a design decision.",
+        category="Technical",
+        difficulty="medium",
+        order_in_session=1,
+    )
+    recording = SessionRecording(
+        id="legacy-video-recording",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="video",
+        transcript="I chose an event-driven design.",
+        video_metrics={"eye_contact_pct": 88.0, "expression": "engaged"},
+        evaluation_state="completed",
+        evaluation_json=json.dumps(
+            {
+                "evaluation_state": "completed",
+                "scores": {
+                    "relevance": 8,
+                    "star_structure": 7,
+                    "technical_depth": 9,
+                    "conciseness": 6,
+                    "communication": 8,
+                    "impact_metrics": 7,
+                },
+                "overall": 7.5,
+            }
+        ),
+    )
+    db_session.add_all([session, question, recording])
+    await db_session.commit()
+
+    response = await client.get(f"/api/coach/sessions/{session.id}/report")
+
+    assert response.status_code == 200
+    assert response.json()["overall_score"] == 7.5
+    await db_session.refresh(recording)
+    assert recording.video_metrics == {"eye_contact_pct": 88.0, "expression": "engaged"}
+
+
+def test_legacy_openapi_report_schemas_keep_numeric_contract() -> None:
+    """Adding conversational report fields or loosening the score maximum breaks legacy clients."""
+    schema = app.openapi()["components"]["schemas"]
+
+    assert schema["RubricDimension"]["properties"]["score"]["maximum"] == 10
+    assert "session_level" not in schema["SessionFeedbackReport"]["properties"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_progress_and_trend_keep_numeric_scores(client, db_session) -> None:
+    """Stringifying persisted scores would break legacy progress and trend consumers."""
+    parent = InterviewSession(
+        id="legacy-progress-parent",
+        application_id="legacy-progress-application",
+        company_name="Legacy Co",
+        role_title="Architect",
+        config={},
+        status="completed",
+        overall_score=7.5,
+        created_at=datetime(2026, 7, 1, 9, 0, 0),
+        rubric={"dimensions": {"relevance": {"score": 8}}},
+        focus_areas=["relevance"],
+    )
+    child = InterviewSession(
+        id="legacy-progress-child",
+        application_id="legacy-progress-application",
+        company_name="Legacy Co",
+        role_title="Architect",
+        config={},
+        status="completed",
+        overall_score=8.25,
+        created_at=datetime(2026, 7, 2, 9, 0, 0),
+        parent_session_id=parent.id,
+        rubric={"dimensions": {"relevance": {"score": 9}}},
+        focus_areas=["communication"],
+    )
+    db_session.add_all([parent, child])
+    await db_session.commit()
+
+    progress = await client.get("/api/coach/progress/legacy-progress-application")
+    trend = await client.get(f"/api/coach/progress/{child.id}/trend")
+
+    assert progress.status_code == trend.status_code == 200
+    assert [item["overall_score"] for item in progress.json()] == [8.25, 7.5]
+    assert [item["overall_score"] for item in trend.json()] == [7.5, 8.25]
+    assert [item["rubric_scores"]["relevance"] for item in trend.json()] == [8, 9]
+
+
+@pytest.mark.asyncio
+async def test_legacy_retry_abandons_source_and_queues_a_new_legacy_session(
+    client, db_session
+) -> None:
+    """Reusing the source row or inheriting a conversational version breaks legacy retry chaining."""
+    source = InterviewSession(
+        id="legacy-retry-source",
+        application_id="legacy-retry-application",
+        company_name="Legacy Co",
+        role_title="Architect",
+        config={"question_count": 3, "jd_text": "Design systems."},
+        status="failed",
+        experience_version="legacy_v1",
+    )
+    db_session.add(source)
+    await db_session.commit()
+
+    with patch(
+        "app.services.coach_session_queue.AsyncJobService.run",
+        side_effect=close_queued_work,
+    ):
+        response = await client.post(f"/api/coach/sessions/{source.id}/retry")
+
+    assert response.status_code == 202
+    await db_session.refresh(source)
+    replacement = await db_session.get(InterviewSession, response.json()["session_id"])
+    assert source.status == "abandoned"
+    assert replacement is not None
+    assert replacement.id != source.id
+    assert replacement.experience_version == "legacy_v1"
+    assert replacement.application_id == source.application_id
+    assert replacement.parent_session_id is None
 
 
 @pytest.mark.asyncio

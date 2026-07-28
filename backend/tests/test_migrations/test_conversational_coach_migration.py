@@ -919,20 +919,23 @@ def _insert_recording(
     evaluation_state: str | None,
     transcript: str = "legacy answer",
     evaluation_json: str = CANONICAL_COMPLETED_EVALUATION_JSON,
+    speech_metrics: str = '{"wpm":123,"filler_count":2}',
+    video_metrics: str = '{"eye_contact_pct":88.0,"expression":"engaged"}',
 ) -> None:
     connection.execute(
         """
         INSERT INTO session_recordings(
             id, session_id, question_id, recording_type, transcript,
-            speech_metrics, evaluation_json, evaluation_state, created_at
-        ) VALUES (?, ?, ?, 'text', ?, ?, ?, ?, ?)
+            speech_metrics, video_metrics, evaluation_json, evaluation_state, created_at
+        ) VALUES (?, ?, ?, 'video', ?, ?, ?, ?, ?, ?)
         """,
         (
             recording_id,
             session_id,
             question_id,
             transcript,
-            '{"wpm":123,"filler_count":2}',
+            speech_metrics,
+            video_metrics,
             evaluation_json,
             evaluation_state,
             created_at,
@@ -1762,7 +1765,7 @@ def test_upgrade_backfills_legacy_vectors_without_mutating_content(
         ).fetchone()
         recording_content = connection.execute(
             """
-            SELECT id, transcript, speech_metrics, evaluation_json
+            SELECT id, transcript, speech_metrics, video_metrics, evaluation_json
             FROM session_recordings ORDER BY id
             """
         ).fetchall()
@@ -1798,7 +1801,7 @@ def test_upgrade_backfills_legacy_vectors_without_mutating_content(
         assert (
             connection.execute(
                 """
-            SELECT id, transcript, speech_metrics, evaluation_json
+            SELECT id, transcript, speech_metrics, video_metrics, evaluation_json
             FROM session_recordings ORDER BY id
             """
             ).fetchall()
