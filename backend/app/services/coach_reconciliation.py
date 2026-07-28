@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy import and_, case, exists, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -1059,22 +1059,31 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
         processing_job = aliased(AsyncJob)
         processing_stage = aliased(InterviewAttemptStage)
         invalid_stage = aliased(InterviewAttemptStage)
+        form_stage = aliased(InterviewAttemptStage)
+        form_transcript = aliased(InterviewTranscriptVersion)
         claim_path = "$.processing_claim"
+        safe_diagnostics = case(
+            (
+                func.json_valid(processing_evaluation.diagnostics_json) == 1,
+                processing_evaluation.diagnostics_json,
+            ),
+            else_=literal("{}"),
+        )
 
         def claim_type(name: str):
             return func.json_type(
-                processing_evaluation.diagnostics_json,
+                safe_diagnostics,
                 f"{claim_path}.{name}",
             )
 
         def claim_value(name: str):
             return func.json_extract(
-                processing_evaluation.diagnostics_json,
+                safe_diagnostics,
                 f"{claim_path}.{name}",
             )
 
         claim_members = func.json_each(
-            func.json_extract(processing_evaluation.diagnostics_json, claim_path)
+            func.json_extract(safe_diagnostics, claim_path)
         ).table_valued("key", "value")
         claim_member_count = (
             select(func.count())
@@ -1083,8 +1092,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             .scalar_subquery()
         )
         exact_claim_shape = and_(
-            func.json_type(processing_evaluation.diagnostics_json, claim_path)
-            == "object",
+            func.json_type(safe_diagnostics, claim_path) == "object",
             claim_member_count == 7,
             claim_type("processing_generation") == "integer",
             claim_type("job_deadline_at") == "text",
@@ -1097,6 +1105,15 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             claim_value("processing_generation")
             == processing_attempt.processing_generation,
             claim_value("processing_contract_version") == "coach_processing_v1",
+        )
+        claim_deadline = claim_value("job_deadline_at")
+        claim_deadline_tail = func.substr(claim_deadline, 11)
+        claim_deadline_julian = func.julianday(claim_deadline)
+        exact_naive_deadline = and_(
+            claim_deadline_julian.is_not(None),
+            ~claim_deadline_tail.like("%+%"),
+            ~claim_deadline_tail.like("%-%"),
+            ~func.lower(claim_deadline_tail).like("%z%"),
         )
         exact_source = or_(
             and_(
@@ -1141,8 +1158,8 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                     processing_attempt.processing_generation
                 ),
                 invalid_stage.claim_token.is_distinct_from(claim_value("claim_token")),
-                func.replace(invalid_stage.job_deadline_at, " ", "T").is_distinct_from(
-                    claim_value("job_deadline_at")
+                func.julianday(invalid_stage.job_deadline_at).is_distinct_from(
+                    claim_deadline_julian
                 ),
                 ~exact_stage_source,
             ),
@@ -1154,9 +1171,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             processing_stage.expected_processing_generation
             == processing_attempt.processing_generation,
             processing_stage.claim_token == claim_value("claim_token"),
-            func.replace(
-                processing_stage.job_deadline_at, " ", "T"
-            ).is_not_distinct_from(claim_value("job_deadline_at")),
+            func.julianday(processing_stage.job_deadline_at) == claim_deadline_julian,
             or_(
                 and_(
                     processing_stage.stage_name.in_(TRANSCRIPT_BOUND_STAGES),
@@ -1181,10 +1196,147 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                 processing_job.status == "failed",
             ),
         )
+        created_current_generation_transcript = exists().where(
+            form_transcript.recording_id == processing_attempt.id,
+            form_transcript.processing_generation
+            == processing_attempt.processing_generation,
+        )
+        active_transcription_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name == "transcription",
+            form_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
+        )
+        active_content_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name == "content_evaluation",
+            form_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
+        )
+        pending_processing_form_is_actionable = and_(
+            pending_processing_is_actionable,
+            or_(
+                and_(
+                    processing_attempt.processing_retry_count
+                    < processing_attempt.processing_retry_limit,
+                    or_(
+                        processing_evaluation.transcript_version_id.is_not(None),
+                        and_(
+                            processing_attempt.recording_type == "audio",
+                            processing_attempt.current_transcript_version_id.is_(None),
+                            active_transcription_stage,
+                            ~created_current_generation_transcript,
+                        ),
+                    ),
+                ),
+                and_(
+                    processing_attempt.processing_retry_count
+                    >= processing_attempt.processing_retry_limit,
+                    or_(
+                        and_(
+                            processing_evaluation.transcript_version_id.is_(None),
+                            processing_attempt.recording_type == "audio",
+                            processing_attempt.current_transcript_version_id.is_(None),
+                            active_transcription_stage,
+                            ~created_current_generation_transcript,
+                        ),
+                        and_(
+                            processing_evaluation.transcript_version_id.is_not(None),
+                            active_content_stage,
+                        ),
+                    ),
+                ),
+            ),
+        )
         nonterminal_stage = exists().where(
             invalid_stage.recording_id == processing_attempt.id,
             invalid_stage.evaluation_version_id == processing_evaluation.id,
             invalid_stage.stage_state.not_in(_TERMINAL_STAGE_STATES),
+        )
+        result_is_mapping = func.json_type(safe_diagnostics, "$.result") == "object"
+        result_reason = case(
+            (
+                func.json_type(safe_diagnostics, "$.result.reason_code").is_not(None),
+                func.json_extract(safe_diagnostics, "$.result.reason_code"),
+            ),
+            else_=func.json_extract(safe_diagnostics, "$.result.code"),
+        )
+        completed_content_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name == "content_evaluation",
+            form_stage.stage_state == "completed",
+        )
+        current_completed_transcript = exists().where(
+            form_transcript.id == processing_evaluation.transcript_version_id,
+            form_transcript.recording_id == processing_attempt.id,
+            or_(
+                processing_attempt.recording_type != "audio",
+                form_transcript.processing_generation
+                == processing_attempt.processing_generation,
+            ),
+        )
+        completed_terminal_form = and_(
+            processing_evaluation.state == "completed",
+            processing_evaluation.transcript_version_id.is_not(None),
+            processing_attempt.current_transcript_version_id
+            == processing_evaluation.transcript_version_id,
+            current_completed_transcript,
+            completed_content_stage,
+        )
+        transcription_terminal_unavailable = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name == "transcription",
+            form_stage.stage_state.in_(("unavailable", "failed_terminal")),
+            form_stage.last_error_code == result_reason,
+        )
+        no_completed_audio_downstream = ~exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name.in_(
+                (
+                    "content_evaluation",
+                    "evidence_grounding",
+                    "follow_up_decision",
+                    "coaching_enrichment",
+                )
+            ),
+            form_stage.stage_state.in_(("completed", "reused")),
+        )
+        audio_unavailable_terminal_form = and_(
+            processing_evaluation.state == "unavailable",
+            processing_evaluation.transcript_version_id.is_(None),
+            processing_attempt.recording_type == "audio",
+            processing_attempt.current_transcript_version_id.is_(None),
+            result_reason.in_(AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS),
+            transcription_terminal_unavailable,
+            ~created_current_generation_transcript,
+            no_completed_audio_downstream,
+        )
+        content_terminal_unavailable = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name == "content_evaluation",
+            form_stage.stage_state.in_(("unavailable", "failed_terminal")),
+            form_stage.last_error_code == result_reason,
+        )
+        no_completed_content_downstream = ~exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name.in_(
+                ("evidence_grounding", "follow_up_decision", "coaching_enrichment")
+            ),
+            form_stage.stage_state.in_(("completed", "reused")),
+        )
+        content_unavailable_terminal_form = and_(
+            processing_evaluation.state == "unavailable",
+            processing_evaluation.transcript_version_id.is_not(None),
+            processing_attempt.current_transcript_version_id
+            == processing_evaluation.transcript_version_id,
+            result_reason.in_(TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS),
+            content_terminal_unavailable,
+            no_completed_content_downstream,
         )
         terminal_processing_is_actionable = and_(
             processing_attempt.attempt_state.in_(("completed", "unavailable")),
@@ -1194,21 +1346,29 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             processing_job.status == "done",
             processing_stage.stage_state.in_(_TERMINAL_STAGE_STATES),
             ~nonterminal_stage,
+            result_is_mapping,
+            or_(
+                completed_terminal_form,
+                audio_unavailable_terminal_form,
+                content_unavailable_terminal_form,
+            ),
         )
         due_processing_claim = exists().where(
             processing_attempt.session_id == InterviewSession.id,
             processing_attempt.id == InterviewSession.active_recording_id,
+            processing_attempt.question_id == InterviewSession.active_question_id,
             processing_attempt.current_evaluation_version_id
             == processing_evaluation.id,
             processing_evaluation.recording_id == processing_attempt.id,
             processing_evaluation.async_job_id == processing_job.id,
             processing_job.type == "coach_attempt_processing",
             exact_claim_shape,
+            exact_naive_deadline,
             exact_source,
             selected_stage_is_exact,
             ~malformed_owned_stage,
             or_(
-                pending_processing_is_actionable,
+                pending_processing_form_is_actionable,
                 terminal_processing_is_actionable,
             ),
         )
@@ -1326,6 +1486,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                                     actionable_advancing,
                                     actionable_follow_up,
                                     and_(
+                                        InterviewSession.status == "active",
                                         InterviewSession.conversation_state
                                         == "processing_answer",
                                         due_processing_claim,
