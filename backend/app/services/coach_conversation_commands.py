@@ -921,12 +921,8 @@ class ConversationCommandService:
             .order_by(SessionQuestion.order_in_session, SessionQuestion.id)
             .limit(1)
         )
-        question.question_state = "skipped"
-        question.pending_hint_count = 0
-        question.pending_hint_types_json = None
         values: dict[str, object] = {
             "active_recording_id": None,
-            "conversation_state": "advancing",
             "activity_version": InterviewSession.activity_version + 1,
         }
         if next_question is None:
@@ -935,6 +931,9 @@ class ConversationCommandService:
             )
             values.update(
                 {
+                    "active_question_id": None,
+                    "active_root_question_id": None,
+                    "conversation_state": "reporting",
                     "report_state": "building",
                     "report_build_reason": "initial_completion",
                     "report_contract_version": REPORT_CONTRACT,
@@ -942,25 +941,117 @@ class ConversationCommandService:
                     "report_started_at": datetime.utcnow(),
                 }
             )
+        else:
+            asked_sequence = (
+                int(
+                    await self.db.scalar(
+                        select(func.count(SessionQuestion.id)).where(
+                            SessionQuestion.session_id == session.id,
+                            SessionQuestion.asked_sequence.is_not(None),
+                        )
+                    )
+                    or 0
+                )
+                + 1
+            )
+            presented = await self.db.execute(
+                update(SessionQuestion)
+                .where(
+                    SessionQuestion.id == next_question.id,
+                    SessionQuestion.session_id == session.id,
+                    SessionQuestion.question_state == "pending",
+                    SessionQuestion.asked_sequence.is_(None),
+                )
+                .values(question_state="asked", asked_sequence=asked_sequence)
+            )
+            if presented.rowcount != 1:
+                raise ConversationCommandError("coach_conversation_invalid_state")
+            values.update(
+                {
+                    "active_question_id": next_question.id,
+                    "active_root_question_id": (
+                        next_question.root_question_id or next_question.id
+                    ),
+                    "conversation_state": "asking",
+                }
+            )
+        skipped = await self.db.execute(
+            update(SessionQuestion)
+            .where(
+                SessionQuestion.id == question.id,
+                SessionQuestion.session_id == session.id,
+                SessionQuestion.question_state == "asked",
+                SessionQuestion.accepted_recording_id.is_(None),
+            )
+            .values(
+                question_state="skipped",
+                pending_hint_count=0,
+                pending_hint_types_json=None,
+            )
+        )
+        if skipped.rowcount != 1:
+            raise ConversationCommandError("coach_conversation_invalid_state")
         state_version = await self._change_session_state(
             session,
             request,
             values=values,
             required_state="asking",
         )
-        await self.repository.append_session_events(
-            session_id=session.id,
-            events=(
+        events = (
+            (
                 SessionEventInput(
                     event_type="question_skipped",
                     actor_type="candidate",
                     state_version=state_version,
                     state_before="asking",
-                    state_after="advancing",
+                    state_after="asking",
                     question_id=question.id,
                     command_id=request.command_id,
                 ),
-            ),
+                SessionEventInput(
+                    event_type="question_advanced",
+                    actor_type="system",
+                    state_version=state_version,
+                    state_before="asking",
+                    state_after="asking",
+                    question_id=next_question.id,
+                    command_id=request.command_id,
+                ),
+                SessionEventInput(
+                    event_type="question_presented",
+                    actor_type="system",
+                    state_version=state_version,
+                    state_before="asking",
+                    state_after="asking",
+                    question_id=next_question.id,
+                    command_id=request.command_id,
+                ),
+            )
+            if next_question is not None
+            else (
+                SessionEventInput(
+                    event_type="question_skipped",
+                    actor_type="candidate",
+                    state_version=state_version,
+                    state_before="asking",
+                    state_after="reporting",
+                    question_id=question.id,
+                    command_id=request.command_id,
+                ),
+                SessionEventInput(
+                    event_type="report_claimed",
+                    actor_type="system",
+                    state_version=state_version,
+                    state_before="asking",
+                    state_after="reporting",
+                    question_id=question.id,
+                    command_id=request.command_id,
+                ),
+            )
+        )
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=events,
         )
         return await self._result(session, request)
 

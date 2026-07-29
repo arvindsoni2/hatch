@@ -34,7 +34,6 @@ from app.services.coach_conversation_commands import (
     ConversationCommandError,
     ConversationCommandService,
 )
-from app.services.coach_reconciliation import reconcile_conversational_session
 
 
 @pytest_asyncio.fixture
@@ -1320,7 +1319,7 @@ async def test_retry_preserves_terminal_attempt_and_budget(
 
 
 @pytest.mark.asyncio
-async def test_skip_persists_advancing_then_recovery_presents_next_once(
+async def test_skip_resolves_to_next_question_within_command_transaction(
     db_session: AsyncSession,
 ) -> None:
     session, questions = await seed_session(
@@ -1341,19 +1340,34 @@ async def test_skip_persists_advancing_then_recovery_presents_next_once(
     await db_session.refresh(questions[0])
     await db_session.refresh(questions[1])
     assert questions[0].question_state == "skipped"
-    assert (questions[1].question_state, questions[1].asked_sequence) == (
-        "pending",
-        None,
-    )
-    assert result.state == "advancing" and result.active_question_id == questions[0].id
-    assert await reconcile_conversational_session(db_session, session.id) == 1
-    assert await reconcile_conversational_session(db_session, session.id) == 0
-    await db_session.refresh(session)
-    await db_session.refresh(questions[1])
-    assert session.conversation_state == "asking"
-    assert session.active_question_id == questions[1].id
+    assert result.state == "asking"
+    assert result.active_question_id == questions[1].id
     assert (questions[1].question_state, questions[1].asked_sequence) == ("asked", 2)
+    assert result.state_version == 4
+    await db_session.refresh(session)
     assert session.activity_version == 1
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(InterviewSessionEvent.session_id == session.id)
+            .order_by(InterviewSessionEvent.sequence_number)
+        )
+    ).all()
+    assert [
+        (
+            event.event_type,
+            event.actor_type,
+            event.state_before,
+            event.state_after,
+            event.state_version,
+            event.question_id,
+        )
+        for event in events
+    ] == [
+        ("question_skipped", "candidate", "asking", "asking", 4, questions[0].id),
+        ("question_advanced", "system", "asking", "asking", 4, questions[1].id),
+        ("question_presented", "system", "asking", "asking", 4, questions[1].id),
+    ]
 
 
 @pytest.mark.asyncio
@@ -1979,7 +1993,7 @@ async def test_retry_at_attempt_limit_is_no_mutation(db_session: AsyncSession) -
 
 
 @pytest.mark.asyncio
-async def test_terminal_skip_claims_initial_report_and_recovers_idempotently(
+async def test_terminal_skip_resolves_to_reporting_within_command_transaction(
     db_session: AsyncSession,
 ) -> None:
     session, questions = await seed_session(
@@ -1990,6 +2004,7 @@ async def test_terminal_skip_claims_initial_report_and_recovers_idempotently(
         question_count=1,
     )
     session.active_question_id = questions[0].id
+    session.active_root_question_id = questions[0].id
     questions[0].question_state = "asked"
     questions[0].asked_sequence = 1
     await db_session.commit()
@@ -2004,7 +2019,7 @@ async def test_terminal_skip_claims_initial_report_and_recovers_idempotently(
     persisted_session = await db_session.get(InterviewSession, session_id)
     persisted_question = await db_session.get(SessionQuestion, question_id)
     assert persisted_session is not None and persisted_question is not None
-    assert (result.state, result.state_version) == ("advancing", 5)
+    assert (result.state, result.state_version) == ("reporting", 5)
     assert (
         persisted_session.status,
         persisted_session.conversation_state,
@@ -2012,10 +2027,13 @@ async def test_terminal_skip_claims_initial_report_and_recovers_idempotently(
         persisted_session.activity_version,
     ) == (
         "active",
-        "advancing",
+        "reporting",
         5,
         1,
     )
+    assert persisted_session.active_question_id is None
+    assert persisted_session.active_root_question_id is None
+    assert persisted_session.active_recording_id is None
     assert persisted_question.question_state == "skipped"
     assert persisted_session.report_state == "building"
     assert persisted_session.report_build_reason == "initial_completion"
@@ -2024,19 +2042,46 @@ async def test_terminal_skip_claims_initial_report_and_recovers_idempotently(
     job = await db_session.get(AsyncJob, persisted_session.report_job_id)
     assert job is not None
     assert (job.type, job.status) == ("coach_conversational_report", "pending")
-
-    assert await reconcile_conversational_session(db_session, session_id) == 1
-    assert await reconcile_conversational_session(db_session, session_id) == 0
-    await db_session.refresh(persisted_session)
-    assert (persisted_session.conversation_state, persisted_session.state_version) == (
-        "reporting",
-        6,
+    report_job_count = await db_session.scalar(
+        select(func.count(AsyncJob.id)).where(
+            AsyncJob.type == "coach_conversational_report"
+        )
     )
+    assert report_job_count == 1
+    event_count = await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id)).where(
+            InterviewSessionEvent.session_id == session_id
+        )
+    )
+    assert event_count == 2
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(InterviewSessionEvent.session_id == session_id)
+            .order_by(InterviewSessionEvent.sequence_number)
+        )
+    ).all()
+    assert [
+        (
+            event.event_type,
+            event.actor_type,
+            event.state_before,
+            event.state_after,
+            event.state_version,
+            event.question_id,
+        )
+        for event in events
+    ] == [
+        ("question_skipped", "candidate", "asking", "reporting", 5, question_id),
+        ("report_claimed", "system", "asking", "reporting", 5, question_id),
+    ]
 
     replay = await ConversationCommandService(db_session).execute(
         user_id="local", session_id=session_id, request=request
     )
     assert replay == result
+    await db_session.refresh(persisted_session)
+    assert persisted_session.state_version == result.state_version
     assert (
         await db_session.scalar(
             select(func.count(ConversationCommandResultRecord.id)).where(
@@ -2052,4 +2097,12 @@ async def test_terminal_skip_claims_initial_report_and_recovers_idempotently(
             )
         )
         == 1
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.session_id == session_id
+            )
+        )
+        == event_count
     )
