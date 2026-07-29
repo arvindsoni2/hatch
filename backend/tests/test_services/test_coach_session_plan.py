@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import zipfile
 from dataclasses import replace
@@ -1519,11 +1520,12 @@ async def test_planning_request_redacts_secrets_before_claim_persistence(
 
 
 @pytest.mark.asyncio
-async def test_source_loader_rejects_oversized_snapshot_without_truncation(
+async def test_source_loader_bounds_long_cv_snapshot_and_hashes_full_source(
     db_session, tmp_path: Path
 ) -> None:
     current_path = tmp_path / "oversized.txt"
-    current_path.write_text("x" * 2001, encoding="utf-8")
+    authoritative_text = "x" * 2000 + "authoritative-cv-tail"
+    current_path.write_text(authoritative_text, encoding="utf-8")
     application = Application(
         id="application_oversized",
         status="discovered",
@@ -1549,12 +1551,60 @@ async def test_source_loader_rejects_oversized_snapshot_without_truncation(
         }
     )
 
-    with pytest.raises(SessionPlanError, match="coach_contract_unsupported"):
-        await load_session_plan_sources(
-            db_session,
-            CreateSessionRequest.model_validate(payload),
-            managed_cv_roots=(tmp_path,),
-        )
+    sources = await load_session_plan_sources(
+        db_session,
+        CreateSessionRequest.model_validate(payload),
+        managed_cv_roots=(tmp_path,),
+    )
+
+    selected = next(
+        source for source in sources if source.source_type == "application_cv"
+    )
+    redacted = _canonical_redacted_text(authoritative_text)
+    assert selected.snapshot_text == redacted[:2000]
+    assert len(selected.snapshot_text) == 2000
+    assert (
+        selected.source_record_version
+        == hashlib.sha256(redacted.encode("utf-8")).hexdigest()
+    )
+
+
+@pytest.mark.asyncio
+async def test_source_loader_bounds_long_jd_snapshot_and_hashes_full_source(
+    db_session,
+) -> None:
+    authoritative_text = "j" * 2000 + "authoritative-jd-tail"
+    payload = _conversational_request(
+        jd_text=authoritative_text,
+        interview_type="behavioural",
+        planned_question_count=3,
+        locale="en-GB",
+    ).model_dump(mode="json")
+    payload["conversational_config"]["evidence_selection"].update(
+        {
+            "application_cv": "none",
+            "master_cv": "exclude",
+            "question_bank": "exclude",
+            "selected_question_bank_record_ids": [],
+            "company_research": "exclude",
+        }
+    )
+
+    sources = await load_session_plan_sources(
+        db_session,
+        CreateSessionRequest.model_validate(payload),
+    )
+
+    assert len(sources) == 1
+    selected = sources[0]
+    redacted = _canonical_redacted_text(authoritative_text)
+    assert selected.source_type == "job_posting"
+    assert selected.snapshot_text == redacted[:2000]
+    assert len(selected.snapshot_text) == 2000
+    assert (
+        selected.source_record_version
+        == hashlib.sha256(redacted.encode("utf-8")).hexdigest()
+    )
 
 
 @pytest.mark.asyncio
@@ -2037,6 +2087,60 @@ async def test_retry_uses_only_stored_request_and_rebuild_overlays_current_reten
     await db_session.refresh(session)
     assert session.conversation_state == "ready"
     assert session.retention_policy_json["audio"] == "retain_until_deleted"
+
+
+@pytest.mark.asyncio
+async def test_retry_overlays_authoritative_retention_amendment_before_finalising(
+    db_session,
+) -> None:
+    request = _conversational_request(
+        interview_type="behavioural", planned_question_count=3, locale="en-GB"
+    )
+    session = InterviewSession(
+        company_name=request.company_name,
+        role_title=request.role_title,
+        config={},
+        status="setup",
+        experience_version="conversational_v1",
+        retention_policy_json={
+            "audio": "delete_after_processing",
+            "transcript": "retain",
+        },
+    )
+    db_session.add(session)
+    await db_session.flush()
+    initial = await claim_session_setup(
+        db_session, session_id=session.id, request=request
+    )
+    assert await fail_session_setup(
+        db_session,
+        claim=initial,
+        error_code="coach_setup_claim_expired",
+        retryable=True,
+    )
+    session.retention_policy_json = {
+        "audio": "retain_until_deleted",
+        "transcript": "retain",
+    }
+    session.retention_version = 1
+    await db_session.commit()
+
+    retry = await claim_session_setup(db_session, session_id=session.id)
+    loaded = await load_claim_planning_request(db_session, claim=retry)
+
+    assert loaded.conversational_config is not None
+    assert loaded.conversational_config.retention.audio == "retain_until_deleted"
+    assert await finalise_session_setup(
+        db_session,
+        claim=retry,
+        build=_three_question_build(loaded),
+    )
+    await db_session.refresh(session)
+    assert session.conversation_state == "ready"
+    assert session.retention_policy_json == {
+        "audio": "retain_until_deleted",
+        "transcript": "retain",
+    }
 
 
 def test_explicit_empty_questions_fail_and_default_questions_are_grounded() -> None:

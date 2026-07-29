@@ -1371,6 +1371,49 @@ async def test_skip_resolves_to_next_question_within_command_transaction(
 
 
 @pytest.mark.asyncio
+async def test_skip_ignores_stale_pending_adaptive_follow_up(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=3
+    )
+    session.active_question_id = questions[0].id
+    session.active_root_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    questions[0].asked_sequence = 1
+    questions[1].order_in_session = 3
+    adaptive = SessionQuestion(
+        id="stale-pending-adaptive",
+        session_id=session.id,
+        question_num=99,
+        text="Stale adaptive follow-up",
+        category="behavioural",
+        difficulty="realistic",
+        order_in_session=2,
+        question_kind="adaptive_follow_up",
+        root_question_id=questions[0].id,
+        parent_question_id=questions[0].id,
+        follow_up_depth=1,
+        follow_up_reason="clarify_example",
+        question_state="pending",
+    )
+    db_session.add(adaptive)
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("skip_question", version=3),
+    )
+
+    await db_session.refresh(adaptive)
+    await db_session.refresh(questions[1])
+    assert result.active_question_id == questions[1].id
+    assert questions[1].question_state == "asked"
+    assert adaptive.question_state == "pending"
+
+
+@pytest.mark.asyncio
 async def test_retry_setup_claim_dispatches_only_after_commit(
     db_session: AsyncSession,
 ) -> None:
@@ -1840,6 +1883,115 @@ async def test_duplicate_client_attempt_precedes_listening_state_validation(
     assert replay.result == "duplicate"
     assert replay.active_attempt_id == first.active_attempt_id
     assert await db_session.scalar(select(func.count(SessionRecording.id))) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("projection", ("accepted", "advanced", "cleared"))
+async def test_client_attempt_replay_survives_later_session_projection(
+    db_session: AsyncSession,
+    projection: str,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    session.active_root_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    service = ConversationCommandService(db_session)
+    payload = {
+        "recording_type": "text",
+        "client_attempt_id": f"projected-retry-{projection}",
+    }
+    first = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("begin_answer", version=0, payload=payload),
+    )
+    attempt = await db_session.get(SessionRecording, first.active_attempt_id)
+    assert attempt is not None
+    attempt.attempt_state = "completed"
+    attempt.evaluation_state = "completed"
+    questions[0].question_state = "answered"
+    questions[0].accepted_recording_id = attempt.id
+    session.state_version = first.state_version + 1
+    if projection == "accepted":
+        session.conversation_state = "awaiting_next_action"
+    elif projection == "advanced":
+        session.conversation_state = "asking"
+        session.active_question_id = questions[1].id
+        session.active_root_question_id = questions[1].id
+        session.active_recording_id = None
+        questions[1].question_state = "asked"
+        questions[1].asked_sequence = 2
+    else:
+        session.conversation_state = "reporting"
+        session.active_question_id = None
+        session.active_root_question_id = None
+        session.active_recording_id = None
+    await db_session.commit()
+
+    replay = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=session.state_version,
+            payload=payload,
+            command_id=f"new-command-after-{projection}",
+        ),
+    )
+
+    assert replay.result == "duplicate"
+    assert replay.active_attempt_id == attempt.id
+    assert await db_session.scalar(select(func.count(SessionRecording.id))) == 1
+
+
+@pytest.mark.asyncio
+async def test_client_attempt_replay_keeps_recording_type_conflict(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    client_attempt_id = "recording-type-conflict"
+    begun = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=0,
+            payload={
+                "recording_type": "text",
+                "client_attempt_id": client_attempt_id,
+            },
+        ),
+    )
+    session.conversation_state = "reporting"
+    session.active_question_id = None
+    session.active_recording_id = None
+    session.state_version = begun.state_version + 1
+    await db_session.commit()
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local",
+            session_id=session.id,
+            request=command(
+                "begin_answer",
+                version=session.state_version,
+                payload={
+                    "recording_type": "audio",
+                    "client_attempt_id": client_attempt_id,
+                },
+                command_id="new-command-recording-type-conflict",
+            ),
+        )
+
+    assert raised.value.code == "coach_attempt_client_id_conflict"
 
 
 @pytest.mark.asyncio

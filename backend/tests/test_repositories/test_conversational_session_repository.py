@@ -1175,6 +1175,66 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
 
 
 @pytest.mark.asyncio
+async def test_processing_finaliser_accepts_same_generation_state_multi_increment(
+    repository_database,
+) -> None:
+    """Reintroducing the pre-pipeline state equality rejects valid worker progress."""
+    await _seed_session(repository_database)
+    claim, transcript_id = await _claim_attempt_for_finalisation(
+        repository_database,
+        recording_type="text",
+        attempt_id="attempt-state-progress",
+        job_id="job-state-progress",
+    )
+    assert transcript_id is not None
+    async with repository_database.begin() as db:
+        fence = await _processing_fence(db, claim)
+        for stage_name in (
+            "content_evaluation",
+            "evidence_grounding",
+            "follow_up_decision",
+        ):
+            db.add(
+                InterviewAttemptStage(
+                    recording_id=claim.recording_id,
+                    evaluation_version_id=claim.evaluation_version_id,
+                    stage_name=stage_name,
+                    stage_state="completed",
+                    job_id=claim.job_id,
+                    claim_token=fence.claim_token,
+                    expected_processing_generation=claim.processing_generation,
+                    source_transcript_version_id=transcript_id,
+                    job_deadline_at=claim.deadline_at,
+                )
+            )
+        session = await db.get(InterviewSession, claim.session_id)
+        assert session is not None
+        session.state_version += 2
+        expected_final_version = session.state_version + 1
+
+    async with repository_database.begin() as db:
+        changed = await ConversationalSessionRepository(db).finalise_attempt_processing(
+            claim=claim,
+            result=AttemptProcessingResult(
+                evaluation_state="completed",
+                evaluation_json={"answer_level": "strong"},
+                transcript_version_id=transcript_id,
+                diagnostics={},
+            ),
+        )
+
+    assert changed is True
+    async with repository_database() as db:
+        session = await db.get(InterviewSession, claim.session_id)
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        assert session is not None and attempt is not None
+        assert session.state_version == expected_final_version
+        assert session.conversation_state == "awaiting_next_action"
+        assert attempt.processing_generation == claim.processing_generation
+        assert attempt.current_evaluation_version_id == claim.evaluation_version_id
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("reason_key", ("reason", "reason_code"))
 async def test_pretranscription_unavailable_finalisation_requires_exact_diagnostic(
     repository_database, reason_key

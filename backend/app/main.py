@@ -405,6 +405,33 @@ def _is_malformed_conversational_create(
     )
 
 
+def _known_conversational_create_validation_code(
+    request: StarletteRequest,
+    error: RequestValidationError,
+) -> str | None:
+    """Allowlist a known model-level error without rendering validation input."""
+    if not _is_malformed_conversational_create(request, error):
+        return None
+    expected_location = ("body", "conversational_config", "evidence_selection")
+    for detail in error.errors():
+        if not isinstance(detail, Mapping) or detail.get("type") != "value_error":
+            continue
+        location = detail.get("loc")
+        if not isinstance(location, (list, tuple)) or tuple(location) != (
+            expected_location
+        ):
+            continue
+        context = detail.get("ctx")
+        if not isinstance(context, Mapping):
+            continue
+        validation_error = context.get("error")
+        if type(validation_error) is ValueError and validation_error.args == (
+            "coach_draft_evidence_consent_required",
+        ):
+            return "coach_draft_evidence_consent_required"
+    return None
+
+
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
@@ -610,15 +637,22 @@ def create_app() -> FastAPI:
         request: StarletteRequest, error: RequestValidationError
     ) -> JSONResponse:
         """Keep strict conversational command validation free of client echoes."""
+        known_create_code = _known_conversational_create_validation_code(request, error)
         if (
-            request.url.path.startswith("/api/coach/sessions/")
-            and request.url.path.endswith("/commands")
-        ) or _is_malformed_conversational_create(request, error):
+            (
+                request.url.path.startswith("/api/coach/sessions/")
+                and request.url.path.endswith("/commands")
+            )
+            or known_create_code is not None
+            or _is_malformed_conversational_create(request, error)
+        ):
             from .routers.coach_conversation import (  # noqa: PLC0415
                 conversation_error_response,
             )
 
-            return conversation_error_response("coach_contract_unsupported")
+            return conversation_error_response(
+                known_create_code or "coach_contract_unsupported"
+            )
         return await request_validation_exception_handler(request, error)
 
     # CORS — origins from ALLOWED_ORIGINS env var (comma-separated), defaults to localhost

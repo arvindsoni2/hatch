@@ -25,6 +25,7 @@ from app.models.coach_session import (
 from app.repositories.session_repository import SessionRepository
 from app.schemas.coach_conversation import ConversationCommandRequest
 from app.services.coach_conversation_commands import ConversationCommandService
+from app.services.coach_conversational_contracts import RUBRIC_CONTRACT
 from app.services.coach_reconciliation import (
     reconcile_conversational_session,
     reconcile_job,
@@ -299,6 +300,74 @@ async def _preserve_terminal_evaluation_pointer(
     return prior
 
 
+async def _configure_downstream_processing_failure(
+    db_session,
+    *,
+    attempt: SessionRecording,
+    evaluation: InterviewAttemptEvaluation,
+    content_stage: InterviewAttemptStage,
+    job: AsyncJob,
+    stage_name: str,
+    stage_state: str,
+) -> InterviewAttemptStage:
+    """Persist content success followed by one owned downstream failure."""
+    rubric = {
+        "answer_level": "interview_ready",
+        "contract_version": RUBRIC_CONTRACT,
+    }
+    evaluation.rubric_json = rubric
+    content_stage.stage_state = "completed"
+    content_stage.completed_at = datetime.utcnow()
+    ordered_downstream = (
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+    )
+    target: InterviewAttemptStage | None = None
+    target_seen = False
+    for name in ordered_downstream:
+        if name == stage_name:
+            target_seen = True
+        persisted_state = (
+            stage_state
+            if name == stage_name
+            else "pending"
+            if target_seen
+            else "completed"
+        )
+        row = InterviewAttemptStage(
+            recording_id=attempt.id,
+            evaluation_version_id=evaluation.id,
+            stage_name=name,
+            stage_state=persisted_state,
+            attempt_count=1,
+            repair_count=0,
+            job_id=content_stage.job_id,
+            claim_token=content_stage.claim_token,
+            expected_processing_generation=content_stage.expected_processing_generation,
+            source_transcript_version_id=evaluation.transcript_version_id,
+            job_deadline_at=content_stage.job_deadline_at,
+            completed_at=(
+                datetime.utcnow()
+                if persisted_state in {"completed", "failed_terminal"}
+                else None
+            ),
+            last_error_code=(
+                "coach_attempt_job_budget_exhausted"
+                if name == stage_name and stage_state != "running"
+                else None
+            ),
+        )
+        db_session.add(row)
+        if name == stage_name:
+            target = row
+    assert target is not None
+    job.status = "failed"
+    job.error = "coach_attempt_job_budget_exhausted"
+    await db_session.commit()
+    return target
+
+
 def _finish_answer_command(
     *, attempt_id: str, version: int
 ) -> ConversationCommandRequest:
@@ -517,6 +586,184 @@ async def test_expired_processing_claim_at_retry_limit_becomes_unavailable(
         "reason_code": "coach_attempt_job_budget_exhausted"
     }
     assert attempt.processing_retry_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage_name", ("evidence_grounding", "follow_up_decision"))
+async def test_exhausted_downstream_failure_uses_terminal_stage_fallback(
+    db_session,
+    stage_name: str,
+) -> None:
+    """Grounding/follow-up failure must not discard a completed content rubric."""
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, content, job = await _processing_claim(
+        db_session, deadline=now + timedelta(minutes=1), retries=2, limit=2
+    )
+    failed_stage = await _configure_downstream_processing_failure(
+        db_session,
+        attempt=attempt,
+        evaluation=evaluation,
+        content_stage=content,
+        job=job,
+        stage_name=stage_name,
+        stage_state="running",
+    )
+    expected_rubric = dict(evaluation.rubric_json)
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    for row in (session, attempt, evaluation, failed_stage, job):
+        await db_session.refresh(row)
+
+    assert session.conversation_state == "awaiting_next_action"
+    assert (attempt.attempt_state, attempt.evaluation_state) == (
+        "completed",
+        "completed",
+    )
+    assert attempt.current_evaluation_version_id == evaluation.id
+    assert json.loads(attempt.evaluation_json) == expected_rubric
+    assert evaluation.state == "completed"
+    assert evaluation.rubric_json == expected_rubric
+    assert failed_stage.stage_state == "unavailable"
+    assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_all_terminal_downstream_failure_is_published_once(db_session) -> None:
+    """Returning early when no stage is active strands a publishable evaluation."""
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, content, job = await _processing_claim(
+        db_session, deadline=now + timedelta(minutes=1), retries=2, limit=2
+    )
+    failed_stage = await _configure_downstream_processing_failure(
+        db_session,
+        attempt=attempt,
+        evaluation=evaluation,
+        content_stage=content,
+        job=job,
+        stage_name="follow_up_decision",
+        stage_state="failed_terminal",
+    )
+    downstream = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id == evaluation.id,
+                    InterviewAttemptStage.stage_name == "coaching_enrichment",
+                )
+            )
+        ).all()
+    )
+    assert len(downstream) == 1
+    downstream[0].stage_state = "unavailable"
+    downstream[0].completed_at = now
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    await db_session.refresh(session)
+    await db_session.refresh(evaluation)
+    await db_session.refresh(failed_stage)
+    assert session.conversation_state == "awaiting_next_action"
+    assert evaluation.state == "completed"
+    assert failed_stage.stage_state == "unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage_form", ("active", "all_terminal"))
+async def test_startup_selector_matches_targeted_downstream_fallback(
+    db_session,
+    monkeypatch,
+    stage_form: str,
+) -> None:
+    from app.services import coach_reconciliation as reconciliation
+
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, content, job = await _processing_claim(
+        db_session, deadline=now + timedelta(minutes=1), retries=2, limit=2
+    )
+    await _configure_downstream_processing_failure(
+        db_session,
+        attempt=attempt,
+        evaluation=evaluation,
+        content_stage=content,
+        job=job,
+        stage_name="follow_up_decision",
+        stage_state="running" if stage_form == "active" else "failed_terminal",
+    )
+    if stage_form == "all_terminal":
+        coaching = await db_session.scalar(
+            select(InterviewAttemptStage).where(
+                InterviewAttemptStage.evaluation_version_id == evaluation.id,
+                InterviewAttemptStage.stage_name == "coaching_enrichment",
+            )
+        )
+        assert coaching is not None
+        coaching.stage_state = "unavailable"
+        coaching.completed_at = now
+        await db_session.commit()
+    session_id = session.id
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr(reconciliation, "AsyncSessionLocal", factory)
+
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, session_id)
+    assert recovered is not None
+    assert recovered.conversation_state == "awaiting_next_action"
+
+
+@pytest.mark.asyncio
+async def test_exhausted_recovery_publishes_unavailable_from_null_pointer(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, _, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=2, limit=2
+    )
+    attempt.current_evaluation_version_id = None
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    for row in (attempt, evaluation):
+        await db_session.refresh(row)
+
+    expected = {
+        "answer_level": "not_assessed",
+        "contract_version": RUBRIC_CONTRACT,
+    }
+    assert attempt.current_evaluation_version_id == evaluation.id
+    assert json.loads(attempt.evaluation_json) == expected
+    assert evaluation.rubric_json == expected
+    assert evaluation.state == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_exhausted_recovery_supersedes_prior_terminal_pointer(
+    db_session,
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, pending, _, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=2, limit=2
+    )
+    prior = await _preserve_terminal_evaluation_pointer(
+        db_session, attempt=attempt, pending=pending
+    )
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    for row in (attempt, pending, prior):
+        await db_session.refresh(row)
+
+    expected = {
+        "answer_level": "not_assessed",
+        "contract_version": RUBRIC_CONTRACT,
+    }
+    assert prior.state == "superseded"
+    assert attempt.current_evaluation_version_id == pending.id
+    assert json.loads(attempt.evaluation_json) == expected
+    assert pending.rubric_json == expected
+    assert pending.state == "unavailable"
 
 
 @pytest.mark.asyncio

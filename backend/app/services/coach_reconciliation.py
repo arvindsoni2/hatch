@@ -30,6 +30,7 @@ from .coach_contracts import CoachDiagnostic, failed_answer_payload
 from .coach_conversational_contracts import (
     AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS,
     REPORT_CONTRACT,
+    RUBRIC_CONTRACT,
     TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS,
 )
 from .coach_processing_snapshot import (
@@ -281,6 +282,28 @@ _ACTIVE_STAGE_STATES = frozenset({"pending", "running"})
 _TERMINAL_STAGE_STATES = frozenset(
     {"completed", "reused", "not_applicable", "unavailable", "failed_terminal"}
 )
+_RECOVERY_STAGE_STATES = frozenset(
+    {
+        "not_started",
+        "pending",
+        "running",
+        "unavailable",
+        "failed_retryable",
+        "failed_terminal",
+    }
+)
+_HARD_FAILURE_STAGES = frozenset(
+    {"audio_persist", "transcription", "content_evaluation"}
+)
+_TERMINAL_FALLBACK_STAGES = frozenset(
+    {
+        "speech_analysis",
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+        "audio_cleanup",
+    }
+)
 
 
 async def _terminal_processing_form_is_valid(
@@ -363,6 +386,188 @@ async def _terminal_processing_form_is_valid(
             for stage in stages
         )
     )
+
+
+def _unavailable_rubric() -> dict[str, str]:
+    return {
+        "answer_level": "not_assessed",
+        "contract_version": RUBRIC_CONTRACT,
+    }
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+async def _supersede_prior_evaluation(
+    db: AsyncSession,
+    *,
+    attempt: SessionRecording,
+    evaluation: InterviewAttemptEvaluation,
+) -> None:
+    prior_id = attempt.current_evaluation_version_id
+    if prior_id is None or prior_id == evaluation.id:
+        return
+    changed = await db.execute(
+        update(InterviewAttemptEvaluation)
+        .where(
+            InterviewAttemptEvaluation.id == prior_id,
+            InterviewAttemptEvaluation.recording_id == attempt.id,
+            InterviewAttemptEvaluation.state.in_(
+                ("completed", "unavailable", "invalid", "failed")
+            ),
+        )
+        .values(state="superseded")
+    )
+    if changed.rowcount != 1:
+        raise _ReconciliationFenceLost
+
+
+async def _publish_downstream_processing_fallback(
+    db: AsyncSession,
+    *,
+    session: InterviewSession,
+    attempt: SessionRecording,
+    evaluation: InterviewAttemptEvaluation,
+    job: AsyncJob,
+    snapshot: ProcessingSnapshot,
+    recovery_stages: list[InterviewAttemptStage],
+    rubric: dict,
+    error_code: str,
+    now: datetime,
+) -> int:
+    """Publish completed content while terminalizing optional downstream work."""
+    claim = snapshot.claim
+    recovery_ids = [stage.id for stage in recovery_stages]
+    stage_change = await db.execute(
+        update(InterviewAttemptStage)
+        .where(
+            InterviewAttemptStage.id.in_(recovery_ids),
+            InterviewAttemptStage.recording_id == attempt.id,
+            InterviewAttemptStage.evaluation_version_id == evaluation.id,
+            InterviewAttemptStage.job_id == job.id,
+            InterviewAttemptStage.claim_token == claim["claim_token"],
+            InterviewAttemptStage.expected_processing_generation
+            == attempt.processing_generation,
+            InterviewAttemptStage.stage_state.in_(_RECOVERY_STAGE_STATES),
+            InterviewAttemptStage.job_deadline_at == snapshot.deadline,
+        )
+        .values(
+            stage_state="unavailable",
+            last_error_code=error_code,
+            completed_at=now,
+            claim_token=None,
+        )
+    )
+    await _supersede_prior_evaluation(
+        db,
+        attempt=attempt,
+        evaluation=evaluation,
+    )
+    attempt_change = await db.execute(
+        update(SessionRecording)
+        .where(
+            SessionRecording.id == attempt.id,
+            SessionRecording.session_id == session.id,
+            SessionRecording.question_id == session.active_question_id,
+            SessionRecording.processing_generation == attempt.processing_generation,
+            SessionRecording.async_job_id == job.id,
+            SessionRecording.current_transcript_version_id.is_not_distinct_from(
+                snapshot.transcript_version_id
+            ),
+            SessionRecording.audio_content_hash.is_not_distinct_from(
+                attempt.audio_content_hash
+            ),
+            SessionRecording.attempt_state == "pending_processing",
+            SessionRecording.evaluation_state == "pending",
+        )
+        .values(
+            attempt_state="completed",
+            evaluation_state="completed",
+            evaluation_json=_canonical_json(rubric),
+            current_evaluation_version_id=evaluation.id,
+            async_job_id=None,
+            processing_completed_at=now,
+        )
+    )
+    evaluation_change = await db.execute(
+        update(InterviewAttemptEvaluation)
+        .where(
+            InterviewAttemptEvaluation.id == evaluation.id,
+            InterviewAttemptEvaluation.recording_id == attempt.id,
+            InterviewAttemptEvaluation.async_job_id == job.id,
+            InterviewAttemptEvaluation.transcript_version_id.is_not_distinct_from(
+                snapshot.transcript_version_id
+            ),
+            InterviewAttemptEvaluation.diagnostics_json["processing_claim"][
+                "claim_token"
+            ].as_string()
+            == claim["claim_token"],
+            InterviewAttemptEvaluation.state == "pending",
+        )
+        .values(
+            state="completed",
+            rubric_json=dict(rubric),
+            completed_at=now,
+            diagnostics_json={
+                "processing_claim": dict(claim),
+                "result": {"code": "completed"},
+            },
+        )
+    )
+    session_change = await db.execute(
+        update(InterviewSession)
+        .where(
+            InterviewSession.id == session.id,
+            InterviewSession.status == "active",
+            InterviewSession.conversation_state == "processing_answer",
+            InterviewSession.state_version == session.state_version,
+            InterviewSession.active_question_id == attempt.question_id,
+            InterviewSession.active_recording_id == attempt.id,
+            InterviewSession.deletion_state == "not_requested",
+        )
+        .values(
+            conversation_state="awaiting_next_action",
+            recoverable_error_scope=None,
+            recoverable_error_code=None,
+            recoverable_error_context_json=None,
+            state_version=InterviewSession.state_version + 1,
+            activity_version=InterviewSession.activity_version + 1,
+            last_activity_at=now,
+        )
+        .returning(InterviewSession.state_version)
+    )
+    state_version = session_change.scalar_one_or_none()
+    if (
+        stage_change.rowcount != len(recovery_stages)
+        or attempt_change.rowcount != 1
+        or evaluation_change.rowcount != 1
+        or state_version is None
+    ):
+        raise _ReconciliationFenceLost
+    await _fail_async_job(db, job_id=job.id, code=error_code, now=now)
+    await ConversationalSessionRepository(db).append_session_events(
+        session_id=session.id,
+        events=(
+            SessionEventInput(
+                event_type="attempt_processing_completed",
+                actor_type="reconciler",
+                state_version=state_version,
+                state_before="processing_answer",
+                state_after="awaiting_next_action",
+                question_id=attempt.question_id,
+                recording_id=attempt.id,
+                payload_json={"state": "completed"},
+            ),
+        ),
+    )
+    return 1
 
 
 async def _reconcile_processing_answer(
@@ -538,28 +743,43 @@ async def _reconcile_processing_answer(
         or job is None
     ):
         return 0
-    active_stages = [
-        stage for stage in stages if stage.stage_state in _ACTIVE_STAGE_STATES
-    ]
     failed_job = job.status == "failed"
     expired = deadline < now
     if not failed_job and not expired:
         return 0
-    if not active_stages:
+    recovery_stages = [
+        stage for stage in stages if stage.stage_state in _RECOVERY_STAGE_STATES
+    ]
+    if not recovery_stages:
         return 0
 
-    retryable = attempt.processing_retry_count < attempt.processing_retry_limit
+    budget_retryable = attempt.processing_retry_count < attempt.processing_retry_limit
+    terminal_failure = any(
+        stage.stage_state in {"failed_terminal", "unavailable"}
+        for stage in recovery_stages
+    )
+    retryable = budget_retryable and not terminal_failure
     transcript_id = evaluation.transcript_version_id
     if attempt.recording_type == "text" and transcript_id is None:
         return 0
-    active_names = {stage.stage_name for stage in active_stages}
-    if transcript_id is None and active_names & TRANSCRIPT_BOUND_STAGES:
+    recovery_names = {stage.stage_name for stage in recovery_stages}
+    if transcript_id is None and any(
+        stage.stage_name in TRANSCRIPT_BOUND_STAGES
+        and stage.stage_state != "not_started"
+        for stage in recovery_stages
+    ):
         return 0
+    stage_by_name = {stage.stage_name: stage for stage in stages}
+    transcription_failure = (
+        stage_by_name.get("transcription")
+        if "transcription" in recovery_names
+        else None
+    )
     pretranscription_audio = (
         attempt.recording_type == "audio"
         and transcript_id is None
         and attempt.current_transcript_version_id is None
-        and "transcription" in active_names
+        and transcription_failure is not None
     )
     if pretranscription_audio:
         created_transcript = await db.scalar(
@@ -573,35 +793,80 @@ async def _reconcile_processing_answer(
         )
         if created_transcript is not None:
             return 0
-    if not retryable and transcript_id is None and not pretranscription_audio:
-        return 0
-    if (
-        not retryable
-        and transcript_id is not None
-        and "content_evaluation" not in active_names
-    ):
-        return 0
-    terminal_state = "recoverable_error" if retryable else "unavailable"
-    stage_state = "failed_retryable" if retryable else "failed_terminal"
     session_error_code = (
         "coach_attempt_job_budget_exhausted"
         if expired
         else "coach_evaluation_unavailable"
     )
+
+    content_stage = stage_by_name.get("content_evaluation")
+    content_succeeded = bool(
+        content_stage is not None
+        and content_stage.stage_state in {"completed", "reused"}
+    )
+    hard_recovery = any(
+        stage.stage_name in _HARD_FAILURE_STAGES for stage in recovery_stages
+    )
+    downstream_only_recovery = all(
+        stage.stage_name in _TERMINAL_FALLBACK_STAGES for stage in recovery_stages
+    )
+    if (
+        not retryable
+        and transcript_id is not None
+        and content_succeeded
+        and not hard_recovery
+        and downstream_only_recovery
+        and isinstance(evaluation.rubric_json, dict)
+    ):
+        transcript = await db.get(InterviewTranscriptVersion, transcript_id)
+        if (
+            transcript is None
+            or transcript.recording_id != attempt.id
+            or (
+                attempt.recording_type == "audio"
+                and transcript.processing_generation != attempt.processing_generation
+            )
+        ):
+            return 0
+        return await _publish_downstream_processing_fallback(
+            db,
+            session=session,
+            attempt=attempt,
+            evaluation=evaluation,
+            job=job,
+            snapshot=snapshot,
+            recovery_stages=recovery_stages,
+            rubric=dict(evaluation.rubric_json),
+            error_code=session_error_code,
+            now=now,
+        )
+
+    if not retryable:
+        if transcript_id is None and not pretranscription_audio:
+            return 0
+        if transcript_id is not None and (
+            content_stage is None
+            or content_stage.stage_state not in _RECOVERY_STAGE_STATES
+        ):
+            return 0
+
+    terminal_state = "recoverable_error" if retryable else "unavailable"
     terminal_reason = (
         "transcription_unavailable" if pretranscription_audio else session_error_code
     )
     stage_error_code = session_error_code if retryable else terminal_reason
+    recovery_ids = [stage.id for stage in recovery_stages]
     stage_change = await db.execute(
         update(InterviewAttemptStage)
         .where(
+            InterviewAttemptStage.id.in_(recovery_ids),
             InterviewAttemptStage.recording_id == attempt.id,
             InterviewAttemptStage.evaluation_version_id == evaluation.id,
             InterviewAttemptStage.job_id == job_id,
             InterviewAttemptStage.claim_token == claim["claim_token"],
             InterviewAttemptStage.expected_processing_generation
             == attempt.processing_generation,
-            InterviewAttemptStage.stage_state.in_(_ACTIVE_STAGE_STATES),
+            InterviewAttemptStage.stage_state.in_(_RECOVERY_STAGE_STATES),
             InterviewAttemptStage.job_deadline_at == deadline,
             or_(
                 and_(
@@ -616,12 +881,42 @@ async def _reconcile_processing_answer(
             ),
         )
         .values(
-            stage_state=stage_state,
+            stage_state=(
+                "failed_retryable"
+                if retryable
+                else case(
+                    (
+                        InterviewAttemptStage.stage_name.in_(_HARD_FAILURE_STAGES),
+                        "failed_terminal",
+                    ),
+                    else_="unavailable",
+                )
+            ),
             last_error_code=stage_error_code,
             completed_at=now,
             claim_token=None,
         )
     )
+    if not retryable:
+        await _supersede_prior_evaluation(
+            db,
+            attempt=attempt,
+            evaluation=evaluation,
+        )
+    attempt_values: dict[str, object] = {
+        "attempt_state": terminal_state,
+        "evaluation_state": "failed" if retryable else "unavailable",
+        "async_job_id": None,
+        "processing_completed_at": now,
+    }
+    if not retryable:
+        unavailable_rubric = _unavailable_rubric()
+        attempt_values.update(
+            {
+                "evaluation_json": _canonical_json(unavailable_rubric),
+                "current_evaluation_version_id": evaluation.id,
+            }
+        )
     attempt_change = await db.execute(
         update(SessionRecording)
         .where(
@@ -630,18 +925,32 @@ async def _reconcile_processing_answer(
             SessionRecording.question_id == session.active_question_id,
             SessionRecording.processing_generation == attempt.processing_generation,
             SessionRecording.async_job_id == attempt.async_job_id,
-            SessionRecording.current_transcript_version_id
-            == evaluation.transcript_version_id,
+            SessionRecording.current_transcript_version_id.is_not_distinct_from(
+                evaluation.transcript_version_id
+            ),
+            SessionRecording.current_evaluation_version_id.is_not_distinct_from(
+                attempt.current_evaluation_version_id
+            ),
+            SessionRecording.audio_content_hash.is_not_distinct_from(
+                attempt.audio_content_hash
+            ),
             SessionRecording.attempt_state == "pending_processing",
             SessionRecording.evaluation_state == "pending",
         )
-        .values(
-            attempt_state=terminal_state,
-            evaluation_state="failed" if retryable else "unavailable",
-            async_job_id=None,
-            processing_completed_at=now,
-        )
+        .values(**attempt_values)
     )
+    evaluation_values: dict[str, object] = {
+        "state": "failed" if retryable else "unavailable",
+        "completed_at": now,
+        "diagnostics_json": {
+            "processing_claim": dict(claim),
+            "result": {
+                "reason_code": session_error_code if retryable else terminal_reason
+            },
+        },
+    }
+    if not retryable:
+        evaluation_values["rubric_json"] = _unavailable_rubric()
     evaluation_change = await db.execute(
         update(InterviewAttemptEvaluation)
         .where(
@@ -656,17 +965,18 @@ async def _reconcile_processing_answer(
             == claim["claim_token"],
             InterviewAttemptEvaluation.state == "pending",
         )
-        .values(
-            state="failed" if retryable else "unavailable",
-            completed_at=now,
-            diagnostics_json={
-                "processing_claim": dict(claim),
-                "result": {
-                    "reason_code": session_error_code if retryable else terminal_reason
-                },
-            },
-        )
+        .values(**evaluation_values)
     )
+    session_values: dict[str, object] = {
+        "conversation_state": "recoverable_error",
+        "recoverable_error_scope": "attempt_processing",
+        "recoverable_error_code": session_error_code,
+        "recoverable_error_context_json": None,
+        "state_version": InterviewSession.state_version + 1,
+        "last_activity_at": now,
+    }
+    if not retryable:
+        session_values["activity_version"] = InterviewSession.activity_version + 1
     session_change = await db.execute(
         update(InterviewSession)
         .where(
@@ -678,19 +988,12 @@ async def _reconcile_processing_answer(
             InterviewSession.active_recording_id == attempt.id,
             InterviewSession.deletion_state == "not_requested",
         )
-        .values(
-            conversation_state="recoverable_error",
-            recoverable_error_scope="attempt_processing",
-            recoverable_error_code=session_error_code,
-            recoverable_error_context_json=None,
-            state_version=InterviewSession.state_version + 1,
-            last_activity_at=now,
-        )
+        .values(**session_values)
         .returning(InterviewSession.state_version)
     )
     state_version = session_change.scalar_one_or_none()
     if (
-        stage_change.rowcount != len(active_stages)
+        stage_change.rowcount != len(recovery_stages)
         or attempt_change.rowcount != 1
         or evaluation_change.rowcount != 1
         or state_version is None
@@ -1251,7 +1554,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             processing_attempt.evaluation_state == "pending",
             processing_attempt.async_job_id == processing_job.id,
             processing_evaluation.state == "pending",
-            processing_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
+            processing_stage.stage_state.in_(_RECOVERY_STAGE_STATES),
             or_(
                 processing_stage.job_deadline_at < now,
                 processing_job.status == "failed",
@@ -1262,60 +1565,106 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             form_transcript.processing_generation
             == processing_attempt.processing_generation,
         )
-        active_transcription_stage = exists().where(
+        recovery_transcription_stage = exists().where(
             form_stage.recording_id == processing_attempt.id,
             form_stage.evaluation_version_id == processing_evaluation.id,
             form_stage.stage_name == "transcription",
-            form_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
+            form_stage.stage_state.in_(_RECOVERY_STAGE_STATES),
         )
-        active_content_stage = exists().where(
+        recovery_content_stage = exists().where(
             form_stage.recording_id == processing_attempt.id,
             form_stage.evaluation_version_id == processing_evaluation.id,
             form_stage.stage_name == "content_evaluation",
-            form_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
+            form_stage.stage_state.in_(_RECOVERY_STAGE_STATES),
         )
-        active_transcript_bound_stage = exists().where(
+        claimed_transcript_bound_stage = exists().where(
             form_stage.recording_id == processing_attempt.id,
             form_stage.evaluation_version_id == processing_evaluation.id,
             form_stage.stage_name.in_(TRANSCRIPT_BOUND_STAGES),
-            form_stage.stage_state.in_(_ACTIVE_STAGE_STATES),
+            form_stage.stage_state.in_(_RECOVERY_STAGE_STATES),
+            form_stage.stage_state != "not_started",
+        )
+        terminal_failure_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_state.in_(("failed_terminal", "unavailable")),
+        )
+        recovery_hard_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name.in_(_HARD_FAILURE_STAGES),
+            form_stage.stage_state.in_(_RECOVERY_STAGE_STATES),
+        )
+        recovery_downstream_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name.in_(_TERMINAL_FALLBACK_STAGES),
+            form_stage.stage_state.in_(_RECOVERY_STAGE_STATES),
+        )
+        recovery_nonfallback_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name.not_in(_TERMINAL_FALLBACK_STAGES),
+            form_stage.stage_state.in_(_RECOVERY_STAGE_STATES),
+        )
+        content_success_stage = exists().where(
+            form_stage.recording_id == processing_attempt.id,
+            form_stage.evaluation_version_id == processing_evaluation.id,
+            form_stage.stage_name == "content_evaluation",
+            form_stage.stage_state.in_(("completed", "reused")),
+        )
+        budget_retryable = (
+            processing_attempt.processing_retry_count
+            < processing_attempt.processing_retry_limit
+        )
+        retryable_processing_form = and_(
+            budget_retryable,
+            ~terminal_failure_stage,
+            or_(
+                processing_evaluation.transcript_version_id.is_not(None),
+                and_(
+                    processing_attempt.recording_type == "audio",
+                    processing_attempt.current_transcript_version_id.is_(None),
+                    ~claimed_transcript_bound_stage,
+                    or_(
+                        ~recovery_transcription_stage,
+                        ~created_current_generation_transcript,
+                    ),
+                ),
+            ),
+        )
+        terminal_hard_processing_form = and_(
+            or_(~budget_retryable, terminal_failure_stage),
+            or_(
+                and_(
+                    processing_evaluation.transcript_version_id.is_(None),
+                    processing_attempt.recording_type == "audio",
+                    processing_attempt.current_transcript_version_id.is_(None),
+                    recovery_transcription_stage,
+                    ~claimed_transcript_bound_stage,
+                    ~created_current_generation_transcript,
+                ),
+                and_(
+                    processing_evaluation.transcript_version_id.is_not(None),
+                    recovery_content_stage,
+                ),
+            ),
+        )
+        terminal_fallback_processing_form = and_(
+            or_(~budget_retryable, terminal_failure_stage),
+            processing_evaluation.transcript_version_id.is_not(None),
+            func.json_type(processing_evaluation.rubric_json) == "object",
+            content_success_stage,
+            recovery_downstream_stage,
+            ~recovery_hard_stage,
+            ~recovery_nonfallback_stage,
         )
         pending_processing_form_is_actionable = and_(
             pending_processing_is_actionable,
             or_(
-                and_(
-                    processing_attempt.processing_retry_count
-                    < processing_attempt.processing_retry_limit,
-                    or_(
-                        processing_evaluation.transcript_version_id.is_not(None),
-                        and_(
-                            processing_attempt.recording_type == "audio",
-                            processing_attempt.current_transcript_version_id.is_(None),
-                            ~active_transcript_bound_stage,
-                            or_(
-                                ~active_transcription_stage,
-                                ~created_current_generation_transcript,
-                            ),
-                        ),
-                    ),
-                ),
-                and_(
-                    processing_attempt.processing_retry_count
-                    >= processing_attempt.processing_retry_limit,
-                    or_(
-                        and_(
-                            processing_evaluation.transcript_version_id.is_(None),
-                            processing_attempt.recording_type == "audio",
-                            processing_attempt.current_transcript_version_id.is_(None),
-                            active_transcription_stage,
-                            ~created_current_generation_transcript,
-                        ),
-                        and_(
-                            processing_evaluation.transcript_version_id.is_not(None),
-                            active_content_stage,
-                        ),
-                    ),
-                ),
+                retryable_processing_form,
+                terminal_hard_processing_form,
+                terminal_fallback_processing_form,
             ),
         )
         nonterminal_stage = exists().where(

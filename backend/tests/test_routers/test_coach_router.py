@@ -628,6 +628,59 @@ async def test_malformed_conversational_create_redacts_all_client_canaries(
 
 
 @pytest.mark.asyncio
+async def test_draft_consent_validation_returns_exact_safe_registered_error(
+    client, caplog
+) -> None:
+    canary = "private-draft-consent-canary"
+    response = await client.post(
+        "/api/coach/sessions",
+        json={
+            "company_name": "Example Co",
+            "role_title": "Architect",
+            "jd_text": "Build resilient systems.",
+            "experience_version": "conversational_v1",
+            "conversational_config": {
+                "interview_type": "mixed",
+                "difficulty": "realistic",
+                "duration_minutes": 30,
+                "planned_question_count": 6,
+                "role_family": "solution_architecture",
+                "role_level": "senior",
+                "industry": "technology",
+                "locale": "en-GB",
+                "focus_areas": ["architecture"],
+                "allowed_answer_modes": ["text"],
+                "evidence_selection": {
+                    "application_cv": "none",
+                    "master_cv": "exclude",
+                    "question_bank": "include_drafts",
+                    "selected_question_bank_record_ids": [canary],
+                    "company_research": "exclude",
+                    "draft_evidence_consent": False,
+                },
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    body = response.json()
+    correlation_id = body["error"].pop("correlation_id")
+    assert len(correlation_id) == 32 and correlation_id.isalnum()
+    assert body == {
+        "error": {
+            "code": "coach_draft_evidence_consent_required",
+            "message": "Consent is required before draft evidence can be used.",
+            "retryable": False,
+            "current_state": None,
+            "current_state_version": None,
+            "details": {},
+        }
+    }
+    assert canary not in response.text
+    assert canary not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_form_encoded_conversational_create_redacts_all_client_canaries(
     client, caplog
 ) -> None:

@@ -869,11 +869,9 @@ class ConversationalSessionRepository:
         processing_retry_limit: int,
         audio_retention_policy: str,
     ) -> AttemptReservation:
-        duplicate = await self._session.scalar(
-            select(SessionRecording).where(
-                SessionRecording.session_id == session_id,
-                SessionRecording.client_attempt_id == client_attempt_id,
-            )
+        duplicate = await self.get_attempt_by_client_id(
+            session_id=session_id,
+            client_attempt_id=client_attempt_id,
         )
         if duplicate is not None:
             if (
@@ -1005,6 +1003,20 @@ class ConversationalSessionRepository:
                 ) from error
             raise AttemptReservationConflict("coach_attempt_already_active") from error
         return AttemptReservation(attempt, False, pending_hint_types)
+
+    async def get_attempt_by_client_id(
+        self,
+        *,
+        session_id: str,
+        client_attempt_id: str,
+    ) -> SessionRecording | None:
+        """Resolve a client-attempt identity independently of live pointers."""
+        return await self._session.scalar(
+            select(SessionRecording).where(
+                SessionRecording.session_id == session_id,
+                SessionRecording.client_attempt_id == client_attempt_id,
+            )
+        )
 
     async def create_transcript_version(
         self,
@@ -1552,8 +1564,6 @@ class ConversationalSessionRepository:
                         InterviewSession.deletion_state == "not_requested",
                         InterviewSession.active_question_id == claim.question_id,
                         InterviewSession.active_recording_id == claim.recording_id,
-                        InterviewSession.state_version
-                        == fence.expected_session_state_version + 1,
                     )
                 )
                 if parent_is_current is None:
@@ -1840,8 +1850,6 @@ class ConversationalSessionRepository:
                         InterviewSession.conversation_state == "processing_answer",
                         InterviewSession.active_question_id == claim.question_id,
                         InterviewSession.active_recording_id == claim.recording_id,
-                        InterviewSession.state_version
-                        == fence.expected_session_state_version + 1,
                     )
                     .values(
                         conversation_state="awaiting_next_action",

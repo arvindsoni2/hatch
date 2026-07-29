@@ -244,7 +244,6 @@ async def load_claim_planning_request(
         return _effective_planning_request(
             row.planning_request_json,
             retention_policy=row.retention_policy_json,
-            rebuild=claim.rebuild,
         )
 
     assert request is not None
@@ -268,10 +267,9 @@ def _effective_planning_request(
     planning_request: dict[str, Any],
     *,
     retention_policy: dict[str, str] | None,
-    rebuild: bool,
 ) -> CreateSessionRequest:
     payload = copy_json(planning_request)
-    if rebuild and retention_policy is not None:
+    if retention_policy is not None:
         payload["conversational_config"]["retention"] = copy_json(retention_policy)
     return CreateSessionRequest.model_validate(payload)
 
@@ -404,11 +402,14 @@ async def load_session_plan_sources(
 
     if any(not item.snapshot_text for item in selected):
         raise SessionPlanError("coach_grounding_source_unavailable")
-    if (
-        len(selected) > 30
-        or any(len(item.snapshot_text) > 2000 for item in selected)
-        or sum(len(item.snapshot_text) for item in selected) > 40000
-    ):
+    selected = [
+        replace(
+            item,
+            snapshot_text=_bounded_evidence_snapshot(item.snapshot_text),
+        )
+        for item in selected
+    ]
+    if len(selected) > 30 or sum(len(item.snapshot_text) for item in selected) > 40000:
         raise SessionPlanError("coach_contract_unsupported")
     if claim is not None:
         await db.flush()
@@ -521,16 +522,11 @@ def _resolve_managed_cv_path(
 
 
 def _read_bounded_text(path: Path) -> str:
-    parts: list[str] = []
-    remaining = _MAX_EVIDENCE_SNAPSHOT_CODEPOINTS + 1
-    with path.open(encoding="utf-8", newline=None) as source:
-        while remaining > 0:
-            chunk = source.read(min(4096, remaining))
-            if not chunk:
-                break
-            parts.append(chunk)
-            remaining -= len(chunk)
-    return "".join(parts)
+    with path.open("rb") as source:
+        raw = source.read(_MAX_SOURCE_FILE_BYTES + 1)
+    if len(raw) > _MAX_SOURCE_FILE_BYTES:
+        raise SessionPlanError("coach_grounding_source_unavailable")
+    return raw.decode("utf-8")
 
 
 def _bounded_text_join(values: Iterable[str]) -> str:
@@ -540,13 +536,17 @@ def _bounded_text_join(values: Iterable[str]) -> str:
         if not value:
             continue
         prefix = "\n" if parts else ""
-        remaining = _MAX_EVIDENCE_SNAPSHOT_CODEPOINTS + 1 - size
-        if remaining <= 0:
-            break
-        fragment = (prefix + value)[:remaining]
-        parts.append(fragment)
+        fragment = prefix + value
         size += len(fragment)
+        if size > _MAX_DOCX_UNCOMPRESSED_BYTES:
+            raise SessionPlanError("coach_grounding_source_unavailable")
+        parts.append(fragment)
     return "".join(parts)
+
+
+def _bounded_evidence_snapshot(value: str) -> str:
+    """Derive a deterministic persisted excerpt from an authoritative source."""
+    return value[:_MAX_EVIDENCE_SNAPSHOT_CODEPOINTS]
 
 
 def _master_cv_sources() -> list[EvidenceSource]:

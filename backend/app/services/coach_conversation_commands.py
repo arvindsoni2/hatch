@@ -357,6 +357,20 @@ class ConversationCommandService:
         request: ConversationCommandRequest,
         payload: BeginAnswerPayload,
     ) -> ConversationCommandResult:
+        duplicate = await self.repository.get_attempt_by_client_id(
+            session_id=session.id,
+            client_attempt_id=payload.client_attempt_id,
+        )
+        if duplicate is not None:
+            if duplicate.recording_type != payload.recording_type:
+                raise AttemptReservationConflict("coach_client_attempt_id_conflict")
+            await self.db.refresh(session)
+            return await self._result(
+                session,
+                request,
+                result="duplicate",
+                active_attempt_id=duplicate.id,
+            )
         if session.active_question_id is None:
             raise ConversationCommandError("coach_conversation_invalid_state")
         question = await self.db.get(SessionQuestion, session.active_question_id)
@@ -916,6 +930,7 @@ class ConversationCommandService:
             .where(
                 SessionQuestion.session_id == session.id,
                 SessionQuestion.question_state == "pending",
+                SessionQuestion.question_kind == "planned",
                 SessionQuestion.id != question_id,
             )
             .order_by(SessionQuestion.order_in_session, SessionQuestion.id)
