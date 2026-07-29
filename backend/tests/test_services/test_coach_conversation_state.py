@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 from dataclasses import dataclass
 
 import pytest
@@ -350,6 +353,25 @@ def test_canonical_contract_versions_are_centralized() -> None:
     assert REPORT_CONTRACT == "coach_conversational_report_v1"
     assert PROGRESS_CONTRACT == "coach_conversational_progress_v2"
     assert DELIVERY_POLICY == "coach_delivery_policy_v1"
+
+
+def test_conversational_contract_versions_have_single_production_authority() -> None:
+    app_root = Path(__file__).parents[2] / "app"
+    authority = app_root / "services" / "coach_conversational_contracts.py"
+    canonical_values = {
+        "coach_evidence_grounding_v1",
+        "coach_follow_up_v1",
+        "coach_conversational_report_v1",
+    }
+    scattered: list[str] = []
+    for path in app_root.rglob("*.py"):
+        if path == authority:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and node.value in canonical_values:
+                scattered.append(f"{path.relative_to(app_root)}:{node.lineno}")
+    assert scattered == []
 
 
 def test_conversational_field_defaults_match_section_36_and_processing_contract() -> (

@@ -29,12 +29,14 @@ from ..repositories.session_repository import SessionRepository
 from .coach_contracts import CoachDiagnostic, failed_answer_payload
 from .coach_conversational_contracts import (
     AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS,
+    REPORT_CONTRACT,
     TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS,
 )
 from .coach_processing_snapshot import (
     TRANSCRIPT_BOUND_STAGES,
     ProcessingSnapshot,
     exact_processing_snapshot,
+    load_owned_processing_evaluation,
 )
 
 logger = logging.getLogger(__name__)
@@ -381,14 +383,9 @@ async def _reconcile_processing_answer(
             SessionRecording.question_id == session.active_question_id,
         )
     )
-    if attempt is None or attempt.current_evaluation_version_id is None:
+    if attempt is None:
         return 0
-    evaluation = await db.scalar(
-        select(InterviewAttemptEvaluation).where(
-            InterviewAttemptEvaluation.id == attempt.current_evaluation_version_id,
-            InterviewAttemptEvaluation.recording_id == attempt.id,
-        )
-    )
+    evaluation = await load_owned_processing_evaluation(db, attempt)
     job_id = attempt.async_job_id or (evaluation.async_job_id if evaluation else None)
     job = await db.get(AsyncJob, job_id) if job_id else None
     stages = list(
@@ -396,11 +393,12 @@ async def _reconcile_processing_answer(
             await db.scalars(
                 select(InterviewAttemptStage).where(
                     InterviewAttemptStage.recording_id == attempt.id,
-                    InterviewAttemptStage.evaluation_version_id
-                    == attempt.current_evaluation_version_id,
+                    InterviewAttemptStage.evaluation_version_id == evaluation.id,
                 )
             )
         ).all()
+        if evaluation is not None
+        else ()
     )
     snapshot = (
         exact_processing_snapshot(
@@ -630,7 +628,6 @@ async def _reconcile_processing_answer(
             SessionRecording.id == attempt.id,
             SessionRecording.session_id == session.id,
             SessionRecording.question_id == session.active_question_id,
-            SessionRecording.current_evaluation_version_id == evaluation.id,
             SessionRecording.processing_generation == attempt.processing_generation,
             SessionRecording.async_job_id == attempt.async_job_id,
             SessionRecording.current_transcript_version_id
@@ -811,7 +808,7 @@ async def _reconcile_transient_state(
             and report_job.type == "coach_conversational_report"
             and report_job.status in {"pending", "running"}
             and session.report_started_at is not None
-            and session.report_contract_version == "coach_conversational_report_v1"
+            and session.report_contract_version == REPORT_CONTRACT
         ):
             return 0
         changed = await db.execute(
@@ -1430,8 +1427,19 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             processing_attempt.session_id == InterviewSession.id,
             processing_attempt.id == InterviewSession.active_recording_id,
             processing_attempt.question_id == InterviewSession.active_question_id,
-            processing_attempt.current_evaluation_version_id
-            == processing_evaluation.id,
+            or_(
+                and_(
+                    processing_attempt.attempt_state == "pending_processing",
+                    processing_attempt.evaluation_state == "pending",
+                    processing_attempt.async_job_id == processing_job.id,
+                    processing_evaluation.state == "pending",
+                ),
+                and_(
+                    processing_attempt.current_evaluation_version_id
+                    == processing_evaluation.id,
+                    processing_attempt.attempt_state.in_(("completed", "unavailable")),
+                ),
+            ),
             processing_evaluation.recording_id == processing_attempt.id,
             processing_evaluation.async_job_id == processing_job.id,
             processing_job.type == "coach_attempt_processing",
@@ -1477,8 +1485,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             InterviewSession.report_state == "building",
             InterviewSession.report_build_reason == "initial_completion",
             InterviewSession.report_started_at.is_not(None),
-            InterviewSession.report_contract_version
-            == "coach_conversational_report_v1",
+            InterviewSession.report_contract_version == REPORT_CONTRACT,
             exists().where(
                 AsyncJob.id == InterviewSession.report_job_id,
                 AsyncJob.type == "coach_conversational_report",

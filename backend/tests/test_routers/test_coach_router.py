@@ -1,4 +1,5 @@
 """Integration tests for /api/coach router — create session, submit answer, end session, 404 handling."""
+
 from __future__ import annotations
 
 import json
@@ -16,7 +17,12 @@ from starlette.requests import Request as StarletteRequest
 from app.main import app
 from app.config import settings
 from app.models.async_job import AsyncJob
-from app.models.coach_session import InterviewSession, SessionQuestion, SessionRecording
+from app.models.coach_session import (
+    InterviewSession,
+    InterviewSessionEvent,
+    SessionQuestion,
+    SessionRecording,
+)
 from app.schemas.coach import (
     AnswerEvaluation,
     CompanyResearchResponse,
@@ -68,7 +74,12 @@ SAMPLE_REPORT = SessionFeedbackReport(
     improvement_areas=["Reduce hedging language"],
     coaching_points=["Practice the STAR framework daily"],
     practice_plan=[
-        {"day": 1, "focus": "STAR Structure", "activity": "Practice 3 STAR answers", "resource": None}
+        {
+            "day": 1,
+            "focus": "STAR Structure",
+            "activity": "Practice 3 STAR answers",
+            "resource": None,
+        }
     ],
     question_evaluations=[],
 )
@@ -117,7 +128,10 @@ async def test_submit_answer_unknown_session_does_not_queue_work(client) -> None
     response = await client.post(
         "/api/coach/sessions/session-uuid-001/submit-answer",
         params={"question_id": "q-uuid-001"},
-        json={"transcript": "In my previous role at a FTSE 100 company...", "duration_ms": 60000},
+        json={
+            "transcript": "In my previous role at a FTSE 100 company...",
+            "duration_ms": 60000,
+        },
     )
     assert response.status_code == 404
 
@@ -193,6 +207,193 @@ async def test_legacy_end_and_retry_reject_conversational_session_before_side_ef
 
 
 @pytest.mark.asyncio
+async def test_legacy_skip_rejects_conversational_session_before_reconciliation_or_write(
+    client, db_session
+) -> None:
+    """Experience dispatch must precede legacy reconciliation and skip persistence."""
+    session = InterviewSession(
+        id="conversation-legacy-skip-guard",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="conversational_v1",
+        conversation_state="asking",
+        state_version=7,
+        activity_version=4,
+    )
+    question = SessionQuestion(
+        id="conversation-legacy-skip-question",
+        session_id=session.id,
+        question_num=1,
+        text="Explain the trade-off.",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=1,
+        question_kind="planned",
+        question_state="asked",
+        asked_sequence=1,
+    )
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    db_session.add_all((session, question))
+    await db_session.commit()
+    session_id = session.id
+    question_id = question.id
+
+    response = await client.post(
+        f"/api/coach/sessions/{session_id}/skip",
+        params={"question_id": question_id},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_conversational_command_required"
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, session_id)
+    assert persisted is not None
+    assert (
+        persisted.status,
+        persisted.conversation_state,
+        persisted.state_version,
+        persisted.activity_version,
+    ) == ("active", "asking", 7, 4)
+    assert (
+        await db_session.scalar(
+            select(func.count(SessionRecording.id)).where(
+                SessionRecording.session_id == session_id
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_conversational_delete_persists_abandoned_pair_and_fences_owned_work(
+    client, db_session
+) -> None:
+    """Changing only coarse status leaves an invalid lifecycle and live workers."""
+    session = InterviewSession(
+        id="conversation-delete-processing",
+        company_name="Example Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="conversational_v1",
+        conversation_state="processing_answer",
+        state_version=9,
+        activity_version=3,
+        setup_generation=2,
+        setup_job_id="stale-setup-job",
+        setup_claim_token="stale-setup-token",
+        setup_claimed_at=datetime.utcnow(),
+        setup_claim_expires_at=datetime.utcnow(),
+        report_state="building",
+        report_job_id="stale-report-job",
+    )
+    question = SessionQuestion(
+        id="conversation-delete-question",
+        session_id=session.id,
+        question_num=1,
+        text="Explain the trade-off.",
+        category="technical",
+        difficulty="realistic",
+        order_in_session=1,
+        question_kind="planned",
+        question_state="asked",
+        asked_sequence=1,
+    )
+    attempt = SessionRecording(
+        id="conversation-delete-attempt",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="pending_processing",
+        evaluation_state="pending",
+        processing_generation=5,
+        processing_retry_limit=2,
+        async_job_id="stale-processing-job",
+        client_attempt_id="conversation-delete-client",
+    )
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    session.active_recording_id = attempt.id
+    db_session.add_all((session, question, attempt))
+    await db_session.commit()
+    session_id = session.id
+    attempt_id = attempt.id
+
+    response = await client.delete(f"/api/coach/sessions/{session_id}")
+
+    assert response.status_code == 204
+    db_session.expire_all()
+    persisted = await db_session.get(InterviewSession, session_id)
+    persisted_attempt = await db_session.get(SessionRecording, attempt_id)
+    assert persisted is not None and persisted_attempt is not None
+    assert (persisted.status, persisted.conversation_state) == (
+        "abandoned",
+        "abandoned",
+    )
+    assert persisted.state_version == 10
+    assert persisted.setup_generation == 3
+    assert (
+        persisted.setup_job_id,
+        persisted.setup_claim_token,
+        persisted.report_job_id,
+        persisted.active_recording_id,
+    ) == (None, None, None, None)
+    assert persisted_attempt.processing_generation == 6
+    assert persisted_attempt.async_job_id is None
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent).where(
+                InterviewSessionEvent.session_id == session_id
+            )
+        )
+    ).all()
+    assert [
+        (event.event_type, event.state_before, event.state_after) for event in events
+    ] == [("session_abandoned", "processing_answer", "abandoned")]
+
+
+@pytest.mark.asyncio
+async def test_legacy_delete_keeps_existing_coarse_status_behavior(
+    client, db_session
+) -> None:
+    """Conversational dispatch must not add state/event mutations to legacy rows."""
+    session = InterviewSession(
+        id="legacy-delete-contract",
+        company_name="Legacy Co",
+        role_title="Architect",
+        config={},
+        status="active",
+        experience_version="legacy_v1",
+        state_version=0,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    response = await client.delete(f"/api/coach/sessions/{session.id}")
+
+    assert response.status_code == 204
+    await db_session.refresh(session)
+    assert (session.status, session.conversation_state, session.state_version) == (
+        "abandoned",
+        None,
+        0,
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.session_id == session.id
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
 async def test_legacy_submit_audio_rejects_conversation_before_media_or_job_side_effects(
     client, db_session, monkeypatch, tmp_path
 ) -> None:
@@ -219,11 +420,14 @@ async def test_legacy_submit_audio_rejects_conversation_before_media_or_job_side
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "coach_conversational_command_required"
-    assert await db_session.scalar(
-        select(func.count(SessionRecording.id)).where(
-            SessionRecording.session_id == session.id
+    assert (
+        await db_session.scalar(
+            select(func.count(SessionRecording.id)).where(
+                SessionRecording.session_id == session.id
+            )
         )
-    ) == 0
+        == 0
+    )
     assert await db_session.scalar(select(func.count(AsyncJob.id))) == 0
     assert not (tmp_path / "recordings" / session.id).exists()
     await db_session.refresh(session)
@@ -253,7 +457,9 @@ async def test_conversational_submit_audio_rejects_before_multipart_form_parsing
     await db_session.commit()
 
     async def fail_if_form_is_parsed(_request):
-        raise AssertionError("multipart form parsing must not run for conversational audio")
+        raise AssertionError(
+            "multipart form parsing must not run for conversational audio"
+        )
 
     monkeypatch.setattr(StarletteRequest, "form", fail_if_form_is_parsed)
 
@@ -691,7 +897,9 @@ async def test_create_redaction_does_not_guess_legacy_or_ambiguous_raw_bodies(
 
 
 @pytest.mark.asyncio
-async def test_malformed_legacy_create_keeps_framework_validation_behavior(client) -> None:
+async def test_malformed_legacy_create_keeps_framework_validation_behavior(
+    client,
+) -> None:
     """Classifying every malformed create as conversational would break legacy clients."""
     response = await client.post(
         "/api/coach/sessions",
@@ -703,7 +911,9 @@ async def test_malformed_legacy_create_keeps_framework_validation_behavior(clien
 
 
 @pytest.mark.asyncio
-async def test_legacy_submit_audio_missing_file_keeps_typed_validation_body(client) -> None:
+async def test_legacy_submit_audio_missing_file_keeps_typed_validation_body(
+    client,
+) -> None:
     """Replacing typed File validation with a string detail breaks legacy clients."""
     response = await client.post(
         "/api/coach/sessions/legacy-audio-validation/submit-audio",
@@ -809,7 +1019,9 @@ async def test_legacy_submit_audio_rejects_file_shaped_face_summary(
 
 
 @pytest.mark.asyncio
-async def test_legacy_submit_audio_preserves_the_size_limit(client, monkeypatch) -> None:
+async def test_legacy_submit_audio_preserves_the_size_limit(
+    client, monkeypatch
+) -> None:
     """Compatibility parsing must not skip the established audio-size fence."""
     monkeypatch.setattr("app.routers.coach._MAX_AUDIO_BYTES", 3)
 
@@ -894,15 +1106,18 @@ async def test_capabilities_publish_the_literal_conversational_contract(
 
     assert response.status_code == 200
     capabilities = response.json()
-    assert {key: capabilities[key] for key in (
-        "conversational_interview",
-        "typed_answers",
-        "audio_upload",
-        "automatic_turn_detection",
-        "audio_retention_default",
-        "video_analysis_for_conversational",
-        "contract_version",
-    )} == {
+    assert {
+        key: capabilities[key]
+        for key in (
+            "conversational_interview",
+            "typed_answers",
+            "audio_upload",
+            "automatic_turn_detection",
+            "audio_retention_default",
+            "video_analysis_for_conversational",
+            "contract_version",
+        )
+    } == {
         "conversational_interview": False,
         "typed_answers": True,
         "audio_upload": False,
@@ -1038,8 +1253,13 @@ async def test_get_session_not_found_returns_404() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         from fastapi import HTTPException
-        instance.get_session = AsyncMock(side_effect=HTTPException(status_code=404, detail="Session not found"))
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+
+        instance.get_session = AsyncMock(
+            side_effect=HTTPException(status_code=404, detail="Session not found")
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get("/api/coach/sessions/nonexistent-id")
     assert response.status_code == 404
     assert "Session not found" in response.json()["detail"]
@@ -1051,7 +1271,9 @@ async def test_research_company_returns_200() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.research_company = AsyncMock(return_value=SAMPLE_RESEARCH)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.post(
                 "/api/coach/research",
                 params={"company_name": "Accenture", "sector": "Consulting"},
@@ -1067,7 +1289,9 @@ async def test_list_sessions_returns_200() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.list_sessions = AsyncMock(return_value=[])
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             response = await client.get("/api/coach/sessions")
     assert response.status_code == 200
     assert isinstance(response.json(), list)
@@ -1093,8 +1317,11 @@ async def test_delete_session_not_found_returns_404(client: AsyncClient) -> None
 # SEC-3: path traversal guards on submit-audio
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
-async def test_submit_audio_rejects_traversal_in_question_id(client: AsyncClient, tmp_path) -> None:
+async def test_submit_audio_rejects_traversal_in_question_id(
+    client: AsyncClient, tmp_path
+) -> None:
     """submit-audio must reject question_id containing path traversal chars."""
     audio_bytes = b"RIFF" + b"\x00" * 36  # minimal dummy
     response = await client.post(
@@ -1110,7 +1337,9 @@ async def test_submit_audio_rejects_traversal_in_question_id(client: AsyncClient
 async def test_submit_audio_rejects_traversal_in_session_id(tmp_path) -> None:
     """submit-audio must reject session_id containing path traversal chars."""
     audio_bytes = b"RIFF" + b"\x00" * 36
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         response = await ac.post(
             "/api/coach/sessions/../foo/submit-audio",
             data={"question_id": "valid-question-id"},
@@ -1123,9 +1352,12 @@ async def test_submit_audio_rejects_traversal_in_session_id(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_audio_accepts_valid_ids(client: AsyncClient, tmp_path, monkeypatch) -> None:
+async def test_submit_audio_accepts_valid_ids(
+    client: AsyncClient, tmp_path, monkeypatch
+) -> None:
     """submit-audio accepts UUIDs and slug IDs."""
     import uuid as _uuid
+
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
 
     audio_bytes = b"RIFF" + b"\x00" * 36
@@ -1144,8 +1376,12 @@ async def test_get_next_question_with_mock_service() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.get_next_question = AsyncMock(return_value=None)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/coach/sessions/session-uuid-001/next-question")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(
+                "/api/coach/sessions/session-uuid-001/next-question"
+            )
     assert response.status_code == 200
     assert response.json() is None
 
@@ -1164,7 +1400,9 @@ async def test_get_session_report_with_mock_service(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_report_snapshot_remains_json_identical(client, db_session) -> None:
+async def test_legacy_report_snapshot_remains_json_identical(
+    client, db_session
+) -> None:
     """Regenerating or extending a stored legacy report would change its response JSON."""
     session_id = "legacy-report-fixture"
     expected_json = {
@@ -1213,7 +1451,9 @@ async def test_legacy_report_snapshot_remains_json_identical(client, db_session)
 
 
 @pytest.mark.asyncio
-async def test_legacy_video_recording_remains_report_readable(client, db_session) -> None:
+async def test_legacy_video_recording_remains_report_readable(
+    client, db_session
+) -> None:
     """Rejecting historical video rows would turn an existing completed report into a 422."""
     session = InterviewSession(
         id="legacy-video-report",
@@ -1275,7 +1515,9 @@ def test_legacy_openapi_report_schemas_keep_numeric_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_legacy_progress_and_trend_keep_numeric_scores(client, db_session) -> None:
+async def test_legacy_progress_and_trend_keep_numeric_scores(
+    client, db_session
+) -> None:
     """Stringifying persisted scores would break legacy progress and trend consumers."""
     parent = InterviewSession(
         id="legacy-progress-parent",
@@ -1389,8 +1631,12 @@ async def test_plan_followup_returns_200_or_404() -> None:
     with patch("app.routers.coach.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.plan_followup_session = AsyncMock(return_value=sample_followup)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post("/api/coach/sessions/session-uuid-001/plan-followup")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            response = await ac.post(
+                "/api/coach/sessions/session-uuid-001/plan-followup"
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -1408,7 +1654,9 @@ async def test_plan_followup_session_not_found_returns_404() -> None:
         instance.plan_followup_session = AsyncMock(
             side_effect=HTTPException(status_code=404, detail="Session not found")
         )
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
             response = await ac.post("/api/coach/sessions/nonexistent-id/plan-followup")
 
     assert response.status_code == 404
@@ -1430,7 +1678,9 @@ async def test_progress_trend_returns_list(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_get_capabilities_returns_dict() -> None:
     """GET /api/coach/capabilities returns face_analysis and tts flags."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         response = await ac.get("/api/coach/capabilities")
     assert response.status_code == 200
     data = response.json()

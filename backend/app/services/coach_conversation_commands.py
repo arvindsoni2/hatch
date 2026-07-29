@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..models.coach_session import (
+    InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewSession,
     SessionQuestion,
@@ -47,6 +48,7 @@ from .coach_conversation_state import require_transition
 from .coach_conversational_contracts import (
     CONVERSATION_COMMAND_RESULT_CONTRACT,
     ERROR_REGISTRY,
+    REPORT_CONTRACT,
     RUBRIC_CONTRACT,
 )
 from .coach_session_plan import SessionPlanError, claim_session_setup
@@ -422,7 +424,7 @@ class ConversationCommandService:
             or attempt.attempt_state != "draft"
         ):
             raise ConversationCommandError("coach_attempt_not_active")
-        await self.repository.create_transcript_version(
+        transcript = await self.repository.create_transcript_version(
             recording_id=attempt.id,
             source="candidate_text",
             transcript=payload.transcript,
@@ -430,6 +432,20 @@ class ConversationCommandService:
             processing_generation=attempt.processing_generation + 1,
         )
         job = await AsyncJobService.create(self.db, "coach_attempt_processing")
+        latest_evaluation_version = await self.db.scalar(
+            select(func.max(InterviewAttemptEvaluation.version_number)).where(
+                InterviewAttemptEvaluation.recording_id == attempt.id
+            )
+        )
+        await self.repository.create_evaluation_version(
+            recording_id=attempt.id,
+            transcript_version_id=transcript.id,
+            evaluation_version=int(latest_evaluation_version or 0) + 1,
+            processing_generation=attempt.processing_generation + 1,
+            contract_version=RUBRIC_CONTRACT,
+            state="pending",
+            async_job_id=job.id,
+        )
         deadline = datetime.utcnow() + timedelta(
             seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
         )
@@ -438,8 +454,6 @@ class ConversationCommandService:
             expected_generation=attempt.processing_generation,
             job_id=job.id,
             deadline=deadline,
-            evaluation_contract_version=RUBRIC_CONTRACT,
-            processing_contract_version=PROCESSING_CONTRACT,
         )
         if claim is None:
             raise ConversationCommandError("coach_attempt_stale_claim")
@@ -447,7 +461,10 @@ class ConversationCommandService:
             update(InterviewSession)
             .where(
                 InterviewSession.id == session.id,
+                InterviewSession.experience_version == "conversational_v1",
+                InterviewSession.status == "active",
                 InterviewSession.conversation_state == "listening",
+                InterviewSession.deletion_state == "not_requested",
                 InterviewSession.active_recording_id == attempt.id,
                 InterviewSession.active_question_id == attempt.question_id,
                 InterviewSession.state_version == request.expected_state_version,
@@ -904,29 +921,31 @@ class ConversationCommandService:
             .order_by(SessionQuestion.order_in_session, SessionQuestion.id)
             .limit(1)
         )
-        if next_question is None:
-            raise ConversationCommandError("coach_conversation_invalid_state")
-        asked_count = await self.db.scalar(
-            select(func.count(SessionQuestion.id)).where(
-                SessionQuestion.session_id == session.id,
-                SessionQuestion.asked_sequence.is_not(None),
-            )
-        )
         question.question_state = "skipped"
         question.pending_hint_count = 0
         question.pending_hint_types_json = None
-        next_question.question_state = "asked"
-        next_question.asked_sequence = int(asked_count or 0) + 1
+        values: dict[str, object] = {
+            "active_recording_id": None,
+            "conversation_state": "advancing",
+            "activity_version": InterviewSession.activity_version + 1,
+        }
+        if next_question is None:
+            report_job = await AsyncJobService.create(
+                self.db, "coach_conversational_report"
+            )
+            values.update(
+                {
+                    "report_state": "building",
+                    "report_build_reason": "initial_completion",
+                    "report_contract_version": REPORT_CONTRACT,
+                    "report_job_id": report_job.id,
+                    "report_started_at": datetime.utcnow(),
+                }
+            )
         state_version = await self._change_session_state(
             session,
             request,
-            values={
-                "active_question_id": next_question.id,
-                "active_root_question_id": next_question.id,
-                "active_recording_id": None,
-                "conversation_state": "asking",
-                "activity_version": InterviewSession.activity_version + 1,
-            },
+            values=values,
             required_state="asking",
         )
         await self.repository.append_session_events(
@@ -937,26 +956,8 @@ class ConversationCommandService:
                     actor_type="candidate",
                     state_version=state_version,
                     state_before="asking",
-                    state_after="asking",
+                    state_after="advancing",
                     question_id=question.id,
-                    command_id=request.command_id,
-                ),
-                SessionEventInput(
-                    event_type="question_advanced",
-                    actor_type="system",
-                    state_version=state_version,
-                    state_before="asking",
-                    state_after="asking",
-                    question_id=next_question.id,
-                    command_id=request.command_id,
-                ),
-                SessionEventInput(
-                    event_type="question_presented",
-                    actor_type="system",
-                    state_version=state_version,
-                    state_before="asking",
-                    state_after="asking",
-                    question_id=next_question.id,
                     command_id=request.command_id,
                 ),
             ),
@@ -980,6 +981,9 @@ class ConversationCommandService:
         return attempt
 
     async def _persist_stub_stages(self, claim: AttemptProcessingClaim) -> None:
+        fence = await self.repository._get_attempt_processing_fence(claim)
+        if fence is None:
+            raise ConversationCommandError("coach_attempt_stale_claim")
         transcript_bound = {
             "content_evaluation",
             "evidence_grounding",
@@ -1004,7 +1008,7 @@ class ConversationCommandService:
                     stage_name=stage_name,
                     stage_state="unavailable" if unavailable else "not_applicable",
                     job_id=claim.job_id,
-                    claim_token=claim.claim_token,
+                    claim_token=fence.claim_token,
                     expected_processing_generation=claim.processing_generation,
                     source_transcript_version_id=(
                         claim.transcript_version_id
@@ -1049,3 +1053,6 @@ class ConversationCommandService:
                 "contract_version": CONVERSATION_COMMAND_RESULT_CONTRACT,
             }
         )
+
+
+CoachConversationCommandService = ConversationCommandService

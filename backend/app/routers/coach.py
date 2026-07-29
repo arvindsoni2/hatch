@@ -313,7 +313,20 @@ async def abandon_session(
     session = await repo.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    await repo.update_session_status(session_id, "abandoned")
+    if session.experience_version == "conversational_v1":
+        from ..repositories.conversational_session_repository import (  # noqa: PLC0415
+            ConversationalSessionRepository,
+        )
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        changed = await ConversationalSessionRepository(
+            db
+        ).abandon_conversational_session(session_id=session_id)
+        if not changed:
+            await db.rollback()
+            return conversation_error_response("coach_conversation_invalid_state")
+    else:
+        await repo.update_session_status(session_id, "abandoned")
     await db.commit()
     return Response(status_code=204)
 
@@ -393,8 +406,13 @@ async def skip_question(
     from ..repositories.session_repository import SessionRepository
     from ..services.coach_reconciliation import reconcile_session
 
-    await reconcile_session(db, session_id)
     repo = SessionRepository(db)
+    session = await repo.get_session(session_id)
+    if session is not None and session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
+    await reconcile_session(db, session_id)
     try:
         await repo.record_skip(session_id=session_id, question_id=question_id)
     except LookupError:
@@ -615,7 +633,9 @@ async def submit_audio(
 
         audio_bytes = await audio.read()
         if len(audio_bytes) > _MAX_AUDIO_BYTES:
-            raise HTTPException(status_code=413, detail="Audio file exceeds 50 MB limit")
+            raise HTTPException(
+                status_code=413, detail="Audio file exceeds 50 MB limit"
+            )
 
         # Parse face_summary JSON if provided (Phase D)
         face_summary_dict: dict | None = None
@@ -625,7 +645,9 @@ async def submit_audio(
             try:
                 face_summary_dict = _json.loads(face_summary)
             except Exception:
-                logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
+                logger.warning(
+                    "submit_audio: could not parse face_summary JSON — ignoring"
+                )
     finally:
         await form.close()
 

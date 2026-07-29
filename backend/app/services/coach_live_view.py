@@ -33,7 +33,10 @@ from ..schemas.coach_conversation import (
 )
 from .coach_command_projection import contextual_allowed_commands
 from .coach_conversational_contracts import ERROR_REGISTRY, LIVE_VIEW_CONTRACT
-from .coach_processing_snapshot import exact_processing_snapshot
+from .coach_processing_snapshot import (
+    exact_processing_snapshot,
+    load_owned_processing_evaluation,
+)
 from .coach_reconciliation import reconcile_conversational_session
 
 
@@ -190,11 +193,7 @@ class CoachLiveViewService:
             attempt.self_assessment_json, root=Mapping
         ):
             raise CoachLiveViewError("coach_conversation_invalid_state")
-        if attempt.current_evaluation_version_id is None:
-            return
-        evaluation = await self.db.get(
-            InterviewAttemptEvaluation, attempt.current_evaluation_version_id
-        )
+        evaluation = await load_owned_processing_evaluation(self.db, attempt)
         if evaluation is None:
             return
         if any(
@@ -302,13 +301,10 @@ class CoachLiveViewService:
             or attempt.attempt_state != "pending_processing"
             or attempt.evaluation_state != "pending"
             or attempt.async_job_id is None
-            or attempt.current_evaluation_version_id is None
         ):
             raise CoachLiveViewError("coach_conversation_invalid_state")
         if state == "processing_answer" and attempt is not None:
-            evaluation = await self.db.get(
-                InterviewAttemptEvaluation, attempt.current_evaluation_version_id
-            )
+            evaluation = await load_owned_processing_evaluation(self.db, attempt)
             job = await self.db.get(AsyncJob, attempt.async_job_id)
             stages = (
                 list(
@@ -317,7 +313,7 @@ class CoachLiveViewService:
                             select(InterviewAttemptStage).where(
                                 InterviewAttemptStage.recording_id == attempt.id,
                                 InterviewAttemptStage.evaluation_version_id
-                                == attempt.current_evaluation_version_id,
+                                == evaluation.id,
                             )
                         )
                     ).all()
@@ -482,13 +478,13 @@ class CoachLiveViewService:
                 retries_remaining=0,
             )
         stage = None
-        if attempt.current_evaluation_version_id is not None:
+        evaluation = await load_owned_processing_evaluation(self.db, attempt)
+        if evaluation is not None:
             stage = await self.db.scalar(
                 select(InterviewAttemptStage)
                 .where(
                     InterviewAttemptStage.recording_id == attempt.id,
-                    InterviewAttemptStage.evaluation_version_id
-                    == attempt.current_evaluation_version_id,
+                    InterviewAttemptStage.evaluation_version_id == evaluation.id,
                 )
                 .order_by(
                     case(

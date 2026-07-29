@@ -34,6 +34,7 @@ from app.services.coach_conversation_commands import (
     ConversationCommandError,
     ConversationCommandService,
 )
+from app.services.coach_reconciliation import reconcile_conversational_session
 
 
 @pytest_asyncio.fixture
@@ -457,6 +458,80 @@ async def test_deterministic_stub_never_emits_scores(db_session: AsyncSession) -
         "coaching_enrichment": "not_applicable",
     }
     assert "score" not in json.dumps(evaluation.rubric_json or {})
+
+
+@pytest.mark.asyncio
+async def test_finish_parent_deletion_race_stops_before_stage_persistence(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=0,
+            payload={
+                "recording_type": "text",
+                "client_attempt_id": "finish-parent-deletion-race",
+            },
+        ),
+    )
+    original_claim = service.repository.claim_attempt_processing
+
+    async def claim_then_mark_deleting(**kwargs):
+        claim = await original_claim(**kwargs)
+        assert claim is not None
+        parent = await service.db.get(InterviewSession, session.id)
+        assert parent is not None
+        parent.deletion_state = "deleting"
+        await service.db.flush()
+        return claim
+
+    monkeypatch.setattr(
+        service.repository, "claim_attempt_processing", claim_then_mark_deleting
+    )
+    stage_inserts: list[str] = []
+    async_engine = db_session.bind
+    assert async_engine is not None
+
+    def capture_stage_insert(
+        _connection, _cursor, statement, _parameters, _context, _executemany
+    ) -> None:
+        normalised = " ".join(statement.lower().split())
+        if normalised.startswith("insert into interview_attempt_stages"):
+            stage_inserts.append(normalised)
+
+    event.listen(
+        async_engine.sync_engine, "before_cursor_execute", capture_stage_insert
+    )
+    try:
+        with pytest.raises(ConversationCommandError) as raised:
+            await service.execute(
+                user_id="local",
+                session_id=session.id,
+                request=command(
+                    "finish_answer",
+                    version=begun.state_version,
+                    payload={
+                        "attempt_id": begun.active_attempt_id,
+                        "transcript": "A bounded answer.",
+                    },
+                ),
+            )
+    finally:
+        event.remove(
+            async_engine.sync_engine, "before_cursor_execute", capture_stage_insert
+        )
+
+    assert raised.value.code == "coach_attempt_stale_claim"
+    assert stage_inserts == []
 
 
 @pytest.mark.asyncio
@@ -1245,7 +1320,7 @@ async def test_retry_preserves_terminal_attempt_and_budget(
 
 
 @pytest.mark.asyncio
-async def test_skip_marks_question_and_presents_next_once(
+async def test_skip_persists_advancing_then_recovery_presents_next_once(
     db_session: AsyncSession,
 ) -> None:
     session, questions = await seed_session(
@@ -1266,9 +1341,18 @@ async def test_skip_marks_question_and_presents_next_once(
     await db_session.refresh(questions[0])
     await db_session.refresh(questions[1])
     assert questions[0].question_state == "skipped"
-    assert (questions[1].question_state, questions[1].asked_sequence) == ("asked", 2)
-    assert result.state == "asking" and result.active_question_id == questions[1].id
+    assert (questions[1].question_state, questions[1].asked_sequence) == (
+        "pending",
+        None,
+    )
+    assert result.state == "advancing" and result.active_question_id == questions[0].id
+    assert await reconcile_conversational_session(db_session, session.id) == 1
+    assert await reconcile_conversational_session(db_session, session.id) == 0
     await db_session.refresh(session)
+    await db_session.refresh(questions[1])
+    assert session.conversation_state == "asking"
+    assert session.active_question_id == questions[1].id
+    assert (questions[1].question_state, questions[1].asked_sequence) == ("asked", 2)
     assert session.activity_version == 1
 
 
@@ -1895,7 +1979,7 @@ async def test_retry_at_attempt_limit_is_no_mutation(db_session: AsyncSession) -
 
 
 @pytest.mark.asyncio
-async def test_terminal_skip_fails_closed_without_partial_mutation(
+async def test_terminal_skip_claims_initial_report_and_recovers_idempotently(
     db_session: AsyncSession,
 ) -> None:
     session, questions = await seed_session(
@@ -1913,25 +1997,59 @@ async def test_terminal_skip_fails_closed_without_partial_mutation(
     question_id = questions[0].id
     request = command("skip_question", version=4)
 
-    with pytest.raises(ConversationCommandError) as raised:
-        await ConversationCommandService(db_session).execute(
-            user_id="local", session_id=session_id, request=request
-        )
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session_id, request=request
+    )
 
-    assert raised.value.code == "coach_conversation_invalid_state"
     persisted_session = await db_session.get(InterviewSession, session_id)
     persisted_question = await db_session.get(SessionQuestion, question_id)
     assert persisted_session is not None and persisted_question is not None
-    assert (persisted_session.conversation_state, persisted_session.state_version) == (
-        "asking",
-        4,
+    assert (result.state, result.state_version) == ("advancing", 5)
+    assert (
+        persisted_session.status,
+        persisted_session.conversation_state,
+        persisted_session.state_version,
+        persisted_session.activity_version,
+    ) == (
+        "active",
+        "advancing",
+        5,
+        1,
     )
-    assert persisted_question.question_state == "asked"
+    assert persisted_question.question_state == "skipped"
+    assert persisted_session.report_state == "building"
+    assert persisted_session.report_build_reason == "initial_completion"
+    assert persisted_session.report_contract_version == "coach_conversational_report_v1"
+    assert persisted_session.report_job_id is not None
+    job = await db_session.get(AsyncJob, persisted_session.report_job_id)
+    assert job is not None
+    assert (job.type, job.status) == ("coach_conversational_report", "pending")
+
+    assert await reconcile_conversational_session(db_session, session_id) == 1
+    assert await reconcile_conversational_session(db_session, session_id) == 0
+    await db_session.refresh(persisted_session)
+    assert (persisted_session.conversation_state, persisted_session.state_version) == (
+        "reporting",
+        6,
+    )
+
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session_id, request=request
+    )
+    assert replay == result
     assert (
         await db_session.scalar(
             select(func.count(ConversationCommandResultRecord.id)).where(
                 ConversationCommandResultRecord.session_id == session_id
             )
         )
-        == 0
+        == 1
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count(AsyncJob.id)).where(
+                AsyncJob.type == "coach_conversational_report"
+            )
+        )
+        == 1
     )

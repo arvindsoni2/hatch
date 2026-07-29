@@ -275,6 +275,30 @@ async def _processing_claim(
     return session, question, attempt, evaluation, stage, job
 
 
+async def _preserve_terminal_evaluation_pointer(
+    db_session,
+    *,
+    attempt: SessionRecording,
+    pending: InterviewAttemptEvaluation,
+) -> InterviewAttemptEvaluation:
+    """Model a committed new claim whose previous terminal version stays current."""
+    pending.version_number = 2
+    prior = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        transcript_version_id=attempt.current_transcript_version_id,
+        version_number=1,
+        state="unavailable",
+        evaluation_contract_version=pending.evaluation_contract_version,
+        evidence_contract_version=pending.evidence_contract_version,
+        follow_up_contract_version=pending.follow_up_contract_version,
+    )
+    db_session.add(prior)
+    await db_session.flush()
+    attempt.current_evaluation_version_id = prior.id
+    await db_session.commit()
+    return prior
+
+
 def _finish_answer_command(
     *, attempt_id: str, version: int
 ) -> ConversationCommandRequest:
@@ -442,6 +466,32 @@ async def test_expired_processing_claim_becomes_recoverable_without_retry_spend(
     assert stage.stage_state == "failed_retryable"
     assert job.status == "failed"
     assert job.result_json is None
+
+
+@pytest.mark.asyncio
+async def test_lazy_expiry_resolves_owned_pending_evaluation_not_terminal_pointer(
+    db_session,
+) -> None:
+    """Targeted recovery must discover a committed pending claim by ownership."""
+    now = datetime.utcnow()
+    session, _, attempt, pending, stage, job = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=1, limit=2
+    )
+    prior = await _preserve_terminal_evaluation_pointer(
+        db_session, attempt=attempt, pending=pending
+    )
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    for row in (session, attempt, pending, stage, job):
+        await db_session.refresh(row)
+
+    assert session.conversation_state == "recoverable_error"
+    assert attempt.current_evaluation_version_id == prior.id
+    assert attempt.attempt_state == "recoverable_error"
+    assert pending.state == "failed"
+    assert stage.stage_state == "failed_retryable"
+    assert job.status == "failed"
 
 
 @pytest.mark.asyncio
@@ -2099,6 +2149,40 @@ async def test_startup_selector_reconciles_each_valid_terminal_form_once(
     assert first_total == 1, selected_results
     assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
     assert selected_results == [(session_id, 1)]
+
+
+@pytest.mark.asyncio
+async def test_startup_expiry_selects_owned_pending_evaluation_behind_terminal_pointer(
+    db_session, monkeypatch
+) -> None:
+    """Startup selection must use generation/job/claim ownership, not current pointer."""
+    from app.services import coach_reconciliation as reconciliation
+
+    now = datetime.utcnow()
+    session, _, attempt, pending, _, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=1, limit=2
+    )
+    prior = await _preserve_terminal_evaluation_pointer(
+        db_session, attempt=attempt, pending=pending
+    )
+    session_id = session.id
+    attempt_id = attempt.id
+    pending_id = pending.id
+    prior_id = prior.id
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr(reconciliation, "AsyncSessionLocal", factory)
+
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 0
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, session_id)
+    recovered_attempt = await db_session.get(SessionRecording, attempt_id)
+    recovered_pending = await db_session.get(InterviewAttemptEvaluation, pending_id)
+    assert recovered is not None and recovered_attempt is not None
+    assert recovered_pending is not None
+    assert recovered.conversation_state == "recoverable_error"
+    assert recovered_attempt.current_evaluation_version_id == prior_id
+    assert recovered_pending.state == "failed"
 
 
 @pytest.mark.asyncio

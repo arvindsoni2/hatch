@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.models.async_job import AsyncJob
 from app.models.coach_session import (
@@ -54,6 +55,103 @@ async def _ready_session(db_session) -> tuple[InterviewSession, SessionQuestion]
     db_session.add(question)
     await db_session.commit()
     return session, question
+
+
+async def _committed_pending_claim_with_terminal_pointer(db_session):
+    """Persist the post-claim/pre-finalisation shape required by V6 section 16.3."""
+    session, question = await _ready_session(db_session)
+    now = datetime.utcnow()
+    session.status = "active"
+    session.conversation_state = "processing_answer"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    question.question_state = "asked"
+    question.asked_sequence = 1
+    job = AsyncJob(type="coach_attempt_processing", status="running")
+    db_session.add(job)
+    await db_session.flush()
+    attempt = SessionRecording(
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        transcript="bounded",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="pending_processing",
+        evaluation_state="pending",
+        processing_generation=2,
+        processing_retry_count=0,
+        processing_retry_limit=2,
+        async_job_id=job.id,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="not_applicable",
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+    transcript = InterviewTranscriptVersion(
+        recording_id=attempt.id,
+        version_number=1,
+        transcript="bounded",
+        source="candidate_text",
+        created_by="candidate",
+        processing_generation=2,
+    )
+    db_session.add(transcript)
+    await db_session.flush()
+    attempt.current_transcript_version_id = transcript.id
+    prior = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="unavailable",
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    pending = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=2,
+        state="pending",
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+        async_job_id=job.id,
+    )
+    db_session.add_all((prior, pending))
+    await db_session.flush()
+    attempt.current_evaluation_version_id = prior.id
+    session.active_recording_id = attempt.id
+    deadline = now + timedelta(minutes=5)
+    claim_token = "committed-pending-token"
+    pending.diagnostics_json = {
+        "processing_claim": {
+            "processing_generation": 2,
+            "job_deadline_at": deadline.isoformat(),
+            "source_audio_content_hash": None,
+            "source_transcript_version_id": transcript.id,
+            "expected_session_state_version": session.state_version - 1,
+            "processing_contract_version": "coach_processing_v1",
+            "claim_token": claim_token,
+        }
+    }
+    db_session.add(
+        InterviewAttemptStage(
+            recording_id=attempt.id,
+            evaluation_version_id=pending.id,
+            stage_name="content_evaluation",
+            stage_state="running",
+            attempt_count=1,
+            repair_count=0,
+            job_id=job.id,
+            claim_token=claim_token,
+            expected_processing_generation=2,
+            source_transcript_version_id=transcript.id,
+            job_deadline_at=deadline,
+        )
+    )
+    await db_session.commit()
+    return session, attempt, prior, pending
 
 
 @pytest.mark.asyncio
@@ -230,6 +328,36 @@ async def test_live_does_not_reconcile_non_stale_processing_claim(db_session) ->
 
 
 @pytest.mark.asyncio
+async def test_live_reads_exact_committed_pending_claim_without_switching_terminal_pointer(
+    db_session,
+) -> None:
+    """Using only current_evaluation_version_id makes a valid live claim unreadable."""
+    (
+        session,
+        attempt,
+        prior,
+        pending,
+    ) = await _committed_pending_claim_with_terminal_pointer(db_session)
+    prior_id = prior.id
+    pending_id = pending.id
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+
+    await db_session.refresh(attempt)
+    persisted_pending = await db_session.get(InterviewAttemptEvaluation, pending_id)
+    assert attempt.current_evaluation_version_id == prior_id
+    assert persisted_pending is not None and persisted_pending.state == "pending"
+    assert view.conversation_state == "processing_answer"
+    assert view.processing.job_id == attempt.async_job_id
+    assert (view.processing.stage, view.processing.state) == (
+        "content_evaluation",
+        "running",
+    )
+
+
+@pytest.mark.asyncio
 async def test_live_processing_rejects_stale_stage_transcript_ownership(
     db_session,
 ) -> None:
@@ -361,55 +489,30 @@ async def test_live_rejects_asking_with_submitted_attempt_still_processing(
 
 @pytest.mark.asyncio
 async def test_processing_projection_prefers_current_running_stage(db_session) -> None:
-    session, question = await _ready_session(db_session)
-    attempt = SessionRecording(
-        session_id=session.id,
-        question_id=question.id,
-        recording_type="text",
-        attempt_number=1,
-        attempt_kind="primary",
-        attempt_state="pending_processing",
-        evaluation_state="pending",
-        processing_generation=1,
-        processing_retry_count=0,
-        processing_retry_limit=2,
-        async_job_id="job-1",
+    _, attempt, _, pending = await _committed_pending_claim_with_terminal_pointer(
+        db_session
     )
-    db_session.add(attempt)
-    await db_session.flush()
-    evaluation = InterviewAttemptEvaluation(
-        recording_id=attempt.id,
-        version_number=1,
-        state="pending",
-        evaluation_contract_version="coach_rubric_v1",
-        evidence_contract_version="coach_evidence_grounding_v1",
-        follow_up_contract_version="coach_follow_up_v1",
-        async_job_id="job-1",
+    running_stage = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == pending.id,
+            InterviewAttemptStage.stage_name == "content_evaluation",
+        )
     )
-    db_session.add(evaluation)
-    await db_session.flush()
-    attempt.current_evaluation_version_id = evaluation.id
-    db_session.add_all(
-        (
-            InterviewAttemptStage(
-                recording_id=attempt.id,
-                evaluation_version_id=evaluation.id,
-                stage_name="transcription",
-                stage_state="completed",
-                attempt_count=1,
-                repair_count=0,
-                started_at=datetime.utcnow(),
-            ),
-            InterviewAttemptStage(
-                recording_id=attempt.id,
-                evaluation_version_id=evaluation.id,
-                stage_name="content_evaluation",
-                stage_state="running",
-                attempt_count=1,
-                repair_count=0,
-                job_id="job-1",
-                started_at=datetime.utcnow() - timedelta(seconds=1),
-            ),
+    assert running_stage is not None
+    db_session.add(
+        InterviewAttemptStage(
+            recording_id=attempt.id,
+            evaluation_version_id=pending.id,
+            stage_name="transcription",
+            stage_state="completed",
+            attempt_count=1,
+            repair_count=0,
+            job_id=attempt.async_job_id,
+            claim_token=running_stage.claim_token,
+            expected_processing_generation=attempt.processing_generation,
+            source_transcript_version_id=None,
+            job_deadline_at=running_stage.job_deadline_at,
+            started_at=datetime.utcnow(),
         )
     )
     await db_session.commit()

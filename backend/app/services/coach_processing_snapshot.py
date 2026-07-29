@@ -7,6 +7,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     InterviewAttemptEvaluation,
@@ -89,6 +92,45 @@ def _parse_claim(evaluation: InterviewAttemptEvaluation) -> ProcessingSnapshot |
     )
 
 
+async def load_owned_processing_evaluation(
+    db: AsyncSession, attempt: SessionRecording
+) -> InterviewAttemptEvaluation | None:
+    """Resolve the owned pending generation without consulting the terminal pointer."""
+    if (
+        attempt.attempt_state == "pending_processing"
+        and attempt.async_job_id is not None
+    ):
+        candidates = list(
+            (
+                await db.scalars(
+                    select(InterviewAttemptEvaluation)
+                    .where(
+                        InterviewAttemptEvaluation.recording_id == attempt.id,
+                        InterviewAttemptEvaluation.async_job_id == attempt.async_job_id,
+                        InterviewAttemptEvaluation.state == "pending",
+                    )
+                    .order_by(InterviewAttemptEvaluation.version_number.desc())
+                    .limit(2)
+                )
+            ).all()
+        )
+        exact = [
+            candidate
+            for candidate in candidates
+            if (snapshot := _parse_claim(candidate)) is not None
+            and snapshot.claim["processing_generation"] == attempt.processing_generation
+        ]
+        return exact[0] if len(exact) == 1 else None
+    if attempt.current_evaluation_version_id is None:
+        return None
+    return await db.scalar(
+        select(InterviewAttemptEvaluation).where(
+            InterviewAttemptEvaluation.id == attempt.current_evaluation_version_id,
+            InterviewAttemptEvaluation.recording_id == attempt.id,
+        )
+    )
+
+
 def exact_processing_snapshot(
     *,
     session: InterviewSession,
@@ -107,7 +149,6 @@ def exact_processing_snapshot(
     if (
         session.active_recording_id != attempt.id
         or attempt.session_id != session.id
-        or attempt.current_evaluation_version_id != evaluation.id
         or evaluation.recording_id != attempt.id
         or evaluation.async_job_id != job_id
         or job.type != "coach_attempt_processing"
@@ -121,7 +162,10 @@ def exact_processing_snapshot(
     if attempt.attempt_state == "pending_processing":
         if attempt.async_job_id != job_id:
             return None
-    elif attempt.async_job_id is not None:
+    elif (
+        attempt.async_job_id is not None
+        or attempt.current_evaluation_version_id != evaluation.id
+    ):
         return None
     if attempt.recording_type == "text":
         if (
