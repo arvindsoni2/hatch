@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Literal, Sequence
 
 from sqlalchemy import and_, func, or_, select, update
@@ -25,13 +27,19 @@ from ..models.coach_session import (
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
+    InterviewAttemptUpload,
     InterviewSession,
     InterviewSessionEvent,
     InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
-from ..schemas.coach_conversation import ConversationCommandRequest, SAFE_TOKEN_RE
+from ..schemas.coach_conversation import (
+    AttemptAudioUploadRead,
+    ConversationCommandRequest,
+    SAFE_TOKEN_RE,
+)
+from ..services.coach_media_storage import StagedAudio
 from ..services.coach_conversational_contracts import (
     AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS,
     EVIDENCE_GROUNDING_CONTRACT,
@@ -540,6 +548,50 @@ class _StaleFinalisation(Exception):
     pass
 
 
+def _audio_upload_request_hash(
+    *,
+    session_id: str,
+    attempt_id: str,
+    upload_id: str,
+    content_sha256: str,
+    byte_size: int,
+    mime_type: str,
+) -> str:
+    encoded = json.dumps(
+        {
+            "attempt_id": attempt_id,
+            "byte_size": byte_size,
+            "content_sha256": content_sha256,
+            "contract_version": "coach_attempt_audio_upload_v1",
+            "mime_type": mime_type,
+            "session_id": session_id,
+            "upload_id": upload_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _audio_upload_read(
+    row: InterviewAttemptUpload, retention_state: str | None
+) -> AttemptAudioUploadRead:
+    return AttemptAudioUploadRead.model_validate(
+        {
+            "attempt_id": row.attempt_id,
+            "upload_id": row.upload_id,
+            "result": row.result_state,
+            "content_sha256": row.content_sha256,
+            "byte_size": row.byte_size,
+            "mime_type": row.mime_type,
+            "audio_retention_state": retention_state,
+            "contract_version": "coach_attempt_audio_upload_v1",
+        }
+    )
+
+
 class ConversationalSessionRepository:
     """SQLite-safe conditional transaction primitives for Coach Phase 1."""
 
@@ -560,6 +612,156 @@ class ConversationalSessionRepository:
         if configured_limit < 1:
             raise ValueError("transcript code-point limit must be a positive integer")
         self._max_transcript_characters = configured_limit
+
+    async def persist_audio_upload(
+        self,
+        *,
+        session_id: str,
+        attempt_id: str,
+        upload_id: str,
+        declared_sha256: str,
+        staged: StagedAudio,
+        destination: Path,
+    ) -> AttemptAudioUploadRead:
+        """Persist one owned audio upload and replay completed duplicates."""
+        temporary_path = staged.temporary_path
+        if staged.content_sha256 != declared_sha256:
+            temporary_path.unlink(missing_ok=True)
+            raise ConversationalRepositoryError(
+                "coach_attempt_upload_hash_mismatch"
+            )
+        request_hash = _audio_upload_request_hash(
+            session_id=session_id,
+            attempt_id=attempt_id,
+            upload_id=upload_id,
+            content_sha256=declared_sha256,
+            byte_size=staged.byte_size,
+            mime_type=staged.mime_type,
+        )
+        existing = await self._session.scalar(
+            select(InterviewAttemptUpload)
+            .join(
+                SessionRecording,
+                SessionRecording.id == InterviewAttemptUpload.attempt_id,
+            )
+            .where(
+                InterviewAttemptUpload.attempt_id == attempt_id,
+                InterviewAttemptUpload.upload_id == upload_id,
+                SessionRecording.session_id == session_id,
+            )
+        )
+        if existing is not None:
+            temporary_path.unlink(missing_ok=True)
+            if existing.request_hash != request_hash:
+                raise ConversationalRepositoryError(
+                    "coach_audio_upload_idempotency_conflict"
+                )
+            attempt = await self._session.get(SessionRecording, attempt_id)
+            if (
+                existing.result_state != "completed"
+                or attempt is None
+                or attempt.session_id != session_id
+                or attempt.audio_uri != existing.storage_uri
+                or Path(existing.storage_uri) != destination
+                or not destination.is_file()
+                or destination.is_symlink()
+            ):
+                raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+            return _audio_upload_read(existing, attempt.audio_retention_state)
+
+        session_row = await self._session.get(InterviewSession, session_id)
+        attempt = await self._session.scalar(
+            select(SessionRecording).where(
+                SessionRecording.id == attempt_id,
+                SessionRecording.session_id == session_id,
+            )
+        )
+        if session_row is None or attempt is None:
+            temporary_path.unlink(missing_ok=True)
+            raise ConversationalRepositoryError("coach_attempt_upload_missing")
+        if (
+            session_row.experience_version != "conversational_v1"
+            or session_row.status != "active"
+            or session_row.conversation_state != "listening"
+            or session_row.active_recording_id != attempt_id
+            or session_row.deletion_state != "not_requested"
+            or attempt.recording_type != "audio"
+            or attempt.attempt_state != "draft"
+            or attempt.audio_uri is not None
+            or attempt.audio_content_hash is not None
+            or attempt.audio_retention_policy
+            not in {"delete_after_processing", "retain_until_deleted"}
+        ):
+            temporary_path.unlink(missing_ok=True)
+            raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+        if (
+            not temporary_path.is_file()
+            or temporary_path.is_symlink()
+            or destination.exists()
+            or destination.is_symlink()
+        ):
+            temporary_path.unlink(missing_ok=True)
+            raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+
+        retention_state = (
+            "retained"
+            if attempt.audio_retention_policy == "retain_until_deleted"
+            else "temporary"
+        )
+        moved = False
+        try:
+            os.replace(temporary_path, destination)
+            moved = True
+            row = InterviewAttemptUpload(
+                id=str(uuid.uuid4()),
+                attempt_id=attempt_id,
+                upload_id=upload_id,
+                request_hash=request_hash,
+                content_sha256=declared_sha256,
+                byte_size=staged.byte_size,
+                mime_type=staged.mime_type,
+                storage_uri=str(destination),
+                result_state="completed",
+                completed_at=datetime.utcnow(),
+            )
+            self._session.add(row)
+            changed = await self._session.execute(
+                update(SessionRecording)
+                .where(
+                    SessionRecording.id == attempt_id,
+                    SessionRecording.session_id == session_id,
+                    SessionRecording.recording_type == "audio",
+                    SessionRecording.attempt_state == "draft",
+                    SessionRecording.audio_uri.is_(None),
+                    SessionRecording.audio_content_hash.is_(None),
+                )
+                .values(
+                    attempt_state="uploaded",
+                    attempt_version=SessionRecording.attempt_version + 1,
+                    audio_uri=str(destination),
+                    audio_content_hash=declared_sha256,
+                    audio_retention_state=retention_state,
+                )
+            )
+            if changed.rowcount != 1:
+                raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+            await self._session.flush()
+            return _audio_upload_read(row, retention_state)
+        except BaseException as error:
+            if moved:
+                destination.unlink(missing_ok=True)
+            temporary_path.unlink(missing_ok=True)
+            try:
+                await self._session.rollback()
+            except BaseException:
+                pass
+            if isinstance(error, ConversationalRepositoryError):
+                raise
+            if not isinstance(error, Exception):
+                raise
+            raise ConversationalRepositoryError(
+                "coach_attempt_upload_conflict"
+            ) from None
 
     async def abandon_conversational_session(self, *, session_id: str) -> bool:
         session_row = await self._session.get(InterviewSession, session_id)
