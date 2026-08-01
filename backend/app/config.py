@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -110,27 +111,47 @@ class Settings(BaseSettings):
     HATCH_COACH_CONVERSATIONAL_PROGRESS_ENABLED: bool = True
 
     # Conversational Coach browser and processing policy.
-    HATCH_COACH_SILENCE_WARNING_MS: int = 4000
-    HATCH_COACH_SILENCE_FINISH_PROMPT_MS: int = 9000
-    HATCH_COACH_MAX_ANSWER_DURATION_SECONDS: int = 600
+    HATCH_COACH_MEDIA_ROOT: Path = Path("./data/coach-media")
+    HATCH_COACH_SILENCE_WARNING_MS: int = Field(default=4000, ge=1000, le=30000)
+    HATCH_COACH_SILENCE_FINISH_PROMPT_MS: int = Field(
+        default=9000, ge=2000, le=60000
+    )
+    HATCH_COACH_MAX_ANSWER_DURATION_SECONDS: int = Field(
+        default=600, ge=60, le=1800
+    )
+    HATCH_COACH_MAX_AUDIO_BYTES: int = Field(
+        default=50 * 1024 * 1024, ge=1024, le=250 * 1024 * 1024
+    )
     HATCH_COACH_MAX_ATTEMPTS_PER_QUESTION: int = Field(default=5, ge=1, le=20)
     HATCH_COACH_MAX_PROCESSING_RETRIES_PER_ATTEMPT: int = Field(default=2, ge=0, le=5)
     HATCH_COACH_PROGRESS_MAX_GROUPS: int = Field(default=20, ge=1, le=100)
     HATCH_COACH_MAX_FOLLOWUPS_PER_ROOT: int = 2
     HATCH_COACH_MAX_TRANSCRIPT_CHARACTERS: int = 30000
     HATCH_COACH_MAX_EVIDENCE_CLAIMS: int = 20
-    HATCH_COACH_AUDIO_FAILURE_RETENTION_HOURS: int = 24
+    HATCH_COACH_AUDIO_FAILURE_RETENTION_HOURS: int = Field(default=24, ge=1, le=168)
 
     # One shared attempt deadline plus per-stage ceilings. Coaching and audio
     # cleanup are separate jobs with their own absolute deadlines.
-    HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS: int = 900
-    HATCH_COACH_TIMEOUT_TRANSCRIPTION_SECONDS: int = 300
-    HATCH_COACH_TIMEOUT_SPEECH_ANALYSIS_SECONDS: int = 120
-    HATCH_COACH_TIMEOUT_CONVERSATIONAL_EVALUATION_SECONDS: int = 300
-    HATCH_COACH_TIMEOUT_EVIDENCE_GROUNDING_SECONDS: int = 180
-    HATCH_COACH_TIMEOUT_FOLLOWUP_DECISION_SECONDS: int = 120
+    HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS: int = Field(
+        default=900, ge=60, le=3600
+    )
+    HATCH_COACH_TIMEOUT_TRANSCRIPTION_SECONDS: int = Field(default=300, ge=10, le=900)
+    HATCH_COACH_TIMEOUT_SPEECH_ANALYSIS_SECONDS: int = Field(
+        default=120, ge=10, le=900
+    )
+    HATCH_COACH_TIMEOUT_CONVERSATIONAL_EVALUATION_SECONDS: int = Field(
+        default=300, ge=10, le=900
+    )
+    HATCH_COACH_TIMEOUT_EVIDENCE_GROUNDING_SECONDS: int = Field(
+        default=180, ge=10, le=900
+    )
+    HATCH_COACH_TIMEOUT_FOLLOWUP_DECISION_SECONDS: int = Field(
+        default=120, ge=10, le=900
+    )
     HATCH_COACH_TIMEOUT_COACHING_JOB_SECONDS: int = 240
-    HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS: int = 180
+    HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS: int = Field(
+        default=180, ge=10, le=900
+    )
 
     # Optional bearer-token auth for non-localhost deploys.
     # When empty (default) auth is disabled — localhost use is frictionless.
@@ -170,4 +191,5 @@ class Settings(BaseSettings):
 
 
 # Singleton instance — import this everywhere
+Settings.model_rebuild(_types_namespace={"Path": Path})
 settings = Settings()
