@@ -84,10 +84,10 @@ def test_conversational_v1_projection_has_only_the_nine_observable_metrics(
     assert set(projection) == {
         "duration_ms", "word_count", "words_per_minute", "filler_count",
         "filler_rate_per_minute", "hedging_count", "pause_count",
-        "long_pause_count", "restart_count",
+        "long_pause_count",
     }
     assert projection["long_pause_count"] is None
-    assert projection["restart_count"] is None
+    assert "restart_count" not in projection
 
 
 def test_conversational_v1_projection_uses_observed_word_timestamps(
@@ -116,7 +116,6 @@ def test_conversational_v1_projection_uses_observed_word_timestamps(
         "hedging_count": 0,
         "pause_count": 2,
         "long_pause_count": 2,
-        "restart_count": None,
     }
 
 

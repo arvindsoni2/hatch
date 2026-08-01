@@ -15,8 +15,17 @@ from ..repositories.conversational_session_repository import (
     AttemptProcessingClaim,
     AttemptProcessingResult,
 )
-from ..models.coach_session import InterviewAttemptStage, SessionRecording
-from sqlalchemy import select
+from ..models.async_job import AsyncJob
+from ..config import settings
+from ..models.coach_session import (
+    InterviewAttemptEvaluation,
+    InterviewAttemptStage,
+    InterviewAttemptUpload,
+    InterviewSession,
+    SessionRecording,
+    InterviewTranscriptVersion,
+)
+from sqlalchemy import select, update
 from .async_job_service import AsyncJobService
 
 logger = logging.getLogger(__name__)
@@ -112,7 +121,17 @@ def require_bound_transcript(context: AttemptProcessingContext) -> tuple[str, st
 
 def queue_attempt_processing(claim: AttemptProcessingClaim) -> None:
     """Schedule processing after the request transaction has committed."""
-    AsyncJobService.run(claim.job_id, _process_attempt_claim(claim))
+    AsyncJobService.run(claim.job_id, _safe_process_attempt_claim(claim))
+
+
+async def _safe_process_attempt_claim(claim: AttemptProcessingClaim) -> None:
+    try:
+        await _process_attempt_claim(claim)
+    except AttemptPipelineError:
+        raise
+    except Exception as error:
+        logger.error("Coach attempt worker failed: %s", type(error).__name__)
+        raise AttemptPipelineError("coach_attempt_worker_failed", retryable=False) from None
 
 
 async def _process_attempt_claim(
@@ -129,9 +148,41 @@ async def _process_attempt_claim(
 
     async with session_factory() as db:
         repository = ConversationalSessionRepository(db)
-        attempt = await db.get(SessionRecording, claim.recording_id)
-        if attempt is None:
+        snapshot = await repository.get_attempt_processing_snapshot(
+            recording_id=claim.recording_id,
+            processing_generation=claim.processing_generation,
+        )
+        if snapshot is None or snapshot.claim != claim:
             raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        evaluation = await db.get(InterviewAttemptEvaluation, claim.evaluation_version_id)
+        session = await db.get(InterviewSession, claim.session_id)
+        if (
+            attempt is None or evaluation is None or session is None
+            or session.conversation_state != "processing_answer"
+            or session.deletion_state != "not_requested"
+            or session.active_recording_id != claim.recording_id
+            or attempt.question_id != claim.question_id
+            or attempt.async_job_id != claim.job_id
+            or evaluation.async_job_id != claim.job_id
+            or evaluation.state != "pending"
+        ):
+            raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
+
+        async def finish(result: AttemptProcessingResult) -> None:
+            """Fence generic-job ownership and attempt terminalisation together."""
+            job_change = await db.execute(
+                update(AsyncJob)
+                .where(AsyncJob.id == claim.job_id, AsyncJob.status.in_(("pending", "running")))
+                .values(status="done", result_json='{"status":"unavailable"}', error=None)
+            )
+            if job_change.rowcount != 1:
+                await db.rollback()
+                raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
+            if not await repository.finalise_attempt_processing(claim=claim, result=result):
+                await db.rollback()
+                raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
+            await db.commit()
         transcript_id = claim.transcript_version_id
         reason = "coach_evaluation_unavailable"
         speech_unavailable = False
@@ -141,18 +192,49 @@ async def _process_attempt_claim(
         ))).all()
         if attempt.recording_type == "audio":
             fence = await repository._get_attempt_processing_fence(claim)
+            upload = await db.scalar(select(InterviewAttemptUpload).where(
+                InterviewAttemptUpload.attempt_id == claim.recording_id,
+                InterviewAttemptUpload.result_state == "completed",
+                InterviewAttemptUpload.content_sha256 == fence.expected_audio_content_hash if fence else False,
+            ))
             if (
-                fence is None or not attempt.audio_uri or not fence.expected_audio_content_hash
+                fence is None or upload is None or not attempt.audio_uri
+                or upload.storage_uri != attempt.audio_uri or not fence.expected_audio_content_hash
             ):
                 raise AttemptPipelineError("coach_attempt_stage_dependency_missing", retryable=False)
-            from ..services.coach_media_storage import owned_audio_path_is_file
-            if not owned_audio_path_is_file(Path(attempt.audio_uri)):
-                raise AttemptPipelineError("coach_attempt_stage_dependency_missing", retryable=False)
+            speech_transcription = None
             try:
-                transcription = transcriber_factory().transcribe(attempt.audio_uri)
+                from ..services.coach_media_storage import open_verified_audio_read_lease
+                with open_verified_audio_read_lease(
+                    Path(settings.HATCH_COACH_MEDIA_ROOT), Path(attempt.audio_uri),
+                    fence.expected_audio_content_hash,
+                ) as lease:
+                    # Independent providers receive the same inode-pinned bytes;
+                    # speech must not depend on content transcription succeeding.
+                    try:
+                        speech_transcription = transcriber_factory().transcribe(str(lease.path))
+                    except Exception:
+                        speech_transcription = None
+                    transcription = transcriber_factory().transcribe(str(lease.path))
             except Exception:  # provider detail must not enter durable diagnostics
                 transcription = None
                 reason = "transcription_unavailable"
+            if transcription is not None and not transcription.text.strip():
+                transcription = None
+                reason = "transcription_unavailable"
+            if speech_transcription is None:
+                speech_unavailable = True
+                metrics = None
+                words: list[dict[str, object]] = []
+            else:
+                words = [{"w": word.w, "start": word.start, "end": word.end} for word in speech_transcription.words]
+                try:
+                    metrics = SpeechAnalyserService().analyse_from_timestamps(speech_transcription.text, words)
+                except Exception:
+                    metrics = None
+                    speech_unavailable = True
+            if metrics is not None:
+                attempt.speech_metrics = {"duration_ms": metrics.duration_ms, "word_count": len(words), "words_per_minute": metrics.wpm, "filler_count": metrics.filler_count, "filler_rate_per_minute": metrics.filler_rate, "hedging_count": metrics.hedging_count, "pause_count": metrics.pause_count, "long_pause_count": metrics.pause_count}
             if transcription is None:
                 for stage in stages:
                     if stage.stage_name == "audio_persist":
@@ -166,16 +248,16 @@ async def _process_attempt_claim(
                     elif stage.stage_name in {"content_evaluation", "evidence_grounding", "follow_up_decision", "coaching_enrichment"}:
                         stage.stage_state = "not_applicable"
                         stage.completed_at = datetime.utcnow()
-                    elif stage.stage_name in {"speech_analysis", "audio_cleanup"}:
+                    elif stage.stage_name == "speech_analysis":
+                        stage.stage_state = "unavailable" if speech_unavailable else "completed"
+                        stage.last_error_code = "speech_analysis_unavailable" if speech_unavailable else None
+                        stage.completed_at = datetime.utcnow()
+                    elif stage.stage_name == "audio_cleanup":
                         stage.stage_state = "not_applicable"
                         stage.last_error_code = None
                         stage.completed_at = datetime.utcnow()
                 result = AttemptProcessingResult("unavailable", {"answer_level": "not_assessed"}, None, {"reason": reason, "execution_mode": "deterministic_stub"})
-                finalised = await repository.finalise_attempt_processing(claim=claim, result=result)
-                if not finalised:
-                    await db.rollback()
-                    raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
-                await AsyncJobService._finish(claim.job_id, '{"status":"unavailable"}', None, db=db)
+                await finish(result)
                 return
             transcript = await repository.create_worker_transcript_version(
                 recording_id=claim.recording_id, transcript=transcription.text,
@@ -187,23 +269,6 @@ async def _process_attempt_claim(
             if transcript is None:
                 raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
             transcript_id = transcript.id
-            words = [
-                {"w": word.w, "start": word.start, "end": word.end}
-                for word in transcription.words
-            ]
-            try:
-                metrics = SpeechAnalyserService().analyse_from_timestamps(transcription.text, words)
-            except Exception:
-                metrics = None
-                speech_unavailable = True
-            if metrics is not None:
-                attempt.speech_metrics = {
-                "duration_ms": metrics.duration_ms, "word_count": len(words),
-                "words_per_minute": metrics.wpm, "filler_count": metrics.filler_count,
-                "filler_rate_per_minute": metrics.filler_rate, "hedging_count": metrics.hedging_count,
-                "pause_count": metrics.pause_count, "long_pause_count": metrics.pause_count,
-                "restart_count": None,
-                }
         for stage in stages:
             if stage.stage_state == "not_applicable":
                 continue
@@ -229,13 +294,7 @@ async def _process_attempt_claim(
             transcript_version_id=transcript_id,
             diagnostics={"code": reason, "execution_mode": "deterministic_stub"},
         )
-        finalised = await repository.finalise_attempt_processing(claim=claim, result=result)
-        if not finalised:
-            await db.rollback()
-            raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
-        await AsyncJobService._finish(
-            claim.job_id, '{"status":"unavailable"}', None, db=db
-        )
+        await finish(result)
 
 
 async def run_attempt_pipeline(
@@ -253,13 +312,19 @@ async def run_attempt_pipeline(
         or any(PIPELINE_ORDER.index(left) >= PIPELINE_ORDER.index(right) for left, right in zip(names, names[1:]))
     ):
         raise AttemptPipelineError("coach_attempt_stage_graph_invalid", retryable=False)
+    normalized_transcript = None
+    if claim.transcript_version_id is not None and any(
+        name in {"content_evaluation", "evidence_grounding", "follow_up_decision"}
+        for name in names
+    ):
+        normalized_transcript = await _load_claim_transcript(claim)
     context = AttemptProcessingContext(
         session_id=claim.session_id, question_id=claim.question_id,
         recording_id=claim.recording_id, transcript_version_id=claim.transcript_version_id,
         evaluation_version_id=claim.evaluation_version_id,
         processing_generation=claim.processing_generation, deadline_at=claim.deadline_at,
         recording_type="text" if claim.transcript_version_id is not None else "audio",
-        normalized_transcript=None, speech_metrics=None, evidence_records=(),
+        normalized_transcript=normalized_transcript, speech_metrics=None, evidence_records=(),
     )
     for stage in stages:
         if stage.name in {"content_evaluation", "evidence_grounding", "follow_up_decision"}:
@@ -287,3 +352,18 @@ async def run_attempt_pipeline(
         transcript_version_id=context.transcript_version_id,
         diagnostics={"code": "coach_evaluation_unavailable", "execution_mode": "deterministic_stub"},
     )
+
+
+async def _load_claim_transcript(claim: AttemptProcessingClaim) -> str | None:
+    """Read the immutable typed transcript without widening the public claim."""
+    if claim.transcript_version_id is None:
+        return None
+    from ..database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        transcript = await db.scalar(select(InterviewTranscriptVersion).where(
+            InterviewTranscriptVersion.id == claim.transcript_version_id,
+            InterviewTranscriptVersion.recording_id == claim.recording_id,
+            InterviewTranscriptVersion.processing_generation == claim.processing_generation,
+        ))
+        return transcript.transcript if transcript is not None else None

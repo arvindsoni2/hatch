@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 from contextlib import asynccontextmanager
+import hashlib
 from datetime import datetime, timedelta
 from inspect import signature
 from typing import get_type_hints
@@ -19,6 +20,8 @@ from app.services.coach_attempt_pipeline import (
     require_bound_transcript,
     run_attempt_pipeline,
     _process_attempt_claim,
+    _safe_process_attempt_claim,
+    queue_attempt_processing,
 )
 from app.repositories.conversational_session_repository import AttemptProcessingClaim
 from app.models.coach_session import (
@@ -30,11 +33,13 @@ from app.models.coach_session import (
     SessionQuestion,
     SessionRecording,
 )
+from app.models.async_job import AsyncJob
 from app.schemas.coach_conversation import ConversationCommandRequest
 from app.services.coach_conversation_commands import (
     ConversationCommandError,
     ConversationCommandService,
 )
+from app.config import settings
 from sqlalchemy import func, select
 
 
@@ -62,6 +67,16 @@ def _command(kind: str, version: int, payload: dict[str, object]) -> Conversatio
         "expected_state_version": version, "payload": payload,
         "contract_version": "coach_conversation_command_v1",
     })
+
+
+def _owned_audio(tmp_path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    root = tmp_path / "coach-media"
+    source = root / "session-1" / "attempt-upload.webm"
+    source.parent.mkdir(parents=True)
+    body = b"deterministic test audio"
+    source.write_bytes(body)
+    monkeypatch.setattr(settings, "HATCH_COACH_MEDIA_ROOT", root)
+    return str(source), hashlib.sha256(body).hexdigest()
 
 
 def test_pr3_pipeline_interfaces_are_stable_and_exported() -> None:
@@ -344,7 +359,7 @@ async def test_typed_worker_terminalises_durable_claim(db_session, monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_audio_worker_binds_completed_upload_and_persists_timestamp_metrics(
-    db_session, monkeypatch: pytest.MonkeyPatch
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     session, _ = await _active_session(db_session)
     claims: list[AttemptProcessingClaim] = []
@@ -355,10 +370,11 @@ async def test_audio_worker_binds_completed_upload_and_persists_timestamp_metric
     ))
     attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
     assert attempt is not None
-    attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", "/owned.webm", "a" * 64
+    audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
+    attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", audio_uri, digest
     db_session.add(InterviewAttemptUpload(
         id="task4-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request",
-        content_sha256="a" * 64, byte_size=1, mime_type="audio/webm", storage_uri="/owned.webm", result_state="completed",
+        content_sha256=digest, byte_size=1, mime_type="audio/webm", storage_uri=audio_uri, result_state="completed",
     ))
     await db_session.commit()
     await service.execute(user_id="local", session_id=session.id, request=_command(
@@ -373,12 +389,11 @@ async def test_audio_worker_binds_completed_upload_and_persists_timestamp_metric
     @asynccontextmanager
     async def session_factory():
         yield db_session
-    monkeypatch.setattr("app.services.coach_media_storage.owned_audio_path_is_file", lambda _path: True)
     await _process_attempt_claim(claims[0], session_factory=session_factory, transcriber_factory=Transcriber)
     await db_session.refresh(attempt)
     assert attempt.attempt_state == "unavailable"
     assert attempt.current_transcript_version_id is not None
-    assert set(attempt.speech_metrics or {}) == {"duration_ms", "word_count", "words_per_minute", "filler_count", "filler_rate_per_minute", "hedging_count", "pause_count", "long_pause_count", "restart_count"}
+    assert set(attempt.speech_metrics or {}) == {"duration_ms", "word_count", "words_per_minute", "filler_count", "filler_rate_per_minute", "hedging_count", "pause_count", "long_pause_count"}
 
 
 def test_pipeline_order_is_fixed_and_rejects_duplicates() -> None:
@@ -399,9 +414,82 @@ async def test_pipeline_rejects_invalid_supplied_stage_graph(names: tuple[str, .
         await run_attempt_pipeline(claim, stages)
 
 
+def test_queue_schedules_the_durable_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    claim = AttemptProcessingClaim("s", "q", "r", None, "e", 1, "j", datetime.utcnow())
+    observed = []
+    monkeypatch.setattr("app.services.coach_attempt_pipeline.AsyncJobService.run", lambda job_id, coro: (observed.append(job_id), coro.close()))
+    queue_attempt_processing(claim)
+    assert observed == ["j"]
+
+
+@pytest.mark.asyncio
+async def test_worker_boundary_sanitizes_unexpected_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    claim = AttemptProcessingClaim("s", "q", "r", None, "e", 1, "j", datetime.utcnow())
+    async def broken(_claim): raise RuntimeError("/secret/audio content")
+    monkeypatch.setattr("app.services.coach_attempt_pipeline._process_attempt_claim", broken)
+    with pytest.raises(AttemptPipelineError) as error:
+        await _safe_process_attempt_claim(claim)
+    assert str(error.value) == "coach_attempt_worker_failed"
+
+
+@pytest.mark.asyncio
+async def test_public_typed_pipeline_loads_immutable_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
+    claim = AttemptProcessingClaim("s", "q", "r", "tv", "e", 1, "j", datetime.utcnow() + timedelta(seconds=30))
+    async def loader(_claim): return "normalized typed answer"
+    monkeypatch.setattr("app.services.coach_attempt_pipeline._load_claim_transcript", loader)
+    class Content:
+        name = "content_evaluation"
+        async def run(self, context):
+            assert require_bound_transcript(context) == ("tv", "normalized typed answer")
+            return StageResult(self.name, "unavailable", None, None, False, 1, 0)
+    await run_attempt_pipeline(claim, (Content(),))
+
+
+@pytest.mark.asyncio
+async def test_stale_claim_preflight_calls_no_provider_and_mutates_nothing(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
+    session, _ = await _active_session(db_session)
+    claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr("app.services.coach_conversation_commands.queue_attempt_processing", claims.append)
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(user_id="local", session_id=session.id, request=_command("begin_answer", 0, {"recording_type": "text", "client_attempt_id": "stale"}))
+    await service.execute(user_id="local", session_id=session.id, request=_command("finish_answer", begun.state_version, {"attempt_id": begun.active_attempt_id, "transcript": "answer"}))
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    attempt.processing_generation += 1
+    await db_session.commit()
+    @asynccontextmanager
+    async def session_factory(): yield db_session
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+        await _process_attempt_claim(claims[0], session_factory=session_factory)
+    await db_session.refresh(attempt)
+    assert attempt.attempt_state == "pending_processing"
+
+
+@pytest.mark.asyncio
+async def test_zero_row_generic_job_fence_rolls_back_attempt_terminalisation(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
+    session, _ = await _active_session(db_session)
+    claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr("app.services.coach_conversation_commands.queue_attempt_processing", claims.append)
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(user_id="local", session_id=session.id, request=_command("begin_answer", 0, {"recording_type": "text", "client_attempt_id": "job-fence"}))
+    await service.execute(user_id="local", session_id=session.id, request=_command("finish_answer", begun.state_version, {"attempt_id": begun.active_attempt_id, "transcript": "answer"}))
+    job = await db_session.get(AsyncJob, claims[0].job_id)
+    assert job is not None
+    job.status = "done"
+    await db_session.commit()
+    @asynccontextmanager
+    async def session_factory(): yield db_session
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+        await _process_attempt_claim(claims[0], session_factory=session_factory)
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    await db_session.refresh(session)
+    assert attempt is not None and attempt.attempt_state == "pending_processing"
+    assert session.conversation_state == "processing_answer"
+
+
 @pytest.mark.asyncio
 async def test_audio_transcription_failure_terminalises_without_downstream_results(
-    db_session, monkeypatch: pytest.MonkeyPatch
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     session, _ = await _active_session(db_session)
     claims: list[AttemptProcessingClaim] = []
@@ -410,29 +498,38 @@ async def test_audio_transcription_failure_terminalises_without_downstream_resul
     begun = await service.execute(user_id="local", session_id=session.id, request=_command("begin_answer", 0, {"recording_type": "audio", "client_attempt_id": "failure-audio"}))
     attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
     assert attempt is not None
-    attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", "/owned.webm", "b" * 64
-    db_session.add(InterviewAttemptUpload(id="failure-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request", content_sha256="b" * 64, byte_size=1, mime_type="audio/webm", storage_uri="/owned.webm", result_state="completed"))
+    audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
+    attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", audio_uri, digest
+    db_session.add(InterviewAttemptUpload(id="failure-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request", content_sha256=digest, byte_size=1, mime_type="audio/webm", storage_uri=audio_uri, result_state="completed"))
     await db_session.commit()
     await service.execute(user_id="local", session_id=session.id, request=_command("finish_answer", begun.state_version, {"attempt_id": attempt.id, "upload_id": "upload-1"}))
-    class BrokenTranscriber:
-        def transcribe(self, _path): raise RuntimeError("private path must not persist")
+    class SpeechThenBrokenTranscriber:
+        calls = 0
+
+        def transcribe(self, _path):
+            type(self).calls += 1
+            if type(self).calls == 2:
+                raise RuntimeError("private path must not persist")
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+            return TranscriptionResult("speech sibling", "en", [WordTimestamp("speech", 0, .2)])
     @asynccontextmanager
     async def session_factory(): yield db_session
-    monkeypatch.setattr("app.services.coach_media_storage.owned_audio_path_is_file", lambda _path: True)
-    await _process_attempt_claim(claims[0], session_factory=session_factory, transcriber_factory=BrokenTranscriber)
+    await _process_attempt_claim(claims[0], session_factory=session_factory, transcriber_factory=SpeechThenBrokenTranscriber)
     stages = (await db_session.scalars(select(InterviewAttemptStage).where(InterviewAttemptStage.recording_id == attempt.id))).all()
     states = {stage.stage_name: (stage.stage_state, stage.last_error_code) for stage in stages}
     await db_session.refresh(attempt)
     assert attempt.attempt_state == "unavailable"
     assert states["audio_persist"][0] == "completed"
     assert states["transcription"] == ("unavailable", "transcription_unavailable")
+    assert states["speech_analysis"][0] == "completed"
+    assert attempt.speech_metrics is not None and "restart_count" not in attempt.speech_metrics
     assert all(states[name][0] != "completed" for name in ("content_evaluation", "evidence_grounding", "follow_up_decision"))
     assert all(state[0] not in {"pending", "running"} for state in states.values())
 
 
 @pytest.mark.asyncio
 async def test_audio_speech_failure_is_independent_after_immutable_transcript(
-    db_session, monkeypatch: pytest.MonkeyPatch
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     session, _ = await _active_session(db_session)
     claims: list[AttemptProcessingClaim] = []
@@ -441,8 +538,9 @@ async def test_audio_speech_failure_is_independent_after_immutable_transcript(
     begun = await service.execute(user_id="local", session_id=session.id, request=_command("begin_answer", 0, {"recording_type": "audio", "client_attempt_id": "speech-failure"}))
     attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
     assert attempt is not None
-    attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", "/owned.webm", "c" * 64
-    db_session.add(InterviewAttemptUpload(id="speech-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request", content_sha256="c" * 64, byte_size=1, mime_type="audio/webm", storage_uri="/owned.webm", result_state="completed"))
+    audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
+    attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", audio_uri, digest
+    db_session.add(InterviewAttemptUpload(id="speech-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request", content_sha256=digest, byte_size=1, mime_type="audio/webm", storage_uri=audio_uri, result_state="completed"))
     await db_session.commit()
     await service.execute(user_id="local", session_id=session.id, request=_command("finish_answer", begun.state_version, {"attempt_id": attempt.id, "upload_id": "upload-1"}))
     class Transcriber:
@@ -451,7 +549,6 @@ async def test_audio_speech_failure_is_independent_after_immutable_transcript(
             return TranscriptionResult("bound transcript", "en", [WordTimestamp("bound", 0, .1)])
     @asynccontextmanager
     async def session_factory(): yield db_session
-    monkeypatch.setattr("app.services.coach_media_storage.owned_audio_path_is_file", lambda _path: True)
     monkeypatch.setattr("app.services.speech_analyser.SpeechAnalyserService.analyse_from_timestamps", lambda *_args: (_ for _ in ()).throw(RuntimeError("speech failed")))
     await _process_attempt_claim(claims[0], session_factory=session_factory, transcriber_factory=Transcriber)
     stages = (await db_session.scalars(select(InterviewAttemptStage).where(InterviewAttemptStage.recording_id == attempt.id))).all()

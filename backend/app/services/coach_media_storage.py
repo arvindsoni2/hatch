@@ -23,6 +23,7 @@ _DIRECTORY_FLAGS = (
     | getattr(os, "O_DIRECTORY", 0)
     | getattr(os, "O_NOFOLLOW", 0)
 )
+_READ_FLAGS = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
 class CoachMediaError(RuntimeError):
@@ -114,6 +115,39 @@ class OwnedAudioPublication:
 
     def release(self) -> None:
         self._entry.close()
+
+
+@dataclass
+class OwnedAudioReadLease:
+    """A verified, inode-pinned read descriptor for worker media access."""
+
+    _file_descriptor: int
+    _closed: bool = False
+
+    @property
+    def file_descriptor(self) -> int:
+        return self._file_descriptor
+
+    @property
+    def path(self) -> Path:
+        return Path(f"/proc/self/fd/{self._file_descriptor}")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.close(self._file_descriptor)
+        except OSError:
+            raise CoachMediaError("coach_attempt_upload_conflict") from None
+
+    def __enter__(self) -> OwnedAudioReadLease:
+        if self._closed:
+            raise CoachMediaError("coach_attempt_upload_conflict")
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
 
 
 @dataclass(frozen=True)
@@ -438,6 +472,80 @@ def owned_audio_path_is_file(destination: Path) -> bool:
                 os.close(directory_fd)
             except OSError:
                 pass
+
+
+def open_verified_audio_read_lease(
+    storage_root: Path,
+    source_path: Path,
+    expected_sha256: str,
+) -> OwnedAudioReadLease:
+    """Open and hash an exact regular inode beneath the configured media root."""
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise CoachMediaError("coach_attempt_upload_conflict")
+    root = _configured_root(storage_root)
+    try:
+        relative = source_path.absolute().relative_to(root)
+    except (OSError, ValueError):
+        raise CoachMediaError("coach_attempt_upload_conflict") from None
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise CoachMediaError("coach_attempt_upload_conflict")
+
+    directory_fd = _open_exact_directory(root)
+    file_fd = -1
+    try:
+        for part in relative.parts[:-1]:
+            next_fd = os.open(part, _DIRECTORY_FLAGS, dir_fd=directory_fd)
+            opened_directory = os.fstat(next_fd)
+            if not stat.S_ISDIR(opened_directory.st_mode):
+                os.close(next_fd)
+                raise CoachMediaError("coach_attempt_upload_conflict")
+            os.close(directory_fd)
+            directory_fd = next_fd
+
+        name = relative.parts[-1]
+        file_fd = os.open(name, _READ_FLAGS, dir_fd=directory_fd)
+        opened = os.fstat(file_fd)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(current.st_mode)
+            or opened.st_dev != current.st_dev
+            or opened.st_ino != current.st_ino
+        ):
+            raise CoachMediaError("coach_attempt_upload_conflict")
+
+        digest = hashlib.sha256()
+        while chunk := os.read(file_fd, _STREAM_CHUNK_BYTES):
+            digest.update(chunk)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if (
+            current.st_dev != opened.st_dev
+            or current.st_ino != opened.st_ino
+            or not secrets.compare_digest(digest.hexdigest(), expected_sha256)
+        ):
+            raise CoachMediaError("coach_attempt_upload_conflict")
+        os.lseek(file_fd, 0, os.SEEK_SET)
+        lease = OwnedAudioReadLease(file_fd)
+        file_fd = -1
+        return lease
+    except CoachMediaError:
+        raise
+    except OSError:
+        raise CoachMediaError("coach_attempt_upload_conflict") from None
+    finally:
+        if file_fd >= 0:
+            try:
+                os.close(file_fd)
+            except OSError:
+                pass
+        try:
+            os.close(directory_fd)
+        except OSError:
+            pass
 
 
 def resolve_owned_audio_path(

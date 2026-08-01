@@ -152,7 +152,6 @@ class SpeechAnalyserService:
             "hedging_count": metrics.hedging_count,
             "pause_count": metrics.pause_count,
             "long_pause_count": long_pause_count,
-            "restart_count": None,
         }
 
     # ── Timestamp path (faster-whisper word timestamps) ──────────────────────
