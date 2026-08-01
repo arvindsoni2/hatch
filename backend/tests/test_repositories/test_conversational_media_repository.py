@@ -404,7 +404,18 @@ async def test_cleanup_retries_the_owned_inode_after_unlink_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Closing a failed lease makes a later cleanup silently leave its inode."""
-    staged = _stage(tmp_path / "cleanup-retry.tmp", b"synthetic-webm")
+    upload = UploadFile(
+        BytesIO(b"synthetic-webm"),
+        filename="answer.webm",
+        headers=Headers({"content-type": "audio/webm"}),
+    )
+    staged = await stream_audio_upload(
+        upload,
+        max_bytes=64,
+        temp_dir=coach_upload_temp_dir(tmp_path / "media"),
+    )
+    entry = staged._entry
+    assert entry is not None
     original_unlink = os.unlink
     failed = False
 
@@ -420,11 +431,94 @@ async def test_cleanup_retries_the_owned_inode_after_unlink_failure(
     with pytest.raises(CoachMediaError, match="coach_attempt_upload_conflict"):
         cleanup_staged_audio(staged)
     assert staged.temporary_path.exists()
+    assert entry.closed is False
 
     cleanup_staged_audio(staged)
+    await upload.close()
 
     assert failed is True
+    assert entry.closed is True
     assert not staged.temporary_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_rollback_retries_transient_publication_unlink_before_surfacing_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Giving up after one transient unlink failure leaves a rolled-back file."""
+    body = b"synthetic-webm"
+    staged_path = tmp_path / "publication-retry.tmp"
+    destination = tmp_path / "media" / "session-1" / "attempt-1-upload-1.webm"
+    destination.parent.mkdir(parents=True)
+    publication = publish_staged_audio(_stage(staged_path, body), destination)
+    original_unlink = os.unlink
+    unlink_attempts = 0
+
+    def fail_destination_once(name, *args, **kwargs):
+        nonlocal unlink_attempts
+        if name == destination.name:
+            unlink_attempts += 1
+            if unlink_attempts == 1:
+                raise OSError("/private/destination-target")
+        return original_unlink(name, *args, **kwargs)
+
+    class RolledBackSession:
+        async def rollback(self) -> None:
+            return None
+
+    monkeypatch.setattr(os, "unlink", fail_destination_once)
+    repository = ConversationalSessionRepository(RolledBackSession())
+    repository._audio_publication = publication
+
+    await repository._rollback_audio_upload()
+
+    assert unlink_attempts == 2
+    assert repository._audio_publication is None
+    assert not destination.exists()
+
+
+@pytest.mark.asyncio
+async def test_rollback_never_unlinks_replacement_after_publication_unlink_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retry that ignores the retained inode identity can delete a replacement."""
+    body = b"synthetic-webm"
+    staged_path = tmp_path / "publication-replacement.tmp"
+    destination = tmp_path / "media" / "session-1" / "attempt-1-upload-1.webm"
+    destination.parent.mkdir(parents=True)
+    publication = publish_staged_audio(_stage(staged_path, body), destination)
+    original_unlink = os.unlink
+    swapped = False
+
+    def replace_then_fail(name, *args, **kwargs):
+        nonlocal swapped
+        if name == destination.name and not swapped:
+            swapped = True
+            original_unlink(name, *args, **kwargs)
+            replacement_fd = os.open(
+                destination.name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=kwargs["dir_fd"],
+            )
+            with os.fdopen(replacement_fd, "wb") as replacement:
+                replacement.write(b"replacement")
+            raise OSError("/private/destination-target")
+        return original_unlink(name, *args, **kwargs)
+
+    class RolledBackSession:
+        async def rollback(self) -> None:
+            return None
+
+    monkeypatch.setattr(os, "unlink", replace_then_fail)
+    repository = ConversationalSessionRepository(RolledBackSession())
+    repository._audio_publication = publication
+
+    with pytest.raises(ConversationalRepositoryError, match="coach_attempt_upload_conflict"):
+        await repository._rollback_audio_upload()
+
+    assert swapped is True
+    assert destination.read_bytes() == b"replacement"
 
 
 @pytest.mark.asyncio

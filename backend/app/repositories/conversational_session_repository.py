@@ -56,6 +56,9 @@ from ..services.coach_conversational_contracts import (
 )
 
 
+_AUDIO_PUBLICATION_COMPENSATION_ATTEMPTS = 2
+
+
 class ConversationalRepositoryError(RuntimeError):
     """Base class for stable repository contract failures."""
 
@@ -648,14 +651,17 @@ class ConversationalSessionRepository:
         compensation_failed = False
         publication = self._audio_publication
         if publication is not None:
-            try:
-                publication.compensate()
-            except BaseException as error:
-                compensation_failed = True
-                if propagated_error is None and not isinstance(error, Exception):
-                    propagated_error = error
-            else:
-                self._audio_publication = None
+            for _ in range(_AUDIO_PUBLICATION_COMPENSATION_ATTEMPTS):
+                try:
+                    publication.compensate()
+                except BaseException as error:
+                    compensation_failed = True
+                    if propagated_error is None and not isinstance(error, Exception):
+                        propagated_error = error
+                else:
+                    self._audio_publication = None
+                    compensation_failed = False
+                    break
         if propagated_error is not None:
             raise propagated_error
         if rollback_failed or compensation_failed:
