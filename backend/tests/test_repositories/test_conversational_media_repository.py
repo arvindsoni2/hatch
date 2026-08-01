@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 from io import BytesIO
 from pathlib import Path
@@ -96,6 +97,28 @@ def _stage(path: Path, body: bytes, mime_type: str = "audio/webm") -> SimpleName
         byte_size=len(body),
         mime_type=mime_type,
     )
+
+
+def _request_hash(
+    *, content_sha256: str, byte_size: int, mime_type: str = "audio/webm"
+) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "attempt_id": "attempt-1",
+                "byte_size": byte_size,
+                "content_sha256": content_sha256,
+                "contract_version": "coach_attempt_audio_upload_v1",
+                "mime_type": mime_type,
+                "session_id": "session-1",
+                "upload_id": "upload-1",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -198,6 +221,140 @@ async def test_persist_audio_upload_rejects_changed_hash_and_removes_staged_file
     assert upload_count == 1
     assert destination.read_bytes() == original
     assert not changed_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_persist_replays_matching_receipt_after_winner_advances_attempt(
+    tmp_path: Path,
+) -> None:
+    """A winner may commit after the initial receipt lookup but before the state fence."""
+    body = b"winner-audio"
+    digest = hashlib.sha256(body).hexdigest()
+    destination = tmp_path / "media" / "session-1" / "attempt-1-upload-1.webm"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(body)
+    attempt = SimpleNamespace(
+        id="attempt-1",
+        session_id="session-1",
+        recording_type="audio",
+        attempt_state="uploaded",
+        audio_uri=str(destination),
+        audio_content_hash=digest,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="temporary",
+    )
+    receipt = SimpleNamespace(
+        attempt_id="attempt-1",
+        upload_id="upload-1",
+        request_hash=_request_hash(content_sha256=digest, byte_size=len(body)),
+        result_state="completed",
+        content_sha256=digest,
+        byte_size=len(body),
+        mime_type="audio/webm",
+        storage_uri=str(destination),
+    )
+
+    class WinnerCommittedBetweenReadsSession:
+        def __init__(self) -> None:
+            self.scalar_values = iter((None, attempt, receipt))
+
+        async def scalar(self, _statement):
+            return next(self.scalar_values)
+
+        async def get(self, _model, _identifier):
+            return SimpleNamespace(
+                experience_version="conversational_v1",
+                status="active",
+                conversation_state="listening",
+                active_recording_id="attempt-1",
+                deletion_state="not_requested",
+            )
+
+    staged_path = tmp_path / "matching-replay.tmp"
+    result = await ConversationalSessionRepository(
+        WinnerCommittedBetweenReadsSession()
+    ).persist_audio_upload(
+        session_id="session-1",
+        attempt_id="attempt-1",
+        upload_id="upload-1",
+        declared_sha256=digest,
+        staged=_stage(staged_path, body),
+        destination=destination,
+    )
+
+    assert result.result == "completed"
+    assert result.content_sha256 == digest
+    assert not staged_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_persist_rejects_changed_receipt_after_winner_advances_attempt(
+    tmp_path: Path,
+) -> None:
+    """Replaying the post-fence receipt without its hash fence accepts changed audio."""
+    original = b"winner-audio"
+    changed = b"changed-audio"
+    original_digest = hashlib.sha256(original).hexdigest()
+    changed_digest = hashlib.sha256(changed).hexdigest()
+    destination = tmp_path / "media" / "session-1" / "attempt-1-upload-1.webm"
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(original)
+    attempt = SimpleNamespace(
+        id="attempt-1",
+        session_id="session-1",
+        recording_type="audio",
+        attempt_state="uploaded",
+        audio_uri=str(destination),
+        audio_content_hash=original_digest,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="temporary",
+    )
+    receipt = SimpleNamespace(
+        attempt_id="attempt-1",
+        upload_id="upload-1",
+        request_hash=_request_hash(
+            content_sha256=original_digest, byte_size=len(original)
+        ),
+        result_state="completed",
+        content_sha256=original_digest,
+        byte_size=len(original),
+        mime_type="audio/webm",
+        storage_uri=str(destination),
+    )
+
+    class WinnerCommittedBetweenReadsSession:
+        def __init__(self) -> None:
+            self.scalar_values = iter((None, attempt, receipt))
+
+        async def scalar(self, _statement):
+            return next(self.scalar_values)
+
+        async def get(self, _model, _identifier):
+            return SimpleNamespace(
+                experience_version="conversational_v1",
+                status="active",
+                conversation_state="listening",
+                active_recording_id="attempt-1",
+                deletion_state="not_requested",
+            )
+
+    staged_path = tmp_path / "changed-replay.tmp"
+    with pytest.raises(
+        ConversationalRepositoryError,
+        match="coach_audio_upload_idempotency_conflict",
+    ):
+        await ConversationalSessionRepository(
+            WinnerCommittedBetweenReadsSession()
+        ).persist_audio_upload(
+            session_id="session-1",
+            attempt_id="attempt-1",
+            upload_id="upload-1",
+            declared_sha256=changed_digest,
+            staged=_stage(staged_path, changed),
+            destination=destination,
+        )
+
+    assert not staged_path.exists()
 
 
 @pytest.mark.asyncio

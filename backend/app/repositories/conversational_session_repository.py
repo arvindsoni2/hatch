@@ -781,6 +781,32 @@ class ConversationalSessionRepository:
             or attempt.audio_retention_policy
             not in {"delete_after_processing", "retain_until_deleted"}
         ):
+            completed = await self._session.scalar(
+                select(InterviewAttemptUpload).where(
+                    InterviewAttemptUpload.attempt_id == attempt_id,
+                    InterviewAttemptUpload.upload_id == upload_id,
+                )
+            )
+            if completed is not None:
+                if completed.request_hash != request_hash:
+                    self._discard_audio_stage(
+                        staged, code="coach_audio_upload_idempotency_conflict"
+                    )
+                if (
+                    completed.result_state == "completed"
+                    and attempt.audio_uri == completed.storage_uri
+                    and Path(completed.storage_uri) == destination
+                    and owned_audio_path_is_file(destination)
+                ):
+                    try:
+                        cleanup_staged_audio(staged)
+                    except CoachMediaError:
+                        raise ConversationalRepositoryError(
+                            "coach_attempt_upload_conflict"
+                        ) from None
+                    return _audio_upload_read(
+                        completed, attempt.audio_retention_state
+                    )
             self._discard_audio_stage(staged, code="coach_attempt_upload_conflict")
 
         retention_state = (
