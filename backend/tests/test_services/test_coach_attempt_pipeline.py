@@ -1,11 +1,14 @@
 """Public contracts for the conversational attempt pipeline."""
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, replace
 from contextlib import asynccontextmanager
 import hashlib
+import json
 from datetime import datetime, timedelta
 from inspect import signature
+from pathlib import Path
+from types import SimpleNamespace
 from typing import get_type_hints
 
 import pytest
@@ -29,6 +32,7 @@ from app.models.coach_session import (
     InterviewAttemptStage,
     InterviewAttemptUpload,
     InterviewSession,
+    InterviewSessionEvent,
     InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
@@ -77,6 +81,55 @@ def _owned_audio(tmp_path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
     source.write_bytes(body)
     monkeypatch.setattr(settings, "HATCH_COACH_MEDIA_ROOT", root)
     return str(source), hashlib.sha256(body).hexdigest()
+
+
+async def _ready_audio_claim(db, monkeypatch: pytest.MonkeyPatch, tmp_path, client_id):
+    session, question = await _active_session(db)
+    claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        claims.append,
+    )
+    service = ConversationCommandService(db)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "begin_answer",
+            0,
+            {"recording_type": "audio", "client_attempt_id": client_id},
+        ),
+    )
+    attempt = await db.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
+    attempt.attempt_state = "uploaded"
+    attempt.audio_uri = audio_uri
+    attempt.audio_content_hash = digest
+    db.add(
+        InterviewAttemptUpload(
+            id=f"{client_id}-upload",
+            attempt_id=attempt.id,
+            upload_id="upload-1",
+            request_hash="request",
+            content_sha256=digest,
+            byte_size=len(b"deterministic test audio"),
+            mime_type="audio/webm",
+            storage_uri=audio_uri,
+            result_state="completed",
+        )
+    )
+    await db.commit()
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "finish_answer",
+            begun.state_version,
+            {"attempt_id": attempt.id, "upload_id": "upload-1"},
+        ),
+    )
+    return session, question, attempt, claims[0]
 
 
 def test_pr3_pipeline_interfaces_are_stable_and_exported() -> None:
@@ -446,6 +499,25 @@ async def test_public_typed_pipeline_loads_immutable_transcript(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
+async def test_fabricated_typed_claim_exposes_no_content_or_stage_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claim = AttemptProcessingClaim("s", "q", "r", "fabricated", "e", 1, "j", datetime.utcnow() + timedelta(seconds=30))
+    async def no_content(_claim): return None
+    monkeypatch.setattr("app.services.coach_attempt_pipeline._load_claim_transcript", no_content)
+    ran = False
+    class Content:
+        name = "content_evaluation"
+        async def run(self, _context):
+            nonlocal ran
+            ran = True
+            return StageResult(self.name, "completed", None, None, False, 1, 0)
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stage_dependency_missing"):
+        await run_attempt_pipeline(claim, (Content(),))
+    assert ran is False
+
+
+@pytest.mark.asyncio
 async def test_stale_claim_preflight_calls_no_provider_and_mutates_nothing(db_session, monkeypatch: pytest.MonkeyPatch) -> None:
     session, _ = await _active_session(db_session)
     claims: list[AttemptProcessingClaim] = []
@@ -556,3 +628,410 @@ async def test_audio_speech_failure_is_independent_after_immutable_transcript(
     await db_session.refresh(attempt)
     assert attempt.attempt_state == "unavailable" and attempt.current_transcript_version_id is not None
     assert states["speech_analysis"] == ("unavailable", "speech_analysis_unavailable")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_failure", ("hash", "root", "replacement"))
+async def test_media_integrity_error_terminalises_invalid_without_acceptance(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    media_failure: str,
+) -> None:
+    session, question, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, f"invalid-media-{media_failure}"
+    )
+    audio_path = Path(attempt.audio_uri or "")
+    if media_failure == "hash":
+        audio_path.write_bytes(b"tampered-audio")
+    elif media_failure == "root":
+        monkeypatch.setattr(
+            settings, "HATCH_COACH_MEDIA_ROOT", tmp_path / "different-root"
+        )
+    else:
+        outside = tmp_path / "replacement.webm"
+        outside.write_bytes(b"replacement-audio")
+        audio_path.unlink()
+        audio_path.symlink_to(outside)
+    before = (
+        session.state_version,
+        session.activity_version,
+        session.event_version,
+        await db_session.scalar(select(func.count(InterviewSessionEvent.id))),
+    )
+    provider_calls = 0
+
+    class Provider:
+        def transcribe(self, _path):
+            nonlocal provider_calls
+            provider_calls += 1
+            pytest.fail("invalid media must fail before provider access")
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claim, session_factory=session_factory, transcriber_factory=Provider
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(question)
+    await db_session.refresh(attempt)
+    evaluation = await db_session.get(
+        InterviewAttemptEvaluation, claim.evaluation_version_id
+    )
+    job = await db_session.get(AsyncJob, claim.job_id)
+    stages = (
+        await db_session.scalars(
+            select(InterviewAttemptStage).where(
+                InterviewAttemptStage.evaluation_version_id
+                == claim.evaluation_version_id
+            )
+        )
+    ).all()
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent)
+            .where(InterviewSessionEvent.session_id == session.id)
+            .order_by(InterviewSessionEvent.sequence_number)
+        )
+    ).all()
+
+    assert provider_calls == 0
+    assert evaluation is not None and evaluation.state == "invalid"
+    assert attempt.attempt_state == attempt.evaluation_state == "invalid"
+    assert attempt.current_evaluation_version_id == claim.evaluation_version_id
+    assert attempt.current_transcript_version_id is None
+    assert question.accepted_recording_id is None
+    assert session.status == session.conversation_state == "failed"
+    assert session.state_version == before[0] + 1
+    assert session.activity_version == before[1] + 1
+    assert session.event_version == before[2] + 1
+    assert len(events) == before[3] + 1
+    terminal_event = events[-1]
+    assert (
+        terminal_event.event_type,
+        terminal_event.state_before,
+        terminal_event.state_after,
+        terminal_event.state_version,
+        terminal_event.payload_json,
+    ) == (
+        "attempt_processing_failed",
+        "processing_answer",
+        "failed",
+        session.state_version,
+        {"state": "invalid", "reason": "invalid_audio"},
+    )
+    assert job is not None and job.status == "done"
+    assert json.loads(job.result_json or "null") == {"status": "invalid"}
+    stage_states = {
+        stage.stage_name: (stage.stage_state, stage.last_error_code)
+        for stage in stages
+    }
+    assert stage_states["audio_persist"] == ("unavailable", "invalid_audio")
+    assert stage_states["audio_persist"][0] != "completed"
+
+
+@pytest.mark.asyncio
+async def test_lost_generic_job_ownership_rolls_back_all_worker_mutations(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    session, _question, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "lost-job"
+    )
+    evaluation = await db_session.get(
+        InterviewAttemptEvaluation, claim.evaluation_version_id
+    )
+    job = await db_session.get(AsyncJob, claim.job_id)
+    stages = (
+        await db_session.scalars(
+            select(InterviewAttemptStage).where(
+                InterviewAttemptStage.evaluation_version_id
+                == claim.evaluation_version_id
+            )
+        )
+    ).all()
+    assert evaluation is not None and job is not None
+    before_session = (
+        session.status,
+        session.conversation_state,
+        session.state_version,
+        session.activity_version,
+        session.event_version,
+    )
+    before_attempt = (
+        attempt.attempt_state,
+        attempt.evaluation_state,
+        attempt.current_transcript_version_id,
+        attempt.current_evaluation_version_id,
+        attempt.speech_metrics,
+    )
+    before_evaluation = (
+        evaluation.state,
+        evaluation.completed_at,
+        evaluation.diagnostics_json,
+    )
+    before_stages = {
+        stage.id: (
+            stage.stage_state,
+            stage.last_error_code,
+            stage.completed_at,
+            stage.source_transcript_version_id,
+        )
+        for stage in stages
+    }
+    before_events = await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id))
+    )
+    real_execute = db_session.execute
+
+    async def lose_job_update(statement, *args, **kwargs):
+        table = getattr(statement, "table", None)
+        if getattr(table, "name", None) == "async_jobs":
+            return SimpleNamespace(rowcount=0)
+        return await real_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db_session, "execute", lose_job_update)
+
+    class Transcriber:
+        def transcribe(self, _path):
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "verified answer", "en", [WordTimestamp("verified", 0, 0.2)]
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+        await _process_attempt_claim(
+            claim, session_factory=session_factory, transcriber_factory=Transcriber
+        )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    await db_session.refresh(evaluation)
+    await db_session.refresh(job)
+    for stage in stages:
+        await db_session.refresh(stage)
+    assert (
+        session.status,
+        session.conversation_state,
+        session.state_version,
+        session.activity_version,
+        session.event_version,
+    ) == before_session
+    assert (
+        attempt.attempt_state,
+        attempt.evaluation_state,
+        attempt.current_transcript_version_id,
+        attempt.current_evaluation_version_id,
+        attempt.speech_metrics,
+    ) == before_attempt
+    assert (
+        evaluation.state,
+        evaluation.completed_at,
+        evaluation.diagnostics_json,
+    ) == before_evaluation
+    assert {
+        stage.id: (
+            stage.stage_state,
+            stage.last_error_code,
+            stage.completed_at,
+            stage.source_transcript_version_id,
+        )
+        for stage in stages
+    } == before_stages
+    assert job.status == "pending" and job.result_json is None
+    assert await db_session.scalar(select(func.count(InterviewSessionEvent.id))) == before_events
+    assert await db_session.scalar(
+        select(func.count(InterviewTranscriptVersion.id)).where(
+            InterviewTranscriptVersion.recording_id == attempt.id
+        )
+    ) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "authority_mismatch",
+    ("terminal_job", "wrong_job_type", "session_status", "experience", "question"),
+)
+async def test_incomplete_worker_authority_fence_calls_no_provider(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    authority_mismatch: str,
+) -> None:
+    session, _question, _attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, f"fence-{authority_mismatch}"
+    )
+    job = await db_session.get(AsyncJob, claim.job_id)
+    assert job is not None
+    if authority_mismatch == "terminal_job":
+        job.status = "done"
+    elif authority_mismatch == "wrong_job_type":
+        job.type = "coach_report"
+    elif authority_mismatch == "session_status":
+        session.status = "failed"
+    elif authority_mismatch == "experience":
+        session.experience_version = "legacy_v1"
+    else:
+        session.active_question_id = None
+    await db_session.commit()
+    provider_calls = 0
+
+    class Provider:
+        def transcribe(self, _path):
+            nonlocal provider_calls
+            provider_calls += 1
+            pytest.fail("stale authority must fail before provider access")
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+        await _process_attempt_claim(
+            claim, session_factory=session_factory, transcriber_factory=Provider
+        )
+    assert provider_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_observation", ("empty_text", "empty_words"))
+async def test_missing_speech_observation_is_unavailable_without_synthetic_metrics(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    missing_observation: str,
+) -> None:
+    _session, _question, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, f"speech-{missing_observation}"
+    )
+
+    class Transcriber:
+        calls = 0
+
+        def transcribe(self, _path):
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return TranscriptionResult(
+                    " " if missing_observation == "empty_text" else "observed",
+                    "en",
+                    []
+                    if missing_observation == "empty_words"
+                    else [WordTimestamp("observed", 0, 0.2)],
+                )
+            return TranscriptionResult(
+                "content transcript", "en", [WordTimestamp("content", 0, 0.2)]
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claim, session_factory=session_factory, transcriber_factory=Transcriber
+    )
+    await db_session.refresh(attempt)
+    speech_stage = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id,
+            InterviewAttemptStage.stage_name == "speech_analysis",
+        )
+    )
+    assert speech_stage is not None
+    assert (
+        speech_stage.stage_state,
+        speech_stage.last_error_code,
+        attempt.speech_metrics,
+    ) == ("unavailable", "speech_analysis_unavailable", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fabrication",
+    ("transcript", "stale_job", "deadline", "claim_token", "processing_contract"),
+)
+async def test_real_db_fabricated_typed_claim_loads_no_content_or_stage(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    fabrication: str,
+) -> None:
+    session, _question = await _active_session(db_session)
+    claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        claims.append,
+    )
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "begin_answer",
+            0,
+            {"recording_type": "text", "client_attempt_id": f"typed-{fabrication}"},
+        ),
+    )
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "finish_answer",
+            begun.state_version,
+            {"attempt_id": begun.active_attempt_id, "transcript": "private content"},
+        ),
+    )
+    claim = claims[0]
+    if fabrication == "transcript":
+        claim = replace(claim, transcript_version_id="fabricated-transcript")
+    elif fabrication == "stale_job":
+        job = await db_session.get(AsyncJob, claim.job_id)
+        assert job is not None
+        job.status = "done"
+        await db_session.commit()
+    elif fabrication == "deadline":
+        claim = replace(claim, deadline_at=claim.deadline_at + timedelta(seconds=1))
+    else:
+        evaluation = await db_session.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        assert evaluation is not None
+        diagnostics = dict(evaluation.diagnostics_json or {})
+        processing_claim = dict(diagnostics["processing_claim"])
+        if fabrication == "claim_token":
+            processing_claim["claim_token"] = "replacement-token"
+        else:
+            processing_claim["processing_contract_version"] = "replacement_contract"
+        evaluation.diagnostics_json = {
+            **diagnostics,
+            "processing_claim": processing_claim,
+        }
+        await db_session.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    monkeypatch.setattr("app.database.AsyncSessionLocal", session_factory)
+    stage_calls = 0
+
+    class Content:
+        name = "content_evaluation"
+
+        async def run(self, _context):
+            nonlocal stage_calls
+            stage_calls += 1
+            pytest.fail("fabricated authority must expose no transcript content")
+
+    with pytest.raises(
+        AttemptPipelineError, match="coach_attempt_stage_dependency_missing"
+    ):
+        await run_attempt_pipeline(claim, (Content(),))
+    assert stage_calls == 0

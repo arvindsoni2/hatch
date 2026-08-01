@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import logging
+import json
 from pathlib import Path
 from datetime import datetime
 from typing import Literal, Mapping, Protocol, Sequence
@@ -17,6 +18,7 @@ from ..repositories.conversational_session_repository import (
 )
 from ..models.async_job import AsyncJob
 from ..config import settings
+from .coach_media_storage import CoachMediaError
 from ..models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
@@ -157,34 +159,51 @@ async def _process_attempt_claim(
         attempt = await db.get(SessionRecording, claim.recording_id)
         evaluation = await db.get(InterviewAttemptEvaluation, claim.evaluation_version_id)
         session = await db.get(InterviewSession, claim.session_id)
+        job = await db.get(AsyncJob, claim.job_id)
         if (
             attempt is None or evaluation is None or session is None
+            or job is None or job.status not in {"pending", "running"}
+            or session.status != "active"
+            or session.experience_version != "conversational_v1"
             or session.conversation_state != "processing_answer"
             or session.deletion_state != "not_requested"
             or session.active_recording_id != claim.recording_id
+            or session.active_question_id != claim.question_id
             or attempt.question_id != claim.question_id
             or attempt.async_job_id != claim.job_id
             or evaluation.async_job_id != claim.job_id
             or evaluation.state != "pending"
+            or job.type != "coach_attempt_processing"
         ):
             raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
 
-        async def finish(result: AttemptProcessingResult) -> None:
+        async def finish(result: AttemptProcessingResult, *, invalid_media: bool = False) -> None:
             """Fence generic-job ownership and attempt terminalisation together."""
             job_change = await db.execute(
                 update(AsyncJob)
                 .where(AsyncJob.id == claim.job_id, AsyncJob.status.in_(("pending", "running")))
-                .values(status="done", result_json='{"status":"unavailable"}', error=None)
+                .values(
+                    status="done",
+                    result_json=json.dumps({"status": "invalid" if invalid_media else result.evaluation_state}),
+                    error=None,
+                    updated_at=datetime.utcnow(),
+                )
             )
             if job_change.rowcount != 1:
                 await db.rollback()
                 raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
-            if not await repository.finalise_attempt_processing(claim=claim, result=result):
+            finalised = (
+                await repository.finalise_invalid_attempt_media(claim=claim)
+                if invalid_media
+                else await repository.finalise_attempt_processing(claim=claim, result=result)
+            )
+            if not finalised:
                 await db.rollback()
                 raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
             await db.commit()
         transcript_id = claim.transcript_version_id
         reason = "coach_evaluation_unavailable"
+        media_invalid = False
         speech_unavailable = False
         stages = (await db.scalars(select(InterviewAttemptStage).where(
             InterviewAttemptStage.recording_id == claim.recording_id,
@@ -216,13 +235,21 @@ async def _process_attempt_claim(
                     except Exception:
                         speech_transcription = None
                     transcription = transcriber_factory().transcribe(str(lease.path))
+            except CoachMediaError:
+                transcription = None
+                reason = "invalid_audio"
+                media_invalid = True
             except Exception:  # provider detail must not enter durable diagnostics
                 transcription = None
                 reason = "transcription_unavailable"
             if transcription is not None and not transcription.text.strip():
                 transcription = None
                 reason = "transcription_unavailable"
-            if speech_transcription is None:
+            if (
+                speech_transcription is None
+                or not speech_transcription.text.strip()
+                or not speech_transcription.words
+            ):
                 speech_unavailable = True
                 metrics = None
                 words: list[dict[str, object]] = []
@@ -238,8 +265,8 @@ async def _process_attempt_claim(
             if transcription is None:
                 for stage in stages:
                     if stage.stage_name == "audio_persist":
-                        stage.stage_state = "completed"
-                        stage.last_error_code = None
+                        stage.stage_state = "unavailable" if media_invalid else "completed"
+                        stage.last_error_code = "invalid_audio" if media_invalid else None
                         stage.completed_at = datetime.utcnow()
                     elif stage.stage_name == "transcription":
                         stage.stage_state = "unavailable"
@@ -256,8 +283,11 @@ async def _process_attempt_claim(
                         stage.stage_state = "not_applicable"
                         stage.last_error_code = None
                         stage.completed_at = datetime.utcnow()
-                result = AttemptProcessingResult("unavailable", {"answer_level": "not_assessed"}, None, {"reason": reason, "execution_mode": "deterministic_stub"})
-                await finish(result)
+                result = AttemptProcessingResult(
+                    "unavailable", {"answer_level": "not_assessed"}, None,
+                    {"reason": reason, "execution_mode": "deterministic_stub"},
+                )
+                await finish(result, invalid_media=media_invalid)
                 return
             transcript = await repository.create_worker_transcript_version(
                 recording_id=claim.recording_id, transcript=transcription.text,
@@ -359,11 +389,91 @@ async def _load_claim_transcript(claim: AttemptProcessingClaim) -> str | None:
     if claim.transcript_version_id is None:
         return None
     from ..database import AsyncSessionLocal
+    from ..repositories.conversational_session_repository import (
+        ConversationalSessionRepository,
+    )
 
     async with AsyncSessionLocal() as db:
-        transcript = await db.scalar(select(InterviewTranscriptVersion).where(
-            InterviewTranscriptVersion.id == claim.transcript_version_id,
-            InterviewTranscriptVersion.recording_id == claim.recording_id,
-            InterviewTranscriptVersion.processing_generation == claim.processing_generation,
-        ))
+        repository = ConversationalSessionRepository(db)
+        snapshot = await repository.get_attempt_processing_snapshot(
+            recording_id=claim.recording_id,
+            processing_generation=claim.processing_generation,
+        )
+        if snapshot is None or snapshot.claim != claim:
+            return None
+        fence = await repository._get_attempt_processing_fence(claim)
+        if (
+            fence is None
+            or not fence.claim_token
+            or fence.processing_contract_version != "coach_processing_v1"
+            or fence.source_transcript_version_id != claim.transcript_version_id
+            or fence.expected_audio_content_hash is not None
+        ):
+            return None
+        stages = (
+            await db.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.recording_id == claim.recording_id,
+                    InterviewAttemptStage.evaluation_version_id
+                    == claim.evaluation_version_id,
+                    InterviewAttemptStage.job_id == claim.job_id,
+                    InterviewAttemptStage.expected_processing_generation
+                    == claim.processing_generation,
+                    InterviewAttemptStage.job_deadline_at == claim.deadline_at,
+                )
+            )
+        ).all()
+        required_stages = {
+            "audio_persist", "transcription", "speech_analysis",
+            "content_evaluation", "evidence_grounding", "follow_up_decision",
+            "coaching_enrichment", "audio_cleanup",
+        }
+        transcript_bound = {
+            "content_evaluation", "evidence_grounding", "follow_up_decision",
+            "coaching_enrichment",
+        }
+        if (
+            len(stages) != 8
+            or {stage.stage_name for stage in stages} != required_stages
+            or any(stage.claim_token != fence.claim_token for stage in stages)
+            or any(
+                stage.source_transcript_version_id != claim.transcript_version_id
+                for stage in stages if stage.stage_name in transcript_bound
+            )
+            or any(
+                stage.source_transcript_version_id is not None
+                for stage in stages if stage.stage_name not in transcript_bound
+            )
+        ):
+            return None
+        transcript = await db.scalar(
+            select(InterviewTranscriptVersion)
+            .join(SessionRecording, SessionRecording.id == InterviewTranscriptVersion.recording_id)
+            .join(InterviewAttemptEvaluation, InterviewAttemptEvaluation.id == claim.evaluation_version_id)
+            .join(InterviewSession, InterviewSession.id == SessionRecording.session_id)
+            .join(AsyncJob, AsyncJob.id == claim.job_id)
+            .where(
+                InterviewTranscriptVersion.id == claim.transcript_version_id,
+                InterviewTranscriptVersion.recording_id == claim.recording_id,
+                InterviewTranscriptVersion.processing_generation == claim.processing_generation,
+                SessionRecording.session_id == claim.session_id,
+                SessionRecording.question_id == claim.question_id,
+                SessionRecording.current_transcript_version_id == claim.transcript_version_id,
+                SessionRecording.processing_generation == claim.processing_generation,
+                SessionRecording.async_job_id == claim.job_id,
+                SessionRecording.attempt_state == "pending_processing",
+                InterviewAttemptEvaluation.recording_id == claim.recording_id,
+                InterviewAttemptEvaluation.transcript_version_id == claim.transcript_version_id,
+                InterviewAttemptEvaluation.async_job_id == claim.job_id,
+                InterviewAttemptEvaluation.state == "pending",
+                InterviewSession.active_question_id == claim.question_id,
+                InterviewSession.active_recording_id == claim.recording_id,
+                InterviewSession.conversation_state == "processing_answer",
+                InterviewSession.status == "active",
+                InterviewSession.experience_version == "conversational_v1",
+                InterviewSession.deletion_state == "not_requested",
+                AsyncJob.type == "coach_attempt_processing",
+                AsyncJob.status.in_(("pending", "running")),
+            )
+        )
         return transcript.transcript if transcript is not None else None

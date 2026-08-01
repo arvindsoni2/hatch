@@ -2285,6 +2285,191 @@ class ConversationalSessionRepository:
             return False
         return True
 
+    async def finalise_invalid_attempt_media(
+        self, *, claim: AttemptProcessingClaim, reason: str = "invalid_audio"
+    ) -> bool:
+        """Fence invalid media as a terminal, non-acceptable attempt."""
+        if reason != "invalid_audio":
+            return False
+        try:
+            async with self._session.begin_nested():
+                if datetime.utcnow() > claim.deadline_at:
+                    raise _StaleFinalisation
+                fence = await self._get_attempt_processing_fence(claim)
+                if (
+                    fence is None
+                    or fence.expected_audio_content_hash is None
+                    or fence.source_transcript_version_id is not None
+                    or fence.processing_contract_version != "coach_processing_v1"
+                ):
+                    raise _StaleFinalisation
+                evaluation = await self._session.get(
+                    InterviewAttemptEvaluation, claim.evaluation_version_id
+                )
+                expected_claim = {
+                    "processing_generation": claim.processing_generation,
+                    "job_deadline_at": claim.deadline_at.isoformat(),
+                    "source_audio_content_hash": fence.expected_audio_content_hash,
+                    "source_transcript_version_id": fence.source_transcript_version_id,
+                    "expected_session_state_version": fence.expected_session_state_version,
+                    "processing_contract_version": fence.processing_contract_version,
+                    "claim_token": fence.claim_token,
+                }
+                if (
+                    evaluation is None
+                    or (evaluation.diagnostics_json or {}).get("processing_claim") != expected_claim
+                ):
+                    raise _StaleFinalisation
+                stages = (
+                    await self._session.scalars(
+                        select(InterviewAttemptStage).where(
+                            InterviewAttemptStage.recording_id == claim.recording_id,
+                            InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id,
+                            InterviewAttemptStage.job_id == claim.job_id,
+                            InterviewAttemptStage.expected_processing_generation == claim.processing_generation,
+                            InterviewAttemptStage.claim_token == fence.claim_token,
+                            InterviewAttemptStage.job_deadline_at == claim.deadline_at,
+                        )
+                    )
+                ).all()
+                stage_by_name = {stage.stage_name: stage for stage in stages}
+                required_stages = {
+                    "audio_persist", "transcription", "speech_analysis",
+                    "content_evaluation", "evidence_grounding", "follow_up_decision",
+                    "coaching_enrichment", "audio_cleanup",
+                }
+                transcript_exists = await self._session.scalar(
+                    select(InterviewTranscriptVersion.id).where(
+                        InterviewTranscriptVersion.recording_id == claim.recording_id,
+                        InterviewTranscriptVersion.processing_generation
+                        == claim.processing_generation,
+                    )
+                )
+                downstream = {"content_evaluation", "evidence_grounding", "follow_up_decision", "coaching_enrichment"}
+                terminal = {"completed", "reused", "not_applicable", "unavailable", "failed_terminal"}
+                if (
+                    set(stage_by_name) != required_stages
+                    or len(stages) != 8
+                    or transcript_exists is not None
+                    or any(stage.stage_state not in terminal for stage in stages)
+                    or any(stage.source_transcript_version_id is not None for stage in stages)
+                    or stage_by_name["audio_persist"].stage_state != "unavailable"
+                    or stage_by_name["audio_persist"].last_error_code != reason
+                    or stage_by_name["transcription"].stage_state != "unavailable"
+                    or stage_by_name["transcription"].last_error_code != reason
+                    or any(stage_by_name[name].stage_state in {"completed", "reused"} for name in downstream)
+                ):
+                    raise _StaleFinalisation
+                prior_current_id = await self._session.scalar(
+                    select(SessionRecording.current_evaluation_version_id).where(
+                        SessionRecording.id == claim.recording_id,
+                        SessionRecording.session_id == claim.session_id,
+                        SessionRecording.question_id == claim.question_id,
+                        SessionRecording.async_job_id == claim.job_id,
+                        SessionRecording.processing_generation == claim.processing_generation,
+                        SessionRecording.attempt_state == "pending_processing",
+                    )
+                )
+                if (
+                    prior_current_id is not None
+                    and prior_current_id != claim.evaluation_version_id
+                ):
+                    superseded = await self._session.execute(
+                        update(InterviewAttemptEvaluation)
+                        .where(
+                            InterviewAttemptEvaluation.id == prior_current_id,
+                            InterviewAttemptEvaluation.recording_id == claim.recording_id,
+                            InterviewAttemptEvaluation.state.in_(
+                                ("completed", "unavailable", "invalid", "failed")
+                            ),
+                        )
+                        .values(state="superseded")
+                    )
+                    if superseded.rowcount != 1:
+                        raise _StaleFinalisation
+                attempt_change = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == claim.recording_id,
+                        SessionRecording.session_id == claim.session_id,
+                        SessionRecording.question_id == claim.question_id,
+                        SessionRecording.async_job_id == claim.job_id,
+                        SessionRecording.processing_generation == claim.processing_generation,
+                        SessionRecording.attempt_state == "pending_processing",
+                        SessionRecording.evaluation_state == "pending",
+                        SessionRecording.recording_type == "audio",
+                        SessionRecording.audio_content_hash == fence.expected_audio_content_hash,
+                        SessionRecording.current_transcript_version_id.is_(None),
+                    )
+                    .values(
+                        attempt_state="invalid", evaluation_state="invalid",
+                        evaluation_json=json.dumps({"answer_level": "not_assessed"}),
+                        current_evaluation_version_id=claim.evaluation_version_id,
+                        async_job_id=None, processing_completed_at=datetime.utcnow(),
+                    )
+                )
+                evaluation_change = await self._session.execute(
+                    update(InterviewAttemptEvaluation)
+                    .where(
+                        InterviewAttemptEvaluation.id == claim.evaluation_version_id,
+                        InterviewAttemptEvaluation.recording_id == claim.recording_id,
+                        InterviewAttemptEvaluation.async_job_id == claim.job_id,
+                        InterviewAttemptEvaluation.state == "pending",
+                        InterviewAttemptEvaluation.transcript_version_id.is_(None),
+                        InterviewAttemptEvaluation.diagnostics_json
+                        == {"processing_claim": expected_claim},
+                    )
+                    .values(
+                        state="invalid",
+                        diagnostics_json={
+                            "processing_claim": expected_claim,
+                            "result": {"reason": reason},
+                        },
+                        completed_at=datetime.utcnow(),
+                    )
+                )
+                session_change = await self._session.execute(
+                    update(InterviewSession)
+                    .where(
+                        InterviewSession.id == claim.session_id,
+                        InterviewSession.status == "active",
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.conversation_state == "processing_answer",
+                        InterviewSession.active_question_id == claim.question_id,
+                        InterviewSession.active_recording_id == claim.recording_id,
+                        InterviewSession.deletion_state == "not_requested",
+                    )
+                    .values(
+                        status="failed",
+                        conversation_state="failed",
+                        state_version=InterviewSession.state_version + 1,
+                        activity_version=InterviewSession.activity_version + 1,
+                        last_activity_at=datetime.utcnow(),
+                    )
+                    .returning(InterviewSession.state_version)
+                )
+                state_version = session_change.scalar_one_or_none()
+                if attempt_change.rowcount != 1 or evaluation_change.rowcount != 1 or state_version is None:
+                    raise _StaleFinalisation
+                await self.append_session_events(
+                    session_id=claim.session_id,
+                    events=(
+                        SessionEventInput(
+                            event_type="attempt_processing_failed",
+                            actor_type="worker",
+                            state_version=state_version,
+                            state_before="processing_answer",
+                            state_after="failed",
+                            question_id=claim.question_id,
+                            recording_id=claim.recording_id,
+                            payload_json={"state": "invalid", "reason": reason},
+                        ),
+                    ),
+                )
+        except _StaleFinalisation:
+            return False
+        return True
+
     async def accept_attempt(
         self,
         *,
