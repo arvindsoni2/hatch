@@ -1,4 +1,5 @@
 """JobPilot FastAPI application entry point."""
+
 from __future__ import annotations
 
 import json
@@ -77,6 +78,7 @@ logger = logging.getLogger("jobpilot")
 
 # ──────────────────────── Lifespan ────────────────────────
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI lifespan: initialise database and start scheduler on startup,
@@ -92,6 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from sqlalchemy import update as _sa_update  # noqa: PLC0415
     from .models.async_job import AsyncJob as _AsyncJob  # noqa: PLC0415
     from .models.application import Application as _Application  # noqa: PLC0415
+
     async with AsyncSessionLocal() as _db:
         _r = await _db.execute(
             _sa_update(_AsyncJob)
@@ -150,6 +153,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     digest_svc = None
     if settings.DIGEST_ENABLED:
         from .services.digest_service import DigestService  # noqa: PLC0415
+
         digest_svc = DigestService(claude_client)
 
     scheduler = create_scheduler(
@@ -169,20 +173,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     # ── Agentic orchestrator ──────────────────────────────────────────
-    orchestrator = AgentOrchestrator(db_factory=AsyncSessionLocal) if ai_configured else None
+    orchestrator = (
+        AgentOrchestrator(db_factory=AsyncSessionLocal) if ai_configured else None
+    )
     if orchestrator is not None:
         orchestrator.start()
     app.state.orchestrator = orchestrator
-    logger.info("Agent orchestrator %s.", "started" if orchestrator else "disabled until AI setup")
+    logger.info(
+        "Agent orchestrator %s.",
+        "started" if orchestrator else "disabled until AI setup",
+    )
 
     # ── Startup context assertion (llamacpp only) ─────────────────
     try:
         from .agents.tools.context_checker import assert_context_budgets  # noqa: PLC0415
         from .agents.tools.profile_loader import load_profile  # noqa: PLC0415
+
         _profile = load_profile()
         await assert_context_budgets(_profile.llm)
     except Exception:
-        logger.debug("Context budget check skipped (profile not loaded or non-llamacpp).")
+        logger.debug(
+            "Context budget check skipped (profile not loaded or non-llamacpp)."
+        )
 
     try:
         yield  # Application running
@@ -198,6 +210,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 # ──────────────────────── App Factory ────────────────────────
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
@@ -387,10 +400,7 @@ def _conversational_create_discriminator(
             pass
         else:
             if isinstance(possible_json, Mapping):
-                return (
-                    possible_json.get("experience_version")
-                    == "conversational_v1"
-                )
+                return possible_json.get("experience_version") == "conversational_v1"
     return _single_conversational_form_discriminator(raw_body)
 
 
@@ -484,6 +494,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._buckets[client] = [t for t in bucket if t > window_start]
         if len(self._buckets[client]) >= self._limit:
             from fastapi.responses import JSONResponse  # noqa: PLC0415
+
             return JSONResponse({"detail": "Rate limit exceeded"}, status_code=429)
         self._buckets[client].append(now)
         return await call_next(request)
@@ -513,6 +524,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             auth = request.headers.get("Authorization", "")
             if auth != f"Bearer {self._token}":
                 from fastapi.responses import JSONResponse  # noqa: PLC0415
+
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         return await call_next(request)
 
@@ -580,14 +592,21 @@ class AppLockMiddleware(BaseHTTPMiddleware):
             or path.startswith("/static/")
         ):
             return await call_next(request)
-        should_protect = path.startswith("/api/") or path in {"/docs", "/redoc", "/openapi.json"}
+        should_protect = path.startswith("/api/") or path in {
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+        }
         if not should_protect:
             return await call_next(request)
         from fastapi.responses import JSONResponse  # noqa: PLC0415
         from .services.app_lock_service import AppLockService  # noqa: PLC0415
         from .services.onboarding_service import OnboardingService  # noqa: PLC0415
+
         token = request.cookies.get(settings.HATCH_APP_SESSION_COOKIE)
-        session_factory = getattr(request.app.state, "app_lock_session_factory", AsyncSessionLocal)
+        session_factory = getattr(
+            request.app.state, "app_lock_session_factory", AsyncSessionLocal
+        )
         async with session_factory() as db:
             lock_service = AppLockService(db)
             session = await lock_service.session(token)
