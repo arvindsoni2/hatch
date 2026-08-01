@@ -1,15 +1,15 @@
 """Atomic persistence primitives for conversational Coach sessions.
 
-Methods in this repository flush but never commit.  Their caller owns the short
-transaction so state, receipts, events, and version pointers succeed or roll
-back together.
+Most methods flush but never commit, so their caller owns the short transaction.
+Audio publication is the exception: its explicit commit method couples database
+durability to filesystem compensation before a response can be returned.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import os
 import re
 import unicodedata
 import uuid
@@ -39,7 +39,14 @@ from ..schemas.coach_conversation import (
     ConversationCommandRequest,
     SAFE_TOKEN_RE,
 )
-from ..services.coach_media_storage import StagedAudio
+from ..services.coach_media_storage import (
+    CoachMediaError,
+    OwnedAudioPublication,
+    StagedAudio,
+    cleanup_staged_audio,
+    owned_audio_path_is_file,
+    publish_staged_audio,
+)
 from ..services.coach_conversational_contracts import (
     AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS,
     EVIDENCE_GROUNDING_CONTRACT,
@@ -612,6 +619,71 @@ class ConversationalSessionRepository:
         if configured_limit < 1:
             raise ValueError("transcript code-point limit must be a positive integer")
         self._max_transcript_characters = configured_limit
+        self._audio_publication: OwnedAudioPublication | None = None
+
+    def _discard_audio_stage(self, staged: StagedAudio, *, code: str) -> None:
+        try:
+            cleanup_staged_audio(staged)
+        except CoachMediaError:
+            code = "coach_attempt_upload_conflict"
+        raise ConversationalRepositoryError(code)
+
+    async def _rollback_audio_upload(self) -> None:
+        rollback_failed = False
+        try:
+            await self._session.rollback()
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            rollback_failed = True
+            try:
+                await self._session.close()
+            except BaseException as close_error:
+                if not isinstance(close_error, Exception):
+                    raise
+        compensation_failed = False
+        publication = self._audio_publication
+        self._audio_publication = None
+        if publication is not None:
+            try:
+                publication.compensate()
+            except BaseException as error:
+                if not isinstance(error, Exception):
+                    raise
+                compensation_failed = True
+        if rollback_failed or compensation_failed:
+            raise ConversationalRepositoryError(
+                "coach_attempt_upload_conflict"
+            ) from None
+
+    async def commit_audio_upload(self) -> None:
+        """Commit the narrow upload transaction or compensate its owned inode."""
+        try:
+            await self._session.commit()
+        except BaseException as error:
+            rollback_error: BaseException | None = None
+            try:
+                await self._rollback_audio_upload()
+            except BaseException as failure:
+                rollback_error = failure
+            if not isinstance(error, Exception):
+                raise
+            if rollback_error is not None and not isinstance(
+                rollback_error, Exception
+            ):
+                raise rollback_error
+            raise ConversationalRepositoryError(
+                "coach_attempt_upload_conflict"
+            ) from None
+        publication = self._audio_publication
+        self._audio_publication = None
+        if publication is not None:
+            try:
+                publication.release()
+            except CoachMediaError:
+                raise ConversationalRepositoryError(
+                    "coach_attempt_upload_conflict"
+                ) from None
 
     async def persist_audio_upload(
         self,
@@ -624,11 +696,9 @@ class ConversationalSessionRepository:
         destination: Path,
     ) -> AttemptAudioUploadRead:
         """Persist one owned audio upload and replay completed duplicates."""
-        temporary_path = staged.temporary_path
         if staged.content_sha256 != declared_sha256:
-            temporary_path.unlink(missing_ok=True)
-            raise ConversationalRepositoryError(
-                "coach_attempt_upload_hash_mismatch"
+            self._discard_audio_stage(
+                staged, code="coach_attempt_upload_hash_mismatch"
             )
         request_hash = _audio_upload_request_hash(
             session_id=session_id,
@@ -651,10 +721,9 @@ class ConversationalSessionRepository:
             )
         )
         if existing is not None:
-            temporary_path.unlink(missing_ok=True)
             if existing.request_hash != request_hash:
-                raise ConversationalRepositoryError(
-                    "coach_audio_upload_idempotency_conflict"
+                self._discard_audio_stage(
+                    staged, code="coach_audio_upload_idempotency_conflict"
                 )
             attempt = await self._session.get(SessionRecording, attempt_id)
             if (
@@ -663,10 +732,17 @@ class ConversationalSessionRepository:
                 or attempt.session_id != session_id
                 or attempt.audio_uri != existing.storage_uri
                 or Path(existing.storage_uri) != destination
-                or not destination.is_file()
-                or destination.is_symlink()
+                or not owned_audio_path_is_file(destination)
             ):
-                raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+                self._discard_audio_stage(
+                    staged, code="coach_attempt_upload_conflict"
+                )
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                raise ConversationalRepositoryError(
+                    "coach_attempt_upload_conflict"
+                ) from None
             return _audio_upload_read(existing, attempt.audio_retention_state)
 
         session_row = await self._session.get(InterviewSession, session_id)
@@ -677,8 +753,7 @@ class ConversationalSessionRepository:
             )
         )
         if session_row is None or attempt is None:
-            temporary_path.unlink(missing_ok=True)
-            raise ConversationalRepositoryError("coach_attempt_upload_missing")
+            self._discard_audio_stage(staged, code="coach_attempt_upload_missing")
         if (
             session_row.experience_version != "conversational_v1"
             or session_row.status != "active"
@@ -692,39 +767,76 @@ class ConversationalSessionRepository:
             or attempt.audio_retention_policy
             not in {"delete_after_processing", "retain_until_deleted"}
         ):
-            temporary_path.unlink(missing_ok=True)
-            raise ConversationalRepositoryError("coach_attempt_upload_conflict")
-        if (
-            not temporary_path.is_file()
-            or temporary_path.is_symlink()
-            or destination.exists()
-            or destination.is_symlink()
-        ):
-            temporary_path.unlink(missing_ok=True)
-            raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+            self._discard_audio_stage(staged, code="coach_attempt_upload_conflict")
 
         retention_state = (
             "retained"
             if attempt.audio_retention_policy == "retain_until_deleted"
             else "temporary"
         )
-        moved = False
+        claim_id = str(uuid.uuid4())
         try:
-            os.replace(temporary_path, destination)
-            moved = True
-            row = InterviewAttemptUpload(
-                id=str(uuid.uuid4()),
-                attempt_id=attempt_id,
-                upload_id=upload_id,
-                request_hash=request_hash,
-                content_sha256=declared_sha256,
-                byte_size=staged.byte_size,
-                mime_type=staged.mime_type,
-                storage_uri=str(destination),
-                result_state="completed",
-                completed_at=datetime.utcnow(),
+            inserted = await self._session.execute(
+                sqlite_insert(InterviewAttemptUpload)
+                .values(
+                    id=claim_id,
+                    attempt_id=attempt_id,
+                    upload_id=upload_id,
+                    request_hash=request_hash,
+                    content_sha256=declared_sha256,
+                    byte_size=staged.byte_size,
+                    mime_type=staged.mime_type,
+                    storage_uri=str(destination),
+                    result_state="pending",
+                )
+                .on_conflict_do_nothing(index_elements=("attempt_id", "upload_id"))
+                .returning(InterviewAttemptUpload.id)
             )
-            self._session.add(row)
+            won_claim = inserted.scalar_one_or_none() is not None
+            if not won_claim:
+                await self._session.rollback()
+                duplicate = None
+                for _ in range(5):
+                    duplicate = await self._session.scalar(
+                        select(InterviewAttemptUpload).where(
+                            InterviewAttemptUpload.attempt_id == attempt_id,
+                            InterviewAttemptUpload.upload_id == upload_id,
+                        )
+                    )
+                    if duplicate is not None:
+                        break
+                    await self._session.rollback()
+                    await asyncio.sleep(0)
+                if duplicate is None or duplicate.result_state != "completed":
+                    self._discard_audio_stage(
+                        staged, code="coach_attempt_upload_conflict"
+                    )
+                if duplicate.request_hash != request_hash:
+                    self._discard_audio_stage(
+                        staged, code="coach_audio_upload_idempotency_conflict"
+                    )
+                replay_attempt = await self._session.get(
+                    SessionRecording, attempt_id
+                )
+                if (
+                    replay_attempt is None
+                    or replay_attempt.session_id != session_id
+                    or replay_attempt.audio_uri != duplicate.storage_uri
+                    or Path(duplicate.storage_uri) != destination
+                    or not owned_audio_path_is_file(destination)
+                ):
+                    self._discard_audio_stage(
+                        staged, code="coach_attempt_upload_conflict"
+                    )
+                try:
+                    cleanup_staged_audio(staged)
+                except CoachMediaError:
+                    raise ConversationalRepositoryError(
+                        "coach_attempt_upload_conflict"
+                    ) from None
+                return _audio_upload_read(
+                    duplicate, replay_attempt.audio_retention_state
+                )
             changed = await self._session.execute(
                 update(SessionRecording)
                 .where(
@@ -746,18 +858,46 @@ class ConversationalSessionRepository:
             if changed.rowcount != 1:
                 raise ConversationalRepositoryError("coach_attempt_upload_conflict")
             await self._session.flush()
+            self._audio_publication = publish_staged_audio(staged, destination)
+            completed = await self._session.execute(
+                update(InterviewAttemptUpload)
+                .where(
+                    InterviewAttemptUpload.id == claim_id,
+                    InterviewAttemptUpload.attempt_id == attempt_id,
+                    InterviewAttemptUpload.upload_id == upload_id,
+                    InterviewAttemptUpload.request_hash == request_hash,
+                    InterviewAttemptUpload.result_state == "pending",
+                )
+                .values(result_state="completed", completed_at=datetime.utcnow())
+            )
+            if completed.rowcount != 1:
+                raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+            await self._session.flush()
+            row = await self._session.get(InterviewAttemptUpload, claim_id)
+            assert row is not None
             return _audio_upload_read(row, retention_state)
         except BaseException as error:
-            if moved:
-                destination.unlink(missing_ok=True)
-            temporary_path.unlink(missing_ok=True)
+            rollback_error: BaseException | None = None
             try:
-                await self._session.rollback()
-            except BaseException:
-                pass
-            if isinstance(error, ConversationalRepositoryError):
-                raise
+                await self._rollback_audio_upload()
+            except BaseException as failure:
+                rollback_error = failure
+            if self._audio_publication is None:
+                try:
+                    cleanup_staged_audio(staged)
+                except BaseException as failure:
+                    if rollback_error is None:
+                        rollback_error = failure
             if not isinstance(error, Exception):
+                raise
+            if rollback_error is not None and not isinstance(
+                rollback_error, Exception
+            ):
+                raise rollback_error
+            if (
+                isinstance(error, ConversationalRepositoryError)
+                and rollback_error is None
+            ):
                 raise
             raise ConversationalRepositoryError(
                 "coach_attempt_upload_conflict"

@@ -7,9 +7,13 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.config import settings
+from app.database import AsyncSessionLocal, get_db
+from app.main import app
 from app.models.coach_session import (
     InterviewAttemptUpload,
     InterviewSession,
@@ -189,3 +193,109 @@ async def test_audio_upload_uses_only_configured_media_root(
         path.resolve().is_relative_to(root)
         for path in isolated_media_root.rglob("*")
     )
+
+
+@pytest.mark.asyncio
+async def test_commit_failure_rolls_back_database_and_compensates_published_file(
+    db_session,
+    seeded_listening_audio_attempt,
+    isolated_media_root,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit failure after route return must not orphan published audio."""
+    original_commit = db_session.commit
+    commit_calls = 0
+
+    async def fail_first_commit() -> None:
+        nonlocal commit_calls
+        commit_calls += 1
+        if commit_calls == 1:
+            raise OSError("/private/database-target")
+        await original_commit()
+
+    monkeypatch.setattr(db_session, "commit", fail_first_commit)
+
+    async def committing_dependency():
+        try:
+            yield db_session
+            await db_session.commit()
+        except BaseException:
+            await db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = committing_dependency
+    body = b"synthetic-webm"
+    digest = hashlib.sha256(body).hexdigest()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as committing_client:
+            response = await committing_client.post(
+                _url(),
+                data={"upload_id": "upload-commit", "content_sha256": digest},
+                files={"audio": ("answer.webm", body, "audio/webm")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.app_lock_session_factory = AsyncSessionLocal
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_attempt_upload_conflict"
+    assert response.json()["error"]["details"] == {}
+    assert await _completed_upload_count(db_session) == 0
+    assert not [path for path in isolated_media_root.rglob("*") if path.is_file()]
+    assert "/private" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_upload_close_failure_precedes_publication_and_is_sanitized(
+    db_session,
+    seeded_listening_audio_attempt,
+    isolated_media_root,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing after publication lets close failure roll back only the database."""
+    original_close = StarletteUploadFile.close
+    failed = False
+
+    async def fail_first_close(upload) -> None:
+        nonlocal failed
+        await original_close(upload)
+        if not failed:
+            failed = True
+            raise OSError("/private/upload-target")
+
+    monkeypatch.setattr(StarletteUploadFile, "close", fail_first_close)
+
+    async def committing_dependency():
+        try:
+            yield db_session
+            await db_session.commit()
+        except BaseException:
+            await db_session.rollback()
+            raise
+
+    app.dependency_overrides[get_db] = committing_dependency
+    body = b"synthetic-webm"
+    digest = hashlib.sha256(body).hexdigest()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test",
+        ) as committing_client:
+            response = await committing_client.post(
+                _url(),
+                data={"upload_id": "upload-close", "content_sha256": digest},
+                files={"audio": ("answer.webm", body, "audio/webm")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+        app.state.app_lock_session_factory = AsyncSessionLocal
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_attempt_upload_conflict"
+    assert response.json()["error"]["details"] == {}
+    assert await _completed_upload_count(db_session) == 0
+    assert not [path for path in isolated_media_root.rglob("*") if path.is_file()]
+    assert "/private" not in response.text

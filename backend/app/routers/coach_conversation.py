@@ -32,6 +32,7 @@ from ..services.coach_live_view import CoachLiveViewError, CoachLiveViewService
 from ..services.coach_media_storage import (
     CoachMediaError,
     StagedAudio,
+    cleanup_staged_audio,
     coach_upload_temp_dir,
     resolve_owned_audio_path,
     stream_audio_upload,
@@ -156,6 +157,7 @@ async def upload_attempt_audio(
 ) -> AttemptAudioUploadRead | JSONResponse:
     """Stream and persist one idempotent, attempt-owned browser recording."""
     staged: StagedAudio | None = None
+    audio_closed = False
     try:
         for value, field in (
             (session_id, "session_id"),
@@ -169,10 +171,22 @@ async def upload_attempt_audio(
             max_bytes=settings.HATCH_COACH_MAX_AUDIO_BYTES,
             temp_dir=coach_upload_temp_dir(storage_root),
         )
+        try:
+            await audio.close()
+            audio_closed = True
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                pass
+            return conversation_error_response("coach_attempt_upload_conflict")
         destination = resolve_owned_audio_path(
             storage_root, session_id, attempt_id, upload_id, ".webm"
         )
-        return await ConversationalSessionRepository(db).persist_audio_upload(
+        repository = ConversationalSessionRepository(db)
+        result = await repository.persist_audio_upload(
             session_id=session_id,
             attempt_id=attempt_id,
             upload_id=upload_id,
@@ -180,6 +194,8 @@ async def upload_attempt_audio(
             staged=staged,
             destination=destination,
         )
+        await repository.commit_audio_upload()
+        return result
     except HTTPException:
         return conversation_error_response("coach_attempt_upload_conflict")
     except (CoachMediaError, ConversationalRepositoryError) as error:
@@ -189,5 +205,12 @@ async def upload_attempt_audio(
         return conversation_error_response(code)
     finally:
         if staged is not None:
-            staged.temporary_path.unlink(missing_ok=True)
-        await audio.close()
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                pass
+        if not audio_closed:
+            try:
+                await audio.close()
+            except Exception:
+                pass
