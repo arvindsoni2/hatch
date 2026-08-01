@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,7 +26,10 @@ from app.repositories.conversational_session_repository import (
 )
 from app.services.coach_media_storage import (
     CoachMediaError,
+    OwnedAudioPublication,
+    cleanup_staged_audio,
     coach_upload_temp_dir,
+    publish_staged_audio,
     resolve_owned_audio_path,
     stream_audio_upload,
 )
@@ -396,38 +400,91 @@ async def test_persist_rejects_destination_parent_symlink_swap(
 
 
 @pytest.mark.asyncio
-async def test_cleanup_unlink_failure_remains_sanitized(
-    repository_database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_cleanup_retries_the_owned_inode_after_unlink_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A cleanup OSError must not replace the content-free domain exception."""
-    await _seed_listening_attempt(repository_database)
-    body = b"synthetic-webm"
-    staged_path = tmp_path / "unlink-failure.tmp"
-    staged = _stage(staged_path, body)
-    original_unlink = Path.unlink
+    """Closing a failed lease makes a later cleanup silently leave its inode."""
+    staged = _stage(tmp_path / "cleanup-retry.tmp", b"synthetic-webm")
+    original_unlink = os.unlink
+    failed = False
 
-    def fail_staged_unlink(path: Path, *args, **kwargs):
-        if path == staged_path:
+    def fail_the_owned_unlink(name, *args, **kwargs):
+        nonlocal failed
+        if name == staged.temporary_path.name and not failed:
+            failed = True
             raise OSError("/private/cleanup-target")
-        return original_unlink(path, *args, **kwargs)
+        return original_unlink(name, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", fail_staged_unlink)
-    async with repository_database() as db:
-        with pytest.raises(ConversationalRepositoryError) as raised:
-            await ConversationalSessionRepository(db).persist_audio_upload(
-                session_id="session-1",
-                attempt_id="attempt-1",
-                upload_id="upload-1",
-                declared_sha256="0" * 64,
-                staged=staged,
-                destination=tmp_path / "unused.webm",
-            )
+    monkeypatch.setattr(os, "unlink", fail_the_owned_unlink)
 
-    assert str(raised.value) in {
-        "coach_attempt_upload_hash_mismatch",
-        "coach_attempt_upload_conflict",
-    }
-    assert "/private" not in str(raised.value)
+    with pytest.raises(CoachMediaError, match="coach_attempt_upload_conflict"):
+        cleanup_staged_audio(staged)
+    assert staged.temporary_path.exists()
+
+    cleanup_staged_audio(staged)
+
+    assert failed is True
+    assert not staged.temporary_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_rollback_compensates_published_audio_before_propagating(
+    tmp_path: Path,
+) -> None:
+    """Propagating cancellation before compensation leaves the published inode."""
+    body = b"synthetic-webm"
+    staged_path = tmp_path / "cancelled-rollback.tmp"
+    destination = tmp_path / "media" / "session-1" / "attempt-1-upload-1.webm"
+    destination.parent.mkdir(parents=True)
+
+    publication = publish_staged_audio(_stage(staged_path, body), destination)
+
+    class CancelledRollbackSession:
+        async def rollback(self) -> None:
+            raise asyncio.CancelledError()
+
+        async def close(self) -> None:
+            return None
+
+    repository = ConversationalSessionRepository(CancelledRollbackSession())
+    repository._audio_publication = publication
+
+    with pytest.raises(asyncio.CancelledError):
+        await repository._rollback_audio_upload()
+
+    assert not staged_path.exists()
+    assert not destination.exists()
+
+
+@pytest.mark.asyncio
+async def test_commit_keeps_durable_upload_success_when_lease_release_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reporting a release error as failure contradicts an already committed receipt."""
+    body = b"synthetic-webm"
+    destination = tmp_path / "media" / "session-1" / "attempt-1-upload-1.webm"
+    destination.parent.mkdir(parents=True)
+    publication = publish_staged_audio(
+        _stage(tmp_path / "release-failure.tmp", body), destination
+    )
+    committed = False
+
+    class DurableSession:
+        async def commit(self) -> None:
+            nonlocal committed
+            committed = True
+
+    def fail_release(_publication) -> None:
+        raise CoachMediaError("coach_attempt_upload_conflict")
+
+    monkeypatch.setattr(OwnedAudioPublication, "release", fail_release)
+    repository = ConversationalSessionRepository(DurableSession())
+    repository._audio_publication = publication
+
+    await repository.commit_audio_upload()
+
+    assert committed is True
+    assert destination.read_bytes() == body
 
 
 @pytest.mark.asyncio

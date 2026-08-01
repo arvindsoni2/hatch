@@ -90,14 +90,16 @@ class _OwnedEntry:
             self.unlink_owned()
         except BaseException as error:
             unlink_error = error
+        if unlink_error is not None:
+            # Keep the directory descriptor and inode identity available for a
+            # later compensation attempt. Closing here would make a transient
+            # unlink failure indistinguishable from an already-cleaned entry.
+            if not isinstance(unlink_error, Exception):
+                raise unlink_error
+            raise CoachMediaError("coach_attempt_upload_conflict") from None
         try:
             self.close()
         except BaseException:
-            if unlink_error is None:
-                unlink_error = CoachMediaError("coach_attempt_upload_conflict")
-        if unlink_error is not None:
-            if not isinstance(unlink_error, Exception):
-                raise unlink_error
             raise CoachMediaError("coach_attempt_upload_conflict") from None
 
 

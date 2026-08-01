@@ -630,27 +630,34 @@ class ConversationalSessionRepository:
 
     async def _rollback_audio_upload(self) -> None:
         rollback_failed = False
+        propagated_error: BaseException | None = None
         try:
             await self._session.rollback()
         except BaseException as error:
-            if not isinstance(error, Exception):
-                raise
             rollback_failed = True
+            if not isinstance(error, Exception):
+                propagated_error = error
             try:
                 await self._session.close()
             except BaseException as close_error:
-                if not isinstance(close_error, Exception):
-                    raise
+                if (
+                    propagated_error is None
+                    and not isinstance(close_error, Exception)
+                ):
+                    propagated_error = close_error
         compensation_failed = False
         publication = self._audio_publication
-        self._audio_publication = None
         if publication is not None:
             try:
                 publication.compensate()
             except BaseException as error:
-                if not isinstance(error, Exception):
-                    raise
                 compensation_failed = True
+                if propagated_error is None and not isinstance(error, Exception):
+                    propagated_error = error
+            else:
+                self._audio_publication = None
+        if propagated_error is not None:
+            raise propagated_error
         if rollback_failed or compensation_failed:
             raise ConversationalRepositoryError(
                 "coach_attempt_upload_conflict"
@@ -666,12 +673,12 @@ class ConversationalSessionRepository:
                 await self._rollback_audio_upload()
             except BaseException as failure:
                 rollback_error = failure
-            if not isinstance(error, Exception):
-                raise
             if rollback_error is not None and not isinstance(
                 rollback_error, Exception
             ):
                 raise rollback_error
+            if not isinstance(error, Exception):
+                raise
             raise ConversationalRepositoryError(
                 "coach_attempt_upload_conflict"
             ) from None
@@ -681,9 +688,10 @@ class ConversationalSessionRepository:
             try:
                 publication.release()
             except CoachMediaError:
-                raise ConversationalRepositoryError(
-                    "coach_attempt_upload_conflict"
-                ) from None
+                # The receipt and file are now durable. A best-effort handle
+                # release cannot truthfully turn that completed upload into a
+                # failed client operation.
+                pass
 
     async def persist_audio_upload(
         self,
@@ -882,21 +890,23 @@ class ConversationalSessionRepository:
                 await self._rollback_audio_upload()
             except BaseException as failure:
                 rollback_error = failure
-            if self._audio_publication is None:
-                try:
-                    cleanup_staged_audio(staged)
-                except BaseException as failure:
-                    if rollback_error is None:
-                        rollback_error = failure
-            if not isinstance(error, Exception):
-                raise
+            cleanup_error: BaseException | None = None
+            try:
+                cleanup_staged_audio(staged)
+            except BaseException as failure:
+                cleanup_error = failure
             if rollback_error is not None and not isinstance(
                 rollback_error, Exception
             ):
                 raise rollback_error
+            if cleanup_error is not None and not isinstance(cleanup_error, Exception):
+                raise cleanup_error
+            if not isinstance(error, Exception):
+                raise
             if (
                 isinstance(error, ConversationalRepositoryError)
                 and rollback_error is None
+                and cleanup_error is None
             ):
                 raise
             raise ConversationalRepositoryError(
