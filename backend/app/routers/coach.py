@@ -11,9 +11,14 @@ from typing import Optional
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import UploadFile as FastAPIUploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from ..config import settings
 from ..database import get_db
@@ -250,7 +255,16 @@ async def create_session(
     async job uses its own DB session (not the request session) to avoid accessing
     a closed connection after the HTTP response has been sent.
     """
-    return await queue_coach_session(request, db, svc)
+    try:
+        return await queue_coach_session(request, db, svc)
+    except Exception as error:
+        from ..services.coach_session_plan import SessionPlanError  # noqa: PLC0415
+
+        if not isinstance(error, SessionPlanError):
+            raise
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response(error.code)
 
 
 @router.get("/sessions", response_model=list[SessionListItem])
@@ -299,7 +313,20 @@ async def abandon_session(
     session = await repo.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    await repo.update_session_status(session_id, "abandoned")
+    if session.experience_version == "conversational_v1":
+        from ..repositories.conversational_session_repository import (  # noqa: PLC0415
+            ConversationalSessionRepository,
+        )
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        changed = await ConversationalSessionRepository(
+            db
+        ).abandon_conversational_session(session_id=session_id)
+        if not changed:
+            await db.rollback()
+            return conversation_error_response("coach_conversation_invalid_state")
+    else:
+        await repo.update_session_status(session_id, "abandoned")
     await db.commit()
     return Response(status_code=204)
 
@@ -317,6 +344,12 @@ async def retry_session(
     session = await repo.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response(
+            "coach_conversational_session_retry_unsupported"
+        )
 
     config = dict(session.config or {})
     session_config_keys = set(SessionConfig.model_fields.keys())
@@ -373,8 +406,13 @@ async def skip_question(
     from ..repositories.session_repository import SessionRepository
     from ..services.coach_reconciliation import reconcile_session
 
-    await reconcile_session(db, session_id)
     repo = SessionRepository(db)
+    session = await repo.get_session(session_id)
+    if session is not None and session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
+    await reconcile_session(db, session_id)
     try:
         await repo.record_skip(session_id=session_id, question_id=question_id)
     except LookupError:
@@ -407,6 +445,11 @@ async def submit_answer(
     from ..repositories.session_repository import SessionRepository
     from ..services.coach_reconciliation import reconcile_session
 
+    session = await SessionRepository(db).get_session(session_id)
+    if session is not None and session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
     await reconcile_session(db, session_id)
     async_job = await AsyncJobService.create(db, "submit_answer")
     trace_context = get_telemetry().capture_trace_context()
@@ -499,14 +542,61 @@ async def submit_answer(
 _MAX_AUDIO_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
-@router.post("/sessions/{session_id}/submit-audio", status_code=202)
+class _LegacySubmitAudioForm(BaseModel):
+    """Typed legacy multipart contract, validated only after the experience fence."""
+
+    question_id: str
+    audio: FastAPIUploadFile
+    face_summary: str | None = None
+
+
+def _validate_legacy_submit_audio_form(form) -> _LegacySubmitAudioForm:
+    values = {
+        name: value
+        for name in _LegacySubmitAudioForm.model_fields
+        if (value := form.get(name)) is not None
+        and not (isinstance(value, str) and value == "")
+    }
+    try:
+        return _LegacySubmitAudioForm.model_validate(values)
+    except ValidationError as error:
+        validation_errors = []
+        for validation_error in error.errors(include_url=False):
+            item = dict(validation_error)
+            item["loc"] = ("body", *item["loc"])
+            if item["type"] == "missing":
+                item["input"] = None
+            elif isinstance(item.get("input"), UploadFile):
+                item["input"] = jsonable_encoder(item["input"])
+            validation_errors.append(item)
+        raise RequestValidationError(validation_errors, body=form) from error
+
+
+@router.post(
+    "/sessions/{session_id}/submit-audio",
+    status_code=202,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["question_id", "audio"],
+                        "properties": {
+                            "question_id": {"type": "string"},
+                            "audio": {"type": "string", "format": "binary"},
+                            "face_summary": {"type": "string"},
+                        },
+                    }
+                }
+            },
+        }
+    },
+)
 async def submit_audio(
     session_id: str,
-    question_id: str = Form(...),
-    audio: UploadFile = File(...),
-    face_summary: Optional[str] = Form(
-        default=None
-    ),  # JSON-encoded FaceSummary (Phase D)
+    request: Request,
     db: AsyncSession = Depends(get_db),
     svc: CoachService = Depends(get_coach_service),
 ) -> dict:
@@ -517,30 +607,50 @@ async def submit_audio(
     Poll /api/async-jobs/{job_id} for the AnswerEvaluation result.
     """
     _require_safe_id(session_id, "session_id")
-    _require_safe_id(question_id, "question_id")
-
-    ct = (audio.content_type or "").split(";")[0].strip().lower()
-    if not ct.startswith("audio/"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Audio files only. Got content-type: {ct!r}",
-        )
-
-    audio_bytes = await audio.read()
-    if len(audio_bytes) > _MAX_AUDIO_BYTES:
-        raise HTTPException(status_code=413, detail="Audio file exceeds 50 MB limit")
-
-    # Parse face_summary JSON if provided (Phase D)
-    face_summary_dict: dict | None = None
-    if face_summary:
-        import json as _json  # noqa: PLC0415
-
-        try:
-            face_summary_dict = _json.loads(face_summary)
-        except Exception:
-            logger.warning("submit_audio: could not parse face_summary JSON — ignoring")
 
     from ..repositories.session_repository import SessionRepository
+
+    session = await SessionRepository(db).get_session(session_id)
+    if session is not None and session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
+
+    form = await request.form()
+    try:
+        validated_form = _validate_legacy_submit_audio_form(form)
+        question_id = validated_form.question_id
+        audio = validated_form.audio
+        face_summary = validated_form.face_summary
+        _require_safe_id(question_id, "question_id")
+
+        ct = (audio.content_type or "").split(";")[0].strip().lower()
+        if not ct.startswith("audio/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Audio files only. Got content-type: {ct!r}",
+            )
+
+        audio_bytes = await audio.read()
+        if len(audio_bytes) > _MAX_AUDIO_BYTES:
+            raise HTTPException(
+                status_code=413, detail="Audio file exceeds 50 MB limit"
+            )
+
+        # Parse face_summary JSON if provided (Phase D)
+        face_summary_dict: dict | None = None
+        if isinstance(face_summary, str) and face_summary:
+            import json as _json  # noqa: PLC0415
+
+            try:
+                face_summary_dict = _json.loads(face_summary)
+            except Exception:
+                logger.warning(
+                    "submit_audio: could not parse face_summary JSON — ignoring"
+                )
+    finally:
+        await form.close()
+
     from ..services.coach_reconciliation import reconcile_session
 
     await reconcile_session(db, session_id)
@@ -656,8 +766,15 @@ async def end_session(
     from ..repositories.session_repository import SessionRepository
     from ..services.coach_reconciliation import reconcile_session
 
-    await reconcile_session(db, session_id)
     repository = SessionRepository(db)
+    session = await repository.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.experience_version == "conversational_v1":
+        from .coach_conversation import conversation_error_response  # noqa: PLC0415
+
+        return conversation_error_response("coach_conversational_command_required")
+    await reconcile_session(db, session_id)
     session = await repository.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -897,12 +1014,26 @@ async def get_capabilities() -> dict:
         from ..agents.tools.profile_loader import load_profile  # noqa: PLC0415
 
         profile = load_profile()
-        return {
-            "face_analysis": profile.perception.face.enabled,
-            "tts": profile.perception.tts.provider != "none",
-        }
+        face_analysis = profile.perception.face.enabled
+        tts = profile.perception.tts.provider != "none"
     except Exception:
-        return {"face_analysis": False, "tts": False}
+        face_analysis = False
+        tts = False
+
+    return {
+        "face_analysis": face_analysis,
+        "tts": tts,
+        "conversational": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
+        "conversational_interview": settings.HATCH_COACH_CONVERSATIONAL_ENABLED,
+        "typed_answers": True,
+        "audio_upload": False,
+        "automatic_turn_detection": "none",
+        "transcription": {"available": False, "provider_type": "none"},
+        "evaluation": {"available": False, "provider_type": "none"},
+        "audio_retention_default": "delete_after_processing",
+        "video_analysis_for_conversational": False,
+        "contract_version": "coach_capabilities_v2",
+    }
 
 
 # ---------------------------------------------------------------------------

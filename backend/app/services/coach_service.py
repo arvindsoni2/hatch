@@ -19,6 +19,7 @@ from ..schemas.coach import (
     SessionResponse,
     SubmitAnswerRequest,
 )
+from ..schemas.coach_conversation import project_retention_summary
 from ..config import settings
 from ..observability import get_telemetry, trace_workflow
 from ..observability.attributes import (
@@ -812,6 +813,9 @@ class CoachService:
             questions=[SessionQuestionRead.model_validate(q) for q in questions],
             created_at=session.created_at,
             interview_date=cfg.get("interview_date"),
+            experience_version=session.experience_version,
+            conversation_state=session.conversation_state,
+            retention_summary=project_retention_summary(session.retention_policy_json),
         )
 
     @trace_workflow(
