@@ -36,6 +36,15 @@ from app.services.coach_conversation_commands import (
 )
 
 
+@pytest.fixture(autouse=True)
+def disable_real_attempt_worker_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Command tests assert durable hand-off; pipeline tests own worker execution."""
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        lambda _claim: None,
+    )
+
+
 @pytest_asyncio.fixture
 async def command_database(tmp_path: Path):
     database = tmp_path / "commands.sqlite3"
@@ -214,6 +223,17 @@ async def seed_review_command_context(
             },
         ),
     )
+    attempt = await db.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    attempt.attempt_state = "unavailable"
+    attempt.evaluation_state = "unavailable"
+    attempt.async_job_id = None
+    evaluation = await db.scalar(select(InterviewAttemptEvaluation).where(
+        InterviewAttemptEvaluation.recording_id == attempt.id
+    ))
+    assert evaluation is not None
+    evaluation.state = "unavailable"
+    evaluation.async_job_id = None
     await db.refresh(session)
     session.conversation_state = target_state
     session.state_version = version
@@ -222,8 +242,6 @@ async def seed_review_command_context(
         session.recoverable_error_code = "coach_evaluation_unavailable"
         session.recoverable_error_context_json = {"retryable": True}
     await db.commit()
-    attempt = await db.get(SessionRecording, begun.active_attempt_id)
-    assert attempt is not None
     return session, questions[0], attempt
 
 
@@ -416,20 +434,18 @@ async def test_deterministic_stub_never_emits_scores(db_session: AsyncSession) -
         ),
     )
 
-    assert finished.state == "awaiting_next_action"
+    assert (finished.state, finished.result) == ("processing_answer", "accepted_processing")
     attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
     assert attempt is not None
-    evaluation = await db_session.get(
-        InterviewAttemptEvaluation, attempt.current_evaluation_version_id
-    )
+    evaluation = await db_session.scalar(select(InterviewAttemptEvaluation).where(
+        InterviewAttemptEvaluation.recording_id == attempt.id,
+        InterviewAttemptEvaluation.async_job_id == finished.async_job_id,
+    ))
     assert evaluation is not None
-    assert evaluation.state == "unavailable"
+    assert evaluation.state == "pending"
     assert evaluation.answer_level is None
     assert evaluation.version_number == 1
-    assert evaluation.rubric_json == {
-        "answer_level": "not_assessed",
-        "contract_version": "coach_conversational_rubric_v1",
-    }
+    assert evaluation.rubric_json is None
     transcript = await db_session.get(
         InterviewTranscriptVersion, evaluation.transcript_version_id
     )
@@ -451,10 +467,11 @@ async def test_deterministic_stub_never_emits_scores(db_session: AsyncSession) -
         "audio_persist": "not_applicable",
         "transcription": "not_applicable",
         "speech_analysis": "not_applicable",
-        "content_evaluation": "unavailable",
-        "evidence_grounding": "not_applicable",
-        "follow_up_decision": "not_applicable",
-        "coaching_enrichment": "not_applicable",
+        "content_evaluation": "pending",
+        "evidence_grounding": "pending",
+        "follow_up_decision": "pending",
+        "coaching_enrichment": "pending",
+        "audio_cleanup": "pending",
     }
     assert "score" not in json.dumps(evaluation.rubric_json or {})
 
@@ -1301,20 +1318,20 @@ async def test_retry_preserves_terminal_attempt_and_budget(
             payload={"attempt_id": begun.active_attempt_id, "transcript": "Answer"},
         ),
     )
-    retried = await service.execute(
-        user_id="local",
-        session_id=session.id,
-        request=command(
-            "retry_answer",
-            version=finished.state_version,
-            payload={"question_id": questions[0].id},
-        ),
-    )
+    with pytest.raises(ConversationCommandError) as raised:
+        await service.execute(
+            user_id="local",
+            session_id=session.id,
+            request=command(
+                "retry_answer", version=finished.state_version,
+                payload={"question_id": questions[0].id},
+            ),
+        )
+    assert raised.value.code == "coach_conversation_invalid_state"
 
     prior = await db_session.get(SessionRecording, begun.active_attempt_id)
     await db_session.refresh(questions[0])
-    assert prior is not None and prior.attempt_state == "unavailable"
-    assert retried.state == "asking" and retried.active_attempt_id is None
+    assert prior is not None and prior.attempt_state == "pending_processing"
     assert questions[0].attempts_created_count == 1
 
 

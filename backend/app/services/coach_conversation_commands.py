@@ -44,6 +44,7 @@ from ..schemas.coach_conversation import (
 )
 from .async_job_service import AsyncJobService
 from .coach_command_projection import contextual_allowed_commands
+from .coach_attempt_pipeline import queue_attempt_processing
 from .coach_conversation_state import require_transition
 from .coach_conversational_contracts import (
     CONVERSATION_COMMAND_RESULT_CONTRACT,
@@ -102,13 +103,14 @@ class ConversationCommandService:
         db: AsyncSession,
         *,
         evaluator: DeterministicEvaluationStub | None = None,
-        after_commit: Callable[[str], Awaitable[None]] | None = None,
+        after_commit: Callable[[str | AttemptProcessingClaim], Awaitable[None]] | None = None,
     ) -> None:
         self.db = db
         self.repository = ConversationalSessionRepository(db)
         self.evaluator = evaluator or DeterministicEvaluationStub()
         self.after_commit = after_commit
         self._post_commit_job_id: str | None = None
+        self._post_commit_attempt_claim: AttemptProcessingClaim | None = None
 
     async def execute(
         self,
@@ -121,6 +123,7 @@ class ConversationCommandService:
             raise ConversationCommandError("coach_conversation_invalid_state")
         request_hash = canonical_request_hash(request, session_id=session_id)
         self._post_commit_job_id = None
+        self._post_commit_attempt_claim = None
         try:
             claim = await self.repository.claim_conversation_command(
                 session_id=session_id,
@@ -195,9 +198,15 @@ class ConversationCommandService:
             await self.db.rollback()
             code = str(error)
             raise ConversationCommandError(code) from error
-        if self._post_commit_job_id is not None and self.after_commit is not None:
+        if self._post_commit_attempt_claim is not None:
             try:
-                await self.after_commit(self._post_commit_job_id)
+                queue_attempt_processing(self._post_commit_attempt_claim)
+            except Exception as error:  # noqa: BLE001 - durable job remains pending
+                logger.error("Coach attempt dispatch failed: %s", type(error).__name__)
+        post_commit_work = self._post_commit_attempt_claim or self._post_commit_job_id
+        if post_commit_work is not None and self.after_commit is not None:
+            try:
+                await self.after_commit(post_commit_work)
             except Exception as error:  # noqa: BLE001 - durable work remains pending
                 logger.error(
                     "Coach post-commit dispatch failed: %s", type(error).__name__
@@ -426,7 +435,7 @@ class ConversationCommandService:
         request: ConversationCommandRequest,
         payload: FinishAnswerPayload,
     ) -> ConversationCommandResult:
-        if payload.transcript is None or payload.upload_id is not None:
+        if (payload.transcript is None) == (payload.upload_id is None):
             raise ConversationCommandError("coach_conversation_invalid_state")
         attempt = await self.db.get(SessionRecording, payload.attempt_id)
         if (
@@ -434,17 +443,25 @@ class ConversationCommandService:
             or attempt.session_id != session.id
             or attempt.question_id != session.active_question_id
             or attempt.id != session.active_recording_id
-            or attempt.recording_type != "text"
-            or attempt.attempt_state != "draft"
+            or attempt.recording_type != ("text" if payload.transcript is not None else "audio")
+            or attempt.attempt_state != ("draft" if payload.transcript is not None else "uploaded")
         ):
             raise ConversationCommandError("coach_attempt_not_active")
-        transcript = await self.repository.create_transcript_version(
-            recording_id=attempt.id,
-            source="candidate_text",
-            transcript=payload.transcript,
-            expected_attempt_version=attempt.attempt_version,
-            processing_generation=attempt.processing_generation + 1,
-        )
+        transcript = None
+        if payload.transcript is not None:
+            transcript = await self.repository.create_transcript_version(
+                recording_id=attempt.id, source="candidate_text", transcript=payload.transcript,
+                expected_attempt_version=attempt.attempt_version,
+                processing_generation=attempt.processing_generation + 1,
+            )
+        else:
+            upload = await self.repository.get_completed_audio_upload(
+                attempt_id=attempt.id,
+                upload_id=payload.upload_id,
+                content_hash=attempt.audio_content_hash,
+            )
+            if upload is None:
+                raise ConversationCommandError("coach_attempt_not_active")
         job = await AsyncJobService.create(self.db, "coach_attempt_processing")
         latest_evaluation_version = await self.db.scalar(
             select(func.max(InterviewAttemptEvaluation.version_number)).where(
@@ -453,7 +470,7 @@ class ConversationCommandService:
         )
         await self.repository.create_evaluation_version(
             recording_id=attempt.id,
-            transcript_version_id=transcript.id,
+            transcript_version_id=transcript.id if transcript is not None else None,
             evaluation_version=int(latest_evaluation_version or 0) + 1,
             processing_generation=attempt.processing_generation + 1,
             contract_version=RUBRIC_CONTRACT,
@@ -520,16 +537,15 @@ class ConversationCommandService:
             ),
         )
         await self._persist_stub_stages(claim)
-        stub_result = await self.evaluator.evaluate(claim)
-        finalised = await self.repository.finalise_attempt_processing(
-            claim=claim, result=stub_result
-        )
-        if not finalised:
-            raise ConversationCommandError("coach_attempt_stale_claim")
-        job.status = "done"
-        job.result_json = '{"status":"unavailable"}'
+        self._post_commit_job_id = job.id
+        self._post_commit_attempt_claim = claim
         await self.db.refresh(session)
-        return await self._result(session, request)
+        return await self._result(
+            session,
+            request,
+            result="accepted_processing",
+            async_job_id=job.id,
+        )
 
     async def _keep_speaking(
         self,
@@ -1104,15 +1120,19 @@ class ConversationCommandService:
             "evidence_grounding",
             "follow_up_decision",
             "coaching_enrichment",
+            "audio_cleanup",
         ):
-            unavailable = stage_name == "content_evaluation"
+            media_not_applicable = (
+                claim.transcript_version_id is not None
+                and stage_name in {"audio_persist", "transcription", "speech_analysis"}
+            )
             self.db.add(
                 InterviewAttemptStage(
                     id=str(uuid.uuid4()),
                     recording_id=claim.recording_id,
                     evaluation_version_id=claim.evaluation_version_id,
                     stage_name=stage_name,
-                    stage_state="unavailable" if unavailable else "not_applicable",
+                    stage_state="not_applicable" if media_not_applicable else "pending",
                     job_id=claim.job_id,
                     claim_token=fence.claim_token,
                     expected_processing_generation=claim.processing_generation,
@@ -1122,10 +1142,7 @@ class ConversationCommandService:
                         else None
                     ),
                     job_deadline_at=claim.deadline_at,
-                    completed_at=datetime.utcnow(),
-                    last_error_code=(
-                        "coach_evaluation_unavailable" if unavailable else None
-                    ),
+                    completed_at=datetime.utcnow() if media_not_applicable else None,
                 )
             )
         await self.db.flush()

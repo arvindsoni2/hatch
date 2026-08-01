@@ -624,6 +624,21 @@ class ConversationalSessionRepository:
         self._max_transcript_characters = configured_limit
         self._audio_publication: OwnedAudioPublication | None = None
 
+    async def get_completed_audio_upload(
+        self, *, attempt_id: str, upload_id: str, content_hash: str | None
+    ) -> InterviewAttemptUpload | None:
+        """Return a completed upload only when it matches the attempt hash."""
+        if not content_hash:
+            return None
+        return await self._session.scalar(
+            select(InterviewAttemptUpload).where(
+                InterviewAttemptUpload.attempt_id == attempt_id,
+                InterviewAttemptUpload.upload_id == upload_id,
+                InterviewAttemptUpload.result_state == "completed",
+                InterviewAttemptUpload.content_sha256 == content_hash,
+            )
+        )
+
     def _discard_audio_stage(self, staged: StagedAudio, *, code: str) -> None:
         try:
             cleanup_staged_audio(staged)

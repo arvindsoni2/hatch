@@ -123,6 +123,38 @@ class SpeechAnalyserService:
             star_coverage=star_coverage,
         )
 
+    def analyse_conversational_v1(
+        self,
+        transcript: str,
+        *,
+        duration_ms: int,
+        words: list[dict] | None = None,
+    ) -> dict[str, int | float | None]:
+        """Project delivery analysis to the V6 conversational allow-list.
+
+        STAR coverage and any voice/video analysis are intentionally excluded:
+        they are not observable fields in the conversational-v1 contract.
+        """
+        if words:
+            metrics = self.analyse_from_timestamps(transcript, words)
+            word_count = len(words)
+            long_pause_count: int | None = metrics.pause_count
+        else:
+            metrics = self.analyse(transcript, duration_ms)
+            word_count = len(transcript.split())
+            long_pause_count = None
+        return {
+            "duration_ms": metrics.duration_ms,
+            "word_count": word_count,
+            "words_per_minute": metrics.wpm,
+            "filler_count": metrics.filler_count,
+            "filler_rate_per_minute": metrics.filler_rate,
+            "hedging_count": metrics.hedging_count,
+            "pause_count": metrics.pause_count,
+            "long_pause_count": long_pause_count,
+            "restart_count": None,
+        }
+
     # ── Timestamp path (faster-whisper word timestamps) ──────────────────────
 
     def analyse_from_timestamps(
