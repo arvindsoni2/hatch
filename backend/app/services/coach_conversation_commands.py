@@ -16,6 +16,7 @@ from ..models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewSession,
+    InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
@@ -29,6 +30,7 @@ from ..repositories.conversational_session_repository import (
     ConversationalRepositoryError,
     ConversationalSessionRepository,
     SessionEventInput,
+    _stage_immutable_diagnostics,
     canonical_request_hash,
 )
 from ..schemas.coach_conversation import (
@@ -40,6 +42,7 @@ from ..schemas.coach_conversation import (
     KeepSpeakingPayload,
     RequestHintPayload,
     RetryAnswerPayload,
+    RetryProcessingPayload,
     UpdateRetentionPayload,
 )
 from .async_job_service import AsyncJobService
@@ -238,6 +241,9 @@ class ConversationCommandService:
         if request.command_type == "retry_answer":
             assert isinstance(request.payload, RetryAnswerPayload)
             return await self._retry_answer(session, request, request.payload)
+        if request.command_type == "retry_processing":
+            assert isinstance(request.payload, RetryProcessingPayload)
+            return await self._retry_processing(session, request)
         if request.command_type in {"retry_setup", "rebuild_plan"}:
             return await self._claim_setup(session, request)
         if request.command_type == "request_hint":
@@ -801,6 +807,63 @@ class ConversationCommandService:
         )
         return await self._result(session, request)
 
+    async def _retry_processing(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+    ) -> ConversationCommandResult:
+        if (
+            session.recoverable_error_scope != "attempt_processing"
+            or session.active_recording_id is None
+        ):
+            raise ConversationCommandError("coach_conversation_invalid_state")
+        job = await AsyncJobService.create(self.db, "coach_attempt_processing")
+        deadline = datetime.utcnow() + timedelta(
+            seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
+        )
+        claim = await self.repository.claim_retry_processing(
+            recording_id=session.active_recording_id,
+            job_id=job.id,
+            deadline=deadline,
+            expected_session_state_version=request.expected_state_version,
+        )
+        if claim is None:
+            raise ConversationCommandError("coach_attempt_stale_claim")
+        await self.db.refresh(session)
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=(
+                SessionEventInput(
+                    event_type="attempt_processing_retry_requested",
+                    actor_type="candidate",
+                    state_version=session.state_version,
+                    state_before="recoverable_error",
+                    state_after="processing_answer",
+                    question_id=claim.question_id,
+                    recording_id=claim.recording_id,
+                    command_id=request.command_id,
+                ),
+                SessionEventInput(
+                    event_type="attempt_processing_started",
+                    actor_type="system",
+                    state_version=session.state_version,
+                    state_before="recoverable_error",
+                    state_after="processing_answer",
+                    question_id=claim.question_id,
+                    recording_id=claim.recording_id,
+                    command_id=request.command_id,
+                ),
+            ),
+        )
+        self._post_commit_job_id = job.id
+        self._post_commit_attempt_claim = claim
+        return await self._result(
+            session,
+            request,
+            result="accepted_processing",
+            async_job_id=job.id,
+        )
+
     async def _claim_setup(
         self, session: InterviewSession, request: ConversationCommandRequest
     ) -> ConversationCommandResult:
@@ -1106,6 +1169,19 @@ class ConversationCommandService:
         fence = await self.repository._get_attempt_processing_fence(claim)
         if fence is None:
             raise ConversationCommandError("coach_attempt_stale_claim")
+        attempt = await self.db.get(SessionRecording, claim.recording_id)
+        evaluation = await self.db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        transcript = (
+            await self.db.get(
+                InterviewTranscriptVersion, claim.transcript_version_id
+            )
+            if claim.transcript_version_id is not None
+            else None
+        )
+        if attempt is None or evaluation is None:
+            raise ConversationCommandError("coach_attempt_stale_claim")
         transcript_bound = {
             "content_evaluation",
             "evidence_grounding",
@@ -1143,6 +1219,25 @@ class ConversationCommandService:
                     ),
                     job_deadline_at=claim.deadline_at,
                     completed_at=datetime.utcnow() if media_not_applicable else None,
+                    diagnostics_json=_stage_immutable_diagnostics(
+                        stage_name=stage_name,
+                        audio_content_hash=attempt.audio_content_hash,
+                        transcript_version_id=(
+                            transcript.id if transcript is not None else None
+                        ),
+                        transcript_content_hash=(
+                            transcript.content_hash if transcript is not None else None
+                        ),
+                        evaluation_contract_version=(
+                            evaluation.evaluation_contract_version
+                        ),
+                        evidence_contract_version=(
+                            evaluation.evidence_contract_version
+                        ),
+                        follow_up_contract_version=(
+                            evaluation.follow_up_contract_version
+                        ),
+                    ),
                 )
             )
         await self.db.flush()

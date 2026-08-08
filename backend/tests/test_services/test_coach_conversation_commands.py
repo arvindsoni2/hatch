@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,10 +18,12 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.database import Base
+from app.config import settings
 from app.models.coach_session import (
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
+    InterviewAttemptUpload,
     InterviewSession,
     InterviewSessionEvent,
     InterviewTranscriptVersion,
@@ -2159,6 +2161,536 @@ async def test_retry_at_attempt_limit_is_no_mutation(db_session: AsyncSession) -
         "awaiting_next_action",
         9,
     )
+
+
+async def _seed_retryable_audio_processing(
+    db: AsyncSession, *, retry_count: int = 0, retry_limit: int = 2
+) -> tuple[
+    InterviewSession,
+    SessionQuestion,
+    SessionRecording,
+    InterviewAttemptEvaluation,
+    InterviewTranscriptVersion,
+]:
+    session, questions = await seed_session(
+        db, state="recoverable_error", status="active", version=11
+    )
+    question = questions[0]
+    question.question_state = "asked"
+    prior_deadline = datetime.utcnow() - timedelta(seconds=1)
+    prior_job = AsyncJob(
+        id="prior-retry-job",
+        type="coach_attempt_processing",
+        status="failed",
+    )
+    db.add(prior_job)
+    transcript = InterviewTranscriptVersion(
+        recording_id="retry-audio-attempt",
+        version_number=1,
+        transcript="A bounded immutable answer.",
+        source="transcription",
+        content_hash="transcript-hash",
+        created_by="system",
+        processing_generation=1,
+    )
+    attempt = SessionRecording(
+        id="retry-audio-attempt",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="audio",
+        audio_uri=None,
+        audio_content_hash="a" * 64,
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="recoverable_error",
+        evaluation_state="failed",
+        processing_generation=1,
+        processing_retry_count=retry_count,
+        processing_retry_limit=retry_limit,
+        audio_retention_policy="delete_after_processing",
+        audio_retention_state="deleted",
+    )
+    db.add(attempt)
+    await db.flush()
+    transcript.recording_id = attempt.id
+    db.add(transcript)
+    await db.flush()
+    attempt.current_transcript_version_id = transcript.id
+    evaluation = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="failed",
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+        async_job_id=prior_job.id,
+        diagnostics_json={
+            "processing_claim": {
+                "processing_generation": 1,
+                "job_deadline_at": prior_deadline.isoformat(),
+                "source_audio_content_hash": "a" * 64,
+                "source_transcript_version_id": None,
+                "expected_session_state_version": 10,
+                "processing_contract_version": "coach_processing_v1",
+                "claim_token": "prior-retry-token",
+            },
+            "result": {"reason_code": "coach_evaluation_unavailable"},
+        },
+    )
+    db.add(evaluation)
+    await db.flush()
+    attempt.current_evaluation_version_id = evaluation.id
+    prior_states = {
+        "audio_persist": "completed",
+        "transcription": "completed",
+        "speech_analysis": "completed",
+        "content_evaluation": "failed_retryable",
+        "evidence_grounding": "failed_retryable",
+        "follow_up_decision": "failed_retryable",
+        "coaching_enrichment": "failed_retryable",
+        "audio_cleanup": "failed_retryable",
+    }
+    transcript_bound = {
+        "content_evaluation",
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+    }
+    for stage_name, stage_state in prior_states.items():
+        transcript_input = stage_name in {
+            "content_evaluation",
+            "evidence_grounding",
+            "follow_up_decision",
+            "coaching_enrichment",
+        }
+        stage_diagnostics = {
+            "processing_contract_version": "coach_processing_v1",
+            "evaluation_contract_version": "coach_conversational_rubric_v1",
+            "evidence_contract_version": "coach_evidence_grounding_v1",
+            "follow_up_contract_version": "coach_follow_up_v1",
+            "source_audio_content_hash": "a" * 64,
+            "source_transcript_version_id": (
+                transcript.id if transcript_input else None
+            ),
+            "source_transcript_content_hash": (
+                transcript.content_hash if transcript_input else None
+            ),
+            "result_transcript_version_id": (
+                transcript.id if stage_name == "transcription" else None
+            ),
+            "result_transcript_content_hash": (
+                transcript.content_hash if stage_name == "transcription" else None
+            ),
+        }
+        db.add(
+            InterviewAttemptStage(
+                recording_id=attempt.id,
+                evaluation_version_id=evaluation.id,
+                stage_name=stage_name,
+                stage_state=stage_state,
+                attempt_count=1,
+                job_id=prior_job.id,
+                claim_token="prior-retry-token",
+                expected_processing_generation=1,
+                source_transcript_version_id=(
+                    transcript.id if stage_name in transcript_bound else None
+                ),
+                job_deadline_at=prior_deadline,
+                completed_at=datetime.utcnow(),
+                last_error_code=(
+                    "coach_evaluation_unavailable"
+                    if stage_state == "failed_retryable"
+                    else None
+                ),
+                diagnostics_json=stage_diagnostics,
+            )
+        )
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    session.active_recording_id = attempt.id
+    session.recoverable_error_scope = "attempt_processing"
+    session.recoverable_error_code = "coach_evaluation_unavailable"
+    await db.commit()
+    return session, question, attempt, evaluation, transcript
+
+
+@pytest.mark.asyncio
+async def test_retry_processing_is_atomic_reuses_valid_upstream_and_replays_once(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, _, attempt, prior_evaluation, transcript = (
+        await _seed_retryable_audio_processing(db_session)
+    )
+    dispatched = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        dispatched.append,
+    )
+    request = command(
+        "retry_processing", version=session.state_version, command_id="retry-processing-1"
+    )
+
+    first = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    evaluations = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptEvaluation)
+                .where(InterviewAttemptEvaluation.recording_id == attempt.id)
+                .order_by(InterviewAttemptEvaluation.version_number)
+            )
+        ).all()
+    )
+    assert first == replay
+    assert first.result == "accepted_processing"
+    assert len(dispatched) == 1
+    assert (attempt.processing_generation, attempt.processing_retry_count) == (2, 1)
+    assert (attempt.attempt_state, attempt.evaluation_state) == (
+        "pending_processing",
+        "pending",
+    )
+    assert session.conversation_state == "processing_answer"
+    assert session.state_version == 12
+    assert len(evaluations) == 2
+    assert evaluations[0].id == prior_evaluation.id
+    assert evaluations[1].state == "pending"
+    assert evaluations[1].transcript_version_id == transcript.id
+    new_stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id == evaluations[1].id
+                )
+            )
+        ).all()
+    )
+    by_name = {stage.stage_name: stage for stage in new_stages}
+    assert len(by_name) == 8
+    assert {
+        name: by_name[name].stage_state
+        for name in ("audio_persist", "transcription", "speech_analysis")
+    } == {
+        "audio_persist": "reused",
+        "transcription": "reused",
+        "speech_analysis": "reused",
+    }
+    assert all(
+        by_name[name].reused_from_stage_id is not None
+        for name in ("audio_persist", "transcription", "speech_analysis")
+    )
+    assert {
+        by_name[name].stage_state
+        for name in (
+            "content_evaluation",
+            "evidence_grounding",
+            "follow_up_decision",
+            "coaching_enrichment",
+            "audio_cleanup",
+        )
+    } == {"pending"}
+
+
+@pytest.mark.asyncio
+async def test_content_retry_preserves_terminal_speech_without_audio_source(
+    db_session: AsyncSession,
+) -> None:
+    session, _, attempt, evaluation, _ = await _seed_retryable_audio_processing(
+        db_session
+    )
+    speech = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == evaluation.id,
+            InterviewAttemptStage.stage_name == "speech_analysis",
+        )
+    )
+    assert speech is not None
+    speech.stage_state = "unavailable"
+    speech.last_error_code = "speech_analysis_unavailable"
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command("retry_processing", version=session.state_version),
+    )
+
+    new_evaluation = await db_session.scalar(
+        select(InterviewAttemptEvaluation)
+        .where(
+            InterviewAttemptEvaluation.recording_id == attempt.id,
+            InterviewAttemptEvaluation.version_number == 2,
+        )
+    )
+    assert new_evaluation is not None
+    new_speech = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == new_evaluation.id,
+            InterviewAttemptStage.stage_name == "speech_analysis",
+        )
+    )
+    assert result.result == "accepted_processing"
+    assert new_speech is not None
+    assert new_speech.stage_state == "unavailable"
+    assert new_speech.last_error_code == "speech_analysis_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_audio_retry_verifies_owned_media_before_consuming_manual_budget(
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session, _, attempt, evaluation, _ = await _seed_retryable_audio_processing(
+        db_session
+    )
+    media_root = tmp_path / "coach-media"
+    media_root.mkdir()
+    missing_audio = media_root / session.id / "missing.webm"
+    monkeypatch.setattr(settings, "HATCH_COACH_MEDIA_ROOT", str(media_root))
+    attempt.audio_uri = str(missing_audio)
+    attempt.audio_retention_state = "retained"
+    speech = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == evaluation.id,
+            InterviewAttemptStage.stage_name == "speech_analysis",
+        )
+    )
+    assert speech is not None
+    speech.stage_state = "failed_retryable"
+    speech.last_error_code = "coach_evaluation_unavailable"
+    db_session.add(
+        InterviewAttemptUpload(
+            attempt_id=attempt.id,
+            upload_id="missing-retry-source",
+            request_hash="request-hash",
+            content_sha256=attempt.audio_content_hash,
+            byte_size=16,
+            mime_type="audio/webm",
+            storage_uri=str(missing_audio),
+            result_state="completed",
+            completed_at=datetime.utcnow(),
+        )
+    )
+    await db_session.commit()
+    before = (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    )
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local",
+            session_id=session.id,
+            request=command("retry_processing", version=session.state_version),
+        )
+
+    assert raised.value.code == "coach_attempt_retry_source_unavailable"
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    ) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retry_count", "retry_limit", "remove_transcript", "expected_code"),
+    (
+        (2, 2, False, "coach_attempt_retry_budget_exhausted"),
+        (0, 2, True, "coach_attempt_retry_source_unavailable"),
+    ),
+)
+async def test_retry_processing_rejection_consumes_no_budget_or_generation(
+    db_session: AsyncSession,
+    retry_count: int,
+    retry_limit: int,
+    remove_transcript: bool,
+    expected_code: str,
+) -> None:
+    session, _, attempt, _, transcript = await _seed_retryable_audio_processing(
+        db_session, retry_count=retry_count, retry_limit=retry_limit
+    )
+    if remove_transcript:
+        attempt.current_transcript_version_id = None
+        await db_session.flush()
+        await db_session.delete(transcript)
+        await db_session.commit()
+    before = (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    )
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local",
+            session_id=session.id,
+            request=command("retry_processing", version=session.state_version),
+        )
+
+    assert raised.value.code == expected_code
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    ) == before
+
+
+@pytest.mark.asyncio
+async def test_retry_processing_refuses_mismatched_reuse_diagnostics_without_mutation(
+    db_session: AsyncSession,
+) -> None:
+    session, _, attempt, evaluation, _ = await _seed_retryable_audio_processing(
+        db_session
+    )
+    speech = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == evaluation.id,
+            InterviewAttemptStage.stage_name == "speech_analysis",
+        )
+    )
+    assert speech is not None
+    speech.diagnostics_json = {
+        **speech.diagnostics_json,
+        "source_audio_content_hash": "mismatched-audio-hash",
+    }
+    await db_session.commit()
+    before = (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    )
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local",
+            session_id=session.id,
+            request=command("retry_processing", version=session.state_version),
+        )
+
+    assert raised.value.code == "coach_attempt_retry_source_unavailable"
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    ) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "job_id",
+        "claim_token",
+        "deadline",
+        "source_transcript",
+        "generation",
+        "reused_provenance",
+    ),
+)
+async def test_retry_processing_requires_exact_prior_stage_ownership(
+    db_session: AsyncSession,
+    corruption: str,
+) -> None:
+    session, _, attempt, evaluation, transcript = (
+        await _seed_retryable_audio_processing(db_session)
+    )
+    speech = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == evaluation.id,
+            InterviewAttemptStage.stage_name == "speech_analysis",
+        )
+    )
+    audio_persist = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == evaluation.id,
+            InterviewAttemptStage.stage_name == "audio_persist",
+        )
+    )
+    assert speech is not None and audio_persist is not None
+    if corruption == "job_id":
+        other_job = AsyncJob(type="coach_attempt_processing", status="failed")
+        db_session.add(other_job)
+        await db_session.flush()
+        speech.job_id = other_job.id
+    elif corruption == "claim_token":
+        speech.claim_token = "wrong-prior-token"
+    elif corruption == "deadline":
+        speech.job_deadline_at += timedelta(microseconds=1)
+    elif corruption == "source_transcript":
+        speech.source_transcript_version_id = transcript.id
+    elif corruption == "generation":
+        speech.expected_processing_generation += 1
+    else:
+        speech.stage_state = "reused"
+        speech.reused_from_stage_id = audio_persist.id
+    await db_session.commit()
+    before = (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    )
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local",
+            session_id=session.id,
+            request=command("retry_processing", version=session.state_version),
+        )
+
+    assert raised.value.code == "coach_attempt_stale_claim"
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    ) == before
+
+
+@pytest.mark.asyncio
+async def test_retry_processing_refuses_nonretryable_recorded_failure_without_mutation(
+    db_session: AsyncSession,
+) -> None:
+    session, _, attempt, _, _ = await _seed_retryable_audio_processing(db_session)
+    session.recoverable_error_code = "coach_attempt_upload_hash_mismatch"
+    await db_session.commit()
+    before = (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    )
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local",
+            session_id=session.id,
+            request=command("retry_processing", version=session.state_version),
+        )
+
+    assert raised.value.code == "coach_attempt_stale_claim"
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert (
+        session.state_version,
+        attempt.processing_generation,
+        attempt.processing_retry_count,
+    ) == before
 
 
 @pytest.mark.asyncio

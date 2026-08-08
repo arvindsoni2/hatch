@@ -113,7 +113,7 @@ _ERROR_REGISTRY: dict[str, ErrorDefinition] = {
         "The source needed to retry this answer is unavailable."
     ),
     "coach_attempt_job_budget_exhausted": _conflict(
-        "The answer processing deadline was reached."
+        "The answer processing deadline was reached.", retryable=True
     ),
     "coach_attempt_stale_claim": _conflict(
         "This answer processing claim is no longer current."

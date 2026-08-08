@@ -1,6 +1,7 @@
 """Public contracts for the conversational attempt pipeline."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import fields, replace
 from contextlib import asynccontextmanager
 import hashlib
@@ -26,7 +27,10 @@ from app.services.coach_attempt_pipeline import (
     _safe_process_attempt_claim,
     queue_attempt_processing,
 )
-from app.repositories.conversational_session_repository import AttemptProcessingClaim
+from app.repositories.conversational_session_repository import (
+    AttemptProcessingClaim,
+    ConversationalSessionRepository,
+)
 from app.models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
@@ -44,6 +48,7 @@ from app.services.coach_conversation_commands import (
     ConversationCommandService,
 )
 from app.config import settings
+from app.services.coach_command_projection import contextual_allowed_commands
 from sqlalchemy import func, select
 
 
@@ -449,6 +454,161 @@ async def test_audio_worker_binds_completed_upload_and_persists_timestamp_metric
     assert set(attempt.speech_metrics or {}) == {"duration_ms", "word_count", "words_per_minute", "filler_count", "filler_rate_per_minute", "hedging_count", "pause_count", "long_pause_count"}
 
 
+@pytest.mark.asyncio
+async def test_audio_worker_persists_internal_provider_attempts_without_manual_retry(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Dropping the counter callback must leave durable stage counts incorrect."""
+    _, _, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task5-provider-counters"
+    )
+    provider_calls = 0
+
+    class Transcriber:
+        def __init__(self, call_number: int) -> None:
+            self.call_number = call_number
+
+        def transcribe(self, _path):
+            if self.call_number in {1, 3}:
+                raise RuntimeError("retryable provider failure")
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "Durable retry transcript",
+                "en",
+                [WordTimestamp("Durable", 0, 0.2)],
+            )
+
+    def transcriber_factory():
+        nonlocal provider_calls
+        provider_calls += 1
+        return Transcriber(provider_calls)
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claim,
+        session_factory=session_factory,
+        transcriber_factory=transcriber_factory,
+    )
+
+    await db_session.refresh(attempt)
+    stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id
+                    == claim.evaluation_version_id,
+                    InterviewAttemptStage.stage_name.in_(
+                        ("transcription", "speech_analysis")
+                    ),
+                )
+            )
+        ).all()
+    )
+    assert provider_calls == 4
+    assert {
+        stage.stage_name: (stage.attempt_count, stage.repair_count)
+        for stage in stages
+    } == {"transcription": (2, 0), "speech_analysis": (2, 0)}
+    assert attempt.processing_retry_count == 0
+
+
+@pytest.mark.asyncio
+async def test_audio_content_retry_reuses_siblings_without_reopening_media(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    session, _, attempt, initial_claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task5-audio-reuse"
+    )
+
+    class InitialTranscriber:
+        def transcribe(self, _path):
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "Reusable transcript",
+                "en",
+                [WordTimestamp("Reusable", 0, 0.2)],
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        initial_claim,
+        session_factory=session_factory,
+        transcriber_factory=InitialTranscriber,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    prior_evaluation = await db_session.get(
+        InterviewAttemptEvaluation, attempt.current_evaluation_version_id
+    )
+    assert prior_evaluation is not None
+    stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id
+                    == prior_evaluation.id
+                )
+            )
+        ).all()
+    )
+    for stage in stages:
+        if stage.stage_name in {
+            "content_evaluation",
+            "evidence_grounding",
+            "follow_up_decision",
+            "coaching_enrichment",
+            "audio_cleanup",
+        }:
+            stage.stage_state = "failed_retryable"
+            stage.last_error_code = "coach_evaluation_unavailable"
+    prior_evaluation.state = "failed"
+    prior_evaluation.diagnostics_json = {
+        "processing_claim": prior_evaluation.diagnostics_json["processing_claim"],
+        "result": {"reason_code": "coach_evaluation_unavailable"},
+    }
+    attempt.attempt_state = "recoverable_error"
+    attempt.evaluation_state = "failed"
+    attempt.audio_uri = None
+    session.conversation_state = "recoverable_error"
+    session.recoverable_error_scope = "attempt_processing"
+    session.recoverable_error_code = "coach_evaluation_unavailable"
+    await db_session.commit()
+    retry_claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        retry_claims.append,
+    )
+    await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command("retry_processing", session.state_version, {}),
+    )
+    assert len(retry_claims) == 1
+
+    class ForbiddenProvider:
+        def transcribe(self, _path):
+            pytest.fail("reused transcription/speech must not reopen audio")
+
+    await _process_attempt_claim(
+        retry_claims[0],
+        session_factory=session_factory,
+        transcriber_factory=ForbiddenProvider,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert session.conversation_state == "awaiting_next_action"
+    assert attempt.attempt_state == "unavailable"
+    assert (attempt.processing_generation, attempt.processing_retry_count) == (2, 1)
+
+
 def test_pipeline_order_is_fixed_and_rejects_duplicates() -> None:
     from app.services.coach_attempt_pipeline import PIPELINE_ORDER
     assert PIPELINE_ORDER == (
@@ -465,6 +625,274 @@ async def test_pipeline_rejects_invalid_supplied_stage_graph(names: tuple[str, .
     stages = tuple(type("Stage", (), {"name": name, "run": lambda *_args: None})() for name in names)
     with pytest.raises(AttemptPipelineError, match="coach_attempt_stage_graph_invalid"):
         await run_attempt_pipeline(claim, stages)
+
+
+@pytest.mark.asyncio
+async def test_shared_deadline_blocks_every_later_provider_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Moving past the absolute deadline must prevent the next provider call."""
+    from app.services import coach_attempt_pipeline as pipeline_module
+
+    deadline = datetime(2026, 7, 25, 12, 0, 2)
+    observed: list[str] = []
+    ticks = iter(
+        (
+            datetime(2026, 7, 25, 12, 0, 1),
+            datetime(2026, 7, 25, 12, 0, 3),
+        )
+    )
+
+    class FakeDateTime:
+        @classmethod
+        def utcnow(cls):
+            return next(ticks)
+
+    monkeypatch.setattr(pipeline_module, "datetime", FakeDateTime)
+    claim = AttemptProcessingClaim(
+        "session", "question", "recording", None, "evaluation", 1, "job", deadline
+    )
+
+    class Transcription:
+        name = "transcription"
+
+        async def run(self, _context):
+            observed.append(self.name)
+            return StageResult(
+                self.name,
+                "completed",
+                {
+                    "transcript_version_id": "transcript",
+                    "normalized_transcript": "answer",
+                },
+                None,
+                False,
+                1,
+                0,
+            )
+
+    class Speech:
+        name = "speech_analysis"
+
+        async def run(self, _context):
+            observed.append(self.name)
+            return StageResult(self.name, "completed", None, None, False, 1, 0)
+
+    with pytest.raises(AttemptPipelineError) as raised:
+        await run_attempt_pipeline(claim, (Transcription(), Speech()))
+
+    assert raised.value.code == "coach_attempt_job_budget_exhausted"
+    assert observed == ["transcription"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stage_name", "maximum_invocations"),
+    (
+        ("transcription", 3),
+        ("speech_analysis", 2),
+        ("content_evaluation", 3),
+        ("evidence_grounding", 3),
+        ("follow_up_decision", 2),
+    ),
+)
+async def test_stage_retry_runner_enforces_v6_invocation_ceiling(
+    stage_name: str,
+    maximum_invocations: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing a V6 retry allowance must reduce the observed provider calls."""
+    claim = AttemptProcessingClaim(
+        "session",
+        "question",
+        "recording",
+        None if stage_name in {"transcription", "speech_analysis"} else "transcript",
+        "evaluation",
+        1,
+        "job",
+        datetime.utcnow() + timedelta(seconds=30),
+    )
+    monkeypatch.setattr(
+        "app.services.coach_attempt_pipeline._load_claim_transcript",
+        lambda _claim: _async_value("answer"),
+    )
+    invocations = 0
+
+    class AlwaysRetryable:
+        name = stage_name
+
+        async def run(self, _context):
+            nonlocal invocations
+            invocations += 1
+            return StageResult(
+                self.name,
+                "failed_retryable",
+                None,
+                "coach_evaluation_unavailable",
+                True,
+                invocations,
+                0,
+            )
+
+    await run_attempt_pipeline(claim, (AlwaysRetryable(),))
+
+    assert invocations == maximum_invocations
+
+
+@pytest.mark.asyncio
+async def test_stage_invocation_timeout_retries_without_claiming_job_budget_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A short stage ceiling must not be reported as the later absolute deadline."""
+    claim = AttemptProcessingClaim(
+        "session",
+        "question",
+        "recording",
+        None,
+        "evaluation",
+        1,
+        "job",
+        datetime.utcnow() + timedelta(seconds=30),
+    )
+    monkeypatch.setattr(
+        "app.services.coach_attempt_pipeline._stage_timeout_seconds",
+        lambda _stage_name: 0.001,
+    )
+    invocations = 0
+
+    class TimesOutOnce:
+        name = "speech_analysis"
+
+        async def run(self, _context):
+            nonlocal invocations
+            invocations += 1
+            if invocations == 1:
+                await asyncio.sleep(1)
+            return StageResult(
+                self.name, "completed", None, None, False, invocations, 0
+            )
+
+    await run_attempt_pipeline(claim, (TimesOutOnce(),))
+
+    assert invocations == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stage_name", "maximum_repairs"),
+    (
+        ("transcription", 0),
+        ("speech_analysis", 0),
+        ("content_evaluation", 1),
+        ("evidence_grounding", 1),
+        ("follow_up_decision", 1),
+    ),
+)
+async def test_stage_runner_enforces_v6_schema_repair_ceiling(
+    stage_name: str,
+    maximum_repairs: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only structured stages may spend their single schema-repair allowance."""
+    claim = AttemptProcessingClaim(
+        "session",
+        "question",
+        "recording",
+        None if stage_name in {"transcription", "speech_analysis"} else "transcript",
+        "evaluation",
+        1,
+        "job",
+        datetime.utcnow() + timedelta(seconds=30),
+    )
+    monkeypatch.setattr(
+        "app.services.coach_attempt_pipeline._load_claim_transcript",
+        lambda _claim: _async_value("answer"),
+    )
+    repairs = 0
+
+    class InvalidSchema:
+        name = stage_name
+
+        async def run(self, _context):
+            return StageResult(
+                self.name,
+                "failed_retryable",
+                None,
+                "coach_transcript_schema_invalid",
+                True,
+                1,
+                0,
+            )
+
+        async def repair(self, _context, _invalid_result):
+            nonlocal repairs
+            repairs += 1
+            return StageResult(
+                self.name,
+                "failed_retryable",
+                None,
+                "coach_transcript_schema_invalid",
+                True,
+                1,
+                repairs,
+            )
+
+    await run_attempt_pipeline(claim, (InvalidSchema(),))
+
+    assert repairs == maximum_repairs
+
+
+async def _async_value(value):
+    return value
+
+
+def test_restart_selection_respects_audio_sibling_dependencies() -> None:
+    """Restarting transcription must not invalidate completed sibling speech work."""
+    from app.services.coach_attempt_pipeline import select_restart_stage
+
+    previous = {
+        "audio_persist": "completed",
+        "transcription": "failed_retryable",
+        "speech_analysis": "completed",
+        "content_evaluation": "not_started",
+        "evidence_grounding": "not_started",
+        "follow_up_decision": "not_started",
+        "coaching_enrichment": "not_started",
+        "audio_cleanup": "not_started",
+    }
+
+    assert select_restart_stage(
+        previous,
+        {
+            "recording_type": "audio",
+            "has_usable_transcript": False,
+            "has_audio_source": True,
+        },
+    ) == "transcription"
+
+
+def test_restart_selection_chooses_earliest_incomplete_applicable_stage() -> None:
+    from app.services.coach_attempt_pipeline import select_restart_stage
+
+    previous = {
+        "audio_persist": "not_applicable",
+        "transcription": "not_applicable",
+        "speech_analysis": "not_applicable",
+        "content_evaluation": "completed",
+        "evidence_grounding": "failed_retryable",
+        "follow_up_decision": "not_started",
+        "coaching_enrichment": "not_started",
+        "audio_cleanup": "not_applicable",
+    }
+
+    assert select_restart_stage(
+        previous,
+        {
+            "recording_type": "text",
+            "has_usable_transcript": True,
+            "has_audio_source": False,
+        },
+    ) == "evidence_grounding"
 
 
 def test_queue_schedules_the_durable_claim(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -560,8 +988,9 @@ async def test_zero_row_generic_job_fence_rolls_back_attempt_terminalisation(db_
 
 
 @pytest.mark.asyncio
-async def test_audio_transcription_failure_terminalises_without_downstream_results(
-    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+@pytest.mark.parametrize("failure_mode", (None, "event", "provider_race"))
+async def test_audio_transcription_exhaustion_reconciles_to_manual_retry(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path, failure_mode: str | None
 ) -> None:
     session, _ = await _active_session(db_session)
     claims: list[AttemptProcessingClaim] = []
@@ -580,23 +1009,423 @@ async def test_audio_transcription_failure_terminalises_without_downstream_resul
 
         def transcribe(self, _path):
             type(self).calls += 1
-            if type(self).calls == 2:
+            if type(self).calls >= 2:
                 raise RuntimeError("private path must not persist")
             from app.services.transcriber import TranscriptionResult, WordTimestamp
             return TranscriptionResult("speech sibling", "en", [WordTimestamp("speech", 0, .2)])
     @asynccontextmanager
     async def session_factory(): yield db_session
+    if failure_mode == "event":
+        async def fail_event(_repository, **_kwargs):
+            raise RuntimeError("event persistence failed")
+
+        monkeypatch.setattr(
+            ConversationalSessionRepository, "append_session_events", fail_event
+        )
+        with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+            await _process_attempt_claim(
+                claims[0],
+                session_factory=session_factory,
+                transcriber_factory=SpeechThenBrokenTranscriber,
+            )
+        await db_session.refresh(attempt)
+        job = await db_session.get(AsyncJob, claims[0].job_id)
+        assert attempt.attempt_state == "pending_processing"
+        assert job is not None and job.status in {"pending", "running"}
+        return
+    if failure_mode == "provider_race":
+        from app.services.coach_reconciliation import (
+            recover_exhausted_transcription_claim as real_recovery,
+        )
+
+        async def lose_job_fence(db, **kwargs):
+            job = await db.get(AsyncJob, claims[0].job_id)
+            assert job is not None
+            job.status = "done"
+            job.result_json = '{"winner":"other-worker"}'
+            await db.commit()
+            return await real_recovery(db, **kwargs)
+
+        monkeypatch.setattr(
+            "app.services.coach_reconciliation.recover_exhausted_transcription_claim",
+            lose_job_fence,
+        )
+        with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+            await _process_attempt_claim(
+                claims[0],
+                session_factory=session_factory,
+                transcriber_factory=SpeechThenBrokenTranscriber,
+            )
+        await db_session.refresh(attempt)
+        await db_session.refresh(session)
+        job = await db_session.get(AsyncJob, claims[0].job_id)
+        assert attempt.attempt_state == "pending_processing"
+        assert session.conversation_state == "processing_answer"
+        assert job is not None and job.status == "done"
+        assert job.result_json == '{"winner":"other-worker"}'
+        return
     await _process_attempt_claim(claims[0], session_factory=session_factory, transcriber_factory=SpeechThenBrokenTranscriber)
+    await db_session.refresh(attempt)
+    assert attempt.attempt_state == "recoverable_error"
     stages = (await db_session.scalars(select(InterviewAttemptStage).where(InterviewAttemptStage.recording_id == attempt.id))).all()
     states = {stage.stage_name: (stage.stage_state, stage.last_error_code) for stage in stages}
     await db_session.refresh(attempt)
-    assert attempt.attempt_state == "unavailable"
     assert states["audio_persist"][0] == "completed"
-    assert states["transcription"] == ("unavailable", "transcription_unavailable")
+    assert states["transcription"] == ("failed_retryable", "transcription_unavailable")
     assert states["speech_analysis"][0] == "completed"
     assert attempt.speech_metrics is not None and "restart_count" not in attempt.speech_metrics
     assert all(states[name][0] != "completed" for name in ("content_evaluation", "evidence_grounding", "follow_up_decision"))
     assert all(state[0] not in {"pending", "running"} for state in states.values())
+    assert "retry_processing" in await contextual_allowed_commands(db_session, session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("speech_variant", "forged_downstream", "reuse_corruption"),
+    (
+        ("reused", False, None),
+        ("unavailable", False, None),
+        ("reused", True, None),
+        ("reused", False, "audio_persist"),
+        ("reused", False, "speech_analysis"),
+    ),
+)
+async def test_manual_audio_retry_transcription_exhaustion_preserves_valid_graph(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    speech_variant: str,
+    forged_downstream: bool,
+    reuse_corruption: str | None,
+) -> None:
+    session, _ = await _active_session(db_session)
+    claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        claims.append,
+    )
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "begin_answer",
+            0,
+            {
+                "recording_type": "audio",
+                "client_attempt_id": f"retry-exhaustion-{speech_variant}",
+            },
+        ),
+    )
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
+    attempt.attempt_state = "uploaded"
+    attempt.audio_uri = audio_uri
+    attempt.audio_content_hash = digest
+    db_session.add(
+        InterviewAttemptUpload(
+            id=f"retry-exhaustion-upload-{speech_variant}",
+            attempt_id=attempt.id,
+            upload_id="upload-1",
+            request_hash="request",
+            content_sha256=digest,
+            byte_size=1,
+            mime_type="audio/webm",
+            storage_uri=audio_uri,
+            result_state="completed",
+        )
+    )
+    await db_session.commit()
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "finish_answer",
+            begun.state_version,
+            {"attempt_id": attempt.id, "upload_id": "upload-1"},
+        ),
+    )
+
+    class InitialExhaustion:
+        calls = 0
+
+        def transcribe(self, _path):
+            type(self).calls += 1
+            if type(self).calls > 1:
+                raise RuntimeError("provider unavailable")
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "speech observation", "en", [WordTimestamp("speech", 0, 0.2)]
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claims[0],
+        session_factory=session_factory,
+        transcriber_factory=InitialExhaustion,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    prior_stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id
+                    == claims[0].evaluation_version_id
+                )
+            )
+        ).all()
+    )
+    prior_speech = next(
+        stage for stage in prior_stages if stage.stage_name == "speech_analysis"
+    )
+    if speech_variant == "unavailable":
+        prior_speech.stage_state = "unavailable"
+        prior_speech.last_error_code = "speech_analysis_unavailable"
+        await db_session.commit()
+
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command("retry_processing", session.state_version, {}),
+    )
+    retry_claim = claims[-1]
+    retry_stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id
+                    == retry_claim.evaluation_version_id
+                )
+            )
+        ).all()
+    )
+    retry_by_name = {stage.stage_name: stage for stage in retry_stages}
+    assert retry_by_name["audio_persist"].stage_state == "reused"
+    assert retry_by_name["speech_analysis"].stage_state == speech_variant
+    assert retry_by_name["transcription"].stage_state == "pending"
+    if forged_downstream:
+        content = retry_by_name["content_evaluation"]
+        content.stage_state = "completed"
+        content.completed_at = datetime.utcnow()
+        await db_session.commit()
+    if reuse_corruption is not None:
+        retry_by_name[reuse_corruption].reused_from_stage_id = None
+        await db_session.commit()
+
+    class RetryExhaustion:
+        calls = 0
+
+        def transcribe(self, _path):
+            type(self).calls += 1
+            raise RuntimeError("provider remains unavailable")
+
+    if forged_downstream or reuse_corruption is not None:
+        with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+            await _process_attempt_claim(
+                retry_claim,
+                session_factory=session_factory,
+                transcriber_factory=RetryExhaustion,
+            )
+        await db_session.refresh(attempt)
+        assert attempt.attempt_state == "pending_processing"
+        if reuse_corruption is not None:
+            assert RetryExhaustion.calls == 0
+        return
+
+    await _process_attempt_claim(
+        retry_claim,
+        session_factory=session_factory,
+        transcriber_factory=RetryExhaustion,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    for stage in retry_stages:
+        await db_session.refresh(stage)
+    assert RetryExhaustion.calls == 3
+    assert session.conversation_state == "recoverable_error"
+    assert attempt.attempt_state == "recoverable_error"
+    assert retry_by_name["audio_persist"].stage_state == "reused"
+    assert retry_by_name["speech_analysis"].stage_state == speech_variant
+    assert retry_by_name["transcription"].stage_state == "failed_retryable"
+
+
+@pytest.mark.asyncio
+async def test_retry_after_transcription_failure_publishes_a_new_transcript_and_retries_later(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Audio-only reuse must not inherit the failed generation's transcript identity."""
+    session, _, attempt, initial_claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task5-new-transcript-after-retry"
+    )
+
+    class InitialTranscriptionFailure:
+        calls = 0
+
+        def transcribe(self, _path):
+            type(self).calls += 1
+            if type(self).calls > 1:
+                raise RuntimeError("transcription provider unavailable")
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "speech-only observation",
+                "en",
+                [WordTimestamp("speech", 0, 0.2)],
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        initial_claim,
+        session_factory=session_factory,
+        transcriber_factory=InitialTranscriptionFailure,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert attempt.attempt_state == "recoverable_error"
+    assert attempt.current_transcript_version_id is None
+
+    retry_claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        retry_claims.append,
+    )
+    service = ConversationCommandService(db_session)
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command("retry_processing", session.state_version, {}),
+    )
+    second_claim = retry_claims[-1]
+    second_stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id
+                    == second_claim.evaluation_version_id
+                )
+            )
+        ).all()
+    )
+    second_by_name = {stage.stage_name: stage for stage in second_stages}
+    assert second_by_name["audio_persist"].stage_state == "reused"
+    assert second_by_name["speech_analysis"].stage_state == "reused"
+    assert second_by_name["transcription"].stage_state == "pending"
+
+    class SuccessfulRetryTranscriber:
+        calls = 0
+
+        def transcribe(self, _path):
+            type(self).calls += 1
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "new immutable transcript",
+                "en",
+                [WordTimestamp("new", 0, 0.2)],
+            )
+
+    await _process_attempt_claim(
+        second_claim,
+        session_factory=session_factory,
+        transcriber_factory=SuccessfulRetryTranscriber,
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert SuccessfulRetryTranscriber.calls == 1
+    assert attempt.attempt_state == "unavailable"
+    assert attempt.current_transcript_version_id is not None
+    transcript = await db_session.get(
+        InterviewTranscriptVersion, attempt.current_transcript_version_id
+    )
+    assert transcript is not None
+    assert transcript.processing_generation == 2
+    for stage in second_stages:
+        await db_session.refresh(stage)
+    assert second_by_name["audio_persist"].stage_state == "reused"
+    assert second_by_name["speech_analysis"].stage_state == "reused"
+    assert second_by_name["transcription"].stage_state == "completed"
+
+    second_evaluation = await db_session.get(
+        InterviewAttemptEvaluation, second_claim.evaluation_version_id
+    )
+    assert second_evaluation is not None
+    second_by_name["content_evaluation"].stage_state = "failed_retryable"
+    second_by_name["content_evaluation"].last_error_code = (
+        "coach_evaluation_unavailable"
+    )
+    second_evaluation.state = "failed"
+    second_evaluation.diagnostics_json = {
+        "processing_claim": second_evaluation.diagnostics_json["processing_claim"],
+        "result": {"reason_code": "coach_evaluation_unavailable"},
+    }
+    attempt.attempt_state = "recoverable_error"
+    attempt.evaluation_state = "failed"
+    session.conversation_state = "recoverable_error"
+    session.recoverable_error_scope = "attempt_processing"
+    session.recoverable_error_code = "coach_evaluation_unavailable"
+    await db_session.commit()
+
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command("retry_processing", session.state_version, {}),
+    )
+    third_claim = retry_claims[-1]
+    assert third_claim.processing_generation == 3
+
+
+@pytest.mark.asyncio
+async def test_worker_rejects_a_nonreused_stage_carrying_a_reuse_link(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    _, _, _, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task5-nonreused-link"
+    )
+    stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id
+                )
+            )
+        ).all()
+    )
+    by_name = {stage.stage_name: stage for stage in stages}
+    assert by_name["content_evaluation"].stage_state == "pending"
+    by_name["content_evaluation"].reused_from_stage_id = by_name["audio_persist"].id
+    await db_session.commit()
+
+    class Provider:
+        calls = 0
+
+        def transcribe(self, _path):
+            type(self).calls += 1
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "must not be called", "en", [WordTimestamp("called", 0, 0.2)]
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+        await _process_attempt_claim(
+            claim,
+            session_factory=session_factory,
+            transcriber_factory=Provider,
+        )
+    assert Provider.calls == 0
 
 
 @pytest.mark.asyncio

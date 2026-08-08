@@ -172,6 +172,7 @@ EXPECTED_ERROR_HTTP_STATUSES = {
 EXPECTED_RETRYABLE_ERRORS = frozenset(
     {
         "coach_setup_claim_expired",
+        "coach_attempt_job_budget_exhausted",
         "coach_evaluation_unavailable",
         "coach_grounding_source_unavailable",
         "coach_audio_cleanup_failed",
