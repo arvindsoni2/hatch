@@ -36,6 +36,8 @@ export function ConversationControls({
 }: ConversationControlsProps) {
   const allowed = new Set(live.allowed_commands);
   const isTypedDraft = live.conversation_state === "listening" && live.active_attempt?.recording_type === "text";
+  const isAudioDraft = (live.conversation_state === "listening" || live.conversation_state === "paused")
+    && live.active_attempt?.recording_type === "audio";
 
   return (
     <section aria-label="Interview controls" className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -66,7 +68,10 @@ export function ConversationControls({
             Answer in writing
           </Button>
         ) : null}
-        {SIMPLE_COMMANDS.filter(({ command }) => allowed.has(command)).map(({ command, label }) => (
+        {SIMPLE_COMMANDS.filter(({ command }) => (
+          allowed.has(command)
+          && !(isAudioDraft && ["pause", "resume", "cancel_attempt"].includes(command))
+        )).map(({ command, label }) => (
           <Button
             key={command}
             type="button"

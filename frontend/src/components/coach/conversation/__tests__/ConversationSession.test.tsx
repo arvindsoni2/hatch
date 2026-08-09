@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
 
@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({
 const api = vi.hoisted(() => ({
   getCoachConversationLive: vi.fn(),
   sendCoachConversationCommand: vi.fn(),
+  uploadCoachAttemptAudio: vi.fn(),
   getSession: vi.fn(),
   submitAnswer: vi.fn(),
   submitAudio: vi.fn(),
@@ -31,7 +32,21 @@ vi.mock("@/lib/api", async () => {
 });
 
 import { ConversationSession } from "../ConversationSession";
-import { ApiError, type ConversationCommandRequest } from "@/lib/api";
+import { ApiError, type ConversationCommandRequest, type ConversationLiveView } from "@/lib/api";
+
+declare global {
+  var __coachMediaTest: {
+    reset: () => void;
+    stream: { getTracks: () => Array<{ stop: ReturnType<typeof vi.fn> }> };
+    latestRecorder: () => {
+      state: RecordingState;
+      pause: ReturnType<typeof vi.fn>;
+      resume: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+    } | null;
+    setAnalyserDb: (db: number) => void;
+  };
+}
 
 const validTypedFinish: ConversationCommandRequest = {
   command_id: "typed-command",
@@ -269,6 +284,50 @@ function textAttempt(transcript: string | null = null) {
   };
 }
 
+function audioAttempt() {
+  return {
+    id: "attempt-audio-1",
+    question_id: "question-1",
+    recording_type: "audio",
+    attempt_number: 1,
+    attempt_state: "draft",
+    attempt_version: 1,
+    processing_generation: 0,
+    processing_retry_count: 0,
+    processing_retry_limit: 2,
+    processing_retries_remaining: 2,
+    audio_retention_policy: "delete_after_processing",
+    audio_retention_state: "temporary",
+    transcript_version: null,
+  };
+}
+
+function commandResult(overrides: Record<string, unknown> = {}) {
+  return {
+    command_id: "command-1",
+    result: "completed",
+    session_id: "session-1",
+    state: "asking",
+    state_version: 4,
+    active_question_id: "question-1",
+    active_attempt_id: null,
+    async_job_id: null,
+    allowed_commands: [],
+    contract_version: "coach_conversation_command_result_v1",
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function legacySession() {
   return {
     id: "session-1",
@@ -296,6 +355,7 @@ function legacySession() {
 describe("ConversationSession server authority", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    globalThis.__coachMediaTest?.reset();
     api.getCoachConversationLive.mockResolvedValue(live());
     api.sendCoachConversationCommand.mockResolvedValue({
       command_id: "command-1",
@@ -309,6 +369,20 @@ describe("ConversationSession server authority", () => {
       allowed_commands: [],
       contract_version: "coach_conversation_command_result_v1",
     });
+    api.uploadCoachAttemptAudio.mockResolvedValue({
+      attempt_id: "attempt-audio-1",
+      upload_id: "upload-1",
+      result: "completed",
+      content_sha256: "a".repeat(64),
+      byte_size: 5,
+      mime_type: "audio/webm",
+      audio_retention_state: "temporary",
+      contract_version: "coach_attempt_audio_upload_v1",
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders refreshed server state without inferring advancement locally", async () => {
@@ -432,6 +506,27 @@ describe("ConversationSession server authority", () => {
     expect(screen.queryByRole("button", { name: "Answer in writing" })).not.toBeInTheDocument();
   });
 
+  it("accepts a delayed higher state version even when a lower version request started later", async () => {
+    const delayedHigher = deferred<ReturnType<typeof live>>();
+    api.getCoachConversationLive
+      .mockReturnValueOnce(delayedHigher.promise)
+      .mockResolvedValueOnce(live({ state_version: 7 }));
+
+    render(<ConversationSession sessionId="session-1" />);
+    await waitFor(() => expect(api.getCoachConversationLive).toHaveBeenCalledTimes(1));
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    expect(await screen.findByRole("button", { name: "Start audio answer" })).toBeVisible();
+    await act(async () => delayedHigher.resolve(live({
+      conversation_state: "paused",
+      state_version: 8,
+      allowed_commands: ["resume"],
+    })));
+
+    expect(await screen.findByRole("button", { name: "Resume interview" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Start audio answer" })).not.toBeInTheDocument();
+  });
+
   it("renders transcript markup as text rather than executable HTML", async () => {
     const markup = '<img src=x onerror="window.__pwned=1">';
     api.getCoachConversationLive.mockResolvedValue(live({
@@ -482,6 +577,888 @@ describe("ConversationSession server authority", () => {
       },
       contract_version: "coach_conversation_command_v1",
     });
+  });
+
+  it("keeps the typed control enabled and uses the existing live region when microphone access is denied", async () => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockRejectedValue(
+          new DOMException("Permission denied", "NotAllowedError"),
+        ),
+      },
+    });
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/microphone access was not granted/i));
+    expect(screen.getByRole("button", { name: "Answer in writing" })).toBeEnabled();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status")).toHaveTextContent(/microphone access was not granted/i);
+  });
+
+  it("routes silence advisories through the sole polite live region", async () => {
+    vi.useFakeTimers();
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    act(() => vi.advanceTimersByTime(500));
+    globalThis.__coachMediaTest.setAnalyserDb(-25);
+    act(() => vi.advanceTimersByTime(1600));
+    globalThis.__coachMediaTest.setAnalyserDb(-55);
+    act(() => vi.advanceTimersByTime(4000));
+
+    expect(screen.getByRole("status")).toHaveTextContent(/quiet for a few seconds/i);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(5000));
+    expect(screen.getByRole("status")).toHaveTextContent(/are you finished/i);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("shows discard recovery instead of a fabricated resume after refreshing a paused audio draft", async () => {
+    api.getCoachConversationLive.mockResolvedValue(live({
+      conversation_state: "paused",
+      state_version: 5,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["resume"],
+    }));
+    render(<ConversationSession sessionId="session-1" />);
+
+    expect(await screen.findByText(/this browser no longer has the live recording/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Discard recording and try again" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Resume interview" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/recording resumed/i)).not.toBeInTheDocument();
+  });
+
+  it("discards a refreshed paused draft through explicit resume then cancel commands", async () => {
+    const paused = live({
+      conversation_state: "paused",
+      state_version: 5,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["resume"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(paused)
+      .mockResolvedValueOnce({
+        ...paused,
+        conversation_state: "listening",
+        state_version: 6,
+        allowed_commands: ["finish_answer", "pause", "cancel_attempt"],
+      })
+      .mockResolvedValueOnce(live({ state_version: 7 }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Discard recording and try again" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(2));
+    expect(api.sendCoachConversationCommand.mock.calls[0][1]).toMatchObject({
+      command_type: "resume",
+      expected_state_version: 5,
+      payload: {},
+    });
+    expect(api.sendCoachConversationCommand.mock.calls[1][1]).toMatchObject({
+      command_type: "cancel_attempt",
+      expected_state_version: 6,
+      payload: { attempt_id: "attempt-audio-1" },
+    });
+    expect(api.sendCoachConversationCommand.mock.calls[0][1].command_id)
+      .not.toBe(api.sendCoachConversationCommand.mock.calls[1][1].command_id);
+  });
+
+  it("cancels a local paused recording through authoritative resume, refresh, then cancel", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    const paused = {
+      ...listening,
+      conversation_state: "paused",
+      state_version: 5,
+      allowed_commands: ["resume"],
+    };
+    const resumed = { ...listening, state_version: 6 };
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(paused)
+      .mockResolvedValueOnce(resumed)
+      .mockResolvedValueOnce(live({ state_version: 7 }));
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce({
+        command_id: "begin-1", result: "completed", session_id: "session-1",
+        state: "listening", state_version: 4, active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1", async_job_id: null,
+        allowed_commands: listening.allowed_commands,
+        contract_version: "coach_conversation_command_result_v1",
+      })
+      .mockResolvedValueOnce({
+        command_id: "pause-1", result: "completed", session_id: "session-1",
+        state: "paused", state_version: 5, active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1", async_job_id: null,
+        allowed_commands: ["resume"], contract_version: "coach_conversation_command_result_v1",
+      })
+      .mockResolvedValueOnce({
+        command_id: "resume-1", result: "completed", session_id: "session-1",
+        state: "listening", state_version: 6, active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1", async_job_id: null,
+        allowed_commands: resumed.allowed_commands,
+        contract_version: "coach_conversation_command_result_v1",
+      })
+      .mockResolvedValueOnce({
+        command_id: "cancel-1", result: "completed", session_id: "session-1",
+        state: "asking", state_version: 7, active_question_id: "question-1",
+        active_attempt_id: null, async_job_id: null, allowed_commands: ["begin_answer", "pause"],
+        contract_version: "coach_conversation_command_result_v1",
+      });
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel audio answer and discard recording" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(4));
+    expect(api.sendCoachConversationCommand.mock.calls.slice(2).map((call) => call[1])).toEqual([
+      expect.objectContaining({ command_type: "resume", expected_state_version: 5, payload: {} }),
+      expect.objectContaining({
+        command_type: "cancel_attempt",
+        expected_state_version: 6,
+        payload: { attempt_id: "attempt-audio-1" },
+      }),
+    ]);
+  });
+
+  it("cancels with the accepted resume result version when the resume refresh is unavailable", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    const paused = {
+      ...listening,
+      conversation_state: "paused",
+      state_version: 5,
+      allowed_commands: ["resume"],
+    };
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(paused)
+      .mockRejectedValueOnce(new Error("offline after resume"))
+      .mockResolvedValueOnce(live({ state_version: 7 }));
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce(commandResult({
+        command_id: "begin-1", state: "listening", state_version: 4,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "pause-1", state: "paused", state_version: 5,
+        active_attempt_id: "attempt-audio-1", allowed_commands: ["resume"],
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "resume-1", state: "listening", state_version: 6,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockResolvedValueOnce(commandResult({ command_id: "cancel-1", state_version: 7 }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel audio answer and discard recording" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(4));
+    expect(api.sendCoachConversationCommand.mock.calls[3][1]).toMatchObject({
+      command_type: "cancel_attempt",
+      expected_state_version: 6,
+      payload: { attempt_id: "attempt-audio-1" },
+    });
+    await waitFor(() => expect(globalThis.__coachMediaTest.latestRecorder()?.stop).toHaveBeenCalledOnce());
+    expect(globalThis.__coachMediaTest.latestRecorder()?.state).toBe("inactive");
+  });
+
+  it("resumes the local recorder when accepted resume cannot complete cancellation", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    const paused = {
+      ...listening,
+      conversation_state: "paused",
+      state_version: 5,
+      allowed_commands: ["resume"],
+    };
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(paused)
+      .mockRejectedValueOnce(new Error("offline after resume"));
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce(commandResult({
+        command_id: "begin-1", state: "listening", state_version: 4,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "pause-1", state: "paused", state_version: 5,
+        active_attempt_id: "attempt-audio-1", allowed_commands: ["resume"],
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "resume-1", state: "listening", state_version: 6,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockRejectedValueOnce(new Error("cancel unavailable"));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel audio answer and discard recording" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(4));
+    expect(globalThis.__coachMediaTest.latestRecorder()?.resume).toHaveBeenCalledOnce();
+    expect(globalThis.__coachMediaTest.latestRecorder()?.state).toBe("recording");
+    expect(screen.getByRole("status")).toHaveTextContent(/cancel is pending/i);
+  });
+
+  it("keeps the local recorder paused when cancel conflict refresh proves same-attempt paused authority", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    const paused = {
+      ...listening,
+      conversation_state: "paused",
+      state_version: 5,
+      allowed_commands: ["resume"],
+    };
+    const refreshedPaused = { ...paused, state_version: 7 };
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(paused)
+      .mockRejectedValueOnce(new Error("offline after resume"))
+      .mockResolvedValueOnce(refreshedPaused);
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce(commandResult({
+        command_id: "begin-1", state: "listening", state_version: 4,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "pause-1", state: "paused", state_version: 5,
+        active_attempt_id: "attempt-audio-1", allowed_commands: ["resume"],
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "resume-1", state: "listening", state_version: 6,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+        error: { code: "coach_conversation_version_conflict" },
+      }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel audio answer and discard recording" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(4));
+    expect(globalThis.__coachMediaTest.latestRecorder()?.resume).not.toHaveBeenCalled();
+    expect(globalThis.__coachMediaTest.latestRecorder()?.state).toBe("paused");
+    expect(screen.getByRole("status")).toHaveTextContent(/remains paused.*cancel/i);
+  });
+
+  it("clears local capture when cancel conflict refresh proves replacement authority", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    const paused = {
+      ...listening,
+      conversation_state: "paused",
+      state_version: 5,
+      allowed_commands: ["resume"],
+    };
+    const replacement = {
+      ...listening,
+      state_version: 7,
+      active_attempt: { ...audioAttempt(), id: "attempt-replacement" },
+    };
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(paused)
+      .mockRejectedValueOnce(new Error("offline after resume"))
+      .mockResolvedValueOnce(replacement);
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce(commandResult({
+        command_id: "begin-1", state: "listening", state_version: 4,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "pause-1", state: "paused", state_version: 5,
+        active_attempt_id: "attempt-audio-1", allowed_commands: ["resume"],
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "resume-1", state: "listening", state_version: 6,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+        error: { code: "coach_conversation_version_conflict" },
+      }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel audio answer and discard recording" }));
+
+    await waitFor(() => expect(globalThis.__coachMediaTest.latestRecorder()?.stop).toHaveBeenCalledOnce());
+    expect(globalThis.__coachMediaTest.latestRecorder()?.resume).not.toHaveBeenCalled();
+    expect(screen.queryByText(/microphone paused|microphone recording/i)).not.toBeInTheDocument();
+  });
+
+  it.each(["paused", "listening", "mismatch", "unavailable"] as const)(
+    "aligns cancel to the newest %s authority when its own refresh becomes stale",
+    async (latestOutcome) => {
+      const listening = live({
+        conversation_state: "listening",
+        state_version: 4,
+        active_attempt: audioAttempt(),
+        allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+      });
+      const paused = {
+        ...listening,
+        conversation_state: "paused",
+        state_version: 5,
+        allowed_commands: ["resume"],
+      };
+      const staleCancelRefresh = deferred<ReturnType<typeof live>>();
+      const latest = (latestOutcome === "paused"
+        ? { ...paused, state_version: 7 }
+        : latestOutcome === "listening"
+          ? { ...listening, state_version: 7 }
+          : {
+              ...listening,
+              state_version: 7,
+              active_attempt: { ...audioAttempt(), id: "attempt-replacement" },
+            }) as ConversationLiveView;
+      const reads = api.getCoachConversationLive
+        .mockResolvedValueOnce(live())
+        .mockResolvedValueOnce(listening)
+        .mockResolvedValueOnce(paused)
+        .mockRejectedValueOnce(new Error("offline after resume"))
+        .mockReturnValueOnce(staleCancelRefresh.promise);
+      if (latestOutcome === "unavailable") {
+        reads.mockRejectedValueOnce(new Error("newest read unavailable"));
+      } else {
+        reads.mockResolvedValueOnce(latest);
+      }
+      api.sendCoachConversationCommand
+        .mockResolvedValueOnce(commandResult({
+          command_id: "begin-1", state: "listening", state_version: 4,
+          active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+        }))
+        .mockResolvedValueOnce(commandResult({
+          command_id: "pause-1", state: "paused", state_version: 5,
+          active_attempt_id: "attempt-audio-1", allowed_commands: ["resume"],
+        }))
+        .mockResolvedValueOnce(commandResult({
+          command_id: "resume-1", state: "listening", state_version: 6,
+          active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+        }))
+        .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+          error: { code: "coach_conversation_version_conflict" },
+        }));
+      const user = userEvent.setup();
+      render(<ConversationSession sessionId="session-1" />);
+
+      await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+      await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+      const cancelClick = user.click(
+        await screen.findByRole("button", { name: "Cancel audio answer and discard recording" }),
+      );
+      await waitFor(() => expect(api.getCoachConversationLive).toHaveBeenCalledTimes(5));
+      act(() => window.dispatchEvent(new Event("focus")));
+      await waitFor(() => expect(api.getCoachConversationLive).toHaveBeenCalledTimes(6));
+      await act(async () => staleCancelRefresh.resolve({ ...listening, state_version: 6 }));
+      await cancelClick;
+
+      const recorder = globalThis.__coachMediaTest.latestRecorder();
+      if (latestOutcome === "paused") {
+        expect(recorder?.resume).not.toHaveBeenCalled();
+        expect(recorder?.state).toBe("paused");
+        expect(screen.getByRole("status")).toHaveTextContent(/remains paused.*cancel/i);
+      } else if (latestOutcome === "mismatch") {
+        await waitFor(() => expect(recorder?.stop).toHaveBeenCalledOnce());
+        expect(recorder?.resume).not.toHaveBeenCalled();
+        expect(screen.queryByText(/microphone paused|microphone recording/i)).not.toBeInTheDocument();
+      } else {
+        await waitFor(() => expect(recorder?.resume).toHaveBeenCalledOnce());
+        expect(recorder?.state).toBe("recording");
+        expect(screen.getByRole("status")).toHaveTextContent(/cancel is pending/i);
+      }
+    },
+  );
+
+  it.each(["paused", "listening", "mismatch", "unavailable"] as const)(
+    "keeps cancel paused until a newer pending %s authority read settles",
+    async (latestOutcome) => {
+      const listening = live({
+        conversation_state: "listening",
+        state_version: 4,
+        active_attempt: audioAttempt(),
+        allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+      });
+      const paused = {
+        ...listening,
+        conversation_state: "paused",
+        state_version: 5,
+        allowed_commands: ["resume"],
+      };
+      const staleCancelRefresh = deferred<ReturnType<typeof live>>();
+      const latestRead = deferred<ConversationLiveView>();
+      const latest = (latestOutcome === "paused"
+        ? { ...paused, state_version: 7 }
+        : latestOutcome === "listening"
+          ? { ...listening, state_version: 7 }
+          : {
+              ...listening,
+              state_version: 7,
+              active_attempt: { ...audioAttempt(), id: "attempt-replacement" },
+            }) as ConversationLiveView;
+      api.getCoachConversationLive
+        .mockResolvedValueOnce(live())
+        .mockResolvedValueOnce(listening)
+        .mockResolvedValueOnce(paused)
+        .mockRejectedValueOnce(new Error("offline after resume"))
+        .mockReturnValueOnce(staleCancelRefresh.promise)
+        .mockReturnValueOnce(latestRead.promise);
+      api.sendCoachConversationCommand
+        .mockResolvedValueOnce(commandResult({
+          command_id: "begin-1", state: "listening", state_version: 4,
+          active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+        }))
+        .mockResolvedValueOnce(commandResult({
+          command_id: "pause-1", state: "paused", state_version: 5,
+          active_attempt_id: "attempt-audio-1", allowed_commands: ["resume"],
+        }))
+        .mockResolvedValueOnce(commandResult({
+          command_id: "resume-1", state: "listening", state_version: 6,
+          active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+        }))
+        .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+          error: { code: "coach_conversation_version_conflict" },
+        }));
+      const user = userEvent.setup();
+      render(<ConversationSession sessionId="session-1" />);
+
+      await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+      await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+      const cancelClick = user.click(
+        await screen.findByRole("button", { name: "Cancel audio answer and discard recording" }),
+      );
+      await waitFor(() => expect(api.getCoachConversationLive).toHaveBeenCalledTimes(5));
+      act(() => window.dispatchEvent(new Event("focus")));
+      await waitFor(() => expect(api.getCoachConversationLive).toHaveBeenCalledTimes(6));
+      await act(async () => staleCancelRefresh.resolve({ ...listening, state_version: 6 }));
+
+      const recorder = globalThis.__coachMediaTest.latestRecorder();
+      expect(recorder?.resume).not.toHaveBeenCalled();
+      expect(recorder?.state).toBe("paused");
+
+      await act(async () => {
+        if (latestOutcome === "unavailable") {
+          latestRead.reject(new Error("newest read unavailable"));
+        } else {
+          latestRead.resolve(latest);
+        }
+      });
+      await cancelClick;
+
+      if (latestOutcome === "paused") {
+        expect(recorder?.resume).not.toHaveBeenCalled();
+        expect(recorder?.state).toBe("paused");
+        expect(screen.getByRole("status")).toHaveTextContent(/remains paused.*cancel/i);
+      } else if (latestOutcome === "mismatch") {
+        await waitFor(() => expect(recorder?.stop).toHaveBeenCalledOnce());
+        expect(recorder?.resume).not.toHaveBeenCalled();
+        expect(screen.queryByText(/microphone paused|microphone recording/i)).not.toBeInTheDocument();
+      } else {
+        await waitFor(() => expect(recorder?.resume).toHaveBeenCalledOnce());
+        expect(recorder?.state).toBe("recording");
+        expect(screen.getByRole("status")).toHaveTextContent(/cancel is pending/i);
+      }
+    },
+  );
+
+  it("uses versioned audio begin, upload, and finish boundaries without browser transcript text", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(live({
+        conversation_state: "processing_answer",
+        state_version: 5,
+        active_attempt: { ...audioAttempt(), attempt_state: "pending_processing", processing_generation: 1 },
+        allowed_commands: [],
+        processing: {
+          job_id: "job-1",
+          stage: "transcription",
+          state: "running",
+          retryable: false,
+          retry_count: 0,
+          retry_limit: 2,
+          retries_remaining: 2,
+        },
+      }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    expect(await screen.findByText("Microphone recording")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Finish audio answer while recording" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(2));
+    expect(api.sendCoachConversationCommand.mock.calls[0][1]).toMatchObject({
+      command_type: "begin_answer",
+      expected_state_version: 3,
+      payload: { recording_type: "audio", client_attempt_id: expect.any(String) },
+    });
+    expect(api.uploadCoachAttemptAudio).toHaveBeenCalledOnce();
+    expect(api.sendCoachConversationCommand.mock.calls[1][1]).toMatchObject({
+      command_type: "finish_answer",
+      expected_state_version: 4,
+      payload: { attempt_id: "attempt-audio-1", upload_id: expect.any(String) },
+    });
+    expect(api.sendCoachConversationCommand.mock.calls[1][1].payload).not.toHaveProperty("transcript");
+  });
+
+  it("preserves the unsent audio island when a finish conflict cannot refresh server authority", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(listening);
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce({
+        command_id: "begin-1",
+        result: "completed",
+        session_id: "session-1",
+        state: "listening",
+        state_version: 4,
+        active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1",
+        async_job_id: null,
+        allowed_commands: listening.allowed_commands,
+        contract_version: "coach_conversation_command_result_v1",
+      })
+      .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+        error: { code: "coach_conversation_version_conflict" },
+      }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Finish audio answer while recording" }));
+
+    expect(await screen.findByText(
+      "Your captured audio is preserved locally while interview status is unavailable.",
+    )).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Upload captured answer again" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause audio recording" })).not.toBeInTheDocument();
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Try refreshing interview" }));
+    expect(await screen.findByRole("button", { name: "Upload captured answer" })).toBeEnabled();
+  });
+
+  it("offers a local-only stop when an accepted audio begin cannot refresh authority", async () => {
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockRejectedValueOnce(new Error("offline after begin"));
+    api.sendCoachConversationCommand.mockResolvedValueOnce(commandResult({
+      command_id: "begin-1",
+      state: "listening",
+      state_version: 4,
+      active_attempt_id: "attempt-audio-1",
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+
+    expect(await screen.findByText("Microphone recording")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop recording and preserve captured audio" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Pause audio recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel audio answer and discard recording" })).not.toBeInTheDocument();
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+  });
+
+  it("preserves captured audio with a local stop when focus refresh loses authority", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockRejectedValueOnce(new Error("focus refresh offline"))
+      .mockResolvedValueOnce(listening);
+    api.sendCoachConversationCommand.mockResolvedValueOnce(commandResult({
+      command_id: "begin-1", state: "listening", state_version: 4,
+      active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+    }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await user.click(await screen.findByRole("button", { name: "Stop recording and preserve captured audio" }));
+
+    await waitFor(() => expect(globalThis.__coachMediaTest.latestRecorder()?.stop).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status")).toHaveTextContent(/captured audio is preserved/i);
+    expect(screen.getByText("Your captured audio is preserved locally while interview status is unavailable."))
+      .toBeVisible();
+    expect(screen.queryByRole("button", { name: /upload captured answer/i })).not.toBeInTheDocument();
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(await screen.findByRole("button", { name: "Upload captured answer" })).toBeEnabled();
+  });
+
+  it("keeps an accepted local pause when its follow-up live refresh is unavailable", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockRejectedValueOnce(new Error("offline"));
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce({
+        command_id: "begin-1",
+        result: "completed",
+        session_id: "session-1",
+        state: "listening",
+        state_version: 4,
+        active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1",
+        async_job_id: null,
+        allowed_commands: listening.allowed_commands,
+        contract_version: "coach_conversation_command_result_v1",
+      })
+      .mockResolvedValueOnce({
+        command_id: "pause-1",
+        result: "completed",
+        session_id: "session-1",
+        state: "paused",
+        state_version: 5,
+        active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1",
+        async_job_id: null,
+        allowed_commands: ["resume"],
+        contract_version: "coach_conversation_command_result_v1",
+      });
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+
+    await waitFor(() => expect(api.getCoachConversationLive).toHaveBeenCalledTimes(3));
+    expect(globalThis.__coachMediaTest.latestRecorder()?.state).toBe("paused");
+    expect(globalThis.__coachMediaTest.latestRecorder()?.resume).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(/could not refresh/i);
+  });
+
+  it("offers a local-only stop when an accepted resume cannot refresh authority", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    const paused = {
+      ...listening,
+      conversation_state: "paused",
+      state_version: 5,
+      allowed_commands: ["resume"],
+    };
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(paused)
+      .mockRejectedValueOnce(new Error("offline after resume"));
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce(commandResult({
+        command_id: "begin-1", state: "listening", state_version: 4,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "pause-1", state: "paused", state_version: 5,
+        active_attempt_id: "attempt-audio-1", allowed_commands: ["resume"],
+      }))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "resume-1", state: "listening", state_version: 6,
+        active_attempt_id: "attempt-audio-1", allowed_commands: listening.allowed_commands,
+      }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+    await user.click(await screen.findByRole("button", { name: "Resume paused audio recording" }));
+
+    expect(await screen.findByText("Microphone recording")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop recording and preserve captured audio" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Pause audio recording" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel audio answer and discard recording" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/could not refresh/i);
+  });
+
+  it("rolls a local pause back when a successful POST result rejects the transition", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce({
+        ...listening,
+        conversation_state: "paused",
+        state_version: 5,
+        allowed_commands: ["resume"],
+      });
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce({
+        command_id: "begin-1",
+        result: "completed",
+        session_id: "session-1",
+        state: "listening",
+        state_version: 4,
+        active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1",
+        async_job_id: null,
+        allowed_commands: listening.allowed_commands,
+        contract_version: "coach_conversation_command_result_v1",
+      })
+      .mockResolvedValueOnce({
+        command_id: "pause-rejected-1",
+        result: "invalid_state",
+        session_id: "session-1",
+        state: "listening",
+        state_version: 4,
+        active_question_id: "question-1",
+        active_attempt_id: "attempt-audio-1",
+        async_job_id: null,
+        allowed_commands: listening.allowed_commands,
+        contract_version: "coach_conversation_command_result_v1",
+      });
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await user.click(await screen.findByRole("button", { name: "Pause audio recording" }));
+
+    await waitFor(() => expect(globalThis.__coachMediaTest.latestRecorder()?.resume).toHaveBeenCalledOnce());
+    expect(globalThis.__coachMediaTest.latestRecorder()?.state).toBe("recording");
+  });
+
+  it("stops local capture when fresh authority reports that the attempt was cancelled remotely", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce(live({ state_version: 5 }));
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    const recorder = globalThis.__coachMediaTest.latestRecorder();
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    await waitFor(() => expect(recorder?.stop).toHaveBeenCalledOnce());
+    expect(screen.queryByText("Microphone recording")).not.toBeInTheDocument();
+    expect(globalThis.__coachMediaTest.stream.getTracks()[0].stop).toHaveBeenCalledOnce();
+  });
+
+  it("stops local capture when fresh authority replaces it with a different audio attempt", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce({
+        ...listening,
+        state_version: 5,
+        active_attempt: { ...audioAttempt(), id: "attempt-audio-remote" },
+      });
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    const recorder = globalThis.__coachMediaTest.latestRecorder();
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    await waitFor(() => expect(recorder?.stop).toHaveBeenCalledOnce());
+    expect(screen.queryByText("Microphone recording")).not.toBeInTheDocument();
   });
 
   it("does not expose future review and report commands in the Task 7 shell", async () => {

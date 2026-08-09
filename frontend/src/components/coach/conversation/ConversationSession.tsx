@@ -6,12 +6,18 @@ import {
   getCoachConversationLive,
   sendCoachConversationCommand,
   type ConversationCommandRequest,
+  type ConversationCommandResult,
   type ConversationCommandType,
   type ConversationLiveView,
 } from "@/lib/api";
 import { ConversationControls } from "./ConversationControls";
 import { ConversationProgress } from "./ConversationProgress";
 import { ConversationQuestion } from "./ConversationQuestion";
+import {
+  ConversationRecorder,
+  type RecorderCancelOutcome,
+  type RecorderTransitionOutcome,
+} from "./ConversationRecorder";
 import { RetentionStatus } from "./RetentionStatus";
 
 const PROCESSING_LABELS: Record<NonNullable<ConversationLiveView["processing"]["stage"]>, string> = {
@@ -56,9 +62,31 @@ function isConflict(error: unknown): boolean {
 }
 
 type LiveRefreshResult =
-  | { kind: "accepted"; live: ConversationLiveView }
-  | { kind: "stale" }
-  | { kind: "failed" };
+  | { kind: "accepted"; live: ConversationLiveView; readSequence: number }
+  | { kind: "stale"; readSequence: number }
+  | { kind: "failed"; readSequence: number };
+
+type CommandExecutionResult = {
+  post:
+    | { kind: "accepted"; result: ConversationCommandResult }
+    | { kind: "rejected" };
+  refresh: LiveRefreshResult | null;
+};
+
+type RecorderCommandAuthority = {
+  state: ConversationCommandResult["state"];
+  stateVersion: number;
+  attemptId: string | null;
+  resumed: boolean;
+};
+
+type RecorderAuthorityResult =
+  | { kind: "accepted"; authority: RecorderCommandAuthority }
+  | { kind: "rejected" };
+
+const ACCEPTED_COMMAND_RESULTS = new Set<ConversationCommandResult["result"]>([
+  "completed", "accepted_processing", "duplicate",
+]);
 
 export function ConversationSession({ sessionId }: { sessionId: string }) {
   const [live, setLive] = useState<ConversationLiveView | null>(null);
@@ -69,38 +97,64 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
   const nextReadSequence = useRef(0);
   const acceptedReadSequence = useRef(0);
   const acceptedStateVersion = useRef(-1);
+  const lastRecorderAuthority = useRef<ConversationLiveView | null>(null);
+  const latestAuthority = useRef<ConversationLiveView | null>(null);
+  const pendingAuthorityReads = useRef(new Map<number, Promise<LiveRefreshResult>>());
 
-  const refreshLive = useCallback(async (announce = true): Promise<LiveRefreshResult> => {
+  const refreshLive = useCallback((announce = true): Promise<LiveRefreshResult> => {
     const readSequence = ++nextReadSequence.current;
-    try {
-      const current = await getCoachConversationLive(sessionId);
-      if (readSequence < nextReadSequence.current || readSequence < acceptedReadSequence.current) {
-        return { kind: "stale" };
-      }
-      if (current.state_version < acceptedStateVersion.current) {
+    const read = (async (): Promise<LiveRefreshResult> => {
+      try {
+        const current = await getCoachConversationLive(sessionId);
+        if (
+          current.state_version < acceptedStateVersion.current
+          || (
+            current.state_version === acceptedStateVersion.current
+            && readSequence < acceptedReadSequence.current
+          )
+        ) {
+          return { kind: "stale", readSequence };
+        }
         acceptedReadSequence.current = readSequence;
+        acceptedStateVersion.current = current.state_version;
+        lastRecorderAuthority.current = current;
+        latestAuthority.current = current;
+        setLive(current);
+        setLoadError(false);
+        if (announce) setAnnouncement(stateLabel(current));
+        return { kind: "accepted", live: current, readSequence };
+      } catch {
+        if (readSequence < nextReadSequence.current || readSequence < acceptedReadSequence.current) {
+          return { kind: "stale", readSequence };
+        }
+        acceptedReadSequence.current = readSequence;
+        latestAuthority.current = null;
         setLive(null);
         setLoadError(true);
         setAnnouncement("We could not refresh this interview. Try again.");
-        return { kind: "failed" };
+        return { kind: "failed", readSequence };
       }
-      acceptedReadSequence.current = readSequence;
-      acceptedStateVersion.current = current.state_version;
-      setLive(current);
-      setLoadError(false);
-      if (announce) setAnnouncement(stateLabel(current));
-      return { kind: "accepted", live: current };
-    } catch {
-      if (readSequence < nextReadSequence.current || readSequence < acceptedReadSequence.current) {
-        return { kind: "stale" };
+    })();
+    pendingAuthorityReads.current.set(readSequence, read);
+    void read.finally(() => {
+      if (pendingAuthorityReads.current.get(readSequence) === read) {
+        pendingAuthorityReads.current.delete(readSequence);
       }
-      acceptedReadSequence.current = readSequence;
-      setLive(null);
-      setLoadError(true);
-      setAnnouncement("We could not refresh this interview. Try again.");
-      return { kind: "failed" };
-    }
+    });
+    return read;
   }, [sessionId]);
+
+  const waitForLatestAuthority = useCallback(async (
+    completedReadSequence: number,
+  ): Promise<ConversationLiveView | null> => {
+    while (true) {
+      const latestReadSequence = nextReadSequence.current;
+      if (latestReadSequence <= completedReadSequence) return latestAuthority.current;
+      const pendingRead = pendingAuthorityReads.current.get(latestReadSequence);
+      if (pendingRead !== undefined) await pendingRead;
+      if (latestReadSequence === nextReadSequence.current) return latestAuthority.current;
+    }
+  }, []);
 
   useEffect(() => {
     void refreshLive();
@@ -127,14 +181,20 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
   const execute = useCallback(async (
     request: ConversationCommandRequest,
     options: { clearTextAfterRefresh?: boolean } = {},
-  ) => {
+  ): Promise<CommandExecutionResult> => {
     setPending(true);
     try {
-      await sendCoachConversationCommand(sessionId, request);
+      const commandResult = await sendCoachConversationCommand(sessionId, request);
       const refreshed = await refreshLive();
-      if (refreshed.kind === "accepted" && options.clearTextAfterRefresh) setTextAnswer("");
+      const accepted = ACCEPTED_COMMAND_RESULTS.has(commandResult.result);
+      if (accepted && refreshed.kind === "accepted" && options.clearTextAfterRefresh) setTextAnswer("");
+      return {
+        post: accepted ? { kind: "accepted", result: commandResult } : { kind: "rejected" },
+        refresh: refreshed,
+      };
     } catch (error) {
       if (isConflict(error)) {
+        latestAuthority.current = null;
         setLive(null);
         setLoadError(false);
         setAnnouncement("The interview changed on the server. Refreshing interview.");
@@ -144,8 +204,10 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
         } else if (refreshed.kind === "failed") {
           setAnnouncement("The interview changed, but we could not refresh it. Your unsent answer is still here.");
         }
+        return { post: { kind: "rejected" }, refresh: refreshed };
       } else {
         setAnnouncement("That action could not be completed. Your unsent answer is still here.");
+        return { post: { kind: "rejected" }, refresh: null };
       }
     } finally {
       setPending(false);
@@ -169,6 +231,32 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
       command_type: "begin_answer",
       payload: { recording_type: "text", client_attempt_id: crypto.randomUUID() },
     });
+  }, [execute, newEnvelope]);
+
+  const beginAudio = useCallback(async (): Promise<{ attemptId: string; stateVersion: number } | null> => {
+    const envelope = newEnvelope();
+    if (envelope === null) return null;
+    const result = await execute({
+      ...envelope,
+      command_type: "begin_answer",
+      payload: { recording_type: "audio", client_attempt_id: crypto.randomUUID() },
+    });
+    if (
+      result.post.kind !== "accepted"
+    ) return null;
+    if (result.refresh?.kind === "accepted") {
+      if (
+        result.refresh.live.conversation_state !== "listening"
+        || result.refresh.live.active_attempt?.recording_type !== "audio"
+      ) return null;
+      return {
+        attemptId: result.refresh.live.active_attempt.id,
+        stateVersion: result.refresh.live.state_version,
+      };
+    }
+    return result.post.result.state === "listening" && result.post.result.active_attempt_id !== null
+      ? { attemptId: result.post.result.active_attempt_id, stateVersion: result.post.result.state_version }
+      : null;
   }, [execute, newEnvelope]);
 
   const finishText = useCallback(() => {
@@ -215,11 +303,178 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
     if (request !== null) void execute(request);
   }, [execute, live, newEnvelope]);
 
+  const executeRecorderRequest = useCallback(async (
+    authority: { state_version: number },
+    commandType: "pause" | "resume" | "keep_speaking" | "cancel_attempt" | "finish_answer",
+    payload: Record<string, string>,
+  ): Promise<CommandExecutionResult> => execute({
+    command_id: crypto.randomUUID(),
+    command_type: commandType,
+    expected_state_version: authority.state_version,
+    payload,
+    contract_version: "coach_conversation_command_v1",
+  } as ConversationCommandRequest), [execute]);
+
+  const pauseAudio = useCallback(async () => {
+    if (live === null) return "rejected" as RecorderTransitionOutcome;
+    const result = await executeRecorderRequest(live, "pause", {});
+    if (result.post.kind !== "accepted") return "rejected";
+    if (result.refresh?.kind === "accepted") {
+      return result.refresh.live.conversation_state === "paused" ? "accepted" : "rejected";
+    }
+    return result.post.result.state === "paused" ? "accepted_refresh_unavailable" : "rejected";
+  }, [executeRecorderRequest, live]);
+
+  const resumeAudio = useCallback(async () => {
+    if (live === null) return "rejected" as RecorderTransitionOutcome;
+    const result = await executeRecorderRequest(live, "resume", {});
+    if (result.post.kind !== "accepted") return "rejected";
+    if (result.refresh?.kind === "accepted") {
+      return result.refresh.live.conversation_state !== "paused" ? "accepted" : "rejected";
+    }
+    return result.post.result.state !== "paused" ? "accepted_refresh_unavailable" : "rejected";
+  }, [executeRecorderRequest, live]);
+
+  const keepSpeakingAudio = useCallback(async (attemptId: string) => {
+    if (live === null) return false;
+    const result = await executeRecorderRequest(live, "keep_speaking", { attempt_id: attemptId });
+    if (result.post.kind !== "accepted") return false;
+    if (result.refresh?.kind === "accepted") {
+      return result.refresh.live.conversation_state === "listening"
+        && result.refresh.live.active_attempt?.id === attemptId;
+    }
+    return result.post.result.state === "listening" && result.post.result.active_attempt_id === attemptId;
+  }, [executeRecorderRequest, live]);
+
+  const resumePausedAuthority = useCallback(async (authority: ConversationLiveView) => {
+    if (authority.conversation_state !== "paused") {
+      return {
+        kind: "accepted",
+        authority: {
+          state: authority.conversation_state,
+          stateVersion: authority.state_version,
+          attemptId: authority.active_attempt?.id ?? null,
+          resumed: false,
+        },
+      } as RecorderAuthorityResult;
+    }
+    const result = await executeRecorderRequest(authority, "resume", {});
+    if (result.refresh?.kind === "accepted") {
+      return {
+        kind: "accepted",
+        authority: {
+          state: result.refresh.live.conversation_state,
+          stateVersion: result.refresh.live.state_version,
+          attemptId: result.refresh.live.active_attempt?.id ?? null,
+          resumed: result.refresh.live.conversation_state === "listening",
+        },
+      } as RecorderAuthorityResult;
+    }
+    if (result.post.kind !== "accepted") return { kind: "rejected" } as RecorderAuthorityResult;
+    return {
+      kind: "accepted",
+      authority: {
+        state: result.post.result.state,
+        stateVersion: result.post.result.state_version,
+        attemptId: result.post.result.active_attempt_id,
+        resumed: result.post.result.state === "listening",
+      },
+    } as RecorderAuthorityResult;
+  }, [executeRecorderRequest]);
+
+  const cancelAudio = useCallback(async (attemptId: string): Promise<RecorderCancelOutcome> => {
+    if (live === null) return "rejected";
+    const resumed = await resumePausedAuthority(live);
+    if (
+      resumed.kind !== "accepted"
+      || resumed.authority.state !== "listening"
+      || resumed.authority.attemptId !== attemptId
+    ) return "rejected";
+    const result = await executeRecorderRequest(
+      { state_version: resumed.authority.stateVersion },
+      "cancel_attempt",
+      { attempt_id: attemptId },
+    );
+    const cancelled = result.post.kind === "accepted" && (
+      result.refresh?.kind === "accepted"
+        ? result.refresh.live.conversation_state === "asking"
+        : result.post.result.state === "asking"
+    );
+    if (cancelled) return "cancelled";
+    const freshestCancelAuthority = result.refresh?.kind === "accepted"
+      ? await waitForLatestAuthority(result.refresh.readSequence)
+      : result.refresh?.kind === "stale"
+        ? await waitForLatestAuthority(result.refresh.readSequence)
+        : null;
+    if (freshestCancelAuthority !== null) {
+      const freshAttemptId = freshestCancelAuthority.active_attempt?.id ?? null;
+      if (freshAttemptId !== attemptId) return "authority_mismatch";
+      if (freshestCancelAuthority.conversation_state === "paused") return "remain_paused";
+      if (freshestCancelAuthority.conversation_state === "listening") return "resumed_pending";
+      return "authority_mismatch";
+    }
+    return resumed.authority.resumed ? "resumed_pending" : "rejected";
+  }, [executeRecorderRequest, live, resumePausedAuthority, waitForLatestAuthority]);
+
+  const discardAudioRecovery = useCallback(async (attemptId: string) => {
+    if (live === null) return false;
+    const resumed = await resumePausedAuthority(live);
+    if (resumed.kind !== "accepted" || resumed.authority.state !== "listening") return false;
+    const cancelled = await executeRecorderRequest(
+      { state_version: resumed.authority.stateVersion },
+      "cancel_attempt",
+      { attempt_id: attemptId },
+    );
+    return cancelled.post.kind === "accepted" && (
+      cancelled.refresh?.kind === "accepted"
+        ? cancelled.refresh.live.conversation_state === "asking"
+        : cancelled.post.result.state === "asking"
+    );
+  }, [executeRecorderRequest, live, resumePausedAuthority]);
+
+  const finishAudio = useCallback(async (attemptId: string, uploadId: string) => {
+    if (live === null) return false;
+    const resumed = await resumePausedAuthority(live);
+    if (resumed.kind !== "accepted" || resumed.authority.state !== "listening") return false;
+    const finished = await executeRecorderRequest({ state_version: resumed.authority.stateVersion }, "finish_answer", {
+      attempt_id: attemptId,
+      upload_id: uploadId,
+    });
+    return finished.post.kind === "accepted" && (
+      finished.refresh?.kind === "accepted"
+        ? finished.refresh.live.conversation_state === "processing_answer"
+        : finished.post.result.state === "processing_answer"
+    );
+  }, [executeRecorderRequest, live, resumePausedAuthority]);
+
+  const recorderAuthority = live ?? lastRecorderAuthority.current;
+
   return (
     <main className="mx-auto max-w-5xl px-4 py-6">
       <p aria-live="polite" className="mb-4 text-sm text-[var(--text-muted)]" role="status">
         {announcement}
       </p>
+
+      <ConversationRecorder
+        sessionId={sessionId}
+        attemptId={recorderAuthority?.active_attempt?.recording_type === "audio"
+          ? recorderAuthority.active_attempt.id
+          : null}
+        serverState={recorderAuthority?.conversation_state ?? "asking"}
+        authorityAvailable={live !== null}
+        authorityVersion={recorderAuthority?.state_version ?? -1}
+        allowedCommands={live?.allowed_commands ?? []}
+        silencePolicy={recorderAuthority?.silence_policy ?? { warning_ms: 4000, finish_prompt_ms: 9000 }}
+        pending={pending || live === null}
+        onBeginAudio={beginAudio}
+        onPause={pauseAudio}
+        onResume={resumeAudio}
+        onKeepSpeaking={keepSpeakingAudio}
+        onCancel={cancelAudio}
+        onDiscardAndRetry={discardAudioRecovery}
+        onFinishCommand={finishAudio}
+        onAnnouncement={setAnnouncement}
+      />
 
       {live === null ? (
         loadError ? (
