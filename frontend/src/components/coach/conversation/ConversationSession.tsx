@@ -61,6 +61,10 @@ function isConflict(error: unknown): boolean {
   );
 }
 
+function isTransportFailure(error: unknown): error is TypeError {
+  return error instanceof TypeError && !(error instanceof ApiError);
+}
+
 type LiveRefreshResult =
   | { kind: "accepted"; live: ConversationLiveView; readSequence: number }
   | { kind: "stale"; readSequence: number }
@@ -184,7 +188,13 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
   ): Promise<CommandExecutionResult> => {
     setPending(true);
     try {
-      const commandResult = await sendCoachConversationCommand(sessionId, request);
+      let commandResult: ConversationCommandResult;
+      try {
+        commandResult = await sendCoachConversationCommand(sessionId, request);
+      } catch (error) {
+        if (!isTransportFailure(error)) throw error;
+        commandResult = await sendCoachConversationCommand(sessionId, request);
+      }
       const refreshed = await refreshLive();
       const accepted = ACCEPTED_COMMAND_RESULTS.has(commandResult.result);
       if (accepted && refreshed.kind === "accepted" && options.clearTextAfterRefresh) setTextAnswer("");
@@ -270,6 +280,26 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
       payload: { attempt_id: attemptId, transcript },
     }, { clearTextAfterRefresh: true });
   }, [execute, live?.active_attempt?.id, newEnvelope, textAnswer]);
+
+  const updateRetention = useCallback((audio: ConversationLiveView["retention"]["audio_policy"]) => {
+    const envelope = newEnvelope();
+    if (envelope === null) return;
+    void execute({
+      ...envelope,
+      command_type: "update_retention",
+      payload: { audio },
+    });
+  }, [execute, newEnvelope]);
+
+  const deleteAudio = useCallback((attemptId: string) => {
+    const envelope = newEnvelope();
+    if (envelope === null) return;
+    void execute({
+      ...envelope,
+      command_type: "delete_audio",
+      payload: { attempt_id: attemptId },
+    });
+  }, [execute, newEnvelope]);
 
   const executeSimpleCommand = useCallback((command: ConversationCommandType) => {
     const envelope = newEnvelope();
@@ -498,6 +528,22 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
               </section>
             ) : null}
 
+            {live.conversation_state === "awaiting_next_action" && (
+              live.active_attempt?.attempt_state === "unavailable"
+              || live.processing.state === "unavailable"
+              || live.processing.state === "failed_terminal"
+            ) ? (
+              <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                <h2 className="text-sm font-semibold text-[var(--text)]">Answer review unavailable</h2>
+                <p className="mt-2 text-sm text-[var(--text-muted)]">
+                  {live.active_attempt?.transcript_version !== null
+                    && live.active_attempt?.transcript_version !== undefined
+                    ? "Your answer and transcript remain available. No performance level was created."
+                    : "No answer review or performance level was created."}
+                </p>
+              </section>
+            ) : null}
+
             {live.conversation_state === "completed" || live.conversation_state === "abandoned" || live.conversation_state === "failed" ? (
               <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                 <h2 className="text-base font-semibold text-[var(--text)]">{stateLabel(live)}</h2>
@@ -518,7 +564,12 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
 
           <aside className="space-y-4">
             <ConversationProgress progress={live.progress} />
-            <RetentionStatus retention={live.retention} />
+            <RetentionStatus
+              live={live}
+              pending={pending}
+              onUpdatePolicy={updateRetention}
+              onDeleteAudio={deleteAudio}
+            />
           </aside>
         </div>
       )}
