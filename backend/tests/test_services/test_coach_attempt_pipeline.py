@@ -30,6 +30,7 @@ from app.services.coach_attempt_pipeline import (
 from app.repositories.conversational_session_repository import (
     AttemptProcessingClaim,
     ConversationalSessionRepository,
+    partition_current_processing_stages,
 )
 from app.models.coach_session import (
     InterviewAttemptEvaluation,
@@ -111,6 +112,7 @@ async def _ready_audio_claim(db, monkeypatch: pytest.MonkeyPatch, tmp_path, clie
     attempt.attempt_state = "uploaded"
     attempt.audio_uri = audio_uri
     attempt.audio_content_hash = digest
+    attempt.audio_retention_state = "temporary"
     db.add(
         InterviewAttemptUpload(
             id=f"{client_id}-upload",
@@ -430,6 +432,7 @@ async def test_audio_worker_binds_completed_upload_and_persists_timestamp_metric
     assert attempt is not None
     audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
     attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", audio_uri, digest
+    attempt.audio_retention_state = "temporary"
     db_session.add(InterviewAttemptUpload(
         id="task4-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request",
         content_sha256=digest, byte_size=1, mime_type="audio/webm", storage_uri=audio_uri, result_state="completed",
@@ -452,6 +455,227 @@ async def test_audio_worker_binds_completed_upload_and_persists_timestamp_metric
     assert attempt.attempt_state == "unavailable"
     assert attempt.current_transcript_version_id is not None
     assert set(attempt.speech_metrics or {}) == {"duration_ms", "word_count", "words_per_minute", "filler_count", "filler_rate_per_minute", "hedging_count", "pause_count", "long_pause_count"}
+
+
+@pytest.mark.asyncio
+async def test_audio_worker_treats_valid_unclaimed_cleanup_as_stale_without_retention_mutation(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    session, _, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task6-cleanup-claim-failure"
+    )
+    attempt.audio_retention_state = "temporary"
+    await db_session.commit()
+    retention_version_before = session.retention_version
+
+    class Transcriber:
+        def transcribe(self, _path):
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "I delivered",
+                "en",
+                [WordTimestamp("I", 0, 0.1), WordTimestamp("delivered", 0.2, 0.5)],
+            )
+
+    async def cannot_claim_cleanup(_self, _recording_id, _now):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.coach_retention.CoachRetentionService.claim_default_cleanup",
+        cannot_claim_cleanup,
+    )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+        await _process_attempt_claim(
+            claim,
+            session_factory=session_factory,
+            transcriber_factory=Transcriber,
+        )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    cleanup = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id,
+            InterviewAttemptStage.stage_name == "audio_cleanup",
+        )
+    )
+    cleanup_events = int(
+        await db_session.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.session_id == session.id,
+                InterviewSessionEvent.recording_id == attempt.id,
+                InterviewSessionEvent.event_type.in_(
+                    ("audio_deleted", "audio_delete_failed")
+                ),
+            )
+        )
+        or 0
+    )
+
+    assert attempt.audio_retention_state == "temporary"
+    assert attempt.audio_uri is not None
+    assert Path(attempt.audio_uri).is_file()
+    assert session.retention_version == retention_version_before
+    assert cleanup is not None
+    assert cleanup.stage_state == "pending"
+    assert cleanup.job_id == claim.job_id
+    assert cleanup.claim_token is not None
+    assert cleanup_events == 0
+
+
+@pytest.mark.asyncio
+async def test_audio_worker_records_delete_failed_for_unclaimed_hash_mismatch(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    session, _, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task6-cleanup-hash-mismatch"
+    )
+    source = Path(attempt.audio_uri or "")
+    mutated = False
+
+    class Transcriber:
+        def transcribe(self, _path):
+            nonlocal mutated
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            if not mutated:
+                source.write_bytes(b"hash-mismatched audio")
+                mutated = True
+            return TranscriptionResult(
+                "I delivered",
+                "en",
+                [WordTimestamp("I", 0, 0.1), WordTimestamp("delivered", 0.2, 0.5)],
+            )
+
+    async def cannot_claim_cleanup(_self, _recording_id, _now):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.coach_retention.CoachRetentionService.claim_default_cleanup",
+        cannot_claim_cleanup,
+    )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claim,
+        session_factory=session_factory,
+        transcriber_factory=Transcriber,
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    cleanup = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id,
+            InterviewAttemptStage.stage_name == "audio_cleanup",
+        )
+    )
+    failure_events = int(
+        await db_session.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.session_id == session.id,
+                InterviewSessionEvent.recording_id == attempt.id,
+                InterviewSessionEvent.event_type == "audio_delete_failed",
+            )
+        )
+        or 0
+    )
+
+    assert mutated is True
+    assert source.read_bytes() == b"hash-mismatched audio"
+    assert attempt.audio_retention_state == "delete_failed"
+    assert cleanup is not None
+    assert cleanup.stage_state == "failed_retryable"
+    assert cleanup.last_error_code == "coach_audio_deletion_failed"
+    assert failure_events == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_worker_records_deleted_when_owned_leaf_disappears_before_cleanup(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    session, _, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task6-cleanup-missing-leaf"
+    )
+    source = Path(attempt.audio_uri or "")
+    removed = False
+
+    class Transcriber:
+        def transcribe(self, _path):
+            nonlocal removed
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            if not removed:
+                source.unlink()
+                removed = True
+            return TranscriptionResult(
+                "I delivered",
+                "en",
+                [WordTimestamp("I", 0, 0.1), WordTimestamp("delivered", 0.2, 0.5)],
+            )
+
+    async def cannot_claim_cleanup(_self, _recording_id, _now):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.coach_retention.CoachRetentionService.claim_default_cleanup",
+        cannot_claim_cleanup,
+    )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claim,
+        session_factory=session_factory,
+        transcriber_factory=Transcriber,
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    cleanup = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id,
+            InterviewAttemptStage.stage_name == "audio_cleanup",
+        )
+    )
+    cleanup_job = await db_session.get(AsyncJob, cleanup.job_id if cleanup else None)
+    deleted_events = await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id)).where(
+            InterviewSessionEvent.session_id == session.id,
+            InterviewSessionEvent.recording_id == attempt.id,
+            InterviewSessionEvent.event_type == "audio_deleted",
+        )
+    )
+    failed_events = await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id)).where(
+            InterviewSessionEvent.session_id == session.id,
+            InterviewSessionEvent.recording_id == attempt.id,
+            InterviewSessionEvent.event_type == "audio_delete_failed",
+        )
+    )
+
+    assert removed is True
+    assert attempt.audio_uri is None
+    assert attempt.audio_retention_state == "deleted"
+    assert cleanup is not None
+    assert cleanup.stage_state == "completed"
+    assert cleanup.last_error_code is None
+    assert cleanup_job is not None
+    assert cleanup_job.type == "coach_audio_cleanup"
+    assert cleanup_job.status == "done"
+    assert deleted_events == 1
+    assert failed_events == 0
 
 
 @pytest.mark.asyncio
@@ -565,7 +789,6 @@ async def test_audio_content_retry_reuses_siblings_without_reopening_media(
             "evidence_grounding",
             "follow_up_decision",
             "coaching_enrichment",
-            "audio_cleanup",
         }:
             stage.stage_state = "failed_retryable"
             stage.last_error_code = "coach_evaluation_unavailable"
@@ -592,6 +815,31 @@ async def test_audio_content_retry_reuses_siblings_without_reopening_media(
         request=_command("retry_processing", session.state_version, {}),
     )
     assert len(retry_claims) == 1
+    retry_stages = list(
+        (
+            await db_session.scalars(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id
+                    == retry_claims[0].evaluation_version_id
+                )
+            )
+        ).all()
+    )
+    prior_cleanup = next(
+        stage for stage in stages if stage.stage_name == "audio_cleanup"
+    )
+    current_cleanup = next(
+        stage for stage in retry_stages if stage.stage_name == "audio_cleanup"
+    )
+    assert current_cleanup.stage_state == "completed"
+    assert current_cleanup.reused_from_stage_id is None
+    assert current_cleanup.job_id == prior_cleanup.job_id
+    assert current_cleanup.claim_token is None
+    assert current_cleanup.job_deadline_at == prior_cleanup.job_deadline_at
+    assert (
+        current_cleanup.expected_processing_generation
+        == retry_claims[0].processing_generation
+    )
 
     class ForbiddenProvider:
         def transcribe(self, _path):
@@ -607,6 +855,29 @@ async def test_audio_content_retry_reuses_siblings_without_reopening_media(
     assert session.conversation_state == "awaiting_next_action"
     assert attempt.attempt_state == "unavailable"
     assert (attempt.processing_generation, attempt.processing_retry_count) == (2, 1)
+    retry_evaluation = await db_session.get(
+        InterviewAttemptEvaluation, retry_claims[0].evaluation_version_id
+    )
+    assert retry_evaluation is not None
+    partition = await partition_current_processing_stages(
+        db_session,
+        attempt=attempt,
+        evaluation=retry_evaluation,
+        stages=retry_stages,
+        processing_job_id=retry_claims[0].job_id,
+    )
+    assert partition is not None and partition[1] is current_cleanup
+    cleanup_job = await db_session.get(AsyncJob, prior_cleanup.job_id)
+    assert cleanup_job is not None
+    cleanup_job.type = "coach_attempt_processing"
+    await db_session.flush()
+    assert await partition_current_processing_stages(
+        db_session,
+        attempt=attempt,
+        evaluation=retry_evaluation,
+        stages=retry_stages,
+        processing_job_id=retry_claims[0].job_id,
+    ) is None
 
 
 def test_pipeline_order_is_fixed_and_rejects_duplicates() -> None:
@@ -1001,6 +1272,7 @@ async def test_audio_transcription_exhaustion_reconciles_to_manual_retry(
     assert attempt is not None
     audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
     attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", audio_uri, digest
+    attempt.audio_retention_state = "temporary"
     db_session.add(InterviewAttemptUpload(id="failure-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request", content_sha256=digest, byte_size=1, mime_type="audio/webm", storage_uri=audio_uri, result_state="completed"))
     await db_session.commit()
     await service.execute(user_id="local", session_id=session.id, request=_command("finish_answer", begun.state_version, {"attempt_id": attempt.id, "upload_id": "upload-1"}))
@@ -1123,6 +1395,7 @@ async def test_manual_audio_retry_transcription_exhaustion_preserves_valid_graph
     attempt.attempt_state = "uploaded"
     attempt.audio_uri = audio_uri
     attempt.audio_content_hash = digest
+    attempt.audio_retention_state = "temporary"
     db_session.add(
         InterviewAttemptUpload(
             id=f"retry-exhaustion-upload-{speech_variant}",
@@ -1441,6 +1714,7 @@ async def test_audio_speech_failure_is_independent_after_immutable_transcript(
     assert attempt is not None
     audio_uri, digest = _owned_audio(tmp_path, monkeypatch)
     attempt.attempt_state, attempt.audio_uri, attempt.audio_content_hash = "uploaded", audio_uri, digest
+    attempt.audio_retention_state = "temporary"
     db_session.add(InterviewAttemptUpload(id="speech-upload", attempt_id=attempt.id, upload_id="upload-1", request_hash="request", content_sha256=digest, byte_size=1, mime_type="audio/webm", storage_uri=audio_uri, result_state="completed"))
     await db_session.commit()
     await service.execute(user_id="local", session_id=session.id, request=_command("finish_answer", begun.state_version, {"attempt_id": attempt.id, "upload_id": "upload-1"}))

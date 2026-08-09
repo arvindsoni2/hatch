@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
@@ -38,6 +39,7 @@ from ..schemas.coach_conversation import (
     CancelAttemptPayload,
     ConversationCommandRequest,
     ConversationCommandResult,
+    DeleteAudioPayload,
     FinishAnswerPayload,
     KeepSpeakingPayload,
     RequestHintPayload,
@@ -56,6 +58,7 @@ from .coach_conversational_contracts import (
     RUBRIC_CONTRACT,
 )
 from .coach_session_plan import SessionPlanError, claim_session_setup
+from .coach_retention import AudioCleanupClaim, CoachRetentionService
 
 PROCESSING_CONTRACT = "coach_processing_v1"
 logger = logging.getLogger(__name__)
@@ -114,6 +117,14 @@ class ConversationCommandService:
         self.after_commit = after_commit
         self._post_commit_job_id: str | None = None
         self._post_commit_attempt_claim: AttemptProcessingClaim | None = None
+        self._post_commit_audio_claim: AudioCleanupClaim | None = None
+
+    def _close_pending_audio_lease(self) -> None:
+        claim = self._post_commit_audio_claim
+        if claim is None or claim._deletion_lease is None:
+            return
+        claim._deletion_lease.close()
+        self._post_commit_audio_claim = None
 
     async def execute(
         self,
@@ -127,6 +138,7 @@ class ConversationCommandService:
         request_hash = canonical_request_hash(request, session_id=session_id)
         self._post_commit_job_id = None
         self._post_commit_attempt_claim = None
+        self._post_commit_audio_claim = None
         try:
             claim = await self.repository.claim_conversation_command(
                 session_id=session_id,
@@ -161,6 +173,7 @@ class ConversationCommandService:
                 raise ConversationCommandError("coach_conversation_invalid_state")
             await self.db.commit()
         except ConversationVersionConflict as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             raise ConversationCommandError(
                 "coach_conversation_version_conflict",
@@ -168,20 +181,24 @@ class ConversationCommandService:
                 current_state=error.current_state,
             ) from error
         except CommandIdempotencyConflict as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             raise ConversationCommandError(
                 "coach_command_idempotency_conflict"
             ) from error
         except (AttemptLimitExhausted, AttemptReservationConflict) as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             code = str(error)
             if code == "coach_client_attempt_id_conflict":
                 code = "coach_attempt_client_id_conflict"
             raise ConversationCommandError(code) from error
         except ConversationCommandError:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             raise
         except IntegrityError as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             duplicate = await self.repository.get_command_result(
                 session_id=session_id, command_id=request.command_id
@@ -198,15 +215,47 @@ class ConversationCommandService:
                 ) from error
             return ConversationCommandResult.model_validate(duplicate.result_json)
         except (ConversationalRepositoryError, ValueError) as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             code = str(error)
             raise ConversationCommandError(code) from error
+        except BaseException:
+            self._close_pending_audio_lease()
+            await self.db.rollback()
+            raise
         if self._post_commit_attempt_claim is not None:
             try:
                 queue_attempt_processing(self._post_commit_attempt_claim)
             except Exception as error:  # noqa: BLE001 - durable job remains pending
                 logger.error("Coach attempt dispatch failed: %s", type(error).__name__)
-        post_commit_work = self._post_commit_attempt_claim or self._post_commit_job_id
+        if self._post_commit_audio_claim is not None:
+            try:
+                retention = CoachRetentionService(self.db)
+                cleanup_result = await retention.delete_claimed_audio(
+                    self._post_commit_audio_claim
+                )
+                if cleanup_result != "stale_claim":
+                    await retention.finalise_audio_cleanup(
+                        self._post_commit_audio_claim, cleanup_result
+                    )
+                    await self.db.commit()
+            except Exception as error:  # noqa: BLE001 - durable claim is reconciled
+                await self.db.rollback()
+                if self._post_commit_audio_claim._deletion_lease is not None:
+                    self._post_commit_audio_claim._deletion_lease.close()
+                logger.error(
+                    "Coach audio cleanup dispatch failed: %s",
+                    type(error).__name__,
+                )
+        post_commit_work = (
+            self._post_commit_attempt_claim
+            or self._post_commit_job_id
+            or (
+                self._post_commit_audio_claim.job_id
+                if self._post_commit_audio_claim is not None
+                else None
+            )
+        )
         if post_commit_work is not None and self.after_commit is not None:
             try:
                 await self.after_commit(post_commit_work)
@@ -252,6 +301,9 @@ class ConversationCommandService:
         if request.command_type == "update_retention":
             assert isinstance(request.payload, UpdateRetentionPayload)
             return await self._update_retention(session, request, request.payload)
+        if request.command_type == "delete_audio":
+            assert isinstance(request.payload, DeleteAudioPayload)
+            return await self._delete_audio(session, request, request.payload)
         if request.command_type == "skip_question":
             return await self._skip_question(session, request)
         raise ConversationCommandError("coach_conversation_invalid_state")
@@ -987,6 +1039,95 @@ class ConversationCommandService:
             ),
         )
         return await self._result(session, request)
+
+    async def _delete_audio(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: DeleteAudioPayload,
+    ) -> ConversationCommandResult:
+        attempt = await self.db.scalar(
+            select(SessionRecording).where(
+                SessionRecording.id == payload.attempt_id,
+                SessionRecording.session_id == session.id,
+            )
+        )
+        if attempt is None:
+            raise ConversationCommandError("coach_attempt_not_active")
+        if (
+            session.conversation_state == "paused"
+            and session.resume_state == "listening"
+            and session.active_recording_id == attempt.id
+            and attempt.attempt_state in {"draft", "uploaded"}
+        ):
+            raise ConversationCommandError("coach_conversation_invalid_state")
+        if (
+            session.conversation_state == "recoverable_error"
+            and session.recoverable_error_scope == "attempt_processing"
+            and attempt.async_job_id is not None
+        ):
+            processing_job_id = attempt.async_job_id
+            fenced_attempt = await self.db.execute(
+                update(SessionRecording)
+                .where(
+                    SessionRecording.id == attempt.id,
+                    SessionRecording.session_id == session.id,
+                    SessionRecording.async_job_id == processing_job_id,
+                    SessionRecording.processing_generation
+                    == attempt.processing_generation,
+                    SessionRecording.attempt_state.in_(
+                        ("pending_processing", "recoverable_error")
+                    ),
+                )
+                .values(async_job_id=None)
+            )
+            fenced_job = await self.db.execute(
+                update(AsyncJob)
+                .where(
+                    AsyncJob.id == processing_job_id,
+                    AsyncJob.type == "coach_attempt_processing",
+                    AsyncJob.status.in_(("pending", "running")),
+                )
+                .values(
+                    status="failed",
+                    result_json=None,
+                    error="coach_attempt_processing_cancelled",
+                    updated_at=datetime.utcnow(),
+                )
+            )
+            if fenced_attempt.rowcount != 1 or fenced_job.rowcount != 1:
+                raise ConversationCommandError("coach_attempt_stale_claim")
+        retention = CoachRetentionService(self.db)
+        cleanup_claim = await retention.claim_explicit_cleanup(
+            attempt.id, datetime.utcnow()
+        )
+        if cleanup_claim is None:
+            if attempt.audio_uri is None and attempt.audio_retention_state == "deleted":
+                return await self._result(session, request)
+            preclaim_result = await retention.classify_cleanup_preclaim(attempt.id)
+            recorded = bool(
+                preclaim_result is not None
+                and await retention.record_cleanup_claim_failure(
+                    attempt.id,
+                    datetime.utcnow(),
+                    result=preclaim_result,
+                    reason="explicit_delete",
+                    actor_type="candidate",
+                )
+            )
+            if recorded:
+                await self.db.refresh(session)
+                await self.db.refresh(attempt)
+                return await self._result(session, request)
+            raise ConversationCommandError("coach_audio_deletion_failed")
+        self._post_commit_audio_claim = cleanup_claim
+        await self.db.refresh(session)
+        return await self._result(
+            session,
+            request,
+            result="accepted_processing",
+            async_job_id=cleanup_claim.job_id,
+        )
 
     async def _skip_question(
         self, session: InterviewSession, request: ConversationCommandRequest

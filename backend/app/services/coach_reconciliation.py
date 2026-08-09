@@ -27,6 +27,7 @@ from ..repositories.conversational_session_repository import (
     ConversationalSessionRepository,
     SessionEventInput,
     _stage_immutable_diagnostics,
+    partition_current_processing_stages,
 )
 from ..repositories.session_repository import SessionRepository
 from .coach_contracts import CoachDiagnostic, failed_answer_payload
@@ -601,7 +602,7 @@ async def _reconcile_processing_answer(
     evaluation = await load_owned_processing_evaluation(db, attempt)
     job_id = attempt.async_job_id or (evaluation.async_job_id if evaluation else None)
     job = await db.get(AsyncJob, job_id) if job_id else None
-    stages = list(
+    all_stages = list(
         (
             await db.scalars(
                 select(InterviewAttemptStage).where(
@@ -613,6 +614,18 @@ async def _reconcile_processing_answer(
         if evaluation is not None
         else ()
     )
+    partition = (
+        await partition_current_processing_stages(
+            db,
+            attempt=attempt,
+            evaluation=evaluation,
+            stages=all_stages,
+            processing_job_id=job.id,
+        )
+        if evaluation is not None and job is not None
+        else None
+    )
+    stages = list(partition[0]) if partition is not None else all_stages
     snapshot = (
         exact_processing_snapshot(
             session=session,
@@ -621,7 +634,7 @@ async def _reconcile_processing_answer(
             job=job,
             stages=stages,
         )
-        if evaluation is not None and job is not None
+        if evaluation is not None and job is not None and partition is not None
         else None
     )
     if snapshot is not None and not await current_processing_graph_reuse_is_valid(
@@ -1558,6 +1571,92 @@ async def reconcile_conversational_session(
         if not changed:
             changed = await _reconcile_processing_answer(db, session, now)
         if not changed:
+            from .coach_retention import CoachRetentionService
+
+            retention = CoachRetentionService(db)
+            cleanup_cursor: tuple[datetime, str] | None = None
+            while not changed:
+                cleanup_query = select(
+                    SessionRecording.id, SessionRecording.created_at
+                ).where(
+                    SessionRecording.session_id == session.id,
+                    SessionRecording.recording_type == "audio",
+                    SessionRecording.audio_retention_policy
+                    == "delete_after_processing",
+                    SessionRecording.audio_retention_state.in_(
+                        ("temporary", "delete_failed", "delete_pending")
+                    ),
+                )
+                if cleanup_cursor is not None:
+                    cursor_created_at, cursor_id = cleanup_cursor
+                    cleanup_query = cleanup_query.where(
+                        or_(
+                            SessionRecording.created_at > cursor_created_at,
+                            and_(
+                                SessionRecording.created_at == cursor_created_at,
+                                SessionRecording.id > cursor_id,
+                            ),
+                        )
+                    )
+                cleanup_rows = (
+                    await db.execute(
+                        cleanup_query.order_by(
+                            SessionRecording.created_at, SessionRecording.id
+                        )
+                        .limit(20)
+                    )
+                ).all()
+                if not cleanup_rows:
+                    break
+                for recording_id, created_at in cleanup_rows:
+                    cleanup_cursor = (created_at, recording_id)
+                    retention_attempt = await db.get(SessionRecording, recording_id)
+                    if (
+                        retention_attempt is not None
+                        and retention_attempt.audio_retention_state == "delete_pending"
+                    ):
+                        changed = int(
+                            await retention.recover_expired_cleanup(recording_id, now)
+                        )
+                        if changed:
+                            await db.commit()
+                            break
+                    if not await retention.default_cleanup_is_due(recording_id, now):
+                        continue
+                    cleanup_claim = await retention.claim_default_cleanup(
+                        recording_id, now
+                    )
+                    if cleanup_claim is None:
+                        preclaim_result = await retention.classify_cleanup_preclaim(
+                            recording_id
+                        )
+                        changed = int(
+                            preclaim_result is not None
+                            and await retention.record_cleanup_claim_failure(
+                                recording_id,
+                                now,
+                                result=preclaim_result,
+                                actor_type="reconciler",
+                            )
+                        )
+                        if changed:
+                            await db.commit()
+                            break
+                        continue
+                    await db.commit()
+                    cleanup_result = await retention.delete_claimed_audio(
+                        cleanup_claim
+                    )
+                    if cleanup_result != "stale_claim":
+                        changed = int(
+                            await retention.finalise_reconciled_audio_cleanup(
+                                cleanup_claim, cleanup_result
+                            )
+                        )
+                        if changed:
+                            await db.commit()
+                    break
+        if not changed:
             changed = await _reconcile_transient_state(db, session, now)
         if changed:
             await db.commit()
@@ -1684,6 +1783,12 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
         reused_transcription_source = aliased(InterviewAttemptStage)
         reused_transcription_evaluation = aliased(InterviewAttemptEvaluation)
         reused_transcript = aliased(InterviewTranscriptVersion)
+        cleanup_attempt = aliased(SessionRecording)
+        cleanup_evaluation = aliased(InterviewAttemptEvaluation)
+        cleanup_stage = aliased(InterviewAttemptStage)
+        cleanup_transcription = aliased(InterviewAttemptStage)
+        cleanup_speech = aliased(InterviewAttemptStage)
+        cleanup_job = aliased(AsyncJob)
         claim_path = "$.processing_claim"
         safe_diagnostics = case(
             (
@@ -2260,6 +2365,77 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             InterviewSession.conversation_state == "asking_follow_up",
             follow_up_candidate_count == 1,
         )
+        due_audio_cleanup = exists().where(
+            cleanup_attempt.session_id == InterviewSession.id,
+            cleanup_attempt.recording_type == "audio",
+            cleanup_attempt.audio_retention_policy == "delete_after_processing",
+            cleanup_attempt.audio_uri.is_not(None),
+            cleanup_attempt.audio_content_hash.is_not(None),
+            cleanup_evaluation.recording_id == cleanup_attempt.id,
+            cleanup_evaluation.id == cleanup_stage.evaluation_version_id,
+            cleanup_stage.recording_id == cleanup_attempt.id,
+            cleanup_stage.stage_name == "audio_cleanup",
+            cleanup_stage.expected_processing_generation
+            == cleanup_attempt.processing_generation,
+            cleanup_transcription.recording_id == cleanup_attempt.id,
+            cleanup_transcription.evaluation_version_id == cleanup_evaluation.id,
+            cleanup_transcription.stage_name == "transcription",
+            cleanup_transcription.expected_processing_generation
+            == cleanup_attempt.processing_generation,
+            cleanup_speech.recording_id == cleanup_attempt.id,
+            cleanup_speech.evaluation_version_id == cleanup_evaluation.id,
+            cleanup_speech.stage_name == "speech_analysis",
+            cleanup_speech.expected_processing_generation
+            == cleanup_attempt.processing_generation,
+            or_(
+                and_(
+                    cleanup_attempt.audio_retention_state.in_(
+                        ("temporary", "delete_failed")
+                    ),
+                    or_(
+                        and_(
+                            cleanup_attempt.current_transcript_version_id.is_not(None),
+                            cleanup_evaluation.transcript_version_id
+                            == cleanup_attempt.current_transcript_version_id,
+                            cleanup_transcription.stage_state.in_(
+                                ("completed", "reused")
+                            ),
+                            cleanup_speech.stage_state.in_(
+                                (
+                                    "completed",
+                                    "reused",
+                                    "unavailable",
+                                    "not_applicable",
+                                    "failed_terminal",
+                                )
+                            ),
+                        ),
+                        and_(
+                            cleanup_transcription.stage_state.in_(
+                                (
+                                    "unavailable",
+                                    "failed_retryable",
+                                    "failed_terminal",
+                                )
+                            ),
+                            cleanup_transcription.completed_at
+                            <= now
+                            - timedelta(
+                                hours=settings.HATCH_COACH_AUDIO_FAILURE_RETENTION_HOURS
+                            ),
+                        ),
+                    ),
+                ),
+                and_(
+                    cleanup_attempt.audio_retention_state == "delete_pending",
+                    cleanup_stage.stage_state == "running",
+                    cleanup_stage.job_deadline_at <= now,
+                    cleanup_stage.job_id == cleanup_job.id,
+                    cleanup_job.type == "coach_audio_cleanup",
+                    cleanup_job.status.in_(("pending", "running")),
+                ),
+            ),
+        )
         candidate_cursor: tuple[datetime, str] | None = None
         while total < batch_size:
             candidate_query = select(
@@ -2288,6 +2464,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                             ),
                             actionable_advancing,
                             actionable_follow_up,
+                            due_audio_cleanup,
                             and_(
                                 InterviewSession.status == "active",
                                 InterviewSession.conversation_state

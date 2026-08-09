@@ -17,6 +17,7 @@ from ..repositories.conversational_session_repository import (
     AttemptProcessingClaim,
     AttemptProcessingResult,
     _stage_immutable_diagnostics,
+    partition_current_processing_stages,
 )
 from ..models.async_job import AsyncJob
 from ..config import settings
@@ -29,7 +30,7 @@ from ..models.coach_session import (
     SessionRecording,
     InterviewTranscriptVersion,
 )
-from sqlalchemy import select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from .async_job_service import AsyncJobService
 
 logger = logging.getLogger(__name__)
@@ -478,18 +479,33 @@ async def _process_attempt_claim(
             exact_processing_snapshot,
         )
 
+        if len(stages) != len(PIPELINE_ORDER) or {
+            stage.stage_name for stage in stages
+        } != set(PIPELINE_ORDER):
+            raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
+        partition = await partition_current_processing_stages(
+            db,
+            attempt=attempt,
+            evaluation=evaluation,
+            stages=stages,
+            processing_job_id=job.id,
+        )
+        if partition is None:
+            raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
+        processing_stages, _independent_cleanup = partition
+
         processing_snapshot = exact_processing_snapshot(
             session=session,
             attempt=attempt,
             evaluation=evaluation,
             job=job,
-            stages=stages,
+            stages=processing_stages,
         )
         if processing_snapshot is None or not await current_processing_graph_reuse_is_valid(
             db,
             attempt=attempt,
             evaluation=evaluation,
-            stages=stages,
+            stages=processing_stages,
             snapshot=processing_snapshot,
         ):
             raise AttemptPipelineError("coach_attempt_stale_claim", retryable=False)
@@ -688,7 +704,7 @@ async def _process_attempt_claim(
                     )
                 return
             if transcription_needed and transcription is None:
-                for stage in stages:
+                for stage in processing_stages:
                     if stage.stage_state == "reused":
                         continue
                     if stage.stage_name == "audio_persist":
@@ -762,10 +778,173 @@ async def _process_attempt_claim(
                             evaluation.follow_up_contract_version
                         ),
                     )
+                    if stage.stage_name in {
+                        "content_evaluation",
+                        "evidence_grounding",
+                        "follow_up_decision",
+                        "coaching_enrichment",
+                    }:
+                        stage.source_transcript_version_id = transcript.id
             if speech_metrics_payload is not None:
                 attempt.speech_metrics = speech_metrics_payload
+            for stage in stages:
+                if stage.stage_state in {"not_applicable", "reused"}:
+                    continue
+                if stage.stage_name == "audio_persist":
+                    stage.stage_state = "completed"
+                    stage.completed_at = datetime.utcnow()
+                elif stage.stage_name == "transcription" and transcript_id is not None:
+                    stage.stage_state = "completed"
+                    stage.completed_at = datetime.utcnow()
+                elif stage.stage_name == "speech_analysis":
+                    stage.stage_state = (
+                        "unavailable" if speech_unavailable else "completed"
+                    )
+                    stage.last_error_code = (
+                        "speech_analysis_unavailable" if speech_unavailable else None
+                    )
+                    stage.completed_at = datetime.utcnow()
+            await db.flush()
+            durable_boundary = await db.execute(
+                update(AsyncJob)
+                .where(
+                    AsyncJob.id == claim.job_id,
+                    AsyncJob.type == "coach_attempt_processing",
+                    AsyncJob.status.in_(("pending", "running")),
+                    exists().where(
+                        InterviewSession.id == claim.session_id,
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.status == "active",
+                        InterviewSession.conversation_state == "processing_answer",
+                        InterviewSession.deletion_state == "not_requested",
+                        InterviewSession.active_question_id == claim.question_id,
+                        InterviewSession.active_recording_id == claim.recording_id,
+                    ),
+                    exists().where(
+                        SessionRecording.id == claim.recording_id,
+                        SessionRecording.session_id == claim.session_id,
+                        SessionRecording.question_id == claim.question_id,
+                        SessionRecording.attempt_state == "pending_processing",
+                        SessionRecording.evaluation_state == "pending",
+                        SessionRecording.async_job_id == claim.job_id,
+                        SessionRecording.processing_generation
+                        == claim.processing_generation,
+                        SessionRecording.audio_content_hash
+                        == fence.expected_audio_content_hash,
+                        SessionRecording.current_transcript_version_id
+                        == transcript_id,
+                    ),
+                    exists().where(
+                        InterviewAttemptEvaluation.id
+                        == claim.evaluation_version_id,
+                        InterviewAttemptEvaluation.recording_id
+                        == claim.recording_id,
+                        InterviewAttemptEvaluation.async_job_id == claim.job_id,
+                        InterviewAttemptEvaluation.state == "pending",
+                        InterviewAttemptEvaluation.transcript_version_id
+                        == transcript_id,
+                        InterviewAttemptEvaluation.diagnostics_json[
+                            "processing_claim"
+                        ]["claim_token"].as_string()
+                        == fence.claim_token,
+                    ),
+                    select(func.count(InterviewAttemptStage.id))
+                    .where(
+                        InterviewAttemptStage.recording_id == claim.recording_id,
+                        InterviewAttemptStage.evaluation_version_id
+                        == claim.evaluation_version_id,
+                        InterviewAttemptStage.job_id == claim.job_id,
+                        InterviewAttemptStage.claim_token == fence.claim_token,
+                        InterviewAttemptStage.expected_processing_generation
+                        == claim.processing_generation,
+                        InterviewAttemptStage.job_deadline_at == claim.deadline_at,
+                        or_(
+                            and_(
+                                InterviewAttemptStage.stage_name.in_(
+                                    {
+                                        "content_evaluation",
+                                        "evidence_grounding",
+                                        "follow_up_decision",
+                                        "coaching_enrichment",
+                                    }
+                                ),
+                                InterviewAttemptStage.source_transcript_version_id
+                                == transcript_id,
+                            ),
+                            and_(
+                                InterviewAttemptStage.stage_name.not_in(
+                                    {
+                                        "content_evaluation",
+                                        "evidence_grounding",
+                                        "follow_up_decision",
+                                        "coaching_enrichment",
+                                    }
+                                ),
+                                InterviewAttemptStage.source_transcript_version_id.is_(
+                                    None
+                                ),
+                            ),
+                        ),
+                    )
+                    .scalar_subquery()
+                    == len(processing_stages),
+                )
+                .values(updated_at=AsyncJob.updated_at)
+            )
+            if durable_boundary.rowcount != 1:
+                await db.rollback()
+                raise AttemptPipelineError(
+                    "coach_attempt_stale_claim", retryable=False
+                )
+            await db.flush()
+            await db.commit()
+            if (
+                attempt.audio_retention_policy == "delete_after_processing"
+                and _independent_cleanup is None
+                and attempt.audio_retention_state != "deleted"
+            ):
+                from .coach_retention import CoachRetentionService
+
+                retention = CoachRetentionService(db)
+                cleanup_claim = await retention.claim_default_cleanup(
+                    attempt.id, datetime.utcnow()
+                )
+                if cleanup_claim is not None:
+                    await db.commit()
+                    cleanup_result = await retention.delete_claimed_audio(cleanup_claim)
+                    if cleanup_result != "stale_claim":
+                        await retention.finalise_audio_cleanup(
+                            cleanup_claim, cleanup_result
+                        )
+                        await db.commit()
+                else:
+                    cleanup_result = await retention.classify_cleanup_preclaim(
+                        attempt.id
+                    )
+                    if cleanup_result is None:
+                        await db.rollback()
+                        raise AttemptPipelineError(
+                            "coach_attempt_stale_claim", retryable=False
+                        )
+                    failure_recorded = await retention.record_cleanup_claim_failure(
+                        attempt.id,
+                        datetime.utcnow(),
+                        result=cleanup_result,
+                    )
+                    if not failure_recorded:
+                        await db.rollback()
+                        raise AttemptPipelineError(
+                            "coach_attempt_stale_claim", retryable=False
+                        )
+                    await db.commit()
         for stage in stages:
             if stage.stage_state in {"not_applicable", "reused"}:
+                continue
+            if (
+                attempt.recording_type == "audio"
+                and stage.stage_name
+                in {"audio_persist", "transcription", "speech_analysis", "audio_cleanup"}
+            ):
                 continue
             if stage.stage_name == "audio_persist" and attempt.recording_type == "audio":
                 stage.stage_state = "completed"

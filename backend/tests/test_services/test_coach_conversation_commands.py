@@ -2208,7 +2208,7 @@ async def _seed_retryable_audio_processing(
         processing_retry_count=retry_count,
         processing_retry_limit=retry_limit,
         audio_retention_policy="delete_after_processing",
-        audio_retention_state="deleted",
+        audio_retention_state="temporary",
     )
     db.add(attempt)
     await db.flush()

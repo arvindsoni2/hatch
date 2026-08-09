@@ -153,11 +153,31 @@ async def load_retryable_processing_snapshot(
             )
         ).all()
     )
+    from ..repositories.conversational_session_repository import (
+        partition_current_processing_stages,
+    )
+
+    partition = await partition_current_processing_stages(
+        db,
+        attempt=attempt,
+        evaluation=evaluation,
+        stages=stages,
+        processing_job_id=evaluation.async_job_id,
+    )
+    if partition is None:
+        return None
+    processing_stages, _independent_cleanup = partition
     if (
         len(stages) != len(_PROCESSING_STAGE_NAMES)
         or {stage.stage_name for stage in stages} != _PROCESSING_STAGE_NAMES
-        or any(stage.stage_state in {"pending", "running"} for stage in stages)
-        or not any(stage.stage_state == "failed_retryable" for stage in stages)
+        or any(
+            stage.stage_state in {"pending", "running"}
+            for stage in processing_stages
+        )
+        or not any(
+            stage.stage_state == "failed_retryable"
+            for stage in processing_stages
+        )
     ):
         return None
     snapshot = exact_processing_snapshot(
@@ -165,14 +185,14 @@ async def load_retryable_processing_snapshot(
         attempt=attempt,
         evaluation=evaluation,
         job=None,
-        stages=stages,
+        stages=processing_stages,
         allow_detached_retry_failure=True,
     )
     if snapshot is None or not await current_processing_graph_reuse_is_valid(
         db,
         attempt=attempt,
         evaluation=evaluation,
-        stages=stages,
+        stages=processing_stages,
         snapshot=snapshot,
     ):
         return None
@@ -554,6 +574,21 @@ async def reused_stage_lineage_is_valid(
         != evaluation.follow_up_contract_version
     ):
         return False
+    if stage.stage_name == "audio_cleanup":
+        from ..repositories.conversational_session_repository import (
+            _independent_cleanup_stage_is_valid,
+        )
+
+        return bool(
+            source.stage_state == "completed"
+            and await _independent_cleanup_stage_is_valid(
+                db,
+                attempt=attempt,
+                evaluation=source_evaluation,
+                cleanup=source,
+                expected_generation=source.expected_processing_generation,
+            )
+        )
     source_snapshot = _parse_claim(source_evaluation)
     if source_snapshot is None:
         return False

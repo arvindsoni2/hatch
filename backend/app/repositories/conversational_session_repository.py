@@ -14,7 +14,7 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Sequence
 
@@ -362,6 +362,116 @@ _PROCESSING_STAGE_ORDER = (
     "coaching_enrichment",
     "audio_cleanup",
 )
+
+
+async def _independent_cleanup_stage_is_valid(
+    db: AsyncSession,
+    *,
+    attempt: SessionRecording,
+    evaluation: InterviewAttemptEvaluation,
+    cleanup: InterviewAttemptStage,
+    expected_generation: int,
+) -> bool:
+    cleanup_job = await db.get(AsyncJob, cleanup.job_id) if cleanup.job_id else None
+    expected_diagnostics = _stage_immutable_diagnostics(
+        stage_name="audio_cleanup",
+        audio_content_hash=attempt.audio_content_hash,
+        transcript_version_id=evaluation.transcript_version_id,
+        transcript_content_hash=None,
+        evaluation_contract_version=evaluation.evaluation_contract_version,
+        evidence_contract_version=evaluation.evidence_contract_version,
+        follow_up_contract_version=evaluation.follow_up_contract_version,
+    )
+    expected_deadline = (
+        cleanup.started_at
+        + timedelta(seconds=settings.HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS)
+        if cleanup.started_at is not None
+        else None
+    )
+    if not (
+        cleanup_job is not None
+        and cleanup_job.type == "coach_audio_cleanup"
+        and cleanup.recording_id == attempt.id
+        and cleanup.evaluation_version_id == evaluation.id
+        and cleanup.expected_processing_generation == expected_generation
+        and cleanup.source_transcript_version_id is None
+        and cleanup.reused_from_stage_id is None
+        and cleanup.diagnostics_json == expected_diagnostics
+        and cleanup.job_deadline_at == expected_deadline
+        and cleanup.started_at is not None
+    ):
+        return False
+    if cleanup.stage_state == "completed":
+        return bool(
+            cleanup.claim_token is None
+            and cleanup.completed_at is not None
+            and cleanup.last_error_code is None
+            and cleanup_job.status == "done"
+            and cleanup_job.result_json == '{"result":"deleted"}'
+            and cleanup_job.error is None
+            and attempt.audio_uri is None
+            and attempt.audio_retention_state == "deleted"
+            and attempt.audio_deleted_at is not None
+        )
+    if cleanup.stage_state == "failed_retryable":
+        return bool(
+            cleanup.claim_token is None
+            and cleanup.completed_at is not None
+            and cleanup.last_error_code == "coach_audio_deletion_failed"
+            and cleanup_job.status == "failed"
+            and cleanup_job.result_json is None
+            and cleanup_job.error == "coach_audio_deletion_failed"
+            and attempt.audio_uri is not None
+            and attempt.audio_retention_state == "delete_failed"
+        )
+    if cleanup.stage_state == "running":
+        return bool(
+            cleanup.claim_token
+            and cleanup.completed_at is None
+            and cleanup.last_error_code is None
+            and cleanup_job.status in {"pending", "running"}
+            and attempt.audio_uri is not None
+            and attempt.audio_retention_state == "delete_pending"
+        )
+    return False
+
+
+async def partition_current_processing_stages(
+    db: AsyncSession,
+    *,
+    attempt: SessionRecording,
+    evaluation: InterviewAttemptEvaluation,
+    stages: Sequence[InterviewAttemptStage],
+    processing_job_id: str,
+) -> tuple[tuple[InterviewAttemptStage, ...], InterviewAttemptStage | None] | None:
+    """Validate the exact eight-row graph and isolate independent cleanup authority."""
+    cleanup_rows = [stage for stage in stages if stage.stage_name == "audio_cleanup"]
+    independent_expected = bool(
+        attempt.recording_type == "audio"
+        and attempt.audio_retention_state
+        in {"delete_pending", "deleted", "delete_failed"}
+    )
+    if len(cleanup_rows) != 1:
+        return None if independent_expected else (tuple(stages), None)
+    if cleanup_rows[0].job_id == processing_job_id:
+        return None if independent_expected else (tuple(stages), None)
+    expected_names = set(_PROCESSING_STAGE_ORDER)
+    if (
+        len(stages) != 8
+        or {stage.stage_name for stage in stages} != expected_names
+    ):
+        return None
+    cleanup = cleanup_rows[0]
+    processing = tuple(stage for stage in stages if stage.stage_name != "audio_cleanup")
+    if not await _independent_cleanup_stage_is_valid(
+        db,
+        attempt=attempt,
+        evaluation=evaluation,
+        cleanup=cleanup,
+        expected_generation=attempt.processing_generation,
+    ):
+        return None
+    return processing, cleanup
 _PROCESSING_STAGE_COUNTER_LIMITS = {
     "audio_persist": (1, 0),
     "transcription": (3, 0),
@@ -1826,6 +1936,21 @@ class ConversationalSessionRepository:
             return None
         prior_evaluation = retry_snapshot.evaluation
         prior_stages = list(retry_snapshot.stages)
+        partition = await partition_current_processing_stages(
+            self._session,
+            attempt=attempt,
+            evaluation=prior_evaluation,
+            stages=prior_stages,
+            processing_job_id=prior_evaluation.async_job_id or "",
+        )
+        if partition is None:
+            return None
+        processing_prior_stages, independent_cleanup = partition
+        if (
+            independent_cleanup is not None
+            and independent_cleanup.stage_state == "running"
+        ):
+            return None
         job = await self._session.scalar(
             select(AsyncJob).where(
                 AsyncJob.id == job_id,
@@ -1858,10 +1983,11 @@ class ConversationalSessionRepository:
             or set(prior_by_name) != set(_PROCESSING_STAGE_ORDER)
             or any(
                 stage.stage_state in {"pending", "running"}
-                for stage in prior_stages
+                for stage in processing_prior_stages
             )
             or not any(
-                stage.stage_state == "failed_retryable" for stage in prior_stages
+                stage.stage_state == "failed_retryable"
+                for stage in processing_prior_stages
             )
         ):
             return None
@@ -1921,7 +2047,7 @@ class ConversationalSessionRepository:
                     and stage.stage_name in _TRANSCRIPT_BOUND_STAGES
                     else None
                 )
-                for stage in prior_stages
+                for stage in processing_prior_stages
             )
         ):
             return None
@@ -1953,6 +2079,9 @@ class ConversationalSessionRepository:
 
         valid_prior_result: dict[str, bool] = {}
         for stage_name, stage in prior_by_name.items():
+            if stage is independent_cleanup:
+                valid_prior_result[stage_name] = True
+                continue
             reuse_is_valid = stage.stage_state != "reused" or await reuse_chain_is_valid(
                 stage, prior_evaluation, set()
             )
@@ -2112,6 +2241,11 @@ class ConversationalSessionRepository:
                         == attempt.current_evaluation_version_id,
                         SessionRecording.audio_content_hash
                         == attempt.audio_content_hash,
+                        ~exists().where(
+                            InterviewAttemptStage.recording_id == attempt.id,
+                            InterviewAttemptStage.stage_name == "audio_cleanup",
+                            InterviewAttemptStage.stage_state == "running",
+                        ),
                     )
                     .values(
                         processing_generation=next_generation,
@@ -2143,6 +2277,44 @@ class ConversationalSessionRepository:
                 await self._session.flush()
                 for stage_name in _PROCESSING_STAGE_ORDER:
                     prior_stage = prior_by_name[stage_name]
+                    if (
+                        stage_name == "audio_cleanup"
+                        and independent_cleanup is not None
+                    ):
+                        self._session.add(
+                            InterviewAttemptStage(
+                                id=str(uuid.uuid4()),
+                                recording_id=attempt.id,
+                                evaluation_version_id=evaluation.id,
+                                stage_name="audio_cleanup",
+                                stage_state=independent_cleanup.stage_state,
+                                job_id=independent_cleanup.job_id,
+                                claim_token=independent_cleanup.claim_token,
+                                expected_processing_generation=next_generation,
+                                source_transcript_version_id=None,
+                                reused_from_stage_id=None,
+                                job_deadline_at=independent_cleanup.job_deadline_at,
+                                started_at=independent_cleanup.started_at,
+                                completed_at=independent_cleanup.completed_at,
+                                attempt_count=independent_cleanup.attempt_count,
+                                repair_count=independent_cleanup.repair_count,
+                                last_error_code=independent_cleanup.last_error_code,
+                                diagnostics_json=_stage_immutable_diagnostics(
+                                    stage_name="audio_cleanup",
+                                    audio_content_hash=attempt.audio_content_hash,
+                                    transcript_version_id=source_transcript_id,
+                                    transcript_content_hash=(
+                                        transcript.content_hash
+                                        if transcript is not None
+                                        else None
+                                    ),
+                                    evaluation_contract_version=RUBRIC_CONTRACT,
+                                    evidence_contract_version=EVIDENCE_GROUNDING_CONTRACT,
+                                    follow_up_contract_version=FOLLOW_UP_CONTRACT,
+                                ),
+                            )
+                        )
+                        continue
                     not_applicable = (
                         attempt.recording_type == "text"
                         and stage_name
@@ -2674,13 +2846,29 @@ class ConversationalSessionRepository:
                             InterviewAttemptStage.recording_id == claim.recording_id,
                             InterviewAttemptStage.evaluation_version_id
                             == claim.evaluation_version_id,
-                            InterviewAttemptStage.job_id == claim.job_id,
-                            InterviewAttemptStage.expected_processing_generation
-                            == claim.processing_generation,
                         )
                     )
                 ).all()
-                stage_by_name = {stage.stage_name: stage for stage in stages}
+                if attempt.audio_retention_state in {
+                    "delete_pending",
+                    "deleted",
+                    "delete_failed",
+                } and (
+                    len(stages) != len(_PROCESSING_STAGE_ORDER)
+                    or {stage.stage_name for stage in stages}
+                    != set(_PROCESSING_STAGE_ORDER)
+                ):
+                    raise _StaleFinalisation
+                partition = await partition_current_processing_stages(
+                    self._session,
+                    attempt=attempt,
+                    evaluation=evaluation,
+                    stages=stages,
+                    processing_job_id=claim.job_id,
+                )
+                if partition is None:
+                    raise _StaleFinalisation
+                processing_stages, independent_cleanup = partition
                 terminal_states = {
                     "completed",
                     "reused",
@@ -2688,11 +2876,38 @@ class ConversationalSessionRepository:
                     "unavailable",
                     "failed_terminal",
                 }
-                if not stages or any(
-                    stage.stage_state not in terminal_states for stage in stages
+                terminal_processing_stages = (
+                    processing_stages
+                    if independent_cleanup is not None
+                    else tuple(
+                        stage
+                        for stage in stages
+                        if stage.job_id == claim.job_id
+                        and stage.expected_processing_generation
+                        == claim.processing_generation
+                    )
+                )
+                stage_by_name = {
+                    stage.stage_name: stage for stage in terminal_processing_stages
+                }
+                if not terminal_processing_stages or any(
+                    stage.stage_state not in terminal_states
+                    for stage in terminal_processing_stages
                 ):
                     raise _StaleFinalisation
-                if any(stage.job_deadline_at != claim.deadline_at for stage in stages):
+                if any(
+                    stage.job_deadline_at != claim.deadline_at
+                    or (
+                        independent_cleanup is not None
+                        and (
+                            stage.job_id != claim.job_id
+                            or stage.expected_processing_generation
+                            != claim.processing_generation
+                            or stage.claim_token != fence.claim_token
+                        )
+                    )
+                    for stage in terminal_processing_stages
+                ):
                     raise _StaleFinalisation
                 transcript_bound_stages = {
                     "content_evaluation",
@@ -2704,7 +2919,7 @@ class ConversationalSessionRepository:
                     stage.stage_name in transcript_bound_stages
                     and stage.source_transcript_version_id
                     != result.transcript_version_id
-                    for stage in stages
+                    for stage in terminal_processing_stages
                 ):
                     raise _StaleFinalisation
 
@@ -2717,7 +2932,7 @@ class ConversationalSessionRepository:
                     self._session,
                     attempt=attempt,
                     evaluation=evaluation,
-                    stages=stages,
+                    stages=terminal_processing_stages,
                     snapshot=ProcessingSnapshot(
                         claim=claim_snapshot,
                         deadline=claim.deadline_at,
