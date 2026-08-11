@@ -35,6 +35,7 @@ from app.repositories.conversational_session_repository import (
     FollowUpAdmissionClaim,
     SessionEventInput,
     StaleVersion,
+    _audio_upload_request_hash,
     _stage_immutable_diagnostics,
     canonical_request_hash,
 )
@@ -87,6 +88,18 @@ def test_canonical_hash_uses_semantic_defaults_and_domain_separation() -> None:
         )
         != expected
     )
+
+
+def test_audio_upload_request_hash_matches_the_v6_five_field_vector() -> None:
+    """Adding any non-V6 field would change this independently-derived digest."""
+    assert _audio_upload_request_hash(
+        session_id="session-not-in-v6-object",
+        attempt_id="attempt-fixed",
+        upload_id="upload-fixed",
+        content_sha256="0" * 64,
+        byte_size=12345,
+        mime_type="audio/webm",
+    ) == "4b74b5d10a8cf52f557e8c780c9b8a25e82e33965f259ecdb2658ab48bdaac6f"
 
 
 @pytest_asyncio.fixture

@@ -18,6 +18,10 @@ from .coach_media_storage import owned_audio_path_is_file
 from .coach_conversation_state import allowed_commands
 from .coach_conversational_contracts import ERROR_REGISTRY
 from .coach_processing_snapshot import load_retryable_processing_snapshot
+from .coach_retention import CoachRetentionService
+
+
+_UNSET_RETRYABLE_AUDIO_CLEANUP_ATTEMPT = object()
 
 
 async def _obvious_audio_retry_source_available(
@@ -44,7 +48,12 @@ async def _obvious_audio_retry_source_available(
 
 
 async def contextual_allowed_commands(
-    db: AsyncSession, session: InterviewSession
+    db: AsyncSession,
+    session: InterviewSession,
+    *,
+    retryable_audio_cleanup_attempt_id: str | None | object = (
+        _UNSET_RETRYABLE_AUDIO_CLEANUP_ATTEMPT
+    ),
 ) -> tuple[str, ...]:
     """Filter the coarse registry through V6 persisted-state predicates."""
     commands = list(allowed_commands(session))
@@ -253,6 +262,14 @@ async def contextual_allowed_commands(
         }:
             remove("resume", "end_session")
 
+    if session.conversation_state == "listening" and (
+        attempt is None
+        or attempt.question_id != session.active_question_id
+        or attempt.recording_type != "audio"
+        or attempt.attempt_state not in {"draft", "uploaded"}
+    ):
+        remove("record_capture_hard_stop")
+
     if session.conversation_state == "completed" and not (
         session.report_state == "failed"
         and session.report_build_reason
@@ -260,6 +277,19 @@ async def contextual_allowed_commands(
         and session.report_job_id is None
     ):
         remove("retry_report")
+
+    if session.conversation_state == "asking":
+        if (
+            retryable_audio_cleanup_attempt_id
+            is _UNSET_RETRYABLE_AUDIO_CLEANUP_ATTEMPT
+        ):
+            retryable_audio_cleanup_attempt_id = (
+                await CoachRetentionService(
+                    db
+                ).find_retryable_cancelled_upload_cleanup_attempt(session.id)
+            )
+        if retryable_audio_cleanup_attempt_id is None:
+            remove("delete_audio")
 
     if audio_targets == 0:
         remove("delete_audio")

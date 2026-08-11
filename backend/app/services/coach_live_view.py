@@ -38,6 +38,7 @@ from .coach_processing_snapshot import (
     load_owned_processing_evaluation,
 )
 from .coach_reconciliation import reconcile_conversational_session
+from .coach_retention import CoachRetentionService
 
 
 class CoachLiveViewError(ValueError):
@@ -86,7 +87,18 @@ class CoachLiveViewService:
         if len(questions) > 36:
             raise CoachLiveViewError("coach_conversation_invalid_state")
         await self._validate_projection_json(session, questions, active_attempt)
-        projected_commands = await contextual_allowed_commands(self.db, session)
+        retryable_audio_cleanup_attempt_id = (
+            await CoachRetentionService(
+                self.db
+            ).find_retryable_cancelled_upload_cleanup_attempt(session.id)
+            if session.conversation_state == "asking"
+            else None
+        )
+        projected_commands = await contextual_allowed_commands(
+            self.db,
+            session,
+            retryable_audio_cleanup_attempt_id=retryable_audio_cleanup_attempt_id,
+        )
         try:
             return ConversationLiveView(
                 session_id=session.id,
@@ -111,6 +123,9 @@ class CoachLiveViewService:
                         active_attempt.audio_retention_state
                         if active_attempt is not None
                         else None
+                    ),
+                    retryable_audio_cleanup_attempt_id=(
+                        retryable_audio_cleanup_attempt_id
                     ),
                 ),
                 allowed_commands=list(projected_commands),

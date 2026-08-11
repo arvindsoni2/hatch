@@ -50,7 +50,8 @@ from app.services.coach_conversation_commands import (
 )
 from app.config import settings
 from app.services.coach_command_projection import contextual_allowed_commands
-from sqlalchemy import func, select
+from app.services.coach_retention import CoachRetentionService
+from sqlalchemy import func, select, update
 
 
 async def _active_session(db) -> tuple[InterviewSession, SessionQuestion]:
@@ -455,6 +456,132 @@ async def test_audio_worker_binds_completed_upload_and_persists_timestamp_metric
     assert attempt.attempt_state == "unavailable"
     assert attempt.current_transcript_version_id is not None
     assert set(attempt.speech_metrics or {}) == {"duration_ms", "word_count", "words_per_minute", "filler_count", "filler_rate_per_minute", "hedging_count", "pause_count", "long_pause_count"}
+
+
+@pytest.mark.asyncio
+async def test_pipeline_default_cleanup_rejects_cancelled_terminal_failure_without_mutation(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The pipeline's default-cleanup boundary cannot reclaim cancellation failure."""
+    session, _question, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "task10-cancelled-default-cleanup"
+    )
+    original_claim_default_cleanup = CoachRetentionService.claim_default_cleanup
+    observed: dict[str, object] = {}
+
+    async def cancelled_terminal_failure_at_cleanup_boundary(
+        retention: CoachRetentionService, recording_id: str, now: datetime
+    ):
+        await retention.db.execute(
+            update(SessionRecording)
+            .where(SessionRecording.id == recording_id)
+            .values(
+                attempt_state="cancelled",
+                audio_retention_state="delete_failed",
+            )
+        )
+        await retention.db.execute(
+            update(InterviewAttemptStage)
+            .where(
+                InterviewAttemptStage.recording_id == recording_id,
+                InterviewAttemptStage.stage_name == "audio_cleanup",
+            )
+            .values(
+                stage_state="failed_retryable",
+                last_error_code="coach_audio_deletion_failed",
+            )
+        )
+        await retention.db.commit()
+        observed["before"] = (
+            int(
+                await retention.db.scalar(
+                    select(func.count(AsyncJob.id)).where(
+                        AsyncJob.type == "coach_audio_cleanup"
+                    )
+                )
+                or 0
+            ),
+            int(
+                await retention.db.scalar(
+                    select(func.count(InterviewSessionEvent.id)).where(
+                        InterviewSessionEvent.recording_id == recording_id,
+                        InterviewSessionEvent.event_type.in_(
+                            ("audio_cleanup_claimed", "audio_deleted", "audio_delete_failed")
+                        ),
+                    )
+                )
+                or 0
+            ),
+        )
+        observed["claim"] = await original_claim_default_cleanup(
+            retention, recording_id, now
+        )
+        return observed["claim"]
+
+    monkeypatch.setattr(
+        CoachRetentionService,
+        "claim_default_cleanup",
+        cancelled_terminal_failure_at_cleanup_boundary,
+    )
+
+    class Transcriber:
+        def transcribe(self, _path):
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "I delivered",
+                "en",
+                [WordTimestamp("I", 0, 0.1), WordTimestamp("delivered", 0.2, 0.5)],
+            )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    with pytest.raises(AttemptPipelineError, match="coach_attempt_stale_claim"):
+        await _process_attempt_claim(
+            claim,
+            session_factory=session_factory,
+            transcriber_factory=Transcriber,
+        )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    cleanup = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.recording_id == attempt.id,
+            InterviewAttemptStage.stage_name == "audio_cleanup",
+        )
+    )
+    after = (
+        int(
+            await db_session.scalar(
+                select(func.count(AsyncJob.id)).where(
+                    AsyncJob.type == "coach_audio_cleanup"
+                )
+            )
+            or 0
+        ),
+        int(
+            await db_session.scalar(
+                select(func.count(InterviewSessionEvent.id)).where(
+                    InterviewSessionEvent.recording_id == attempt.id,
+                    InterviewSessionEvent.event_type.in_(
+                        ("audio_cleanup_claimed", "audio_deleted", "audio_delete_failed")
+                    ),
+                )
+            )
+            or 0
+        ),
+    )
+
+    assert observed["claim"] is None
+    assert after == observed["before"]
+    assert (attempt.attempt_state, attempt.audio_retention_state) == (
+        "cancelled",
+        "delete_failed",
+    )
+    assert cleanup is not None and cleanup.stage_state == "failed_retryable"
 
 
 @pytest.mark.asyncio

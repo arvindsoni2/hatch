@@ -35,6 +35,7 @@ from app.schemas.coach_conversation import (
     PlanInterview,
     PlanRole,
     RebuildPlanPayload,
+    RecordCaptureHardStopPayload,
     RecordSelfAssessmentPayload,
     RequestCoachingPayload,
     RequestHintPayload,
@@ -450,6 +451,11 @@ COMMAND_CASES = [
     ("pause", {}, PausePayload),
     ("resume", {}, ResumePayload),
     ("cancel_attempt", {"attempt_id": "attempt_1"}, CancelAttemptPayload),
+    (
+        "record_capture_hard_stop",
+        {"attempt_id": "attempt_1"},
+        RecordCaptureHardStopPayload,
+    ),
     ("retry_answer", {"question_id": "question_1"}, RetryAnswerPayload),
     ("retry_setup", {}, RetrySetupPayload),
     ("rebuild_plan", {"refresh_sources": True}, RebuildPlanPayload),
@@ -495,7 +501,7 @@ COMMAND_CASES = [
 
 
 @pytest.mark.parametrize(("command_type", "payload", "payload_type"), COMMAND_CASES)
-def test_all_23_commands_dispatch_to_a_strict_typed_payload(
+def test_all_24_commands_dispatch_to_a_strict_typed_payload(
     command_type: str, payload: dict, payload_type: type
 ) -> None:
     parsed = ConversationCommandRequest.model_validate(command(command_type, payload))
@@ -542,7 +548,7 @@ def test_command_json_schema_discriminates_all_envelope_branches() -> None:
     assert set(discriminator["mapping"]) == {
         command_type for command_type, _, _ in COMMAND_CASES
     }
-    assert len(schema["oneOf"]) == 23
+    assert len(schema["oneOf"]) == 24
 
     resolved_branches = [
         resolve_local_schema_ref(schema, candidate) for candidate in schema["oneOf"]
@@ -584,12 +590,12 @@ def test_command_openapi_preserves_envelope_discriminator() -> None:
     schema = test_app.openapi()["components"]["schemas"]["ConversationCommandRequest"]
 
     assert schema["discriminator"]["propertyName"] == "command_type"
-    assert len(schema["discriminator"]["mapping"]) == 23
+    assert len(schema["discriminator"]["mapping"]) == 24
     assert all(
         reference.startswith("#/components/schemas/")
         for reference in schema["discriminator"]["mapping"].values()
     )
-    assert len(schema["oneOf"]) == 23
+    assert len(schema["oneOf"]) == 24
 
 
 def test_command_and_live_openapi_document_canonical_error_models() -> None:
@@ -763,6 +769,7 @@ def valid_live_view() -> dict:
         "retention": {
             "audio_policy": "delete_after_processing",
             "current_audio_state": "deleted",
+            "retryable_audio_cleanup_attempt_id": None,
         },
         "allowed_commands": ["request_coaching", "retry_answer"],
         "silence_policy": {"warning_ms": 4000, "finish_prompt_ms": 9000},
@@ -779,6 +786,7 @@ def test_live_view_models_the_complete_authoritative_projection() -> None:
     assert view.active_question.attempts_remaining == 3
     assert view.active_attempt.processing_retries_remaining == 1
     assert view.progress.current_planned_position == 3
+    assert view.retention.retryable_audio_cleanup_attempt_id is None
     assert view.silence_policy.warning_ms == 4000
 
 

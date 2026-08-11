@@ -323,6 +323,10 @@ class CancelAttemptPayload(StrictContractModel):
     attempt_id: SafeToken
 
 
+class RecordCaptureHardStopPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
 class RetryAnswerPayload(StrictContractModel):
     question_id: SafeToken | None = None
 
@@ -439,6 +443,7 @@ CommandType = Literal[
     "pause",
     "resume",
     "cancel_attempt",
+    "record_capture_hard_stop",
     "retry_answer",
     "retry_setup",
     "rebuild_plan",
@@ -465,6 +470,7 @@ CommandPayload = (
     | PausePayload
     | ResumePayload
     | CancelAttemptPayload
+    | RecordCaptureHardStopPayload
     | RetryAnswerPayload
     | RetrySetupPayload
     | RebuildPlanPayload
@@ -491,6 +497,7 @@ COMMAND_PAYLOAD_TYPES: dict[str, type[StrictContractModel]] = {
     "pause": PausePayload,
     "resume": ResumePayload,
     "cancel_attempt": CancelAttemptPayload,
+    "record_capture_hard_stop": RecordCaptureHardStopPayload,
     "retry_answer": RetryAnswerPayload,
     "retry_setup": RetrySetupPayload,
     "rebuild_plan": RebuildPlanPayload,
@@ -817,6 +824,7 @@ class ProgressProjection(StrictContractModel):
 class RetentionStatus(StrictContractModel):
     audio_policy: AudioRetentionPolicy
     current_audio_state: AudioRetentionState | None
+    retryable_audio_cleanup_attempt_id: SafeToken | None
 
 
 class AttemptAudioUploadRead(StrictContractModel):

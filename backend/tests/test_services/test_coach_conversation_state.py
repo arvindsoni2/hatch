@@ -31,7 +31,7 @@ from app.services.coach_conversational_contracts import (
 Settings = type(settings)
 
 
-APPENDIX_A_PROJECTIONS: dict[tuple[str, str], frozenset[str]] = {
+COARSE_TRANSITION_PROJECTIONS: dict[tuple[str, str], frozenset[str]] = {
     ("planning", "setup"): frozenset(),
     ("ready", "setup"): frozenset({"start", "rebuild_plan", "update_retention"}),
     ("asking", "active"): frozenset(
@@ -41,6 +41,7 @@ APPENDIX_A_PROJECTIONS: dict[tuple[str, str], frozenset[str]] = {
             "skip_question",
             "pause",
             "end_session",
+            "delete_audio",
             "update_retention",
         }
     ),
@@ -51,6 +52,7 @@ APPENDIX_A_PROJECTIONS: dict[tuple[str, str], frozenset[str]] = {
             "request_hint",
             "pause",
             "cancel_attempt",
+            "record_capture_hard_stop",
             "update_retention",
         }
     ),
@@ -259,6 +261,7 @@ def test_transition_registry_rejects_unlisted_state_status_cross_products(
         ("completed", "completed", "retry_report"),
         ("completed", "completed", "record_self_assessment"),
         ("ready", "setup", "update_retention"),
+        ("listening", "active", "record_capture_hard_stop"),
         ("completed", "completed", "delete_audio"),
     ],
 )
@@ -276,24 +279,25 @@ def test_transition_registry_preserves_valid_exact_pairs(
     ("state", "status", "expected"),
     [
         (*projection, commands)
-        for projection, commands in APPENDIX_A_PROJECTIONS.items()
+        for projection, commands in COARSE_TRANSITION_PROJECTIONS.items()
     ],
 )
-def test_allowed_commands_match_every_appendix_a_projection(
+def test_coarse_allowed_commands_match_every_transition_projection(
     state: str, status: str, expected: frozenset[str]
 ) -> None:
+    """The registry is coarse admission; live projection applies authority filters."""
     actual = allowed_commands(state=state, status=status)
     assert frozenset(actual) == expected
     assert len(actual) == len(expected)
 
 
 def test_all_unlisted_state_status_pairs_are_fail_closed() -> None:
-    states = {state for state, _ in APPENDIX_A_PROJECTIONS}
-    statuses = {status for _, status in APPENDIX_A_PROJECTIONS}
+    states = {state for state, _ in COARSE_TRANSITION_PROJECTIONS}
+    statuses = {status for _, status in COARSE_TRANSITION_PROJECTIONS}
 
     for state in states:
         for status in statuses:
-            if (state, status) not in APPENDIX_A_PROJECTIONS:
+            if (state, status) not in COARSE_TRANSITION_PROJECTIONS:
                 assert allowed_commands(state=state, status=status) == ()
 
 

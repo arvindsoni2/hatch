@@ -327,6 +327,46 @@ async def _processing_authority_signature(db_session, seeded: SeededAudio) -> tu
     )
 
 
+async def _cleanup_publication_signature(db_session, seeded: SeededAudio) -> tuple:
+    await db_session.refresh(seeded.attempt)
+    await db_session.refresh(seeded.session)
+    await db_session.refresh(seeded.cleanup_stage)
+    return (
+        seeded.attempt.attempt_state,
+        seeded.attempt.audio_retention_state,
+        seeded.attempt.attempt_version,
+        seeded.attempt.audio_uri,
+        seeded.attempt.audio_deleted_at,
+        seeded.session.state_version,
+        seeded.session.retention_version,
+        seeded.cleanup_stage.stage_state,
+        seeded.cleanup_stage.job_id,
+        seeded.cleanup_stage.claim_token,
+        seeded.cleanup_stage.job_deadline_at,
+        seeded.cleanup_stage.attempt_count,
+        seeded.cleanup_stage.last_error_code,
+        int(
+            await db_session.scalar(
+                select(func.count(AsyncJob.id)).where(
+                    AsyncJob.type == "coach_audio_cleanup"
+                )
+            )
+            or 0
+        ),
+        int(
+            await db_session.scalar(
+                select(func.count(InterviewSessionEvent.id)).where(
+                    InterviewSessionEvent.recording_id == seeded.attempt.id,
+                    InterviewSessionEvent.event_type.in_(
+                        ("audio_cleanup_claimed", "audio_deleted", "audio_delete_failed")
+                    ),
+                )
+            )
+            or 0
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_default_cleanup_claims_before_evaluation_finishes(
     db_session, tmp_path: Path
@@ -345,6 +385,180 @@ async def test_default_cleanup_claims_before_evaluation_finishes(
     assert seeded.attempt.audio_retention_state == "delete_pending"
     assert seeded.evaluation.state == "pending"
     assert seeded.cleanup_stage.stage_state == "running"
+
+
+@pytest.mark.asyncio
+async def test_default_cleanup_rejects_cancelled_terminal_failure_without_mutation(
+    db_session, tmp_path: Path
+) -> None:
+    """Cancelled terminal failures are candidate-retried, never default-cleaned."""
+    seeded = await _seed_audio(db_session, tmp_path)
+    seeded.attempt.attempt_state = "cancelled"
+    seeded.attempt.audio_retention_state = "delete_failed"
+    seeded.cleanup_stage.stage_state = "failed_retryable"
+    seeded.cleanup_stage.last_error_code = "coach_audio_deletion_failed"
+    await db_session.commit()
+    retention = CoachRetentionService(db_session, media_root=tmp_path / "coach-media")
+
+    before = (
+        seeded.attempt.attempt_state,
+        seeded.attempt.audio_retention_state,
+        seeded.attempt.attempt_version,
+        seeded.attempt.audio_uri,
+        seeded.session.state_version,
+        seeded.session.retention_version,
+        seeded.cleanup_stage.stage_state,
+        seeded.cleanup_stage.job_id,
+        seeded.cleanup_stage.claim_token,
+        seeded.cleanup_stage.job_deadline_at,
+        seeded.cleanup_stage.attempt_count,
+        int(
+            await db_session.scalar(
+                select(func.count(AsyncJob.id)).where(
+                    AsyncJob.type == "coach_audio_cleanup"
+                )
+            )
+            or 0
+        ),
+        int(
+            await db_session.scalar(
+                select(func.count(InterviewSessionEvent.id)).where(
+                    InterviewSessionEvent.recording_id == seeded.attempt.id,
+                    InterviewSessionEvent.event_type.in_(
+                        ("audio_cleanup_claimed", "audio_deleted", "audio_delete_failed")
+                    ),
+                )
+            )
+            or 0
+        ),
+    )
+
+    assert not await retention.default_cleanup_is_due(
+        seeded.attempt.id, datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+    )
+    assert (
+        await retention.claim_default_cleanup(
+            seeded.attempt.id, datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+        )
+        is None
+    )
+
+    await db_session.refresh(seeded.attempt)
+    await db_session.refresh(seeded.session)
+    await db_session.refresh(seeded.cleanup_stage)
+    after = (
+        seeded.attempt.attempt_state,
+        seeded.attempt.audio_retention_state,
+        seeded.attempt.attempt_version,
+        seeded.attempt.audio_uri,
+        seeded.session.state_version,
+        seeded.session.retention_version,
+        seeded.cleanup_stage.stage_state,
+        seeded.cleanup_stage.job_id,
+        seeded.cleanup_stage.claim_token,
+        seeded.cleanup_stage.job_deadline_at,
+        seeded.cleanup_stage.attempt_count,
+        int(
+            await db_session.scalar(
+                select(func.count(AsyncJob.id)).where(
+                    AsyncJob.type == "coach_audio_cleanup"
+                )
+            )
+            or 0
+        ),
+        int(
+            await db_session.scalar(
+                select(func.count(InterviewSessionEvent.id)).where(
+                    InterviewSessionEvent.recording_id == seeded.attempt.id,
+                    InterviewSessionEvent.event_type.in_(
+                        ("audio_cleanup_claimed", "audio_deleted", "audio_delete_failed")
+                    ),
+                )
+            )
+            or 0
+        ),
+    )
+    assert after == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("media_boundary", "cleanup_state"),
+    (
+        ("missing", "failed_retryable"),
+        ("invalid", "pending"),
+    ),
+)
+async def test_default_cleanup_fallback_rejects_cancelled_terminal_failure_without_mutation(
+    db_session,
+    tmp_path: Path,
+    media_boundary: str,
+    cleanup_state: str,
+) -> None:
+    """Pipeline fallback cannot publish a generic result for cancellation retry."""
+    seeded = await _seed_audio(db_session, tmp_path)
+    seeded.attempt.attempt_state = "cancelled"
+    seeded.attempt.audio_retention_state = "delete_failed"
+    seeded.cleanup_stage.stage_state = cleanup_state
+    seeded.cleanup_stage.last_error_code = "coach_audio_deletion_failed"
+    if media_boundary == "missing":
+        seeded.path.unlink()
+    else:
+        seeded.path.write_bytes(b"hash-mismatched audio")
+    await db_session.commit()
+    retention = CoachRetentionService(db_session, media_root=tmp_path / "coach-media")
+    before = await _cleanup_publication_signature(db_session, seeded)
+
+    preclaim_result = await retention.classify_cleanup_preclaim(seeded.attempt.id)
+    recorded = bool(
+        preclaim_result is not None
+        and await retention.record_cleanup_claim_failure(
+            seeded.attempt.id,
+            datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc),
+            result=preclaim_result,
+        )
+    )
+
+    assert preclaim_result is None
+    assert recorded is False
+    assert await _cleanup_publication_signature(db_session, seeded) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("media_boundary", "fallback_result", "cleanup_state"),
+    (
+        ("missing", "deleted", "failed_retryable"),
+        ("invalid", "delete_failed", "pending"),
+    ),
+)
+async def test_default_cleanup_fallback_recorder_rejects_cancelled_terminal_failure_race(
+    db_session,
+    tmp_path: Path,
+    media_boundary: str,
+    fallback_result: str,
+    cleanup_state: str,
+) -> None:
+    """The recorder repeats fallback authority after classification races."""
+    seeded = await _seed_audio(db_session, tmp_path)
+    seeded.attempt.attempt_state = "cancelled"
+    seeded.attempt.audio_retention_state = "delete_failed"
+    seeded.cleanup_stage.stage_state = cleanup_state
+    seeded.cleanup_stage.last_error_code = "coach_audio_deletion_failed"
+    if media_boundary == "missing":
+        seeded.path.unlink()
+    else:
+        seeded.path.write_bytes(b"hash-mismatched audio")
+    await db_session.commit()
+    retention = CoachRetentionService(db_session, media_root=tmp_path / "coach-media")
+    before = await _cleanup_publication_signature(db_session, seeded)
+
+    assert not await retention.record_cleanup_claim_failure(
+        seeded.attempt.id,
+        datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc),
+        result=fallback_result,
+    )
+    assert await _cleanup_publication_signature(db_session, seeded) == before
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,7 @@ _TRANSITIONS: dict[str, TransitionRule] = {
     ),
     "resume": _rule(("paused", "active")),
     "cancel_attempt": _rule(("listening", "active")),
+    "record_capture_hard_stop": _rule(("listening", "active")),
     "retry_answer": _rule(
         ("awaiting_next_action", "active"),
         ("coaching", "active"),
@@ -95,6 +96,7 @@ _TRANSITIONS: dict[str, TransitionRule] = {
         ("recoverable_error", "active"),
     ),
     "delete_audio": _rule(
+        ("asking", "active"),
         ("awaiting_next_action", "active"),
         ("coaching", "active"),
         ("paused", "active"),

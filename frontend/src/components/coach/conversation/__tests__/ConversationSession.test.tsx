@@ -627,6 +627,97 @@ describe("ConversationSession server authority", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
+  it("retries one hard-stop envelope after transport failure and preserves captured audio", async () => {
+    vi.useFakeTimers();
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt", "record_capture_hard_stop"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce({ ...listening, state_version: 5 });
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce(commandResult({
+        command_id: "begin-1",
+        state: "listening",
+        state_version: 4,
+        active_attempt_id: "attempt-audio-1",
+        allowed_commands: listening.allowed_commands,
+      }))
+      .mockRejectedValueOnce(new TypeError("offline"))
+      .mockResolvedValueOnce(commandResult({
+        command_id: "hard-stop-1",
+        state: "listening",
+        state_version: 5,
+        active_attempt_id: "attempt-audio-1",
+        allowed_commands: listening.allowed_commands,
+      }));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await act(async () => vi.advanceTimersByTime(600_000));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(3));
+    const [firstHardStop, retryHardStop] = api.sendCoachConversationCommand.mock.calls.slice(1);
+    expect(firstHardStop[1]).toMatchObject({
+      command_type: "record_capture_hard_stop",
+      expected_state_version: 4,
+      payload: { attempt_id: "attempt-audio-1" },
+    });
+    expect(retryHardStop[1]).toEqual(firstHardStop[1]);
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole("button", { name: "Upload captured answer" })).toBeEnabled();
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+  });
+
+  it("refreshes authoritative state after a hard-stop conflict without discarding audio", async () => {
+    vi.useFakeTimers();
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: audioAttempt(),
+      allowed_commands: ["finish_answer", "keep_speaking", "pause", "cancel_attempt", "record_capture_hard_stop"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live())
+      .mockResolvedValueOnce(listening)
+      .mockResolvedValueOnce({ ...listening, state_version: 5 });
+    api.sendCoachConversationCommand
+      .mockResolvedValueOnce(commandResult({
+        command_id: "begin-1",
+        state: "listening",
+        state_version: 4,
+        active_attempt_id: "attempt-audio-1",
+        allowed_commands: listening.allowed_commands,
+      }))
+      .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+        error: { code: "coach_conversation_version_conflict" },
+      }));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ConversationSession sessionId="session-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Start audio answer" }));
+    await act(async () => vi.advanceTimersByTime(600_000));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(2));
+    expect(api.sendCoachConversationCommand.mock.calls[1][1]).toMatchObject({
+      command_type: "record_capture_hard_stop",
+      expected_state_version: 4,
+      payload: { attempt_id: "attempt-audio-1" },
+    });
+    expect(await screen.findByRole("button", { name: "Upload captured answer" })).toBeEnabled();
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+  });
+
   it("shows discard recovery instead of a fabricated resume after refreshing a paused audio draft", async () => {
     api.getCoachConversationLive.mockResolvedValue(live({
       conversation_state: "paused",

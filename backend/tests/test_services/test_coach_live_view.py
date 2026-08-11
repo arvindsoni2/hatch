@@ -208,7 +208,9 @@ async def test_live_reconciles_then_reloads_and_projects_registry_commands(
     assert view.active_question is not None
     assert view.active_question.id == question.id
     assert view.allowed_commands == list(
-        allowed_commands(state="asking", status="active")
+        command
+        for command in allowed_commands(state="asking", status="active")
+        if command != "delete_audio"
     )
     assert view.contract_version == "coach_live_view_v1"
 

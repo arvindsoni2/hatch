@@ -24,6 +24,9 @@ interface RetentionStatusProps {
 
 export function RetentionStatus({ live, pending, onUpdatePolicy, onDeleteAudio }: RetentionStatusProps) {
   const activeAttempt = live.active_attempt;
+  const retryableAudioCleanupAttemptId = live.retention.retryable_audio_cleanup_attempt_id;
+  const canRetryCancelledAudioCleanup = retryableAudioCleanupAttemptId !== null
+    && live.allowed_commands.includes("delete_audio");
   const snapshotPolicy = activeAttempt?.audio_retention_policy;
   const futurePolicyTarget = live.retention.audio_policy === "retain_until_deleted"
     ? "delete_after_processing"
@@ -57,6 +60,22 @@ export function RetentionStatus({ live, pending, onUpdatePolicy, onDeleteAudio }
       </div>
       <div className="mt-4">
         <h3 className="text-sm font-semibold text-[var(--text)]">This answer</h3>
+        {canRetryCancelledAudioCleanup ? (
+          <>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              A cancelled recording could not be deleted. You can try again.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3"
+              disabled={pending}
+              onClick={() => onDeleteAudio(retryableAudioCleanupAttemptId)}
+            >
+              Retry audio deletion
+            </Button>
+          </>
+        ) : null}
         {snapshotPolicy === null || snapshotPolicy === undefined ? null : (
           <p className="mt-1 text-sm text-[var(--text-muted)]">
             {FUTURE_AUDIO_POLICY_LABELS[snapshotPolicy]}

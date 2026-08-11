@@ -75,6 +75,7 @@ export interface ConversationRecorderProps {
   onCancel: (attemptId: string) => Promise<RecorderCancelOutcome>;
   onDiscardAndRetry: (attemptId: string) => Promise<boolean>;
   onFinishCommand: (attemptId: string, uploadId: string) => Promise<boolean>;
+  onHardStop: (attemptId: string) => Promise<boolean>;
   onAnnouncement: (message: string) => void;
 }
 
@@ -102,6 +103,7 @@ export function ConversationRecorder({
   onCancel,
   onDiscardAndRetry,
   onFinishCommand,
+  onHardStop,
   onAnnouncement,
 }: ConversationRecorderProps) {
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
@@ -145,9 +147,12 @@ export function ConversationRecorder({
   const uploadRef = useRef<{ uploadId: string; contentSha256: string; completed: boolean } | null>(null);
   const submitInFlightRef = useRef<number | null>(null);
   const hardStopStartedRef = useRef(false);
+  const onHardStopRef = useRef(onHardStop);
   const mountedRef = useRef(true);
   const finishButtonRef = useRef<HTMLButtonElement | null>(null);
   const pauseButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  onHardStopRef.current = onHardStop;
   const resumeButtonRef = useRef<HTMLButtonElement | null>(null);
   const focusTargetRef = useRef<"finish" | "pause" | "resume" | null>(null);
 
@@ -258,9 +263,17 @@ export function ConversationRecorder({
     hardStopStartedRef.current = true;
     await stopRecorder(true);
     if (!mountedRef.current) return;
+    const ownedAttemptId = captureAttemptIdRef.current ?? attemptId;
+    if (ownedAttemptId !== null && authorityAvailableRef.current) {
+      try {
+        await onHardStopRef.current(ownedAttemptId);
+      } catch {
+        // The local blob remains the recovery authority when telemetry cannot send.
+      }
+    }
     setCaptureMessage("Recording stopped at the ten-minute limit. Submit or discard the captured answer.");
     onAnnouncement("Recording stopped at the ten-minute limit. Submit or discard the captured answer.");
-  }, [onAnnouncement, stopRecorder]);
+  }, [attemptId, onAnnouncement, stopRecorder]);
 
   const currentActiveElapsed = useCallback(() => elapsedMsRef.current + (
     activeSegmentStartedAtRef.current === null

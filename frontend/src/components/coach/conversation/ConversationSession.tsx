@@ -335,7 +335,7 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
 
   const executeRecorderRequest = useCallback(async (
     authority: { state_version: number },
-    commandType: "pause" | "resume" | "keep_speaking" | "cancel_attempt" | "finish_answer",
+    commandType: "pause" | "resume" | "keep_speaking" | "cancel_attempt" | "finish_answer" | "record_capture_hard_stop",
     payload: Record<string, string>,
   ): Promise<CommandExecutionResult> => execute({
     command_id: crypto.randomUUID(),
@@ -477,6 +477,29 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
     );
   }, [executeRecorderRequest, live, resumePausedAuthority]);
 
+  const recordCaptureHardStop = useCallback(async (attemptId: string) => {
+    if (
+      live === null
+      || live.status !== "active"
+      || live.conversation_state !== "listening"
+      || live.active_attempt?.id !== attemptId
+      || live.active_attempt.recording_type !== "audio"
+      || !live.allowed_commands.includes("record_capture_hard_stop")
+    ) return false;
+    const recorded = await executeRecorderRequest(
+      live,
+      "record_capture_hard_stop",
+      { attempt_id: attemptId },
+    );
+    return recorded.post.kind === "accepted" && (
+      recorded.refresh?.kind === "accepted"
+        ? recorded.refresh.live.conversation_state === "listening"
+          && recorded.refresh.live.active_attempt?.id === attemptId
+        : recorded.post.result.state === "listening"
+          && recorded.post.result.active_attempt_id === attemptId
+    );
+  }, [executeRecorderRequest, live]);
+
   const recorderAuthority = live ?? lastRecorderAuthority.current;
 
   return (
@@ -503,6 +526,7 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
         onCancel={cancelAudio}
         onDiscardAndRetry={discardAudioRecovery}
         onFinishCommand={finishAudio}
+        onHardStop={recordCaptureHardStop}
         onAnnouncement={setAnnouncement}
       />
 

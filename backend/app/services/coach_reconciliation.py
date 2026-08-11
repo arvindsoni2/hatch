@@ -1574,6 +1574,50 @@ async def reconcile_conversational_session(
             from .coach_retention import CoachRetentionService
 
             retention = CoachRetentionService(db)
+            cancelled_cursor: tuple[datetime, str] | None = None
+            for _page in range(36):
+                cancelled_query = select(
+                    SessionRecording.id, SessionRecording.created_at
+                ).where(
+                    SessionRecording.session_id == session.id,
+                    SessionRecording.recording_type == "audio",
+                    SessionRecording.attempt_state == "cancelled",
+                    SessionRecording.audio_uri.is_not(None),
+                    SessionRecording.audio_content_hash.is_not(None),
+                    SessionRecording.audio_retention_state == "delete_pending",
+                )
+                if cancelled_cursor is not None:
+                    cursor_created_at, cursor_id = cancelled_cursor
+                    cancelled_query = cancelled_query.where(
+                        or_(
+                            SessionRecording.created_at > cursor_created_at,
+                            and_(
+                                SessionRecording.created_at == cursor_created_at,
+                                SessionRecording.id > cursor_id,
+                            ),
+                        )
+                    )
+                cancelled_rows = (
+                    await db.execute(
+                        cancelled_query.order_by(
+                            SessionRecording.created_at, SessionRecording.id
+                        ).limit(20)
+                    )
+                ).all()
+                if not cancelled_rows:
+                    break
+                for recording_id, created_at in cancelled_rows:
+                    cancelled_cursor = (created_at, recording_id)
+                    changed = int(
+                        await retention.recover_expired_cancelled_upload_cleanup(
+                            recording_id, now
+                        )
+                    )
+                    if changed:
+                        await db.commit()
+                        break
+                if changed:
+                    break
             cleanup_cursor: tuple[datetime, str] | None = None
             while not changed:
                 cleanup_query = select(
@@ -1585,6 +1629,10 @@ async def reconcile_conversational_session(
                     == "delete_after_processing",
                     SessionRecording.audio_retention_state.in_(
                         ("temporary", "delete_failed", "delete_pending")
+                    ),
+                    or_(
+                        SessionRecording.attempt_state != "cancelled",
+                        SessionRecording.audio_retention_state != "delete_failed",
                     ),
                 )
                 if cleanup_cursor is not None:
@@ -1628,7 +1676,7 @@ async def reconcile_conversational_session(
                     )
                     if cleanup_claim is None:
                         preclaim_result = await retention.classify_cleanup_preclaim(
-                            recording_id
+                            recording_id, reason="default_cleanup"
                         )
                         changed = int(
                             preclaim_result is not None
@@ -1789,11 +1837,20 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
         cleanup_transcription = aliased(InterviewAttemptStage)
         cleanup_speech = aliased(InterviewAttemptStage)
         cleanup_job = aliased(AsyncJob)
+        cancelled_cleanup_attempt = aliased(SessionRecording)
+        cancelled_cleanup_job = aliased(AsyncJob)
         claim_path = "$.processing_claim"
         safe_diagnostics = case(
             (
                 func.json_valid(processing_evaluation.diagnostics_json) == 1,
                 processing_evaluation.diagnostics_json,
+            ),
+            else_=literal("{}"),
+        )
+        safe_cancelled_cleanup_claim = case(
+            (
+                func.json_valid(cancelled_cleanup_job.result_json) == 1,
+                cancelled_cleanup_job.result_json,
             ),
             else_=literal("{}"),
         )
@@ -2436,6 +2493,21 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                 ),
             ),
         )
+        due_cancelled_upload_cleanup = exists().where(
+            cancelled_cleanup_attempt.session_id == InterviewSession.id,
+            cancelled_cleanup_attempt.recording_type == "audio",
+            cancelled_cleanup_attempt.attempt_state == "cancelled",
+            cancelled_cleanup_attempt.audio_uri.is_not(None),
+            cancelled_cleanup_attempt.audio_content_hash.is_not(None),
+            cancelled_cleanup_attempt.audio_retention_state == "delete_pending",
+            cancelled_cleanup_attempt.async_job_id == cancelled_cleanup_job.id,
+            cancelled_cleanup_job.type == "coach_cancelled_upload_cleanup",
+            cancelled_cleanup_job.status.in_(("pending", "running")),
+            func.json_type(safe_cancelled_cleanup_claim, "$.deadline_at")
+            == "text",
+            func.json_extract(safe_cancelled_cleanup_claim, "$.deadline_at")
+            <= now.isoformat(),
+        )
         candidate_cursor: tuple[datetime, str] | None = None
         while total < batch_size:
             candidate_query = select(
@@ -2465,6 +2537,7 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                             actionable_advancing,
                             actionable_follow_up,
                             due_audio_cleanup,
+                            due_cancelled_upload_cleanup,
                             and_(
                                 InterviewSession.status == "active",
                                 InterviewSession.conversation_state

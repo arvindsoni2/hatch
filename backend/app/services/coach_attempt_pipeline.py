@@ -919,7 +919,7 @@ async def _process_attempt_claim(
                         await db.commit()
                 else:
                     cleanup_result = await retention.classify_cleanup_preclaim(
-                        attempt.id
+                        attempt.id, reason="default_cleanup"
                     )
                     if cleanup_result is None:
                         await db.rollback()

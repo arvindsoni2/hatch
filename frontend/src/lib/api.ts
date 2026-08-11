@@ -1242,6 +1242,7 @@ export type ConversationCommandType =
   | "pause"
   | "resume"
   | "cancel_attempt"
+  | "record_capture_hard_stop"
   | "retry_answer"
   | "retry_setup"
   | "rebuild_plan"
@@ -1292,6 +1293,7 @@ export type ConversationCommandRequest =
   | ConversationCommandEnvelope<"pause", EmptyConversationCommandPayload>
   | ConversationCommandEnvelope<"resume", EmptyConversationCommandPayload>
   | ConversationCommandEnvelope<"cancel_attempt", { attempt_id: string }>
+  | ConversationCommandEnvelope<"record_capture_hard_stop", { attempt_id: string }>
   | ConversationCommandEnvelope<"retry_answer", { question_id?: string | null }>
   | ConversationCommandEnvelope<"retry_setup", EmptyConversationCommandPayload>
   | ConversationCommandEnvelope<"rebuild_plan", { refresh_sources: true }>
@@ -1455,6 +1457,7 @@ export interface ConversationLiveView {
   retention: {
     audio_policy: ConversationAudioRetentionPolicy;
     current_audio_state: ConversationAudioRetentionState | null;
+    retryable_audio_cleanup_attempt_id: string | null;
   };
   allowed_commands: ConversationCommandType[];
   silence_policy: { warning_ms: number; finish_prompt_ms: number };

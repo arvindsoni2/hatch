@@ -134,6 +134,7 @@ function props(overrides: Partial<ConversationRecorderProps> = {}): Conversation
     onCancel: vi.fn().mockResolvedValue("cancelled"),
     onDiscardAndRetry: vi.fn().mockResolvedValue(true),
     onFinishCommand: vi.fn().mockResolvedValue(true),
+    onHardStop: vi.fn().mockResolvedValue(true),
     onAnnouncement: vi.fn(),
     ...overrides,
   };
@@ -229,6 +230,7 @@ describe("ConversationRecorder browser capture", () => {
           onCancel={vi.fn()}
           onDiscardAndRetry={vi.fn()}
           onFinishCommand={vi.fn()}
+          onHardStop={vi.fn()}
           onAnnouncement={vi.fn()}
         />
       </div>,
@@ -871,10 +873,11 @@ describe("ConversationRecorder browser capture", () => {
     expect(recorderProps.onDiscardAndRetry).toHaveBeenCalledWith("attempt-1");
   });
 
-  it("warns at five minutes and hard-stops locally at ten without automatic submission", async () => {
+  it("warns at five minutes and records one hard-stop event without automatic submission", async () => {
     vi.useFakeTimers();
     installMedia();
-    const recorderProps = props();
+    const onHardStop = vi.fn().mockResolvedValue(true);
+    const recorderProps = props({ onHardStop });
     const view = render(<ConversationRecorder {...recorderProps} />);
     await startRecording(recorderProps, view.rerender);
 
@@ -889,7 +892,33 @@ describe("ConversationRecorder browser capture", () => {
     expect(await screen.findByText(/recording stopped at the ten-minute limit/i)).toBeVisible();
     expect(FakeMediaRecorder.latest?.stop).toHaveBeenCalledOnce();
     expect(recorderProps.onFinishCommand).not.toHaveBeenCalled();
+    expect(onHardStop).toHaveBeenCalledOnce();
+    expect(onHardStop).toHaveBeenCalledWith("attempt-1");
     expect(screen.getByRole("button", { name: "Upload captured answer" })).toBeEnabled();
+  });
+
+  it("emits the hard-stop event once when timer and focus both observe the boundary", async () => {
+    vi.useFakeTimers();
+    const monotonicNow = vi.spyOn(performance, "now").mockReturnValue(0);
+    installMedia();
+    const onHardStop = vi.fn().mockRejectedValue(new Error("offline"));
+    const recorderProps = props({ onHardStop });
+    const view = render(<ConversationRecorder {...recorderProps} />);
+    await startRecording(recorderProps, view.rerender);
+
+    monotonicNow.mockReturnValue(600_000);
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(600_000);
+    });
+
+    expect(onHardStop).toHaveBeenCalledOnce();
+    expect(FakeMediaRecorder.latest?.stop).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Upload captured answer" })).toBeEnabled();
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
   });
 
   it("uses monotonic active time and rechecks the hard limit after browser throttling", async () => {

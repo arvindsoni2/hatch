@@ -70,6 +70,7 @@ function live(overrides: Partial<ConversationLiveView> = {}): ConversationLiveVi
     retention: {
       audio_policy: "retain_until_deleted",
       current_audio_state: "temporary",
+      retryable_audio_cleanup_attempt_id: null,
     },
     allowed_commands: ["update_retention", "delete_audio"],
     silence_policy: { warning_ms: 4000, finish_prompt_ms: 9000 },
@@ -110,7 +111,11 @@ describe("RetentionStatus", () => {
   ] as const)("renders the %s backend retention state truthfully", (state, message) => {
     render(
       <RetentionStatus
-        live={live({ retention: { audio_policy: "delete_after_processing", current_audio_state: state } })}
+        live={live({ retention: {
+          audio_policy: "delete_after_processing",
+          current_audio_state: state,
+          retryable_audio_cleanup_attempt_id: null,
+        } })}
         pending={false}
         onUpdatePolicy={vi.fn()}
         onDeleteAudio={vi.fn()}
@@ -165,6 +170,48 @@ describe("RetentionStatus", () => {
     );
     expect(screen.queryByRole("button", { name: /future answers/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete audio for this answer" })).not.toBeInTheDocument();
+  });
+
+  it("offers cancelled-cleanup retry only from the server-projected authority", async () => {
+    const user = userEvent.setup();
+    const onDeleteAudio = vi.fn();
+    const retryRetention = {
+      audio_policy: "delete_after_processing" as const,
+      current_audio_state: null,
+      retryable_audio_cleanup_attempt_id: "cancelled-cleanup-attempt-1",
+    } as unknown as ConversationLiveView["retention"];
+    const view = render(
+      <RetentionStatus
+        live={live({
+          conversation_state: "asking",
+          active_attempt: null,
+          retention: retryRetention,
+          allowed_commands: ["begin_answer", "delete_audio"],
+        })}
+        pending={false}
+        onUpdatePolicy={vi.fn()}
+        onDeleteAudio={onDeleteAudio}
+      />,
+    );
+
+    expect(screen.getByText("A cancelled recording could not be deleted. You can try again.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry audio deletion" }));
+    expect(onDeleteAudio).toHaveBeenCalledWith("cancelled-cleanup-attempt-1");
+
+    view.rerender(
+      <RetentionStatus
+        live={live({
+          conversation_state: "asking",
+          active_attempt: null,
+          retention: retryRetention,
+          allowed_commands: ["begin_answer"],
+        })}
+        pending={false}
+        onUpdatePolicy={vi.fn()}
+        onDeleteAudio={onDeleteAudio}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Retry audio deletion" })).not.toBeInTheDocument();
   });
 
   it("disables advertised retention actions while another command is pending", () => {
@@ -232,7 +279,11 @@ describe("ConversationSession retention authority", () => {
       .mockResolvedValueOnce(live({
         state_version: 9,
         retention_version: 3,
-        retention: { audio_policy: "delete_after_processing", current_audio_state: "temporary" },
+        retention: {
+          audio_policy: "delete_after_processing",
+          current_audio_state: "temporary",
+          retryable_audio_cleanup_attempt_id: null,
+        },
       }))
       .mockResolvedValueOnce(live({ state_version: 10, retention_version: 4 }));
     const user = userEvent.setup();
@@ -267,7 +318,11 @@ describe("ConversationSession retention authority", () => {
       .mockResolvedValueOnce(live({
         state_version: 9,
         retention_version: 3,
-        retention: { audio_policy: "delete_after_processing", current_audio_state: "temporary" },
+        retention: {
+          audio_policy: "delete_after_processing",
+          current_audio_state: "temporary",
+          retryable_audio_cleanup_attempt_id: null,
+        },
       }));
     api.sendCoachConversationCommand
       .mockRejectedValueOnce(new TypeError("Failed to fetch"))
@@ -303,10 +358,116 @@ describe("ConversationSession retention authority", () => {
     expect(api.getCoachConversationLive).toHaveBeenCalledTimes(2);
   });
 
+  it("retries the exact server-surfaced cancelled cleanup and removes it after refresh", async () => {
+    const retryRetention = {
+      audio_policy: "delete_after_processing" as const,
+      current_audio_state: null,
+      retryable_audio_cleanup_attempt_id: "cancelled-cleanup-attempt-1",
+    } as unknown as ConversationLiveView["retention"];
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live({
+        conversation_state: "asking",
+        state_version: 8,
+        active_attempt: null,
+        retention: retryRetention,
+        allowed_commands: ["begin_answer", "delete_audio"],
+      }))
+      .mockResolvedValueOnce(live({
+        conversation_state: "asking",
+        state_version: 9,
+        active_attempt: null,
+        retention: {
+          audio_policy: "delete_after_processing",
+          current_audio_state: null,
+          retryable_audio_cleanup_attempt_id: null,
+        },
+        allowed_commands: ["begin_answer"],
+      }));
+    api.sendCoachConversationCommand.mockResolvedValueOnce({
+      command_id: "cancelled-cleanup-command",
+      result: "accepted_processing",
+      session_id: "session-retention-1",
+      state: "asking",
+      state_version: 8,
+      active_question_id: "question-retention-1",
+      active_attempt_id: null,
+      async_job_id: "cancelled-cleanup-job-2",
+      allowed_commands: ["begin_answer"],
+      contract_version: "coach_conversation_command_result_v1",
+    });
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-retention-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Retry audio deletion" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledOnce());
+    expect(api.sendCoachConversationCommand.mock.calls[0][1]).toMatchObject({
+      command_type: "delete_audio",
+      expected_state_version: 8,
+      payload: { attempt_id: "cancelled-cleanup-attempt-1" },
+    });
+    expect(await screen.findByRole("heading", { name: "This answer" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry audio deletion" })).not.toBeInTheDocument();
+  });
+
+  it("reuses the cancelled-cleanup envelope for a transport retry", async () => {
+    const retryRetention = {
+      audio_policy: "delete_after_processing" as const,
+      current_audio_state: null,
+      retryable_audio_cleanup_attempt_id: "cancelled-cleanup-attempt-1",
+    } as unknown as ConversationLiveView["retention"];
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live({
+        conversation_state: "asking",
+        state_version: 8,
+        active_attempt: null,
+        retention: retryRetention,
+        allowed_commands: ["begin_answer", "delete_audio"],
+      }))
+      .mockResolvedValueOnce(live({
+        conversation_state: "asking",
+        state_version: 9,
+        active_attempt: null,
+        retention: {
+          audio_policy: "delete_after_processing",
+          current_audio_state: null,
+          retryable_audio_cleanup_attempt_id: null,
+        },
+        allowed_commands: ["begin_answer"],
+      }));
+    api.sendCoachConversationCommand
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({
+        command_id: "cancelled-cleanup-command",
+        result: "accepted_processing",
+        session_id: "session-retention-1",
+        state: "asking",
+        state_version: 8,
+        active_question_id: "question-retention-1",
+        active_attempt_id: null,
+        async_job_id: "cancelled-cleanup-job-2",
+        allowed_commands: ["begin_answer"],
+        contract_version: "coach_conversation_command_result_v1",
+      });
+    const user = userEvent.setup();
+    render(<ConversationSession sessionId="session-retention-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Retry audio deletion" }));
+
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(2));
+    expect(api.sendCoachConversationCommand.mock.calls[1][1]).toBe(
+      api.sendCoachConversationCommand.mock.calls[0][1],
+    );
+  });
+
   it("deletes only the advertised answer audio and preserves transcript review", async () => {
     const markup = '<img src=x onerror="window.__coachRetentionXss=1">';
     const current = live({
-      retention: { audio_policy: "retain_until_deleted", current_audio_state: "delete_failed" },
+      retention: {
+        audio_policy: "retain_until_deleted",
+        current_audio_state: "delete_failed",
+        retryable_audio_cleanup_attempt_id: null,
+      },
       active_attempt: {
         ...live().active_attempt!,
         transcript_version: { ...live().active_attempt!.transcript_version!, transcript: markup },
@@ -317,7 +478,11 @@ describe("ConversationSession retention authority", () => {
       .mockResolvedValueOnce(live({
         state_version: 9,
         retention_version: 3,
-        retention: { audio_policy: "retain_until_deleted", current_audio_state: "deleted" },
+        retention: {
+          audio_policy: "retain_until_deleted",
+          current_audio_state: "deleted",
+          retryable_audio_cleanup_attempt_id: null,
+        },
         allowed_commands: ["update_retention"],
         active_attempt: {
           ...current.active_attempt!,
