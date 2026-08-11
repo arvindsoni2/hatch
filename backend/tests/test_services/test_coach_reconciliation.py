@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 import pytest
@@ -36,6 +37,7 @@ from app.services.coach_reconciliation import (
     reconcile_session,
     reconcile_stale_coach_state,
 )
+from app.services.coach_attempt_pipeline import _process_attempt_claim
 from app.services.coach_service import CoachService
 
 
@@ -443,7 +445,13 @@ async def test_processing_claim_within_deadline_is_noop(db_session) -> None:
 @pytest.mark.asyncio
 async def test_real_finish_answer_terminal_claim_reconciles_after_state_increment(
     db_session,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    dispatched = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        dispatched.append,
+    )
     session = await _conversational_session(db_session, state="asking")
     question = SessionQuestion(
         session_id=session.id,
@@ -489,14 +497,23 @@ async def test_real_finish_answer_terminal_claim_reconciles_after_state_incremen
             attempt_id=attempt.id, version=begun.state_version
         ),
     )
+    assert len(dispatched) == 1
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(dispatched[0], session_factory=session_factory)
     await db_session.refresh(session)
+    await db_session.refresh(attempt)
     evaluation = await db_session.get(
         InterviewAttemptEvaluation, attempt.current_evaluation_version_id
     )
     assert evaluation is not None
     claim = evaluation.diagnostics_json["processing_claim"]
     assert claim["expected_session_state_version"] + 2 == session.state_version
-    assert result.state == session.conversation_state == "awaiting_next_action"
+    assert result.state == "processing_answer"
+    assert session.conversation_state == "awaiting_next_action"
     session.conversation_state = "processing_answer"
     session.state_version = claim["expected_session_state_version"] + 1
     session.activity_version -= 1

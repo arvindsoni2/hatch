@@ -76,6 +76,14 @@ def _temporary_uploads(root: Path) -> list[Path]:
     return list(root.rglob("coach-upload-*")) if root.exists() else []
 
 
+def _assert_only_coordination_lockfiles_remain(root: Path) -> None:
+    files = [path for path in root.rglob("*") if path.is_file()]
+    assert not [path for path in files if path.name != ".coach-media.lock"]
+    lockfiles = [path for path in files if path.name == ".coach-media.lock"]
+    assert lockfiles
+    assert all(not path.is_symlink() for path in lockfiles)
+
+
 @pytest.mark.asyncio
 async def test_audio_upload_is_hash_verified_and_idempotent(
     client, db_session, seeded_listening_audio_attempt, isolated_media_root
@@ -244,7 +252,7 @@ async def test_commit_failure_rolls_back_database_and_compensates_published_file
     assert response.json()["error"]["code"] == "coach_attempt_upload_conflict"
     assert response.json()["error"]["details"] == {}
     assert await _completed_upload_count(db_session) == 0
-    assert not [path for path in isolated_media_root.rglob("*") if path.is_file()]
+    _assert_only_coordination_lockfiles_remain(isolated_media_root)
     assert "/private" not in response.text
 
 
@@ -297,5 +305,5 @@ async def test_upload_close_failure_precedes_publication_and_is_sanitized(
     assert response.json()["error"]["code"] == "coach_attempt_upload_conflict"
     assert response.json()["error"]["details"] == {}
     assert await _completed_upload_count(db_session) == 0
-    assert not [path for path in isolated_media_root.rglob("*") if path.is_file()]
+    _assert_only_coordination_lockfiles_remain(isolated_media_root)
     assert "/private" not in response.text
