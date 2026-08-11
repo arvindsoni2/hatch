@@ -642,6 +642,9 @@ async def test_rollback_never_unlinks_replacement_after_publication_unlink_failu
     destination = tmp_path / "media" / "session-1" / "attempt-1-upload-1.webm"
     destination.parent.mkdir(parents=True)
     publication = publish_staged_audio(_stage(staged_path, body), destination)
+    published_fd = publication._file_descriptor
+    published = os.fstat(published_fd)
+    assert published.st_ino == destination.stat().st_ino
     original_unlink = os.unlink
     swapped = False
 
@@ -673,7 +676,9 @@ async def test_rollback_never_unlinks_replacement_after_publication_unlink_failu
         await repository._rollback_audio_upload()
 
     assert swapped is True
+    assert os.fstat(published_fd).st_ino == published.st_ino
     assert destination.read_bytes() == b"replacement"
+    publication.release()
 
 
 @pytest.mark.asyncio

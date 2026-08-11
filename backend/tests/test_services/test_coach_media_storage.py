@@ -177,14 +177,27 @@ def test_verified_deletion_lease_does_not_hide_two_boundary_replacements(
     second_replacement = b"second-replacement"
     source.write_bytes(original)
     preserved_original = source.with_name("preserved-original.webm")
+    real_open = os.open
     real_rename = os.rename
     real_exchange = media_storage._rename_exchange
     injected = False
+    placeholder_fd = -1
+
+    def capture_placeholder_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal placeholder_fd
+        opened_fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        if isinstance(path, str) and path.startswith(".coach-delete-"):
+            placeholder_fd = opened_fd
+        return opened_fd
 
     def replace_at_exchange(directory_fd: int, src: str, dst: str) -> None:
         nonlocal injected
         if not injected:
             injected = True
+            placeholder = os.stat(dst, dir_fd=directory_fd, follow_symlinks=False)
+            pinned_placeholder = os.fstat(placeholder_fd)
+            assert pinned_placeholder.st_dev == placeholder.st_dev
+            assert pinned_placeholder.st_ino == placeholder.st_ino
             real_rename(source, preserved_original)
             source.write_bytes(first_replacement)
             real_exchange(directory_fd, src, dst)
@@ -196,6 +209,7 @@ def test_verified_deletion_lease_does_not_hide_two_boundary_replacements(
     with open_verified_audio_deletion_lease(
         root, source, _sha256(original)
     ) as lease:
+        monkeypatch.setattr(os, "open", capture_placeholder_open)
         monkeypatch.setattr(media_storage, "_rename_exchange", replace_at_exchange)
         with pytest.raises(CoachMediaError, match="coach_attempt_upload_conflict"):
             lease.delete_owned()

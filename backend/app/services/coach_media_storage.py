@@ -268,12 +268,34 @@ class OwnedAudioPublication:
     """An inode-bound destination lease used for rollback compensation."""
 
     _entry: _OwnedEntry
+    _file_descriptor: int
+
+    def _close_file_descriptor(self) -> None:
+        if self._file_descriptor < 0:
+            return
+        file_descriptor = self._file_descriptor
+        self._file_descriptor = -1
+        try:
+            os.close(file_descriptor)
+        except OSError:
+            raise CoachMediaError("coach_attempt_upload_conflict") from None
 
     def compensate(self) -> None:
         self._entry.cleanup()
+        self._close_file_descriptor()
 
     def release(self) -> None:
-        self._entry.close()
+        failed = False
+        try:
+            self._close_file_descriptor()
+        except CoachMediaError:
+            failed = True
+        try:
+            self._entry.close()
+        except CoachMediaError:
+            failed = True
+        if failed:
+            raise CoachMediaError("coach_attempt_upload_conflict")
 
 
 @dataclass
@@ -351,8 +373,6 @@ class OwnedAudioDeletionLease:
             placeholder_mode = placeholder.st_mode
             placeholder_uid = placeholder.st_uid
             placeholder_gid = placeholder.st_gid
-            os.close(placeholder_fd)
-            placeholder_fd = -1
             _rename_exchange(self._entry.directory_fd, self._entry.name, tombstone)
             moved = os.stat(
                 tombstone,
@@ -773,6 +793,7 @@ def publish_staged_audio(
     source = _entry_for_staged(staged)
     destination_fd = _open_exact_directory(destination.parent)
     publication: _OwnedEntry | None = None
+    publication_fd = -1
     locks: _DirectoryMutationLocks | None = None
     try:
         locks = _acquire_directory_mutation_locks(
@@ -800,6 +821,14 @@ def publish_staged_audio(
         )
         if published.st_dev != source.device or published.st_ino != source.inode:
             raise CoachMediaError("coach_attempt_upload_conflict")
+        publication_fd = os.open(
+            destination.name,
+            _READ_FLAGS,
+            dir_fd=destination_fd,
+        )
+        pinned = os.fstat(publication_fd)
+        if pinned.st_dev != published.st_dev or pinned.st_ino != published.st_ino:
+            raise CoachMediaError("coach_attempt_upload_conflict")
         publication = _OwnedEntry(
             destination_fd,
             destination.name,
@@ -809,7 +838,9 @@ def publish_staged_audio(
         destination_fd = -1
         os.unlink(source.name, dir_fd=source.directory_fd)
         source.close()
-        return OwnedAudioPublication(publication)
+        result = OwnedAudioPublication(publication, publication_fd)
+        publication_fd = -1
+        return result
     except BaseException as error:
         cleanup_error: BaseException | None = None
         if publication is not None:
@@ -828,6 +859,11 @@ def publish_staged_audio(
             raise cleanup_error
         raise CoachMediaError("coach_attempt_upload_conflict") from None
     finally:
+        if publication_fd >= 0:
+            try:
+                os.close(publication_fd)
+            except OSError:
+                pass
         if locks is not None:
             try:
                 locks.close()
