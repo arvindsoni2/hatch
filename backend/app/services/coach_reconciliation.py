@@ -581,6 +581,7 @@ async def _reconcile_processing_answer(
     now: datetime,
     *,
     forced_retryable_failure: bool = False,
+    dry_run: bool = False,
 ) -> int:
     if (
         session.status != "active"
@@ -666,6 +667,8 @@ async def _reconcile_processing_answer(
             snapshot=snapshot,
         )
     ):
+        if dry_run:
+            return 1
         terminal_exists = exists().where(
             InterviewAttemptEvaluation.id == evaluation.id,
             InterviewAttemptEvaluation.recording_id == attempt.id,
@@ -863,6 +866,8 @@ async def _reconcile_processing_answer(
             )
         ):
             return 0
+        if dry_run:
+            return 1
         return await _publish_downstream_processing_fallback(
             db,
             session=session,
@@ -884,6 +889,9 @@ async def _reconcile_processing_answer(
             or content_stage.stage_state not in _RECOVERY_STAGE_STATES
         ):
             return 0
+
+    if dry_run:
+        return 1
 
     terminal_state = "recoverable_error" if retryable else "unavailable"
     terminal_reason = (
@@ -2339,6 +2347,18 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                 terminal_processing_is_actionable,
             ),
         )
+        # Startup discovery is deliberately coarse. The exact claim, JSON,
+        # deadline, stage graph, and reuse authority are all revalidated by
+        # reconcile_conversational_session before any mutation. Embedding that
+        # complete authority proof here produced a deeply nested SQLite
+        # expression that exceeds the parser stack in the Python 3.12 runner.
+        # Stable keyset paging below continues past false-positive candidates,
+        # so a malformed or not-yet-due row cannot consume the success budget.
+        due_processing_claim = exists().where(
+            processing_attempt.session_id == InterviewSession.id,
+            processing_attempt.id == InterviewSession.active_recording_id,
+            processing_attempt.question_id == InterviewSession.active_question_id,
+        )
         prior = aliased(SessionQuestion)
         accepted = aliased(SessionRecording)
         candidate = aliased(SessionQuestion)
@@ -2514,6 +2534,11 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                 InterviewSession.id,
                 InterviewSession.experience_version,
                 InterviewSession.created_at,
+                InterviewSession.conversation_state,
+                due_audio_cleanup.label("due_audio_cleanup"),
+                due_cancelled_upload_cleanup.label(
+                    "due_cancelled_upload_cleanup"
+                ),
             ).where(
                 or_(
                     and_(
@@ -2568,12 +2593,33 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
             ).all()
             if not candidate_rows:
                 break
-            for session_id, experience, created_at in candidate_rows:
+            for (
+                session_id,
+                experience,
+                created_at,
+                conversation_state,
+                cleanup_due,
+                cancelled_cleanup_due,
+            ) in candidate_rows:
                 candidate_cursor = (created_at, session_id)
                 if total >= batch_size:
                     break
                 try:
                     if experience == "conversational_v1":
+                        if (
+                            conversation_state == "processing_answer"
+                            and not cleanup_due
+                            and not cancelled_cleanup_due
+                        ):
+                            session = await db.scalar(
+                                select(InterviewSession).where(
+                                    InterviewSession.id == session_id
+                                )
+                            )
+                            if session is None or not await _reconcile_processing_answer(
+                                db, session, now, dry_run=True
+                            ):
+                                continue
                         total += await reconcile_conversational_session(db, session_id)
                     else:
                         total += await reconcile_session(db, session_id)

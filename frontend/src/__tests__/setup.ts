@@ -1,5 +1,31 @@
 import '@testing-library/jest-dom';
+import { Buffer } from 'node:buffer';
+import { webcrypto } from 'node:crypto';
 import { vi } from 'vitest';
+
+// jsdom's Crypto implementation on Node 20 provides randomUUID but omits
+// SubtleCrypto. Its ArrayBuffer also belongs to jsdom's realm, which Node 20's
+// WebCrypto rejects directly, so cross the test-only realm boundary via Buffer.
+const coachTestCrypto = {
+  getRandomValues: webcrypto.getRandomValues.bind(webcrypto),
+  randomUUID: webcrypto.randomUUID.bind(webcrypto),
+  subtle: {
+    digest: (algorithm: AlgorithmIdentifier, data: BufferSource) =>
+      webcrypto.subtle.digest(
+        algorithm,
+        Buffer.from(new Uint8Array(data as ArrayBuffer)),
+      ),
+  },
+};
+
+Object.defineProperty(globalThis, 'crypto', {
+  configurable: true,
+  value: coachTestCrypto,
+});
+Object.defineProperty(window, 'crypto', {
+  configurable: true,
+  value: coachTestCrypto,
+});
 
 class CoachTestTrack {
   stop = vi.fn();
