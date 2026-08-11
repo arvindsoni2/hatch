@@ -212,6 +212,8 @@ This revision resolves the blocking and clarification reviews raised against v1 
 | Retry scope | Phase 1 retries only an unaccepted active question. Accepting an attempt makes the question terminal for conversational navigation; accepted historical questions are not revisited or replaced. |
 | Question categories | Conversational questions use the canonical six-value category enum and deterministic behavioural/role-specific grouping in Sections 4.2 and 13.1. |
 | Audio cleanup | Default cleanup is independently claimed as soon as transcription and speech analysis are terminal; evaluation and grounding are not prerequisites. Cleanup mutations version the live retention projection. |
+| Cancelled-audio cleanup retry | `/live.retention.retryable_audio_cleanup_attempt_id` exposes at most one authoritative cancelled attempt in terminal `delete_failed`; only that exact attempt may be retried with the existing `delete_audio` command from `asking`. A cancellation cleanup generation is the persisted `AsyncJob(type=coach_cancelled_upload_cleanup).id` plus its claim token/deadline and ownership fence; terminal failures are candidate-retried, never automatically reclaimed. |
+| Capture hard limit | `record_capture_hard_stop` records one idempotent candidate technical event for the active audio attempt at the server-authored 600,000 ms limit, keeps the session `listening`, and neither submits nor evaluates or scores the capture. |
 | Hint attribution | Hints requested before `begin_answer` are stored on the active question and atomically transferred to the next attempt. |
 | Legacy backfill | The latest terminal legacy recording wins: `skipped` outranks an earlier completed recording; otherwise any valid completed recording yields `answered`. |
 | Processing stages | Every attempt stage belongs to a non-null evaluation version; the unique key therefore has no SQLite `NULL` ambiguity. |
@@ -1402,6 +1404,8 @@ This table is the single transition authority. The backend must derive `/live.al
 | `listening` | `finish_answer` | `processing_answer` | none |
 | `listening` | `pause` | `paused` | none |
 | `listening` | `cancel_attempt` | `asking` | none |
+| `listening` | `record_capture_hard_stop` for the active audio attempt | `listening` | none |
+| `asking` | `delete_audio` for exactly `/live.retention.retryable_audio_cleanup_attempt_id` | `asking` | none |
 | `processing_answer` | processing completed or unavailable | `awaiting_next_action` | none |
 | `processing_answer` | retryable processing failure | `recoverable_error` | none |
 | `processing_answer` | terminal runtime failure | `failed` | set `failed` |
@@ -1514,6 +1518,7 @@ keep_speaking
 pause
 resume
 cancel_attempt
+record_capture_hard_stop
 retry_answer
 retry_setup
 rebuild_plan
@@ -1783,6 +1788,26 @@ Preconditions:
 - processing has not started.
 
 Delete or fence cleanup of temporary media, mark `cancelled`, clear active attempt and return to `asking`.
+
+#### `record_capture_hard_stop`
+
+Payload:
+
+```json
+{
+  "attempt_id": "<opaque-id>"
+}
+```
+
+This command is admissible only while `status = active`, `state = listening`, and the supplied ID is the current active attempt with `recording_type = audio`. The server, rather than the browser, authors the event payload:
+
+```json
+{
+  "limit_ms": 600000
+}
+```
+
+For a new command it leaves `conversation_state = listening`, increments the normal command `state_version` and `activity_version` exactly once, and appends exactly one candidate-authored `answer_capture_hard_limit_reached` event referencing that attempt. It neither changes attempt/upload/processing state nor creates a job; in particular it does not submit, discard, clear, score, evaluate, pause, or automatically accept the captured blob. The browser stops local capture and leaves the blob available for the candidate's ordinary submit-or-discard decision. Duplicate replay uses the normal persisted command-result and semantic-hash rules, returns the original result, and does not add another version increment or event. A typed, stale, replaced, non-active, or wrong-session attempt is rejected.
 
 #### `retry_answer`
 
@@ -2137,6 +2162,7 @@ Additional command preconditions:
 - the session is not in `processing_answer`;
 - while `paused`, the target is not the locally captured active listening draft;
 - if a recoverable processing claim still requires the audio, the command first cancels and fences that claim, marks audio-dependent retry unavailable and then performs deletion.
+- In `asking`, this command is advertised and admissible only when `payload.attempt_id` exactly equals the non-null `/live.retention.retryable_audio_cleanup_attempt_id`. That value identifies one authoritative cancelled audio attempt in terminal `delete_failed`; an arbitrary historical, stale, replaced, or unsurfaced failed ID is rejected. An accepted retry creates a fresh cleanup generation before its claim/finalisation, so its terminal result is versioned independently of the failed generation.
 
 #### `delete_transcript`
 
@@ -2217,7 +2243,8 @@ This endpoint is a read plus reconciliation boundary, matching the existing Coac
   },
   "retention": {
     "audio_policy": "delete_after_processing",
-    "current_audio_state": "deleted"
+    "current_audio_state": "deleted",
+    "retryable_audio_cleanup_attempt_id": null
   },
   "allowed_commands": [
     "request_coaching",
@@ -2236,6 +2263,8 @@ This endpoint is a read plus reconciliation boundary, matching the existing Coac
   "contract_version": "coach_live_view_v1"
 }
 ```
+
+`retryable_audio_cleanup_attempt_id` is nullable. It is non-null only when the server has selected one authoritative cancelled audio attempt belonging to this session whose retention state is `delete_failed`; it is an opaque identifier and is the only cancelled-attempt ID that `delete_audio` may claim from `asking`. Candidate discovery uses stable `(created_at, id)` ascending keyset pages of 20 rows, scans no more than the existing maximum 36 questions × 20 attempts = 720 attempts per session, and skips rows with invalid ownership/authority predicates so an invalid early row cannot starve a later valid one. Of the valid rows, the server projects only the first exact candidate and returns `null` when none is currently claimable. The live projection must not infer this field from browser state.
 
 ## 10.4 Polling transport
 
@@ -2348,6 +2377,7 @@ hint_presented
 answer_capture_paused
 answer_capture_resumed
 answer_capture_cancelled
+answer_capture_hard_limit_reached
 answer_submitted
 attempt_processing_started
 attempt_processing_retry_requested
@@ -3484,6 +3514,8 @@ hard local recording limit at 10 minutes
 At five minutes, show a neutral time notice. Do not reduce the candidate’s evaluation because they reached the warning.
 
 At the hard limit, stop local capture and require the candidate to submit or discard. Persist a technical event; do not classify the answer as poor.
+
+The local hard-stop transition sends one `record_capture_hard_stop` command for the active audio attempt using a stable command ID across transport retry. The timer/focus/re-render path must not emit it twice. On a 409 the browser refreshes `/live`; a transport or command failure preserves the locally captured blob and its unload guard. The limit is a capture boundary only: it never automatically submits, discards, pauses, scores, evaluates, or clears media.
 
 ## 20.8 Permission failure
 
@@ -5053,7 +5085,7 @@ Audio becomes eligible after:
 - file path and hash ownership verified;
 - attempt still references the same file and hash;
 - the attempt-snapshotted policy is `delete_after_processing`;
-- retention state is `temporary` or `delete_failed`.
+- retention state is `temporary`, or is `delete_failed` with `attempt_state != cancelled`. A cancelled attempt in terminal `delete_failed` is explicitly excluded from general default-cleanup eligibility and may be retried only through the candidate's exact `delete_audio` command under the cancelled-cleanup contract below.
 
 Evaluation and grounding do not delay default deletion. The retention service must claim `audio_cleanup` immediately after the transcription and speech-analysis terminal predicates become true, using a dedicated stage job/claim and deadline that is independent of the 900-second evaluation budget. Claiming atomically changes state to `delete_pending` and appends `audio_cleanup_claimed`.
 
@@ -5072,6 +5104,8 @@ A cleanup failure sets `delete_failed`, increments attempt `attempt_version` plu
 
 Cleanup requires exact URI, content hash, attempt policy, cleanup claim and retention-state predicates. A stale worker cannot delete a replacement file.
 
+For a cancelled audio attempt, a terminal `delete_failed` is not an automatic-retry queue and is excluded from the preceding general `delete_failed` eligibility. The cancellation cleanup generation requires no migration or numeric generation column: it is the unique persisted `AsyncJob(type=coach_cancelled_upload_cleanup).id`, together with that job's claim token, deadline, and a fence digest bound to the expected attempt version, URI, content hash, and upload receipt. The live projection discovers candidates in stable `(created_at, id)` ascending keyset pages of 20, with a hard session scan bound of 36 × 20 = 720 attempts; it skips invalid authority rows and projects only the first valid exact candidate as `retryable_audio_cleanup_attempt_id`. That field is non-null only for the selected `delete_failed` row and enables `delete_audio` only from `asking` for its exact ID. A new accepted `delete_audio` command creates a new cancellation-cleanup `AsyncJob` and claim token; finalisation requires the exact current job ID, claim token, deadline, and matching fence digest before it can mutate the attempt. Startup and lazy reconciliation may recover an expired, persisted `delete_pending` claim, but must never automatically reclaim a terminal `delete_failed` row. This preserves candidate control, prevents repeated terminal failure events/version increments, and cannot allow a stale cleanup worker to delete a replacement blob.
+
 ### 29.4 `delete_audio`
 
 For the explicit attempt ID:
@@ -5086,6 +5120,8 @@ For the explicit attempt ID:
 - be idempotent.
 
 Failure sets `delete_failed`, increments attempt `attempt_version` plus session `state_version` and `retention_version` once for that deletion attempt, appends `audio_delete_failed` and exposes retry.
+
+When this command is used for the surfaced cancelled-attempt retry in `asking`, it has the same file-safety and idempotency requirements but may claim only the exact live-projected ID. It must create a new persisted `AsyncJob(type=coach_cancelled_upload_cleanup)` and claim token, with a deadline and fence digest bound to the expected attempt version, URI, content hash, and upload receipt; finalisation requires that exact current job and claim. This job ID is the cleanup generation—no numeric schema field is added. Duplicate delivery of that command replays its stored result, while a distinct command ID is required for a later candidate retry after another terminal failure.
 
 ### 29.5 Exact transcript deletion behaviour
 
@@ -5998,6 +6034,7 @@ Required cases:
 - network retry does not create duplicate attempt;
 - duplicate accept does not create duplicate follow-up;
 - duplicate end does not create duplicate report job;
+- duplicate `record_capture_hard_stop` replays one result and creates neither a second technical event nor another state/activity-version increment;
 - `end_session` acceptance suppresses follow-up persistence; exclusion sets the current question to skipped; zero accepted attempts produces a not-enough-evidence report.
 
 ## 37.4 Attempt tests
@@ -6067,6 +6104,11 @@ Required races:
 - `retry_processing` and `edit_transcript` commit `pending_processing` before worker dispatch;
 - cleanup finalisation after evaluation has already moved the session to `awaiting_next_action`;
 - cleanup success and `delete_failed` each increment retention/state versions once per cleanup generation.
+- general default cleanup excludes a cancelled attempt in terminal `delete_failed`; that state is candidate-retried only through exact `delete_audio` and cannot be automatically reclaimed;
+- cancelled-upload candidate discovery uses stable `(created_at, id)` keyset pages of 20, examines no more than 720 attempts/session, skips invalid authority rows, and projects only one exact valid ID in `asking`;
+- a cancelled upload cleanup reaches `delete_failed`, exposes only its exact authoritative ID in `asking`, and a stale/unsurfaced/replaced ID cannot be deleted;
+- startup/lazy reconciliation recovers expired `delete_pending` ownership but never reclaims terminal `delete_failed` cleanup; a candidate retry creates a new `AsyncJob(type=coach_cancelled_upload_cleanup).id`, claim token, deadline, and expected attempt-version/URI/hash/upload-receipt fence digest, and exact-current-job finalisation has one terminal event/version increment;
+- concurrent or repeated hard-limit timer/focus callbacks append only one `answer_capture_hard_limit_reached` event and advance normal command/activity authority once; duplicate replay, a stale expected version, and a replaced/non-audio attempt do not mutate authority;
 
 Every stale worker must perform no authoritative mutation.
 
@@ -6132,6 +6174,7 @@ Every stale worker must perform no authoritative mutation.
 - deletion fence verifies path/hash/policy;
 - stale cleanup cannot delete replacement;
 - failed cleanup visible and retryable;
+- cancelled-upload cleanup excludes `attempt_state = cancelled` from general `delete_failed` eligibility; it discovers at most one server-authoritative retry ID through bounded stable keyset scanning, and `delete_audio` in `asking` accepts only that ID, creates a new persisted job/token fence generation, and never deletes a replacement;
 - failure grace cleanup after configured hours;
 - delete audio leaves transcript/evaluation;
 - delete transcript removes derived content;
@@ -6995,6 +7038,14 @@ A baseline legacy fixture produces the same numeric report before and after Phas
 
 Automated tests verify that logs, attributes, metrics and support diagnostics contain no transcript/evidence content.
 
+### AC-31 - Cancelled-audio cleanup retry
+
+When cancelled-upload cleanup reaches terminal `delete_failed`, it is excluded from general default-cleanup eligibility and `/live.retention.retryable_audio_cleanup_attempt_id` exposes at most one authoritative cancelled attempt. Discovery uses stable `(created_at, id)` keyset pages of 20, scans no more than 720 attempts/session, skips invalid authority rows, and projects only the first valid candidate. `delete_audio` is offered from `asking` only for that exact opaque ID, creates a fresh persisted `AsyncJob(type=coach_cancelled_upload_cleanup).id` plus claim token/deadline and fence digest bound to expected attempt version, URI/hash, and upload receipt, preserves transcript/evaluation where present, and cannot delete a stale replacement. Finalisation requires that exact current job and claim. Startup/lazy reconciliation may recover `delete_pending` ownership but never automatically retries terminal `delete_failed`; each generation produces at most one terminal event and retention/state version increment.
+
+### AC-32 - Capture hard-limit event
+
+At 600,000 ms the browser stops audio capture but preserves the blob for explicit submit or discard. It sends one idempotent `record_capture_hard_stop` for the active audio attempt; the server keeps `listening`, advances normal command/activity authority once, and persists one candidate-authored `answer_capture_hard_limit_reached` event with server-authored `limit_ms: 600000`. The boundary never automatically submits, discards, pauses, evaluates, scores, or accepts an answer.
+
 ---
 
 ## 44. Known implementation risks and mandated mitigations
@@ -7149,8 +7200,8 @@ This appendix is derived from Section 8.5 and must be covered by a parity test.
 |---|---|
 | `planning` | none; abandonment through existing session DELETE only |
 | `ready` | `start`, `rebuild_plan`, `update_retention` |
-| `asking` | `begin_answer`, `request_hint`, `skip_question`, `pause`, `end_session`, `update_retention` |
-| `listening` | `finish_answer`, `keep_speaking`, `request_hint`, `pause`, `cancel_attempt`, `update_retention` |
+| `asking` | `begin_answer`, `request_hint`, `skip_question`, `pause`, `end_session`, `update_retention`, and `delete_audio` only when `retention.retryable_audio_cleanup_attempt_id` is non-null and supplied exactly |
+| `listening` | `finish_answer`, `keep_speaking`, `request_hint`, `pause`, `cancel_attempt`, `record_capture_hard_stop`, `update_retention` |
 | `processing_answer` | none |
 | `awaiting_next_action` | `request_coaching`, `retry_answer`, `edit_transcript`, `accept_attempt`, `record_self_assessment`, `update_retention`, `pause`, `end_session`, `delete_audio`, `delete_transcript` |
 | `coaching` | `return_to_review`, `edit_transcript`, `retry_answer`, `accept_attempt`, `record_self_assessment`, `update_retention`, `pause`, `end_session`, `delete_audio`, `delete_transcript` |
