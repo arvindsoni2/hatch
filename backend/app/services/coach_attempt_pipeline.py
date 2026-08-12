@@ -39,6 +39,7 @@ __all__ = (
     "AttemptStage", "AttemptProcessingContext", "StageResult",
     "SpeechMetricsSnapshot", "SessionEvidenceSnapshot", "select_restart_stage",
     "ConversationalEvaluationStage",
+    "EvidenceGroundingStage",
 )
 
 PIPELINE_ORDER = (
@@ -204,6 +205,64 @@ class ConversationalEvaluationStage:
                     for name, dimension in result.dimensions.items()
                 },
                 "delivery": result.delivery.model_dump(mode="json"),
+            },
+            error_code=None,
+            retryable=False,
+            attempt_count=0,
+            repair_count=result.repair_count,
+        )
+
+
+class EvidenceGroundingStage:
+    """Pipeline adapter that keeps grounding failure separate from content."""
+
+    name = "evidence_grounding"
+
+    def __init__(self, grounder, *, draft_evidence_consent: bool = False) -> None:
+        self._grounder = grounder
+        self._draft_evidence_consent = draft_evidence_consent
+
+    async def run(self, context: AttemptProcessingContext) -> StageResult:
+        if (
+            context.transcript_version_id is None
+            or context.normalized_transcript is None
+            or not context.evidence_records
+        ):
+            return StageResult(
+                stage_name=self.name,
+                stage_state="unavailable",
+                output={"level": "not_assessed", "claims": []},
+                error_code="coach_grounding_source_unavailable",
+                retryable=False,
+                attempt_count=0,
+                repair_count=0,
+            )
+        from .coach_evidence_grounder import GroundingRequest
+
+        result = await self._grounder.ground(
+            GroundingRequest(
+                normalized_transcript=context.normalized_transcript,
+                evidence_records=context.evidence_records,
+                deadline_at=context.deadline_at,
+                draft_evidence_consent=self._draft_evidence_consent,
+            )
+        )
+        if result.state == "unavailable":
+            return StageResult(
+                stage_name=self.name,
+                stage_state="unavailable",
+                output={"level": "not_assessed", "claims": []},
+                error_code=result.error_code,
+                retryable=False,
+                attempt_count=0,
+                repair_count=result.repair_count,
+            )
+        return StageResult(
+            stage_name=self.name,
+            stage_state="completed",
+            output={
+                "level": result.level,
+                "claims": [claim.__dict__ for claim in result.claims],
             },
             error_code=None,
             retryable=False,
@@ -1064,12 +1123,15 @@ async def run_attempt_pipeline(
         normalized_transcript=normalized_transcript, speech_metrics=None, evidence_records=(),
     )
     content_result: StageResult | None = None
+    grounding_result: StageResult | None = None
     for stage in stages:
         if stage.name in {"content_evaluation", "evidence_grounding", "follow_up_decision"}:
             require_bound_transcript(context)
         stage_result = await _run_stage_with_budget(stage, context)
         if stage.name == "content_evaluation":
             content_result = stage_result
+        elif stage.name == "evidence_grounding":
+            grounding_result = stage_result
         if (
             stage.name == "transcription"
             and context.transcript_version_id is None
@@ -1091,9 +1153,16 @@ async def run_attempt_pipeline(
         and content_result.stage_state == "completed"
         and isinstance(content_result.output, Mapping)
     ):
+        evaluation_json = dict(content_result.output)
+        if grounding_result is not None and isinstance(
+            grounding_result.output, Mapping
+        ):
+            evaluation_json["evidence_consistency"] = dict(
+                grounding_result.output
+            )
         return AttemptProcessingResult(
             evaluation_state="completed",
-            evaluation_json=dict(content_result.output),
+            evaluation_json=evaluation_json,
             transcript_version_id=context.transcript_version_id,
             diagnostics={
                 "code": "completed",
