@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 __all__ = (
     "AttemptStage", "AttemptProcessingContext", "StageResult",
     "SpeechMetricsSnapshot", "SessionEvidenceSnapshot", "select_restart_stage",
+    "ConversationalEvaluationStage",
 )
 
 PIPELINE_ORDER = (
@@ -147,6 +148,68 @@ class AttemptStage(Protocol):
     name: str
 
     async def run(self, context: AttemptProcessingContext) -> StageResult: ...
+
+
+class ConversationalEvaluationStage:
+    """Pipeline adapter for the strict PR3 conversational evaluator."""
+
+    name = "content_evaluation"
+
+    def __init__(self, evaluator, *, question: str) -> None:
+        self._evaluator = evaluator
+        self._question = question
+
+    async def run(self, context: AttemptProcessingContext) -> StageResult:
+        if (
+            context.transcript_version_id is None
+            or context.normalized_transcript is None
+        ):
+            return StageResult(
+                stage_name=self.name,
+                stage_state="unavailable",
+                output=None,
+                error_code="coach_evaluation_unavailable",
+                retryable=False,
+                attempt_count=0,
+                repair_count=0,
+            )
+        from .coach_conversational_evaluator import EvaluationRequest
+
+        result = await self._evaluator.evaluate(
+            EvaluationRequest(
+                question=self._question,
+                normalized_transcript=context.normalized_transcript,
+                deadline_at=context.deadline_at,
+                recording_type=context.recording_type,
+                speech_metrics=context.speech_metrics,
+            )
+        )
+        if result.state == "unavailable":
+            return StageResult(
+                stage_name=self.name,
+                stage_state="unavailable",
+                output=None,
+                error_code=result.error_code or "coach_evaluation_unavailable",
+                retryable=False,
+                attempt_count=0,
+                repair_count=result.repair_count,
+            )
+        return StageResult(
+            stage_name=self.name,
+            stage_state="completed",
+            output={
+                "answer_level": result.answer_level,
+                "dimensions": {
+                    name: dimension.model_dump(mode="json")
+                    for name, dimension in result.dimensions.items()
+                },
+                "delivery": result.delivery.model_dump(mode="json"),
+            },
+            error_code=None,
+            retryable=False,
+            attempt_count=0,
+            repair_count=result.repair_count,
+        )
 
 
 def effective_timeout(deadline: datetime, ceiling_seconds: int, now: datetime) -> float:
@@ -1000,10 +1063,13 @@ async def run_attempt_pipeline(
         recording_type="text" if claim.transcript_version_id is not None else "audio",
         normalized_transcript=normalized_transcript, speech_metrics=None, evidence_records=(),
     )
+    content_result: StageResult | None = None
     for stage in stages:
         if stage.name in {"content_evaluation", "evidence_grounding", "follow_up_decision"}:
             require_bound_transcript(context)
         stage_result = await _run_stage_with_budget(stage, context)
+        if stage.name == "content_evaluation":
+            content_result = stage_result
         if (
             stage.name == "transcription"
             and context.transcript_version_id is None
@@ -1020,11 +1086,30 @@ async def run_attempt_pipeline(
                     transcript_version_id=transcript_version_id,
                     normalized_transcript=normalized_transcript,
                 )
+    if (
+        content_result is not None
+        and content_result.stage_state == "completed"
+        and isinstance(content_result.output, Mapping)
+    ):
+        return AttemptProcessingResult(
+            evaluation_state="completed",
+            evaluation_json=dict(content_result.output),
+            transcript_version_id=context.transcript_version_id,
+            diagnostics={
+                "code": "completed",
+                "execution_mode": "conversational_v1",
+            },
+        )
+    unavailable_code = (
+        content_result.error_code
+        if content_result is not None and content_result.error_code is not None
+        else "coach_evaluation_unavailable"
+    )
     return AttemptProcessingResult(
         evaluation_state="unavailable",
         evaluation_json={"answer_level": "not_assessed"},
         transcript_version_id=context.transcript_version_id,
-        diagnostics={"code": "coach_evaluation_unavailable", "execution_mode": "deterministic_stub"},
+        diagnostics={"code": unavailable_code, "execution_mode": "deterministic_stub"},
     )
 
 

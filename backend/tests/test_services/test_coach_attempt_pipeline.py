@@ -232,6 +232,56 @@ async def test_audio_transcription_binds_context_before_content_sibling_runs() -
 
 
 @pytest.mark.asyncio
+async def test_pipeline_returns_the_completed_content_evaluation_projection() -> None:
+    claim = AttemptProcessingClaim(
+        session_id="session-1", question_id="question-1", recording_id="recording-1",
+        transcript_version_id=None, evaluation_version_id="evaluation-1",
+        processing_generation=1, job_id="job-1",
+        deadline_at=datetime.utcnow() + timedelta(seconds=30),
+    )
+
+    class Transcription:
+        name = "transcription"
+
+        async def run(self, _context):
+            return StageResult(
+                self.name,
+                "completed",
+                {"transcript_version_id": "tv-1", "normalized_transcript": "answer"},
+                None,
+                False,
+                1,
+                0,
+            )
+
+    class Content:
+        name = "content_evaluation"
+
+        async def run(self, _context):
+            return StageResult(
+                self.name,
+                "completed",
+                {"answer_level": "interview_ready", "dimensions": {}},
+                None,
+                False,
+                1,
+                0,
+            )
+
+    result = await run_attempt_pipeline(claim, (Transcription(), Content()))
+
+    assert result.evaluation_state == "completed"
+    assert result.evaluation_json == {
+        "answer_level": "interview_ready",
+        "dimensions": {},
+    }
+    assert result.diagnostics == {
+        "code": "completed",
+        "execution_mode": "conversational_v1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_content_stage_does_not_run_without_a_bound_transcript() -> None:
     claim = AttemptProcessingClaim(
         session_id="session-1", question_id="question-1", recording_id="recording-1",
