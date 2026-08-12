@@ -37,6 +37,7 @@ from ..models.coach_session import (
 )
 from ..schemas.coach_conversation import (
     AttemptAudioUploadRead,
+    CandidateSelfAssessment,
     ConversationCommandRequest,
     SAFE_TOKEN_RE,
 )
@@ -167,6 +168,13 @@ class AcceptanceResult:
     current_state: str | None
     evaluation_version_id: str | None
     evaluation_state: str | None
+
+
+@dataclass(frozen=True)
+class SelfAssessmentMutationResult:
+    attempt_version: int
+    activity_version: int
+    state_version: int
 
 
 @dataclass(frozen=True)
@@ -3373,6 +3381,110 @@ class ConversationalSessionRepository:
         except _StaleFinalisation:
             return False
         return True
+
+    async def record_attempt_self_assessment(
+        self,
+        *,
+        session_id: str,
+        attempt_id: str,
+        assessment: CandidateSelfAssessment,
+        expected_state_version: int,
+        recorded_at: datetime,
+    ) -> SelfAssessmentMutationResult:
+        session = await self._session.get(InterviewSession, session_id)
+        attempt = await self._session.get(SessionRecording, attempt_id)
+        if (
+            session is None
+            or session.experience_version != "conversational_v1"
+            or session.status != "active"
+            or session.conversation_state
+            not in {"awaiting_next_action", "coaching"}
+            or session.deletion_state != "not_requested"
+            or session.active_recording_id != attempt_id
+            or session.active_question_id is None
+            or session.state_version != expected_state_version
+            or attempt is None
+            or attempt.session_id != session_id
+            or attempt.question_id != session.active_question_id
+            or attempt.attempt_state not in {"completed", "unavailable"}
+            or attempt.evaluation_state != attempt.attempt_state
+        ):
+            raise ConversationalRepositoryError("coach_attempt_not_active")
+
+        persisted = assessment.model_copy(update={"recorded_at": recorded_at})
+        state_before = session.conversation_state
+        try:
+            async with self._session.begin_nested():
+                attempt_change = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == attempt_id,
+                        SessionRecording.session_id == session_id,
+                        SessionRecording.question_id == session.active_question_id,
+                        SessionRecording.attempt_state == attempt.attempt_state,
+                        SessionRecording.evaluation_state == attempt.evaluation_state,
+                        SessionRecording.attempt_version == attempt.attempt_version,
+                    )
+                    .values(
+                        self_assessment_json=persisted.model_dump(mode="json"),
+                        self_assessment_updated_at=recorded_at,
+                        attempt_version=SessionRecording.attempt_version + 1,
+                    )
+                    .returning(SessionRecording.attempt_version)
+                )
+                attempt_version = attempt_change.scalar_one_or_none()
+                session_change = await self._session.execute(
+                    update(InterviewSession)
+                    .where(
+                        InterviewSession.id == session_id,
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.status == "active",
+                        InterviewSession.conversation_state == state_before,
+                        InterviewSession.state_version == expected_state_version,
+                        InterviewSession.active_question_id == attempt.question_id,
+                        InterviewSession.active_recording_id == attempt_id,
+                        InterviewSession.deletion_state == "not_requested",
+                    )
+                    .values(
+                        state_version=InterviewSession.state_version + 1,
+                        activity_version=InterviewSession.activity_version + 1,
+                        last_activity_at=recorded_at,
+                    )
+                    .returning(
+                        InterviewSession.state_version,
+                        InterviewSession.activity_version,
+                    )
+                )
+                version_row = session_change.one_or_none()
+                if attempt_version is None or version_row is None:
+                    raise _StaleFinalisation
+                state_version, activity_version = version_row
+                await self.append_session_events(
+                    session_id=session_id,
+                    events=(
+                        SessionEventInput(
+                            event_type="self_assessment_recorded",
+                            actor_type="candidate",
+                            state_version=state_version,
+                            state_before=state_before,
+                            state_after=state_before,
+                            question_id=attempt.question_id,
+                            recording_id=attempt_id,
+                            payload_json={
+                                "attempt_version": attempt_version,
+                                "activity_version": activity_version,
+                            },
+                        ),
+                    ),
+                )
+                await self._session.flush()
+        except _StaleFinalisation as error:
+            raise ConversationalRepositoryError("coach_attempt_not_active") from error
+        return SelfAssessmentMutationResult(
+            attempt_version=attempt_version,
+            activity_version=activity_version,
+            state_version=state_version,
+        )
 
     async def accept_attempt(
         self,

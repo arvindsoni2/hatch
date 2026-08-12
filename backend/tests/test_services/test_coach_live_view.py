@@ -244,6 +244,80 @@ async def test_live_projection_exposes_no_error_context_or_planning_content(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "required", "forbidden"),
+    [
+        ("awaiting_next_action", {"record_self_assessment"}, {"return_to_review"}),
+        (
+            "coaching",
+            {"record_self_assessment", "return_to_review"},
+            set(),
+        ),
+        ("completed", set(), {"record_self_assessment", "return_to_review"}),
+    ],
+)
+async def test_live_reflection_commands_follow_active_review_state(
+    db_session,
+    state: str,
+    required: set[str],
+    forbidden: set[str],
+) -> None:
+    session, question = await _ready_session(db_session)
+    session.status = "completed" if state == "completed" else "active"
+    session.conversation_state = state
+    if state == "completed":
+        session.report_state = "completed"
+    session.active_question_id = question.id
+    session.active_recording_id = "attempt-reflected"
+    attempt = SessionRecording(
+        id="attempt-reflected",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        current_evaluation_version_id="evaluation-reflected",
+        self_assessment_json={
+            "comfort_level": "medium",
+            "felt_complete": True,
+            "note": "I want to make the outcome clearer.",
+            "recorded_at": "2026-08-12T09:30:00",
+            "contract_version": "coach_candidate_self_assessment_v1",
+        },
+        self_assessment_updated_at=datetime(2026, 8, 12, 9, 30),
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="evaluation-reflected",
+        recording_id=attempt.id,
+        version_number=1,
+        state="completed",
+        answer_level="interview_ready",
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add_all((attempt, evaluation))
+    await db_session.commit()
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+
+    assert required <= set(view.allowed_commands)
+    assert not forbidden.intersection(view.allowed_commands)
+    assert view.active_attempt is not None
+    assert view.active_attempt.self_assessment is not None
+    assert view.active_attempt.self_assessment.model_dump(mode="json") == {
+        "comfort_level": "medium",
+        "felt_complete": True,
+        "note": "I want to make the outcome clearer.",
+        "recorded_at": "2026-08-12T09:30:00",
+        "contract_version": "coach_candidate_self_assessment_v1",
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("user_id", ["other", "", "LOCAL"])
 async def test_live_rejects_unowned_session(db_session, user_id: str) -> None:
     session, _ = await _ready_session(db_session)

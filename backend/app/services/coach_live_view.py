@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import datetime
 
 from pydantic import ValidationError
 from sqlalchemy import case, select
@@ -20,6 +21,7 @@ from ..models.coach_session import (
     SessionRecording,
 )
 from ..schemas.coach_conversation import (
+    CandidateSelfAssessment,
     ConversationLiveView,
     ConversationalQuestionRead,
     InterviewAttemptRead,
@@ -463,6 +465,29 @@ class CoachLiveViewService:
             )
         retry_count = attempt.processing_retry_count
         retry_limit = attempt.processing_retry_limit
+        self_assessment = None
+        if attempt.self_assessment_json is not None:
+            assessment_json = dict(attempt.self_assessment_json)
+            recorded_at_value = assessment_json.get("recorded_at")
+            if not isinstance(recorded_at_value, str):
+                raise CoachLiveViewError("coach_conversation_invalid_state")
+            try:
+                assessment_json["recorded_at"] = datetime.fromisoformat(
+                    recorded_at_value
+                )
+            except ValueError as error:
+                raise CoachLiveViewError(
+                    "coach_conversation_invalid_state"
+                ) from error
+            self_assessment = CandidateSelfAssessment.model_validate(
+                assessment_json
+            )
+            if (
+                self_assessment.recorded_at is None
+                or attempt.self_assessment_updated_at
+                != self_assessment.recorded_at.replace(tzinfo=None)
+            ):
+                raise CoachLiveViewError("coach_conversation_invalid_state")
         return InterviewAttemptRead(
             id=attempt.id,
             question_id=attempt.question_id,
@@ -477,6 +502,7 @@ class CoachLiveViewService:
             audio_retention_policy=attempt.audio_retention_policy,
             audio_retention_state=attempt.audio_retention_state,
             transcript_version=transcript_projection,
+            self_assessment=self_assessment,
         )
 
     async def _project_processing(

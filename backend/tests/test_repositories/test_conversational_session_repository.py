@@ -31,6 +31,7 @@ from app.repositories.conversational_session_repository import (
     AttemptReservationConflict,
     CommandIdempotencyConflict,
     ConversationVersionConflict,
+    ConversationalRepositoryError,
     ConversationalSessionRepository,
     FollowUpAdmissionClaim,
     SessionEventInput,
@@ -39,7 +40,10 @@ from app.repositories.conversational_session_repository import (
     _stage_immutable_diagnostics,
     canonical_request_hash,
 )
-from app.schemas.coach_conversation import ConversationCommandRequest
+from app.schemas.coach_conversation import (
+    CandidateSelfAssessment,
+    ConversationCommandRequest,
+)
 from app.schemas.coach import CreateSessionRequest
 from app.services.coach_session_plan import (
     SessionPlanError,
@@ -155,6 +159,145 @@ async def _seed_session(
                 attempts_created_count=attempts_created_count,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_self_assessment_overwrites_with_atomic_versions_and_private_event(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        session = await db.get(InterviewSession, "session-1")
+        question = await db.get(SessionQuestion, "question-1")
+        assert session is not None and question is not None
+        session.conversation_state = "awaiting_next_action"
+        session.active_recording_id = "attempt-reflection"
+        attempt = SessionRecording(
+            id="attempt-reflection",
+            session_id=session.id,
+            question_id=question.id,
+            recording_type="text",
+            attempt_number=1,
+            attempt_state="completed",
+            evaluation_state="completed",
+            attempt_version=3,
+        )
+        db.add(attempt)
+
+    recorded_at = datetime(2026, 8, 12, 9, 30)
+    async with repository_database.begin() as db:
+        result = await ConversationalSessionRepository(
+            db
+        ).record_attempt_self_assessment(
+            session_id="session-1",
+            attempt_id="attempt-reflection",
+            assessment=CandidateSelfAssessment(
+                comfort_level="high",
+                felt_complete=False,
+                note="Second reflection",
+                recorded_at=recorded_at,
+            ),
+            expected_state_version=4,
+            recorded_at=recorded_at,
+        )
+
+    async with repository_database() as db:
+        session = await db.get(InterviewSession, "session-1")
+        attempt = await db.get(SessionRecording, "attempt-reflection")
+        event_row = await db.scalar(
+            select(InterviewSessionEvent).where(
+                InterviewSessionEvent.session_id == "session-1",
+                InterviewSessionEvent.event_type == "self_assessment_recorded",
+            )
+        )
+        assert session is not None and attempt is not None and event_row is not None
+        assert result.attempt_version == attempt.attempt_version == 4
+        assert result.activity_version == session.activity_version == 1
+        assert result.state_version == session.state_version == 5
+        assert attempt.self_assessment_json == {
+            "comfort_level": "high",
+            "felt_complete": False,
+            "note": "Second reflection",
+            "recorded_at": recorded_at.isoformat(),
+            "contract_version": "coach_candidate_self_assessment_v1",
+        }
+        assert event_row.payload_json == {
+            "attempt_version": 4,
+            "activity_version": 1,
+        }
+        assert "Second reflection" not in json.dumps(event_row.payload_json)
+
+
+@pytest.mark.asyncio
+async def test_self_assessment_rejects_cross_session_attempt_without_mutation(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    async with repository_database.begin() as db:
+        db.add(
+            InterviewSession(
+                id="session-2",
+                company_name="Other",
+                role_title="Engineer",
+                experience_version="conversational_v1",
+                status="active",
+                conversation_state="awaiting_next_action",
+                active_question_id="question-2",
+                active_recording_id="attempt-other",
+                state_version=4,
+                retention_policy_json={"audio": "delete_after_processing"},
+            )
+        )
+        db.add(
+            SessionQuestion(
+                id="question-2",
+                session_id="session-2",
+                question_num=1,
+                text="Other question",
+                category="behavioural",
+                difficulty="medium",
+                order_in_session=1,
+                question_state="asked",
+            )
+        )
+        db.add(
+            SessionRecording(
+                id="attempt-other",
+                session_id="session-2",
+                question_id="question-2",
+                recording_type="text",
+                attempt_number=1,
+                attempt_state="completed",
+                evaluation_state="completed",
+            )
+        )
+
+    async with repository_database.begin() as db:
+        with pytest.raises(
+            ConversationalRepositoryError, match="coach_attempt_not_active"
+        ):
+            await ConversationalSessionRepository(
+                db
+            ).record_attempt_self_assessment(
+                session_id="session-1",
+                attempt_id="attempt-other",
+                assessment=CandidateSelfAssessment(
+                    comfort_level="low",
+                    felt_complete=False,
+                    note=None,
+                    recorded_at=datetime(2026, 8, 12, 9, 35),
+                ),
+                expected_state_version=4,
+                recorded_at=datetime(2026, 8, 12, 9, 35),
+            )
+
+    async with repository_database() as db:
+        assert await db.scalar(
+            select(func.count(InterviewSessionEvent.id)).where(
+                InterviewSessionEvent.session_id == "session-1",
+                InterviewSessionEvent.event_type == "self_assessment_recorded",
+            )
+        ) == 0
 
 
 def _setup_request() -> CreateSessionRequest:

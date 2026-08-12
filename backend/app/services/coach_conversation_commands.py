@@ -37,12 +37,14 @@ from ..repositories.conversational_session_repository import (
 from ..schemas.coach_conversation import (
     BeginAnswerPayload,
     CancelAttemptPayload,
+    CandidateSelfAssessment,
     ConversationCommandRequest,
     ConversationCommandResult,
     DeleteAudioPayload,
     FinishAnswerPayload,
     KeepSpeakingPayload,
     RecordCaptureHardStopPayload,
+    RecordSelfAssessmentPayload,
     RequestCoachingPayload,
     RequestHintPayload,
     RetryAnswerPayload,
@@ -324,6 +326,13 @@ class ConversationCommandService:
         if request.command_type == "request_coaching":
             assert isinstance(request.payload, RequestCoachingPayload)
             return await self._request_coaching(session, request, request.payload)
+        if request.command_type == "return_to_review":
+            return await self._return_to_review(session, request)
+        if request.command_type == "record_self_assessment":
+            assert isinstance(request.payload, RecordSelfAssessmentPayload)
+            return await self._record_self_assessment(
+                session, request, request.payload
+            )
         if request.command_type == "update_retention":
             assert isinstance(request.payload, UpdateRetentionPayload)
             return await self._update_retention(session, request, request.payload)
@@ -333,6 +342,41 @@ class ConversationCommandService:
         if request.command_type == "skip_question":
             return await self._skip_question(session, request)
         raise ConversationCommandError("coach_conversation_invalid_state")
+
+    async def _return_to_review(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+    ) -> ConversationCommandResult:
+        await self._change_session_state(
+            session,
+            request,
+            values={"conversation_state": "awaiting_next_action"},
+            required_state="coaching",
+        )
+        return await self._result(session, request)
+
+    async def _record_self_assessment(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: RecordSelfAssessmentPayload,
+    ) -> ConversationCommandResult:
+        recorded_at = datetime.utcnow()
+        await self.repository.record_attempt_self_assessment(
+            session_id=session.id,
+            attempt_id=payload.attempt_id,
+            assessment=CandidateSelfAssessment(
+                comfort_level=payload.comfort_level,
+                felt_complete=payload.felt_complete,
+                note=payload.note,
+                recorded_at=recorded_at,
+            ),
+            expected_state_version=request.expected_state_version,
+            recorded_at=recorded_at,
+        )
+        await self.db.refresh(session)
+        return await self._result(session, request)
 
     async def _request_coaching(
         self,

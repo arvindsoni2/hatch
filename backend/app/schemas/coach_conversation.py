@@ -435,6 +435,25 @@ class RecordSelfAssessmentPayload(StrictContractModel):
         )
 
 
+class CandidateSelfAssessment(StrictContractModel):
+    comfort_level: Literal["low", "medium", "high"]
+    felt_complete: bool
+    note: str | None = None
+    recorded_at: datetime | None = None
+    contract_version: Literal["coach_candidate_self_assessment_v1"] = (
+        "coach_candidate_self_assessment_v1"
+    )
+
+    @field_validator("note")
+    @classmethod
+    def validate_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalized_bounded_text(
+            value, field_name="note", minimum=1, maximum=1_000
+        )
+
+
 class UpdateRetentionPayload(StrictContractModel):
     audio: AudioRetentionPolicy
 
@@ -807,6 +826,7 @@ class InterviewAttemptRead(StrictContractModel):
     audio_retention_policy: AudioRetentionPolicy | None
     audio_retention_state: AudioRetentionState | None
     transcript_version: TranscriptVersionRead | None
+    self_assessment: CandidateSelfAssessment | None = None
 
     @model_validator(mode="after")
     def validate_processing_retry_budget(self) -> Self:

@@ -2851,6 +2851,172 @@ async def test_request_coaching_rejects_stale_evaluation_without_mutation(
 
 
 @pytest.mark.asyncio
+async def test_return_to_review_changes_only_review_state_and_replays(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="coaching", status="active", version=7
+    )
+    session.active_question_id = questions[0].id
+    session.active_recording_id = "review-attempt"
+    attempt = SessionRecording(
+        id="review-attempt",
+        session_id=session.id,
+        question_id=questions[0].id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        current_evaluation_version_id="review-evaluation",
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="review-evaluation",
+        recording_id=attempt.id,
+        version_number=1,
+        state="completed",
+        answer_level="developing",
+        rubric_json={"answer_level": "developing"},
+        coaching_json={"priority_improvement": "Add an outcome."},
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add_all((attempt, evaluation))
+    await db_session.commit()
+    before_activity = session.activity_version
+    request = command("return_to_review", version=7, command_id="return-review")
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(evaluation)
+    assert result == replay
+    assert (session.conversation_state, session.state_version) == (
+        "awaiting_next_action",
+        8,
+    )
+    assert session.activity_version == before_activity
+    assert evaluation.answer_level == "developing"
+    assert evaluation.coaching_json == {"priority_improvement": "Add an outcome."}
+
+
+@pytest.mark.asyncio
+async def test_active_self_assessment_overwrites_without_changing_quality(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="awaiting_next_action", status="active", version=4
+    )
+    session.active_question_id = questions[0].id
+    session.active_recording_id = "reflection-attempt"
+    attempt = SessionRecording(
+        id="reflection-attempt",
+        session_id=session.id,
+        question_id=questions[0].id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        attempt_version=2,
+        evaluation_json=json.dumps({"answer_level": "strong"}),
+    )
+    db_session.add(attempt)
+    await db_session.commit()
+
+    first = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "record_self_assessment",
+            version=4,
+            command_id="reflection-one",
+            payload={
+                "attempt_id": attempt.id,
+                "comfort_level": "medium",
+                "felt_complete": True,
+                "note": "I want to make the outcome clearer.",
+            },
+        ),
+    )
+    second = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "record_self_assessment",
+            version=first.state_version,
+            command_id="reflection-two",
+            payload={
+                "attempt_id": attempt.id,
+                "comfort_level": "high",
+                "felt_complete": False,
+                "note": "Second reflection",
+            },
+        ),
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert second.state == "awaiting_next_action"
+    assert attempt.self_assessment_json == {
+        "comfort_level": "high",
+        "felt_complete": False,
+        "note": "Second reflection",
+        "recorded_at": attempt.self_assessment_updated_at.isoformat(),
+        "contract_version": "coach_candidate_self_assessment_v1",
+    }
+    assert attempt.attempt_version == 4
+    assert session.state_version == 6
+    assert session.activity_version == 2
+    assert json.loads(attempt.evaluation_json) == {"answer_level": "strong"}
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent).where(
+                InterviewSessionEvent.event_type == "self_assessment_recorded"
+            )
+        )
+    ).all()
+    assert len(events) == 2
+    assert "Second reflection" not in json.dumps(events[-1].payload_json)
+
+
+@pytest.mark.asyncio
+async def test_completed_self_assessment_is_rejected_without_receipt(
+    db_session: AsyncSession,
+) -> None:
+    session, _ = await seed_session(
+        db_session, state="completed", status="completed", version=9
+    )
+    request = command(
+        "record_self_assessment",
+        version=9,
+        command_id="completed-reflection",
+        payload={
+            "attempt_id": "completed-attempt",
+            "comfort_level": "low",
+            "felt_complete": False,
+            "note": None,
+        },
+    )
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local", session_id=session.id, request=request
+        )
+
+    assert raised.value.code == "coach_conversation_invalid_state"
+    assert await db_session.scalar(
+        select(func.count(ConversationCommandResultRecord.id)).where(
+            ConversationCommandResultRecord.command_id == request.command_id
+        )
+    ) == 0
+
+
+@pytest.mark.asyncio
 async def test_event_failure_rolls_back_state_and_receipt(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

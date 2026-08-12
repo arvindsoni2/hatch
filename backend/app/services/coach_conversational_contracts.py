@@ -17,6 +17,7 @@ FOLLOW_UP_CONTRACT = "coach_follow_up_v1"
 REPORT_CONTRACT = "coach_conversational_report_v1"
 PROGRESS_CONTRACT = "coach_conversational_progress_v2"
 DELIVERY_POLICY = "coach_delivery_policy_v1"
+SELF_ASSESSMENT_CONTRACT = "coach_candidate_self_assessment_v1"
 
 CONTENT_DIMENSIONS: Final[tuple[str, ...]] = (
     "relevance",
