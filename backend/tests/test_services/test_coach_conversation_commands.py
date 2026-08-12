@@ -3197,6 +3197,100 @@ async def test_accept_attempt_rejects_invalid_follow_up_and_advances_planned_seq
 
 
 @pytest.mark.asyncio
+async def test_edit_transcript_claims_new_generation_and_preserves_original_review(
+    db_session: AsyncSession,
+) -> None:
+    session, _, attempt = await _seed_review_attempt_for_acceptance(
+        db_session, follow_up_proposal=None
+    )
+    original_transcript_id = attempt.current_transcript_version_id
+    original_evaluation_id = attempt.current_evaluation_version_id
+    attempt_id = attempt.id
+    original_evaluation = await db_session.get(
+        InterviewAttemptEvaluation, original_evaluation_id
+    )
+    assert original_evaluation is not None
+    original_evaluation.rubric_json = {
+        **(original_evaluation.rubric_json or {}),
+        "delivery": {"level": "not_assessed", "observations": {}},
+    }
+    await db_session.commit()
+    request = command(
+        "edit_transcript",
+        version=4,
+        command_id="edit-review-transcript",
+        payload={
+            "attempt_id": attempt.id,
+            "transcript": "I led the corrected migration and reduced latency by 20 percent.",
+            "edit_reason": "transcription_error",
+        },
+    )
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    db_session.expire_all()
+    persisted_attempt = await db_session.get(SessionRecording, attempt_id)
+    original_transcript = await db_session.get(
+        InterviewTranscriptVersion, original_transcript_id
+    )
+    original_review = await db_session.get(
+        InterviewAttemptEvaluation, original_evaluation_id
+    )
+    assert result == replay
+    assert result.result == "accepted_processing"
+    assert (result.state, result.state_version) == ("processing_answer", 5)
+    assert persisted_attempt is not None
+    assert persisted_attempt.processing_generation == 2
+    assert persisted_attempt.attempt_version == 1
+    assert persisted_attempt.attempt_state == "pending_processing"
+    assert persisted_attempt.current_transcript_version_id != original_transcript_id
+    edited = await db_session.get(
+        InterviewTranscriptVersion,
+        persisted_attempt.current_transcript_version_id,
+    )
+    assert edited is not None
+    assert (
+        edited.version_number,
+        edited.source,
+        edited.created_by,
+        edited.edit_reason,
+        edited.processing_generation,
+    ) == (2, "candidate_edit", "candidate", "transcription_error", 2)
+    assert original_transcript is not None
+    assert original_transcript.transcript == (
+        "I led the migration and the stakeholders were satisfied."
+    )
+    assert original_review is not None
+    assert original_review.rubric_json["delivery"] == {
+        "level": "not_assessed",
+        "observations": {},
+    }
+    pending = await db_session.scalar(
+        select(InterviewAttemptEvaluation).where(
+            InterviewAttemptEvaluation.recording_id == attempt_id,
+            InterviewAttemptEvaluation.state == "pending",
+        )
+    )
+    assert pending is not None and pending.transcript_version_id == edited.id
+    assert await db_session.scalar(
+        select(func.count(InterviewAttemptStage.id)).where(
+            InterviewAttemptStage.recording_id == attempt_id,
+            InterviewAttemptStage.evaluation_version_id == pending.id,
+        )
+    ) == 8
+    assert await db_session.scalar(
+        select(func.count(InterviewTranscriptVersion.id)).where(
+            InterviewTranscriptVersion.recording_id == attempt_id
+        )
+    ) == 2
+
+
+@pytest.mark.asyncio
 async def test_event_failure_rolls_back_state_and_receipt(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:

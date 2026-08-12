@@ -43,6 +43,7 @@ from ..schemas.coach_conversation import (
     ConversationCommandRequest,
     ConversationCommandResult,
     DeleteAudioPayload,
+    EditTranscriptPayload,
     FinishAnswerPayload,
     KeepSpeakingPayload,
     RecordCaptureHardStopPayload,
@@ -340,6 +341,9 @@ class ConversationCommandService:
         if request.command_type == "accept_attempt":
             assert isinstance(request.payload, AcceptAttemptPayload)
             return await self._accept_attempt(session, request, request.payload)
+        if request.command_type == "edit_transcript":
+            assert isinstance(request.payload, EditTranscriptPayload)
+            return await self._edit_transcript(session, request, request.payload)
         if request.command_type == "update_retention":
             assert isinstance(request.payload, UpdateRetentionPayload)
             return await self._update_retention(session, request, request.payload)
@@ -649,6 +653,65 @@ class ConversationCommandService:
             raise ConversationCommandError("coach_conversation_invalid_state")
         await self.repository.append_session_events(
             session_id=session.id, events=events
+        )
+
+    async def _edit_transcript(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: EditTranscriptPayload,
+    ) -> ConversationCommandResult:
+        attempt = await self._require_active_attempt(session, payload.attempt_id)
+        job = await AsyncJobService.create(self.db, "coach_attempt_processing")
+        deadline = datetime.utcnow() + timedelta(
+            seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
+        )
+        state_before = session.conversation_state
+        claim = await self.repository.claim_transcript_edit(
+            session_id=session.id,
+            recording_id=attempt.id,
+            transcript=payload.transcript,
+            expected_attempt_version=attempt.attempt_version,
+            expected_session_state_version=request.expected_state_version,
+            job_id=job.id,
+            deadline=deadline,
+        )
+        if claim is None:
+            raise ConversationCommandError("coach_attempt_stale_claim")
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=(
+                SessionEventInput(
+                    event_type="transcript_edited",
+                    actor_type="candidate",
+                    state_version=request.expected_state_version + 1,
+                    state_before=state_before,
+                    state_after="processing_answer",
+                    question_id=claim.question_id,
+                    recording_id=claim.recording_id,
+                    command_id=request.command_id,
+                ),
+                SessionEventInput(
+                    event_type="attempt_processing_started",
+                    actor_type="system",
+                    state_version=request.expected_state_version + 1,
+                    state_before=state_before,
+                    state_after="processing_answer",
+                    question_id=claim.question_id,
+                    recording_id=claim.recording_id,
+                    command_id=request.command_id,
+                ),
+            ),
+        )
+        await self._persist_stub_stages(claim)
+        self._post_commit_job_id = job.id
+        self._post_commit_attempt_claim = claim
+        await self.db.refresh(session)
+        return await self._result(
+            session,
+            request,
+            result="accepted_processing",
+            async_job_id=job.id,
         )
 
     async def _request_coaching(
