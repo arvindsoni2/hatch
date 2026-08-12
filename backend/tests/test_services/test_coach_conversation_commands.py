@@ -3016,6 +3016,186 @@ async def test_completed_self_assessment_is_rejected_without_receipt(
     ) == 0
 
 
+async def _seed_review_attempt_for_acceptance(
+    db_session: AsyncSession,
+    *,
+    follow_up_proposal: dict[str, object] | None,
+) -> tuple[InterviewSession, list[SessionQuestion], SessionRecording]:
+    session, questions = await seed_session(
+        db_session,
+        state="awaiting_next_action",
+        status="active",
+        version=4,
+        question_count=2,
+    )
+    question = questions[0]
+    question.question_state = "asked"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    session.active_recording_id = "attempt-accept-command"
+    transcript_text = "I led the migration and the stakeholders were satisfied."
+    transcript = InterviewTranscriptVersion(
+        id="transcript-accept-command",
+        recording_id="attempt-accept-command",
+        version_number=1,
+        transcript=transcript_text,
+        source="candidate_text",
+        content_hash="a" * 64,
+        created_by="candidate",
+        processing_generation=1,
+    )
+    attempt = SessionRecording(
+        id="attempt-accept-command",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="completed",
+        evaluation_state="completed",
+        processing_generation=1,
+        current_transcript_version_id=transcript.id,
+        current_evaluation_version_id="evaluation-accept-command",
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="evaluation-accept-command",
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="completed",
+        answer_level="developing",
+        rubric_json={
+            "answer_level": "developing",
+            "dimensions": {
+                "impact": {"level": "developing"},
+                "specificity": {"level": "interview_ready"},
+            },
+        },
+        follow_up_proposal_json=follow_up_proposal,
+        diagnostics_json={"processing_claim": {"processing_generation": 1}},
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add_all((attempt, transcript, evaluation))
+    await db_session.commit()
+    return session, questions, attempt
+
+
+@pytest.mark.asyncio
+async def test_accept_attempt_admits_one_grounded_follow_up_and_replays(
+    db_session: AsyncSession,
+) -> None:
+    transcript_text = "I led the migration and the stakeholders were satisfied."
+    excerpt = "the stakeholders were satisfied"
+    start = transcript_text.index(excerpt)
+    session, questions, attempt = await _seed_review_attempt_for_acceptance(
+        db_session,
+        follow_up_proposal={
+            "should_ask": True,
+            "reason": "measurable_result",
+            "question": "What measurable outcome resulted from your intervention?",
+            "transcript_evidence": {
+                "start": start,
+                "end": start + len(excerpt),
+                "excerpt": excerpt,
+            },
+            "target_dimension": "impact",
+            "aggregation_role": "gap_repair",
+            "duplicate_key": "root-question:impact:result",
+        },
+    )
+    request = command(
+        "accept_attempt",
+        version=4,
+        command_id="accept-with-follow-up",
+        payload={"attempt_id": attempt.id},
+    )
+    session_id = session.id
+    root_question_id = questions[0].id
+    attempt_id = attempt.id
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    db_session.expire_all()
+    persisted_session = await db_session.get(InterviewSession, session_id)
+    root = await db_session.get(SessionQuestion, root_question_id)
+    follow_ups = list(
+        (
+            await db_session.scalars(
+                select(SessionQuestion).where(
+                    SessionQuestion.session_id == session_id,
+                    SessionQuestion.question_kind == "adaptive_follow_up",
+                )
+            )
+        ).all()
+    )
+    assert result == replay
+    assert persisted_session is not None and root is not None
+    assert (persisted_session.conversation_state, persisted_session.state_version) == (
+        "asking",
+        5,
+    )
+    assert root.accepted_recording_id == attempt_id
+    assert len(follow_ups) == 1
+    assert persisted_session.active_question_id == follow_ups[0].id
+    assert follow_ups[0].question_state == "asked"
+
+
+@pytest.mark.asyncio
+async def test_accept_attempt_rejects_invalid_follow_up_and_advances_planned_sequence(
+    db_session: AsyncSession,
+) -> None:
+    session, questions, attempt = await _seed_review_attempt_for_acceptance(
+        db_session,
+        follow_up_proposal={
+            "should_ask": True,
+            "reason": "measurable_result",
+            "question": "You scored 4/10, explain your confidence.",
+            "transcript_evidence": {
+                "start": 0,
+                "end": 1,
+                "excerpt": "I",
+            },
+            "target_dimension": "impact",
+            "aggregation_role": "gap_repair",
+            "duplicate_key": "unsafe-score",
+        },
+    )
+    session_id = session.id
+    next_question_id = questions[1].id
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "accept_attempt",
+            version=4,
+            command_id="accept-without-follow-up",
+            payload={"attempt_id": attempt.id},
+        ),
+    )
+
+    db_session.expire_all()
+    persisted_session = await db_session.get(InterviewSession, session_id)
+    next_question = await db_session.get(SessionQuestion, next_question_id)
+    assert persisted_session is not None and next_question is not None
+    assert (result.state, result.state_version) == ("asking", 5)
+    assert persisted_session.active_question_id == next_question.id
+    assert next_question.question_state == "asked"
+    assert await db_session.scalar(
+        select(func.count(SessionQuestion.id)).where(
+            SessionQuestion.session_id == session_id,
+            SessionQuestion.question_kind == "adaptive_follow_up",
+        )
+    ) == 0
+
+
 @pytest.mark.asyncio
 async def test_event_failure_rolls_back_state_and_receipt(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
