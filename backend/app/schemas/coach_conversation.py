@@ -54,6 +54,14 @@ SafeToken: TypeAlias = Annotated[
 ]
 NonNegativeInt: TypeAlias = Annotated[int, Field(ge=0)]
 
+ConversationalLevel = Literal[
+    "needs_work", "developing", "interview_ready", "strong", "not_assessed"
+]
+DeliverySeverity = Literal["none", "moderate", "material", "severe"]
+DeliveryMetricFamily = Literal[
+    "pace", "fillers_per_minute", "long_pauses", "hedging", "restarts"
+]
+
 ExperienceVersion = Literal["legacy_v1", "conversational_v1"]
 InterviewType = Literal["behavioural", "role_specific_verbal", "mixed"]
 ConversationalDifficulty = Literal["supportive", "realistic", "challenging"]
@@ -141,6 +149,36 @@ class StrictContractModel(BaseModel):
     """Base for new contracts: reject unknown fields and non-JSON numbers."""
 
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+
+
+class TranscriptEvidenceSpan(StrictContractModel):
+    transcript_start: NonNegativeInt
+    transcript_end: Annotated[int, Field(gt=0)]
+    excerpt: Annotated[str, Field(min_length=1, max_length=2_000)]
+
+    @model_validator(mode="after")
+    def require_half_open_span(self) -> Self:
+        if self.transcript_start >= self.transcript_end:
+            raise ValueError("transcript evidence span must be non-empty")
+        return self
+
+
+class DeliveryObservation(StrictContractModel):
+    measured_value: int | float
+    threshold_bucket: str
+    severity: DeliverySeverity
+
+
+class ConversationalRubricDimension(StrictContractModel):
+    level: ConversationalLevel
+    evidence: Annotated[list[TranscriptEvidenceSpan], Field(max_length=2)] = Field(
+        default_factory=list
+    )
+    rationale: Annotated[str, Field(min_length=1, max_length=2_000)] | None = None
+    improvement: Annotated[str, Field(min_length=1, max_length=2_000)] | None = None
+    observations: dict[DeliveryMetricFamily, DeliveryObservation] = Field(
+        default_factory=dict
+    )
 
 
 def _normalized_bounded_text(
