@@ -12,10 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewSession,
+    InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
@@ -29,6 +31,7 @@ from ..repositories.conversational_session_repository import (
     ConversationalRepositoryError,
     ConversationalSessionRepository,
     SessionEventInput,
+    _stage_immutable_diagnostics,
     canonical_request_hash,
 )
 from ..schemas.coach_conversation import (
@@ -36,14 +39,18 @@ from ..schemas.coach_conversation import (
     CancelAttemptPayload,
     ConversationCommandRequest,
     ConversationCommandResult,
+    DeleteAudioPayload,
     FinishAnswerPayload,
     KeepSpeakingPayload,
+    RecordCaptureHardStopPayload,
     RequestHintPayload,
     RetryAnswerPayload,
+    RetryProcessingPayload,
     UpdateRetentionPayload,
 )
 from .async_job_service import AsyncJobService
 from .coach_command_projection import contextual_allowed_commands
+from .coach_attempt_pipeline import queue_attempt_processing
 from .coach_conversation_state import require_transition
 from .coach_conversational_contracts import (
     CONVERSATION_COMMAND_RESULT_CONTRACT,
@@ -52,6 +59,12 @@ from .coach_conversational_contracts import (
     RUBRIC_CONTRACT,
 )
 from .coach_session_plan import SessionPlanError, claim_session_setup
+from .coach_retention import (
+    AudioCleanupClaim,
+    CancelledUploadCleanupClaim,
+    CoachRetentionService,
+    queue_audio_cleanup,
+)
 
 PROCESSING_CONTRACT = "coach_processing_v1"
 logger = logging.getLogger(__name__)
@@ -102,13 +115,24 @@ class ConversationCommandService:
         db: AsyncSession,
         *,
         evaluator: DeterministicEvaluationStub | None = None,
-        after_commit: Callable[[str], Awaitable[None]] | None = None,
+        after_commit: Callable[[str | AttemptProcessingClaim], Awaitable[None]] | None = None,
     ) -> None:
         self.db = db
         self.repository = ConversationalSessionRepository(db)
         self.evaluator = evaluator or DeterministicEvaluationStub()
         self.after_commit = after_commit
         self._post_commit_job_id: str | None = None
+        self._post_commit_attempt_claim: AttemptProcessingClaim | None = None
+        self._post_commit_audio_claim: (
+            AudioCleanupClaim | CancelledUploadCleanupClaim | None
+        ) = None
+
+    def _close_pending_audio_lease(self) -> None:
+        claim = self._post_commit_audio_claim
+        if claim is None or claim._deletion_lease is None:
+            return
+        claim._deletion_lease.close()
+        self._post_commit_audio_claim = None
 
     async def execute(
         self,
@@ -121,6 +145,8 @@ class ConversationCommandService:
             raise ConversationCommandError("coach_conversation_invalid_state")
         request_hash = canonical_request_hash(request, session_id=session_id)
         self._post_commit_job_id = None
+        self._post_commit_attempt_claim = None
+        self._post_commit_audio_claim = None
         try:
             claim = await self.repository.claim_conversation_command(
                 session_id=session_id,
@@ -155,6 +181,7 @@ class ConversationCommandService:
                 raise ConversationCommandError("coach_conversation_invalid_state")
             await self.db.commit()
         except ConversationVersionConflict as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             raise ConversationCommandError(
                 "coach_conversation_version_conflict",
@@ -162,20 +189,24 @@ class ConversationCommandService:
                 current_state=error.current_state,
             ) from error
         except CommandIdempotencyConflict as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             raise ConversationCommandError(
                 "coach_command_idempotency_conflict"
             ) from error
         except (AttemptLimitExhausted, AttemptReservationConflict) as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             code = str(error)
             if code == "coach_client_attempt_id_conflict":
                 code = "coach_attempt_client_id_conflict"
             raise ConversationCommandError(code) from error
         except ConversationCommandError:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             raise
         except IntegrityError as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             duplicate = await self.repository.get_command_result(
                 session_id=session_id, command_id=request.command_id
@@ -192,15 +223,63 @@ class ConversationCommandService:
                 ) from error
             return ConversationCommandResult.model_validate(duplicate.result_json)
         except (ConversationalRepositoryError, ValueError) as error:
+            self._close_pending_audio_lease()
             await self.db.rollback()
             code = str(error)
             raise ConversationCommandError(code) from error
-        if self._post_commit_job_id is not None and self.after_commit is not None:
+        except BaseException:
+            self._close_pending_audio_lease()
+            await self.db.rollback()
+            raise
+        if self._post_commit_attempt_claim is not None:
             try:
-                await self.after_commit(self._post_commit_job_id)
+                queue_attempt_processing(self._post_commit_attempt_claim)
+            except Exception as error:  # noqa: BLE001 - durable job remains pending
+                logger.error("Coach attempt dispatch failed: %s", type(error).__name__)
+        if isinstance(self._post_commit_audio_claim, AudioCleanupClaim):
+            try:
+                retention = CoachRetentionService(self.db)
+                cleanup_result = await retention.delete_claimed_audio(
+                    self._post_commit_audio_claim
+                )
+                if cleanup_result != "stale_claim":
+                    await retention.finalise_audio_cleanup(
+                        self._post_commit_audio_claim, cleanup_result
+                    )
+                    await self.db.commit()
+            except Exception as error:  # noqa: BLE001 - durable claim is reconciled
+                await self.db.rollback()
+                if self._post_commit_audio_claim._deletion_lease is not None:
+                    self._post_commit_audio_claim._deletion_lease.close()
+                logger.error(
+                    "Coach audio cleanup dispatch failed: %s",
+                    type(error).__name__,
+                )
+        post_commit_work = (
+            self._post_commit_attempt_claim
+            or self._post_commit_job_id
+            or (
+                self._post_commit_audio_claim.job_id
+                if self._post_commit_audio_claim is not None
+                else None
+            )
+        )
+        if post_commit_work is not None and self.after_commit is not None:
+            try:
+                await self.after_commit(post_commit_work)
             except Exception as error:  # noqa: BLE001 - durable work remains pending
                 logger.error(
                     "Coach post-commit dispatch failed: %s", type(error).__name__
+                )
+        if isinstance(self._post_commit_audio_claim, CancelledUploadCleanupClaim):
+            try:
+                queue_audio_cleanup(self._post_commit_audio_claim)
+            except Exception as error:  # noqa: BLE001 - durable claim is reconciled
+                if self._post_commit_audio_claim._deletion_lease is not None:
+                    self._post_commit_audio_claim._deletion_lease.close()
+                logger.error(
+                    "Coach audio cleanup dispatch failed: %s",
+                    type(error).__name__,
                 )
         return result
 
@@ -226,9 +305,15 @@ class ConversationCommandService:
         if request.command_type == "cancel_attempt":
             assert isinstance(request.payload, CancelAttemptPayload)
             return await self._cancel_attempt(session, request, request.payload)
+        if request.command_type == "record_capture_hard_stop":
+            assert isinstance(request.payload, RecordCaptureHardStopPayload)
+            return await self._record_capture_hard_stop(session, request, request.payload)
         if request.command_type == "retry_answer":
             assert isinstance(request.payload, RetryAnswerPayload)
             return await self._retry_answer(session, request, request.payload)
+        if request.command_type == "retry_processing":
+            assert isinstance(request.payload, RetryProcessingPayload)
+            return await self._retry_processing(session, request)
         if request.command_type in {"retry_setup", "rebuild_plan"}:
             return await self._claim_setup(session, request)
         if request.command_type == "request_hint":
@@ -237,6 +322,9 @@ class ConversationCommandService:
         if request.command_type == "update_retention":
             assert isinstance(request.payload, UpdateRetentionPayload)
             return await self._update_retention(session, request, request.payload)
+        if request.command_type == "delete_audio":
+            assert isinstance(request.payload, DeleteAudioPayload)
+            return await self._delete_audio(session, request, request.payload)
         if request.command_type == "skip_question":
             return await self._skip_question(session, request)
         raise ConversationCommandError("coach_conversation_invalid_state")
@@ -426,7 +514,7 @@ class ConversationCommandService:
         request: ConversationCommandRequest,
         payload: FinishAnswerPayload,
     ) -> ConversationCommandResult:
-        if payload.transcript is None or payload.upload_id is not None:
+        if (payload.transcript is None) == (payload.upload_id is None):
             raise ConversationCommandError("coach_conversation_invalid_state")
         attempt = await self.db.get(SessionRecording, payload.attempt_id)
         if (
@@ -434,17 +522,25 @@ class ConversationCommandService:
             or attempt.session_id != session.id
             or attempt.question_id != session.active_question_id
             or attempt.id != session.active_recording_id
-            or attempt.recording_type != "text"
-            or attempt.attempt_state != "draft"
+            or attempt.recording_type != ("text" if payload.transcript is not None else "audio")
+            or attempt.attempt_state != ("draft" if payload.transcript is not None else "uploaded")
         ):
             raise ConversationCommandError("coach_attempt_not_active")
-        transcript = await self.repository.create_transcript_version(
-            recording_id=attempt.id,
-            source="candidate_text",
-            transcript=payload.transcript,
-            expected_attempt_version=attempt.attempt_version,
-            processing_generation=attempt.processing_generation + 1,
-        )
+        transcript = None
+        if payload.transcript is not None:
+            transcript = await self.repository.create_transcript_version(
+                recording_id=attempt.id, source="candidate_text", transcript=payload.transcript,
+                expected_attempt_version=attempt.attempt_version,
+                processing_generation=attempt.processing_generation + 1,
+            )
+        else:
+            upload = await self.repository.get_completed_audio_upload(
+                attempt_id=attempt.id,
+                upload_id=payload.upload_id,
+                content_hash=attempt.audio_content_hash,
+            )
+            if upload is None:
+                raise ConversationCommandError("coach_attempt_not_active")
         job = await AsyncJobService.create(self.db, "coach_attempt_processing")
         latest_evaluation_version = await self.db.scalar(
             select(func.max(InterviewAttemptEvaluation.version_number)).where(
@@ -453,7 +549,7 @@ class ConversationCommandService:
         )
         await self.repository.create_evaluation_version(
             recording_id=attempt.id,
-            transcript_version_id=transcript.id,
+            transcript_version_id=transcript.id if transcript is not None else None,
             evaluation_version=int(latest_evaluation_version or 0) + 1,
             processing_generation=attempt.processing_generation + 1,
             contract_version=RUBRIC_CONTRACT,
@@ -520,16 +616,15 @@ class ConversationCommandService:
             ),
         )
         await self._persist_stub_stages(claim)
-        stub_result = await self.evaluator.evaluate(claim)
-        finalised = await self.repository.finalise_attempt_processing(
-            claim=claim, result=stub_result
-        )
-        if not finalised:
-            raise ConversationCommandError("coach_attempt_stale_claim")
-        job.status = "done"
-        job.result_json = '{"status":"unavailable"}'
+        self._post_commit_job_id = job.id
+        self._post_commit_attempt_claim = claim
         await self.db.refresh(session)
-        return await self._result(session, request)
+        return await self._result(
+            session,
+            request,
+            result="accepted_processing",
+            async_job_id=job.id,
+        )
 
     async def _keep_speaking(
         self,
@@ -683,26 +778,95 @@ class ConversationCommandService:
         attempt = await self._require_active_attempt(session, payload.attempt_id)
         if attempt.attempt_state not in {"draft", "uploaded"}:
             raise ConversationCommandError("coach_attempt_not_active")
-        attempt.attempt_state = "cancelled"
-        attempt.async_job_id = None
         state_version = await self._change_session_state(
             session,
             request,
             values={"conversation_state": "asking", "active_recording_id": None},
             required_state="listening",
         )
-        await self.repository.append_session_events(
-            session_id=session.id,
-            events=(
+        cleanup_claim: CancelledUploadCleanupClaim | None = None
+        if attempt.attempt_state == "uploaded":
+            cleanup_claim = await CoachRetentionService(
+                self.db
+            ).claim_cancelled_upload_cleanup(attempt.id, datetime.utcnow())
+            if cleanup_claim is None:
+                raise ConversationCommandError("coach_attempt_stale_claim")
+            self._post_commit_audio_claim = cleanup_claim
+        else:
+            attempt.attempt_state = "cancelled"
+            attempt.async_job_id = None
+        events = [
+            SessionEventInput(
+                event_type="answer_capture_cancelled",
+                actor_type="candidate",
+                state_version=state_version,
+                state_before="listening",
+                state_after="asking",
+                question_id=attempt.question_id,
+                recording_id=attempt.id,
+                command_id=request.command_id,
+            )
+        ]
+        if cleanup_claim is not None:
+            events.append(
                 SessionEventInput(
-                    event_type="answer_capture_cancelled",
+                    event_type="audio_cleanup_claimed",
                     actor_type="candidate",
                     state_version=state_version,
-                    state_before="listening",
+                    state_before="asking",
                     state_after="asking",
                     question_id=attempt.question_id,
                     recording_id=attempt.id,
                     command_id=request.command_id,
+                    payload_json={"reason": "cancelled_attempt"},
+                )
+            )
+        await self.repository.append_session_events(
+            session_id=session.id, events=tuple(events)
+        )
+        if cleanup_claim is not None:
+            return await self._result(
+                session,
+                request,
+                result="accepted_processing",
+                async_job_id=cleanup_claim.job_id,
+            )
+        return await self._result(session, request)
+
+    async def _record_capture_hard_stop(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: RecordCaptureHardStopPayload,
+    ) -> ConversationCommandResult:
+        """Persist the capture boundary without changing the draft attempt."""
+        attempt = await self._require_active_attempt(session, payload.attempt_id)
+        if (
+            attempt.recording_type != "audio"
+            or attempt.attempt_state not in {"draft", "uploaded"}
+        ):
+            raise ConversationCommandError("coach_attempt_not_active")
+        state_version = await self._change_session_state(
+            session,
+            request,
+            values={
+                "activity_version": InterviewSession.activity_version + 1,
+            },
+            required_state="listening",
+        )
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=(
+                SessionEventInput(
+                    event_type="answer_capture_hard_limit_reached",
+                    actor_type="candidate",
+                    state_version=state_version,
+                    state_before="listening",
+                    state_after="listening",
+                    question_id=attempt.question_id,
+                    recording_id=attempt.id,
+                    command_id=request.command_id,
+                    payload_json={"limit_ms": 600_000},
                 ),
             ),
         )
@@ -784,6 +948,63 @@ class ConversationCommandService:
             ),
         )
         return await self._result(session, request)
+
+    async def _retry_processing(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+    ) -> ConversationCommandResult:
+        if (
+            session.recoverable_error_scope != "attempt_processing"
+            or session.active_recording_id is None
+        ):
+            raise ConversationCommandError("coach_conversation_invalid_state")
+        job = await AsyncJobService.create(self.db, "coach_attempt_processing")
+        deadline = datetime.utcnow() + timedelta(
+            seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
+        )
+        claim = await self.repository.claim_retry_processing(
+            recording_id=session.active_recording_id,
+            job_id=job.id,
+            deadline=deadline,
+            expected_session_state_version=request.expected_state_version,
+        )
+        if claim is None:
+            raise ConversationCommandError("coach_attempt_stale_claim")
+        await self.db.refresh(session)
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=(
+                SessionEventInput(
+                    event_type="attempt_processing_retry_requested",
+                    actor_type="candidate",
+                    state_version=session.state_version,
+                    state_before="recoverable_error",
+                    state_after="processing_answer",
+                    question_id=claim.question_id,
+                    recording_id=claim.recording_id,
+                    command_id=request.command_id,
+                ),
+                SessionEventInput(
+                    event_type="attempt_processing_started",
+                    actor_type="system",
+                    state_version=session.state_version,
+                    state_before="recoverable_error",
+                    state_after="processing_answer",
+                    question_id=claim.question_id,
+                    recording_id=claim.recording_id,
+                    command_id=request.command_id,
+                ),
+            ),
+        )
+        self._post_commit_job_id = job.id
+        self._post_commit_attempt_claim = claim
+        return await self._result(
+            session,
+            request,
+            result="accepted_processing",
+            async_job_id=job.id,
+        )
 
     async def _claim_setup(
         self, session: InterviewSession, request: ConversationCommandRequest
@@ -908,6 +1129,120 @@ class ConversationCommandService:
             ),
         )
         return await self._result(session, request)
+
+    async def _delete_audio(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: DeleteAudioPayload,
+    ) -> ConversationCommandResult:
+        retention = CoachRetentionService(self.db)
+        if session.conversation_state == "asking":
+            retryable_attempt_id = (
+                await retention.find_retryable_cancelled_upload_cleanup_attempt(
+                    session.id
+                )
+            )
+            if retryable_attempt_id != payload.attempt_id:
+                raise ConversationCommandError("coach_attempt_stale_claim")
+            cleanup_claim = await retention.claim_cancelled_upload_cleanup(
+                payload.attempt_id,
+                datetime.utcnow(),
+                retrying_terminal_failure=True,
+            )
+            if cleanup_claim is None:
+                raise ConversationCommandError("coach_attempt_stale_claim")
+            self._post_commit_audio_claim = cleanup_claim
+            await self.db.refresh(session)
+            return await self._result(
+                session,
+                request,
+                result="accepted_processing",
+                async_job_id=cleanup_claim.job_id,
+            )
+        attempt = await self.db.scalar(
+            select(SessionRecording).where(
+                SessionRecording.id == payload.attempt_id,
+                SessionRecording.session_id == session.id,
+            )
+        )
+        if attempt is None:
+            raise ConversationCommandError("coach_attempt_not_active")
+        if (
+            session.conversation_state == "paused"
+            and session.resume_state == "listening"
+            and session.active_recording_id == attempt.id
+            and attempt.attempt_state in {"draft", "uploaded"}
+        ):
+            raise ConversationCommandError("coach_conversation_invalid_state")
+        if (
+            session.conversation_state == "recoverable_error"
+            and session.recoverable_error_scope == "attempt_processing"
+            and attempt.async_job_id is not None
+        ):
+            processing_job_id = attempt.async_job_id
+            fenced_attempt = await self.db.execute(
+                update(SessionRecording)
+                .where(
+                    SessionRecording.id == attempt.id,
+                    SessionRecording.session_id == session.id,
+                    SessionRecording.async_job_id == processing_job_id,
+                    SessionRecording.processing_generation
+                    == attempt.processing_generation,
+                    SessionRecording.attempt_state.in_(
+                        ("pending_processing", "recoverable_error")
+                    ),
+                )
+                .values(async_job_id=None)
+            )
+            fenced_job = await self.db.execute(
+                update(AsyncJob)
+                .where(
+                    AsyncJob.id == processing_job_id,
+                    AsyncJob.type == "coach_attempt_processing",
+                    AsyncJob.status.in_(("pending", "running")),
+                )
+                .values(
+                    status="failed",
+                    result_json=None,
+                    error="coach_attempt_processing_cancelled",
+                    updated_at=datetime.utcnow(),
+                )
+            )
+            if fenced_attempt.rowcount != 1 or fenced_job.rowcount != 1:
+                raise ConversationCommandError("coach_attempt_stale_claim")
+        cleanup_claim = await retention.claim_explicit_cleanup(
+            attempt.id, datetime.utcnow()
+        )
+        if cleanup_claim is None:
+            if attempt.audio_uri is None and attempt.audio_retention_state == "deleted":
+                return await self._result(session, request)
+            preclaim_result = await retention.classify_cleanup_preclaim(
+                attempt.id, reason="explicit_delete"
+            )
+            recorded = bool(
+                preclaim_result is not None
+                and await retention.record_cleanup_claim_failure(
+                    attempt.id,
+                    datetime.utcnow(),
+                    result=preclaim_result,
+                    reason="explicit_delete",
+                    actor_type="candidate",
+                )
+            )
+            if recorded:
+                await self.db.refresh(session)
+                await self.db.refresh(attempt)
+                return await self._result(session, request)
+            raise ConversationCommandError("coach_audio_deletion_failed")
+        self._post_commit_audio_claim = cleanup_claim
+        await self.db.refresh(session)
+        return await self._result(
+            session,
+            request,
+            result="accepted_processing",
+            async_job_id=cleanup_claim.job_id,
+        )
 
     async def _skip_question(
         self, session: InterviewSession, request: ConversationCommandRequest
@@ -1090,6 +1425,19 @@ class ConversationCommandService:
         fence = await self.repository._get_attempt_processing_fence(claim)
         if fence is None:
             raise ConversationCommandError("coach_attempt_stale_claim")
+        attempt = await self.db.get(SessionRecording, claim.recording_id)
+        evaluation = await self.db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        transcript = (
+            await self.db.get(
+                InterviewTranscriptVersion, claim.transcript_version_id
+            )
+            if claim.transcript_version_id is not None
+            else None
+        )
+        if attempt is None or evaluation is None:
+            raise ConversationCommandError("coach_attempt_stale_claim")
         transcript_bound = {
             "content_evaluation",
             "evidence_grounding",
@@ -1104,15 +1452,19 @@ class ConversationCommandService:
             "evidence_grounding",
             "follow_up_decision",
             "coaching_enrichment",
+            "audio_cleanup",
         ):
-            unavailable = stage_name == "content_evaluation"
+            media_not_applicable = (
+                claim.transcript_version_id is not None
+                and stage_name in {"audio_persist", "transcription", "speech_analysis"}
+            )
             self.db.add(
                 InterviewAttemptStage(
                     id=str(uuid.uuid4()),
                     recording_id=claim.recording_id,
                     evaluation_version_id=claim.evaluation_version_id,
                     stage_name=stage_name,
-                    stage_state="unavailable" if unavailable else "not_applicable",
+                    stage_state="not_applicable" if media_not_applicable else "pending",
                     job_id=claim.job_id,
                     claim_token=fence.claim_token,
                     expected_processing_generation=claim.processing_generation,
@@ -1122,9 +1474,25 @@ class ConversationCommandService:
                         else None
                     ),
                     job_deadline_at=claim.deadline_at,
-                    completed_at=datetime.utcnow(),
-                    last_error_code=(
-                        "coach_evaluation_unavailable" if unavailable else None
+                    completed_at=datetime.utcnow() if media_not_applicable else None,
+                    diagnostics_json=_stage_immutable_diagnostics(
+                        stage_name=stage_name,
+                        audio_content_hash=attempt.audio_content_hash,
+                        transcript_version_id=(
+                            transcript.id if transcript is not None else None
+                        ),
+                        transcript_content_hash=(
+                            transcript.content_hash if transcript is not None else None
+                        ),
+                        evaluation_contract_version=(
+                            evaluation.evaluation_contract_version
+                        ),
+                        evidence_contract_version=(
+                            evaluation.evidence_contract_version
+                        ),
+                        follow_up_contract_version=(
+                            evaluation.follow_up_contract_version
+                        ),
                     ),
                 )
             )

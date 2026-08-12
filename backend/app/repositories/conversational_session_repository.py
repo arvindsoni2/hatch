@@ -1,44 +1,65 @@
 """Atomic persistence primitives for conversational Coach sessions.
 
-Methods in this repository flush but never commit.  Their caller owns the short
-transaction so state, receipts, events, and version pointers succeed or roll
-back together.
+Most methods flush but never commit, so their caller owns the short transaction.
+Audio publication is the exception: its explicit commit method couples database
+durability to filesystem compensation before a response can be returned.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Literal, Sequence
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
+    InterviewAttemptUpload,
     InterviewSession,
     InterviewSessionEvent,
     InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
-from ..schemas.coach_conversation import ConversationCommandRequest, SAFE_TOKEN_RE
+from ..schemas.coach_conversation import (
+    AttemptAudioUploadRead,
+    ConversationCommandRequest,
+    SAFE_TOKEN_RE,
+)
+from ..services.coach_media_storage import (
+    CoachMediaError,
+    OwnedAudioPublication,
+    StagedAudio,
+    cleanup_staged_audio,
+    open_verified_audio_read_lease,
+    owned_audio_path_is_file,
+    publish_staged_audio,
+)
 from ..services.coach_conversational_contracts import (
     AUDIO_PRETRANSCRIPTION_UNAVAILABLE_REASONS,
     EVIDENCE_GROUNDING_CONTRACT,
     ERROR_REGISTRY,
     FOLLOW_UP_CONTRACT,
+    RUBRIC_CONTRACT,
     TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS,
 )
+
+
+_AUDIO_PUBLICATION_COMPENSATION_ATTEMPTS = 2
 
 
 class ConversationalRepositoryError(RuntimeError):
@@ -279,6 +300,7 @@ _CONVERSATIONAL_EVENT_TYPES = frozenset(
         "answer_capture_paused",
         "answer_capture_resumed",
         "answer_capture_cancelled",
+        "answer_capture_hard_limit_reached",
         "answer_submitted",
         "attempt_processing_started",
         "attempt_processing_retry_requested",
@@ -331,6 +353,144 @@ _PROCESSING_STAGES = frozenset(
         "audio_cleanup",
     }
 )
+_PROCESSING_STAGE_ORDER = (
+    "audio_persist",
+    "transcription",
+    "speech_analysis",
+    "content_evaluation",
+    "evidence_grounding",
+    "follow_up_decision",
+    "coaching_enrichment",
+    "audio_cleanup",
+)
+
+
+async def _independent_cleanup_stage_is_valid(
+    db: AsyncSession,
+    *,
+    attempt: SessionRecording,
+    evaluation: InterviewAttemptEvaluation,
+    cleanup: InterviewAttemptStage,
+    expected_generation: int,
+) -> bool:
+    cleanup_job = await db.get(AsyncJob, cleanup.job_id) if cleanup.job_id else None
+    expected_diagnostics = _stage_immutable_diagnostics(
+        stage_name="audio_cleanup",
+        audio_content_hash=attempt.audio_content_hash,
+        transcript_version_id=evaluation.transcript_version_id,
+        transcript_content_hash=None,
+        evaluation_contract_version=evaluation.evaluation_contract_version,
+        evidence_contract_version=evaluation.evidence_contract_version,
+        follow_up_contract_version=evaluation.follow_up_contract_version,
+    )
+    expected_deadline = (
+        cleanup.started_at
+        + timedelta(seconds=settings.HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS)
+        if cleanup.started_at is not None
+        else None
+    )
+    if not (
+        cleanup_job is not None
+        and cleanup_job.type == "coach_audio_cleanup"
+        and cleanup.recording_id == attempt.id
+        and cleanup.evaluation_version_id == evaluation.id
+        and cleanup.expected_processing_generation == expected_generation
+        and cleanup.source_transcript_version_id is None
+        and cleanup.reused_from_stage_id is None
+        and cleanup.diagnostics_json == expected_diagnostics
+        and cleanup.job_deadline_at == expected_deadline
+        and cleanup.started_at is not None
+    ):
+        return False
+    if cleanup.stage_state == "completed":
+        return bool(
+            cleanup.claim_token is None
+            and cleanup.completed_at is not None
+            and cleanup.last_error_code is None
+            and cleanup_job.status == "done"
+            and cleanup_job.result_json == '{"result":"deleted"}'
+            and cleanup_job.error is None
+            and attempt.audio_uri is None
+            and attempt.audio_retention_state == "deleted"
+            and attempt.audio_deleted_at is not None
+        )
+    if cleanup.stage_state == "failed_retryable":
+        return bool(
+            cleanup.claim_token is None
+            and cleanup.completed_at is not None
+            and cleanup.last_error_code == "coach_audio_deletion_failed"
+            and cleanup_job.status == "failed"
+            and cleanup_job.result_json is None
+            and cleanup_job.error == "coach_audio_deletion_failed"
+            and attempt.audio_uri is not None
+            and attempt.audio_retention_state == "delete_failed"
+        )
+    if cleanup.stage_state == "running":
+        return bool(
+            cleanup.claim_token
+            and cleanup.completed_at is None
+            and cleanup.last_error_code is None
+            and cleanup_job.status in {"pending", "running"}
+            and attempt.audio_uri is not None
+            and attempt.audio_retention_state == "delete_pending"
+        )
+    return False
+
+
+async def partition_current_processing_stages(
+    db: AsyncSession,
+    *,
+    attempt: SessionRecording,
+    evaluation: InterviewAttemptEvaluation,
+    stages: Sequence[InterviewAttemptStage],
+    processing_job_id: str,
+) -> tuple[tuple[InterviewAttemptStage, ...], InterviewAttemptStage | None] | None:
+    """Validate the exact eight-row graph and isolate independent cleanup authority."""
+    cleanup_rows = [stage for stage in stages if stage.stage_name == "audio_cleanup"]
+    independent_expected = bool(
+        attempt.recording_type == "audio"
+        and attempt.audio_retention_state
+        in {"delete_pending", "deleted", "delete_failed"}
+    )
+    if len(cleanup_rows) != 1:
+        return None if independent_expected else (tuple(stages), None)
+    if cleanup_rows[0].job_id == processing_job_id:
+        return None if independent_expected else (tuple(stages), None)
+    expected_names = set(_PROCESSING_STAGE_ORDER)
+    if (
+        len(stages) != 8
+        or {stage.stage_name for stage in stages} != expected_names
+    ):
+        return None
+    cleanup = cleanup_rows[0]
+    processing = tuple(stage for stage in stages if stage.stage_name != "audio_cleanup")
+    if not await _independent_cleanup_stage_is_valid(
+        db,
+        attempt=attempt,
+        evaluation=evaluation,
+        cleanup=cleanup,
+        expected_generation=attempt.processing_generation,
+    ):
+        return None
+    return processing, cleanup
+_PROCESSING_STAGE_COUNTER_LIMITS = {
+    "audio_persist": (1, 0),
+    "transcription": (3, 0),
+    "speech_analysis": (2, 0),
+    "content_evaluation": (3, 1),
+    "evidence_grounding": (3, 1),
+    "follow_up_decision": (2, 1),
+    "coaching_enrichment": (1, 0),
+    "audio_cleanup": (1, 0),
+}
+_TRANSCRIPT_BOUND_STAGES = frozenset(
+    {
+        "content_evaluation",
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+    }
+)
 _PROCESSING_DIAGNOSTIC_STATES = frozenset(
     {
         "not_started",
@@ -344,6 +504,39 @@ _PROCESSING_DIAGNOSTIC_STATES = frozenset(
         "failed_terminal",
     }
 )
+
+
+def _stage_immutable_diagnostics(
+    *,
+    stage_name: str,
+    audio_content_hash: str | None,
+    transcript_version_id: str | None,
+    transcript_content_hash: str | None,
+    evaluation_contract_version: str,
+    evidence_contract_version: str,
+    follow_up_contract_version: str,
+) -> dict[str, object]:
+    transcript_input = stage_name in _TRANSCRIPT_BOUND_STAGES
+    transcription_output = stage_name == "transcription"
+    return {
+        "processing_contract_version": "coach_processing_v1",
+        "evaluation_contract_version": evaluation_contract_version,
+        "evidence_contract_version": evidence_contract_version,
+        "follow_up_contract_version": follow_up_contract_version,
+        "source_audio_content_hash": audio_content_hash,
+        "source_transcript_version_id": (
+            transcript_version_id if transcript_input else None
+        ),
+        "source_transcript_content_hash": (
+            transcript_content_hash if transcript_input else None
+        ),
+        "result_transcript_version_id": (
+            transcript_version_id if transcription_output else None
+        ),
+        "result_transcript_content_hash": (
+            transcript_content_hash if transcription_output else None
+        ),
+    }
 
 
 def _validate_event_payload(value: object) -> None:
@@ -540,6 +733,48 @@ class _StaleFinalisation(Exception):
     pass
 
 
+def _audio_upload_request_hash(
+    *,
+    session_id: str,
+    attempt_id: str,
+    upload_id: str,
+    content_sha256: str,
+    byte_size: int,
+    mime_type: str,
+) -> str:
+    encoded = json.dumps(
+        {
+            "attempt_id": attempt_id,
+            "byte_size": byte_size,
+            "content_sha256": content_sha256,
+            "mime_type": mime_type,
+            "upload_id": upload_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _audio_upload_read(
+    row: InterviewAttemptUpload, retention_state: str | None
+) -> AttemptAudioUploadRead:
+    return AttemptAudioUploadRead.model_validate(
+        {
+            "attempt_id": row.attempt_id,
+            "upload_id": row.upload_id,
+            "result": row.result_state,
+            "content_sha256": row.content_sha256,
+            "byte_size": row.byte_size,
+            "mime_type": row.mime_type,
+            "audio_retention_state": retention_state,
+            "contract_version": "coach_attempt_audio_upload_v1",
+        }
+    )
+
+
 class ConversationalSessionRepository:
     """SQLite-safe conditional transaction primitives for Coach Phase 1."""
 
@@ -560,6 +795,343 @@ class ConversationalSessionRepository:
         if configured_limit < 1:
             raise ValueError("transcript code-point limit must be a positive integer")
         self._max_transcript_characters = configured_limit
+        self._audio_publication: OwnedAudioPublication | None = None
+
+    async def get_completed_audio_upload(
+        self, *, attempt_id: str, upload_id: str, content_hash: str | None
+    ) -> InterviewAttemptUpload | None:
+        """Return a completed upload only when it matches the attempt hash."""
+        if not content_hash:
+            return None
+        return await self._session.scalar(
+            select(InterviewAttemptUpload).where(
+                InterviewAttemptUpload.attempt_id == attempt_id,
+                InterviewAttemptUpload.upload_id == upload_id,
+                InterviewAttemptUpload.result_state == "completed",
+                InterviewAttemptUpload.content_sha256 == content_hash,
+            )
+        )
+
+    def _discard_audio_stage(self, staged: StagedAudio, *, code: str) -> None:
+        try:
+            cleanup_staged_audio(staged)
+        except CoachMediaError:
+            code = "coach_attempt_upload_conflict"
+        raise ConversationalRepositoryError(code)
+
+    async def _rollback_audio_upload(self) -> None:
+        rollback_failed = False
+        propagated_error: BaseException | None = None
+        try:
+            await self._session.rollback()
+        except BaseException as error:
+            rollback_failed = True
+            if not isinstance(error, Exception):
+                propagated_error = error
+            try:
+                await self._session.close()
+            except BaseException as close_error:
+                if (
+                    propagated_error is None
+                    and not isinstance(close_error, Exception)
+                ):
+                    propagated_error = close_error
+        compensation_failed = False
+        publication = self._audio_publication
+        if publication is not None:
+            for _ in range(_AUDIO_PUBLICATION_COMPENSATION_ATTEMPTS):
+                try:
+                    publication.compensate()
+                except BaseException as error:
+                    compensation_failed = True
+                    if propagated_error is None and not isinstance(error, Exception):
+                        propagated_error = error
+                else:
+                    self._audio_publication = None
+                    compensation_failed = False
+                    break
+        if propagated_error is not None:
+            raise propagated_error
+        if rollback_failed or compensation_failed:
+            raise ConversationalRepositoryError(
+                "coach_attempt_upload_conflict"
+            ) from None
+
+    async def commit_audio_upload(self) -> None:
+        """Commit the narrow upload transaction or compensate its owned inode."""
+        try:
+            await self._session.commit()
+        except BaseException as error:
+            rollback_error: BaseException | None = None
+            try:
+                await self._rollback_audio_upload()
+            except BaseException as failure:
+                rollback_error = failure
+            if rollback_error is not None and not isinstance(
+                rollback_error, Exception
+            ):
+                raise rollback_error
+            if not isinstance(error, Exception):
+                raise
+            raise ConversationalRepositoryError(
+                "coach_attempt_upload_conflict"
+            ) from None
+        publication = self._audio_publication
+        self._audio_publication = None
+        if publication is not None:
+            try:
+                publication.release()
+            except CoachMediaError:
+                # The receipt and file are now durable. A best-effort handle
+                # release cannot truthfully turn that completed upload into a
+                # failed client operation.
+                pass
+
+    async def persist_audio_upload(
+        self,
+        *,
+        session_id: str,
+        attempt_id: str,
+        upload_id: str,
+        declared_sha256: str,
+        staged: StagedAudio,
+        destination: Path,
+    ) -> AttemptAudioUploadRead:
+        """Persist one owned audio upload and replay completed duplicates."""
+        if staged.content_sha256 != declared_sha256:
+            self._discard_audio_stage(
+                staged, code="coach_attempt_upload_hash_mismatch"
+            )
+        request_hash = _audio_upload_request_hash(
+            session_id=session_id,
+            attempt_id=attempt_id,
+            upload_id=upload_id,
+            content_sha256=declared_sha256,
+            byte_size=staged.byte_size,
+            mime_type=staged.mime_type,
+        )
+        existing = await self._session.scalar(
+            select(InterviewAttemptUpload)
+            .join(
+                SessionRecording,
+                SessionRecording.id == InterviewAttemptUpload.attempt_id,
+            )
+            .where(
+                InterviewAttemptUpload.attempt_id == attempt_id,
+                InterviewAttemptUpload.upload_id == upload_id,
+                SessionRecording.session_id == session_id,
+            )
+        )
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                self._discard_audio_stage(
+                    staged, code="coach_audio_upload_idempotency_conflict"
+                )
+            attempt = await self._session.get(SessionRecording, attempt_id)
+            if (
+                existing.result_state != "completed"
+                or attempt is None
+                or attempt.session_id != session_id
+                or attempt.audio_uri != existing.storage_uri
+                or Path(existing.storage_uri) != destination
+                or not owned_audio_path_is_file(destination)
+            ):
+                self._discard_audio_stage(
+                    staged, code="coach_attempt_upload_conflict"
+                )
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                raise ConversationalRepositoryError(
+                    "coach_attempt_upload_conflict"
+                ) from None
+            return _audio_upload_read(existing, attempt.audio_retention_state)
+
+        session_row = await self._session.get(InterviewSession, session_id)
+        attempt = await self._session.scalar(
+            select(SessionRecording).where(
+                SessionRecording.id == attempt_id,
+                SessionRecording.session_id == session_id,
+            )
+        )
+        if session_row is None or attempt is None:
+            self._discard_audio_stage(staged, code="coach_attempt_upload_missing")
+        if (
+            session_row.experience_version != "conversational_v1"
+            or session_row.status != "active"
+            or session_row.conversation_state != "listening"
+            or session_row.active_recording_id != attempt_id
+            or session_row.deletion_state != "not_requested"
+            or attempt.recording_type != "audio"
+            or attempt.attempt_state != "draft"
+            or attempt.audio_uri is not None
+            or attempt.audio_content_hash is not None
+            or attempt.audio_retention_policy
+            not in {"delete_after_processing", "retain_until_deleted"}
+        ):
+            completed = await self._session.scalar(
+                select(InterviewAttemptUpload).where(
+                    InterviewAttemptUpload.attempt_id == attempt_id,
+                    InterviewAttemptUpload.upload_id == upload_id,
+                )
+            )
+            if completed is not None:
+                if completed.request_hash != request_hash:
+                    self._discard_audio_stage(
+                        staged, code="coach_audio_upload_idempotency_conflict"
+                    )
+                if (
+                    completed.result_state == "completed"
+                    and attempt.audio_uri == completed.storage_uri
+                    and Path(completed.storage_uri) == destination
+                    and owned_audio_path_is_file(destination)
+                ):
+                    try:
+                        cleanup_staged_audio(staged)
+                    except CoachMediaError:
+                        raise ConversationalRepositoryError(
+                            "coach_attempt_upload_conflict"
+                        ) from None
+                    return _audio_upload_read(
+                        completed, attempt.audio_retention_state
+                    )
+            self._discard_audio_stage(staged, code="coach_attempt_upload_conflict")
+
+        retention_state = (
+            "retained"
+            if attempt.audio_retention_policy == "retain_until_deleted"
+            else "temporary"
+        )
+        claim_id = str(uuid.uuid4())
+        try:
+            inserted = await self._session.execute(
+                sqlite_insert(InterviewAttemptUpload)
+                .values(
+                    id=claim_id,
+                    attempt_id=attempt_id,
+                    upload_id=upload_id,
+                    request_hash=request_hash,
+                    content_sha256=declared_sha256,
+                    byte_size=staged.byte_size,
+                    mime_type=staged.mime_type,
+                    storage_uri=str(destination),
+                    result_state="pending",
+                )
+                .on_conflict_do_nothing(index_elements=("attempt_id", "upload_id"))
+                .returning(InterviewAttemptUpload.id)
+            )
+            won_claim = inserted.scalar_one_or_none() is not None
+            if not won_claim:
+                await self._session.rollback()
+                duplicate = None
+                for _ in range(5):
+                    duplicate = await self._session.scalar(
+                        select(InterviewAttemptUpload).where(
+                            InterviewAttemptUpload.attempt_id == attempt_id,
+                            InterviewAttemptUpload.upload_id == upload_id,
+                        )
+                    )
+                    if duplicate is not None:
+                        break
+                    await self._session.rollback()
+                    await asyncio.sleep(0)
+                if duplicate is None or duplicate.result_state != "completed":
+                    self._discard_audio_stage(
+                        staged, code="coach_attempt_upload_conflict"
+                    )
+                if duplicate.request_hash != request_hash:
+                    self._discard_audio_stage(
+                        staged, code="coach_audio_upload_idempotency_conflict"
+                    )
+                replay_attempt = await self._session.get(
+                    SessionRecording, attempt_id
+                )
+                if (
+                    replay_attempt is None
+                    or replay_attempt.session_id != session_id
+                    or replay_attempt.audio_uri != duplicate.storage_uri
+                    or Path(duplicate.storage_uri) != destination
+                    or not owned_audio_path_is_file(destination)
+                ):
+                    self._discard_audio_stage(
+                        staged, code="coach_attempt_upload_conflict"
+                    )
+                try:
+                    cleanup_staged_audio(staged)
+                except CoachMediaError:
+                    raise ConversationalRepositoryError(
+                        "coach_attempt_upload_conflict"
+                    ) from None
+                return _audio_upload_read(
+                    duplicate, replay_attempt.audio_retention_state
+                )
+            changed = await self._session.execute(
+                update(SessionRecording)
+                .where(
+                    SessionRecording.id == attempt_id,
+                    SessionRecording.session_id == session_id,
+                    SessionRecording.recording_type == "audio",
+                    SessionRecording.attempt_state == "draft",
+                    SessionRecording.audio_uri.is_(None),
+                    SessionRecording.audio_content_hash.is_(None),
+                )
+                .values(
+                    attempt_state="uploaded",
+                    attempt_version=SessionRecording.attempt_version + 1,
+                    audio_uri=str(destination),
+                    audio_content_hash=declared_sha256,
+                    audio_retention_state=retention_state,
+                )
+            )
+            if changed.rowcount != 1:
+                raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+            await self._session.flush()
+            self._audio_publication = publish_staged_audio(staged, destination)
+            completed = await self._session.execute(
+                update(InterviewAttemptUpload)
+                .where(
+                    InterviewAttemptUpload.id == claim_id,
+                    InterviewAttemptUpload.attempt_id == attempt_id,
+                    InterviewAttemptUpload.upload_id == upload_id,
+                    InterviewAttemptUpload.request_hash == request_hash,
+                    InterviewAttemptUpload.result_state == "pending",
+                )
+                .values(result_state="completed", completed_at=datetime.utcnow())
+            )
+            if completed.rowcount != 1:
+                raise ConversationalRepositoryError("coach_attempt_upload_conflict")
+            await self._session.flush()
+            row = await self._session.get(InterviewAttemptUpload, claim_id)
+            assert row is not None
+            return _audio_upload_read(row, retention_state)
+        except BaseException as error:
+            rollback_error: BaseException | None = None
+            try:
+                await self._rollback_audio_upload()
+            except BaseException as failure:
+                rollback_error = failure
+            cleanup_error: BaseException | None = None
+            try:
+                cleanup_staged_audio(staged)
+            except BaseException as failure:
+                cleanup_error = failure
+            if rollback_error is not None and not isinstance(
+                rollback_error, Exception
+            ):
+                raise rollback_error
+            if cleanup_error is not None and not isinstance(cleanup_error, Exception):
+                raise cleanup_error
+            if not isinstance(error, Exception):
+                raise
+            if (
+                isinstance(error, ConversationalRepositoryError)
+                and rollback_error is None
+                and cleanup_error is None
+            ):
+                raise
+            raise ConversationalRepositoryError(
+                "coach_attempt_upload_conflict"
+            ) from None
 
     async def abandon_conversational_session(self, *, session_id: str) -> bool:
         session_row = await self._session.get(InterviewSession, session_id)
@@ -1294,6 +1866,551 @@ class ConversationalSessionRepository:
         await self._session.flush()
         return row
 
+    async def claim_retry_processing(
+        self,
+        *,
+        recording_id: str,
+        job_id: str,
+        deadline: datetime,
+        expected_session_state_version: int,
+    ) -> AttemptProcessingClaim | None:
+        """Atomically consume one manual retry and create its complete stage graph."""
+        from ..services.coach_attempt_pipeline import (
+            AttemptPipelineError,
+            select_restart_stage,
+        )
+
+        attempt = await self._session.get(SessionRecording, recording_id)
+        if attempt is None or attempt.attempt_state != "recoverable_error":
+            return None
+        session = await self._session.get(InterviewSession, attempt.session_id)
+        recorded_error = (
+            ERROR_REGISTRY.get(session.recoverable_error_code)
+            if session is not None and session.recoverable_error_code is not None
+            else None
+        )
+        if (
+            session is None
+            or session.experience_version != "conversational_v1"
+            or session.status != "active"
+            or session.conversation_state != "recoverable_error"
+            or session.recoverable_error_scope != "attempt_processing"
+            or session.state_version != expected_session_state_version
+            or session.deletion_state != "not_requested"
+            or session.active_recording_id != attempt.id
+            or session.active_question_id != attempt.question_id
+            or attempt.async_job_id is not None
+            or recorded_error is None
+        ):
+            return None
+        if attempt.processing_retry_count >= attempt.processing_retry_limit:
+            raise ConversationalRepositoryError(
+                "coach_attempt_retry_budget_exhausted"
+            )
+        retry_source = (
+            await self._session.get(
+                InterviewTranscriptVersion, attempt.current_transcript_version_id
+            )
+            if attempt.current_transcript_version_id is not None
+            else None
+        )
+        if retry_source is None and (
+            attempt.recording_type == "text"
+            or not attempt.audio_uri
+            or not attempt.audio_content_hash
+        ):
+            raise ConversationalRepositoryError(
+                "coach_attempt_retry_source_unavailable"
+            )
+        from ..services.coach_processing_snapshot import (
+            load_retryable_processing_snapshot,
+        )
+
+        retry_snapshot = await load_retryable_processing_snapshot(
+            self._session,
+            session=session,
+            attempt=attempt,
+        )
+        if retry_snapshot is None:
+            return None
+        prior_evaluation = retry_snapshot.evaluation
+        prior_stages = list(retry_snapshot.stages)
+        partition = await partition_current_processing_stages(
+            self._session,
+            attempt=attempt,
+            evaluation=prior_evaluation,
+            stages=prior_stages,
+            processing_job_id=prior_evaluation.async_job_id or "",
+        )
+        if partition is None:
+            return None
+        processing_prior_stages, independent_cleanup = partition
+        if (
+            independent_cleanup is not None
+            and independent_cleanup.stage_state == "running"
+        ):
+            return None
+        job = await self._session.scalar(
+            select(AsyncJob).where(
+                AsyncJob.id == job_id,
+                AsyncJob.type == "coach_attempt_processing",
+                AsyncJob.status == "pending",
+            )
+        )
+        if job is None:
+            return None
+        prior_claim = (prior_evaluation.diagnostics_json or {}).get(
+            "processing_claim"
+        )
+        if (
+            not isinstance(prior_claim, dict)
+            or prior_claim.get("processing_generation")
+            != attempt.processing_generation
+            or prior_claim.get("processing_contract_version")
+            != "coach_processing_v1"
+            or prior_claim.get("source_audio_content_hash")
+            != attempt.audio_content_hash
+            or prior_evaluation.evaluation_contract_version != RUBRIC_CONTRACT
+            or prior_evaluation.evidence_contract_version
+            != EVIDENCE_GROUNDING_CONTRACT
+            or prior_evaluation.follow_up_contract_version != FOLLOW_UP_CONTRACT
+        ):
+            return None
+        prior_by_name = {stage.stage_name: stage for stage in prior_stages}
+        if (
+            len(prior_stages) != len(_PROCESSING_STAGE_ORDER)
+            or set(prior_by_name) != set(_PROCESSING_STAGE_ORDER)
+            or any(
+                stage.stage_state in {"pending", "running"}
+                for stage in processing_prior_stages
+            )
+            or not any(
+                stage.stage_state == "failed_retryable"
+                for stage in processing_prior_stages
+            )
+        ):
+            return None
+
+        transcript = (
+            await self._session.get(
+                InterviewTranscriptVersion, attempt.current_transcript_version_id
+            )
+            if attempt.current_transcript_version_id is not None
+            else None
+        )
+        if transcript is None and (
+            attempt.recording_type == "text"
+            or not attempt.audio_uri
+            or not attempt.audio_content_hash
+        ):
+            raise ConversationalRepositoryError(
+                "coach_attempt_retry_source_unavailable"
+            )
+        if transcript is not None and (
+            transcript.recording_id != attempt.id
+            or not transcript.content_hash
+            or prior_evaluation.transcript_version_id != transcript.id
+        ):
+            return None
+        expected_prior_diagnostics = {
+            stage_name: _stage_immutable_diagnostics(
+                stage_name=stage_name,
+                audio_content_hash=attempt.audio_content_hash,
+                transcript_version_id=(transcript.id if transcript is not None else None),
+                transcript_content_hash=(
+                    transcript.content_hash if transcript is not None else None
+                ),
+                evaluation_contract_version=prior_evaluation.evaluation_contract_version,
+                evidence_contract_version=prior_evaluation.evidence_contract_version,
+                follow_up_contract_version=prior_evaluation.follow_up_contract_version,
+            )
+            for stage_name in _PROCESSING_STAGE_ORDER
+        }
+        try:
+            prior_deadline = datetime.fromisoformat(prior_claim["job_deadline_at"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        prior_claim_token = prior_claim.get("claim_token")
+        if (
+            prior_evaluation.async_job_id is None
+            or not isinstance(prior_claim_token, str)
+            or not prior_claim_token
+            or any(
+                stage.job_id != prior_evaluation.async_job_id
+                or stage.claim_token != prior_claim_token
+                or stage.job_deadline_at != prior_deadline
+                or stage.source_transcript_version_id
+                != (
+                    transcript.id
+                    if transcript is not None
+                    and stage.stage_name in _TRANSCRIPT_BOUND_STAGES
+                    else None
+                )
+                for stage in processing_prior_stages
+            )
+        ):
+            return None
+
+        async def reuse_chain_is_valid(
+            stage: InterviewAttemptStage,
+            evaluation: InterviewAttemptEvaluation,
+            visited: set[str],
+        ) -> bool:
+            from ..services.coach_processing_snapshot import (
+                reused_stage_lineage_is_valid,
+            )
+
+            result_transcript = (
+                await self._session.get(
+                    InterviewTranscriptVersion, evaluation.transcript_version_id
+                )
+                if evaluation.transcript_version_id is not None
+                else None
+            )
+            return await reused_stage_lineage_is_valid(
+                self._session,
+                attempt=attempt,
+                evaluation=evaluation,
+                stage=stage,
+                result_transcript=result_transcript,
+                visited=frozenset(visited),
+            )
+
+        valid_prior_result: dict[str, bool] = {}
+        for stage_name, stage in prior_by_name.items():
+            if stage is independent_cleanup:
+                valid_prior_result[stage_name] = True
+                continue
+            reuse_is_valid = stage.stage_state != "reused" or await reuse_chain_is_valid(
+                stage, prior_evaluation, set()
+            )
+            if stage.stage_state == "reused" and not reuse_is_valid:
+                return None
+            valid_prior_result[stage_name] = (
+                stage.diagnostics_json == expected_prior_diagnostics[stage_name]
+                and reuse_is_valid
+            )
+        effective_prior_states = {
+            stage_name: (
+                "not_started"
+                if stage.stage_state in {"completed", "reused"}
+                and not valid_prior_result[stage_name]
+                else stage.stage_state
+            )
+            for stage_name, stage in prior_by_name.items()
+        }
+        audio_transcript_is_usable = bool(
+            transcript is not None
+            and prior_by_name["transcription"].stage_state
+            in {"completed", "reused"}
+            and valid_prior_result["transcription"]
+        )
+        has_audio_source = bool(
+            attempt.audio_uri
+            and attempt.audio_content_hash
+            and valid_prior_result["audio_persist"]
+        )
+        try:
+            restart_stage = select_restart_stage(
+                effective_prior_states,
+                {
+                    "recording_type": attempt.recording_type,
+                    "has_usable_transcript": (
+                        transcript is not None
+                        if attempt.recording_type == "text"
+                        else audio_transcript_is_usable
+                    ),
+                    "has_audio_source": has_audio_source,
+                },
+            )
+        except AttemptPipelineError as error:
+            raise ConversationalRepositoryError(error.code) from error
+        if restart_stage in {"transcription", "speech_analysis"}:
+            upload_exists = await self._session.scalar(
+                select(InterviewAttemptUpload.id).where(
+                    InterviewAttemptUpload.attempt_id == attempt.id,
+                    InterviewAttemptUpload.result_state == "completed",
+                    InterviewAttemptUpload.content_sha256
+                    == attempt.audio_content_hash,
+                    InterviewAttemptUpload.storage_uri == attempt.audio_uri,
+                )
+            )
+            if upload_exists is None:
+                raise ConversationalRepositoryError(
+                    "coach_attempt_retry_source_unavailable"
+                )
+            try:
+                with open_verified_audio_read_lease(
+                    Path(settings.HATCH_COACH_MEDIA_ROOT),
+                    Path(attempt.audio_uri),
+                    attempt.audio_content_hash,
+                ):
+                    pass
+            except CoachMediaError:
+                raise ConversationalRepositoryError(
+                    "coach_attempt_retry_source_unavailable"
+                ) from None
+
+        invalidated = {
+            "transcription": {
+                "transcription",
+                "content_evaluation",
+                "evidence_grounding",
+                "follow_up_decision",
+                "coaching_enrichment",
+            },
+            "speech_analysis": {"speech_analysis"},
+            "content_evaluation": {
+                "content_evaluation",
+                "evidence_grounding",
+                "follow_up_decision",
+                "coaching_enrichment",
+            },
+            "evidence_grounding": {
+                "evidence_grounding",
+                "follow_up_decision",
+            },
+            "follow_up_decision": {"follow_up_decision"},
+            "coaching_enrichment": {"coaching_enrichment"},
+        }[restart_stage]
+        next_generation = attempt.processing_generation + 1
+        next_evaluation_version = int(
+            await self._session.scalar(
+                select(func.max(InterviewAttemptEvaluation.version_number)).where(
+                    InterviewAttemptEvaluation.recording_id == attempt.id
+                )
+            )
+            or 0
+        ) + 1
+        claim_token = str(uuid.uuid4())
+        source_transcript_id = transcript.id if transcript is not None else None
+        claim_snapshot = {
+            "processing_generation": next_generation,
+            "job_deadline_at": deadline.isoformat(),
+            "source_audio_content_hash": attempt.audio_content_hash,
+            "source_transcript_version_id": source_transcript_id,
+            "expected_session_state_version": expected_session_state_version,
+            "processing_contract_version": "coach_processing_v1",
+            "claim_token": claim_token,
+        }
+        now = datetime.utcnow()
+        try:
+            async with self._session.begin_nested():
+                session_change = await self._session.execute(
+                    update(InterviewSession)
+                    .where(
+                        InterviewSession.id == session.id,
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.status == "active",
+                        InterviewSession.conversation_state == "recoverable_error",
+                        InterviewSession.recoverable_error_scope
+                        == "attempt_processing",
+                        InterviewSession.state_version
+                        == expected_session_state_version,
+                        InterviewSession.deletion_state == "not_requested",
+                        InterviewSession.active_question_id == attempt.question_id,
+                        InterviewSession.active_recording_id == attempt.id,
+                    )
+                    .values(
+                        conversation_state="processing_answer",
+                        recoverable_error_scope=None,
+                        recoverable_error_code=None,
+                        recoverable_error_context_json=None,
+                        state_version=InterviewSession.state_version + 1,
+                        last_activity_at=now,
+                    )
+                )
+                attempt_change = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == attempt.id,
+                        SessionRecording.session_id == session.id,
+                        SessionRecording.question_id == attempt.question_id,
+                        SessionRecording.attempt_state == "recoverable_error",
+                        SessionRecording.async_job_id.is_(None),
+                        SessionRecording.processing_generation
+                        == attempt.processing_generation,
+                        SessionRecording.processing_retry_count
+                        == attempt.processing_retry_count,
+                        SessionRecording.processing_retry_count
+                        < SessionRecording.processing_retry_limit,
+                        SessionRecording.current_transcript_version_id
+                        == source_transcript_id,
+                        SessionRecording.current_evaluation_version_id
+                        == attempt.current_evaluation_version_id,
+                        SessionRecording.audio_content_hash
+                        == attempt.audio_content_hash,
+                        ~exists().where(
+                            InterviewAttemptStage.recording_id == attempt.id,
+                            InterviewAttemptStage.stage_name == "audio_cleanup",
+                            InterviewAttemptStage.stage_state == "running",
+                        ),
+                    )
+                    .values(
+                        processing_generation=next_generation,
+                        processing_retry_count=SessionRecording.processing_retry_count
+                        + 1,
+                        attempt_state="pending_processing",
+                        evaluation_state="pending",
+                        evaluation_json=None,
+                        async_job_id=job.id,
+                        processing_started_at=now,
+                        processing_completed_at=None,
+                    )
+                )
+                if session_change.rowcount != 1 or attempt_change.rowcount != 1:
+                    raise _StaleFinalisation
+                evaluation = InterviewAttemptEvaluation(
+                    id=str(uuid.uuid4()),
+                    recording_id=attempt.id,
+                    transcript_version_id=source_transcript_id,
+                    version_number=next_evaluation_version,
+                    state="pending",
+                    evaluation_contract_version=RUBRIC_CONTRACT,
+                    evidence_contract_version=EVIDENCE_GROUNDING_CONTRACT,
+                    follow_up_contract_version=FOLLOW_UP_CONTRACT,
+                    async_job_id=job.id,
+                    diagnostics_json={"processing_claim": claim_snapshot},
+                )
+                self._session.add(evaluation)
+                await self._session.flush()
+                for stage_name in _PROCESSING_STAGE_ORDER:
+                    prior_stage = prior_by_name[stage_name]
+                    if (
+                        stage_name == "audio_cleanup"
+                        and independent_cleanup is not None
+                    ):
+                        self._session.add(
+                            InterviewAttemptStage(
+                                id=str(uuid.uuid4()),
+                                recording_id=attempt.id,
+                                evaluation_version_id=evaluation.id,
+                                stage_name="audio_cleanup",
+                                stage_state=independent_cleanup.stage_state,
+                                job_id=independent_cleanup.job_id,
+                                claim_token=independent_cleanup.claim_token,
+                                expected_processing_generation=next_generation,
+                                source_transcript_version_id=None,
+                                reused_from_stage_id=None,
+                                job_deadline_at=independent_cleanup.job_deadline_at,
+                                started_at=independent_cleanup.started_at,
+                                completed_at=independent_cleanup.completed_at,
+                                attempt_count=independent_cleanup.attempt_count,
+                                repair_count=independent_cleanup.repair_count,
+                                last_error_code=independent_cleanup.last_error_code,
+                                diagnostics_json=_stage_immutable_diagnostics(
+                                    stage_name="audio_cleanup",
+                                    audio_content_hash=attempt.audio_content_hash,
+                                    transcript_version_id=source_transcript_id,
+                                    transcript_content_hash=(
+                                        transcript.content_hash
+                                        if transcript is not None
+                                        else None
+                                    ),
+                                    evaluation_contract_version=RUBRIC_CONTRACT,
+                                    evidence_contract_version=EVIDENCE_GROUNDING_CONTRACT,
+                                    follow_up_contract_version=FOLLOW_UP_CONTRACT,
+                                ),
+                            )
+                        )
+                        continue
+                    not_applicable = (
+                        attempt.recording_type == "text"
+                        and stage_name
+                        in {
+                            "audio_persist",
+                            "transcription",
+                            "speech_analysis",
+                            "audio_cleanup",
+                        }
+                    )
+                    reusable = (
+                        not not_applicable
+                        and stage_name not in invalidated
+                        and stage_name != "audio_cleanup"
+                        and prior_stage.stage_state in {"completed", "reused"}
+                        and valid_prior_result[stage_name]
+                    )
+                    preserved_terminal_speech = (
+                        stage_name == "speech_analysis"
+                        and stage_name not in invalidated
+                        and prior_stage.stage_state
+                        in {"unavailable", "failed_terminal"}
+                        and valid_prior_result[stage_name]
+                    )
+                    stage_state = (
+                        "not_applicable"
+                        if not_applicable
+                        else "reused"
+                        if reusable
+                        else prior_stage.stage_state
+                        if preserved_terminal_speech
+                        else "pending"
+                    )
+                    self._session.add(
+                        InterviewAttemptStage(
+                            id=str(uuid.uuid4()),
+                            recording_id=attempt.id,
+                            evaluation_version_id=evaluation.id,
+                            stage_name=stage_name,
+                            stage_state=stage_state,
+                            job_id=job.id,
+                            claim_token=claim_token,
+                            expected_processing_generation=next_generation,
+                            source_transcript_version_id=(
+                                source_transcript_id
+                                if stage_name in _TRANSCRIPT_BOUND_STAGES
+                                else None
+                            ),
+                            reused_from_stage_id=(
+                                prior_stage.id if reusable else None
+                            ),
+                            job_deadline_at=deadline,
+                            completed_at=(
+                                now
+                                if stage_state
+                                in {
+                                    "reused",
+                                    "not_applicable",
+                                    "unavailable",
+                                    "failed_terminal",
+                                }
+                                else None
+                            ),
+                            last_error_code=(
+                                prior_stage.last_error_code
+                                if preserved_terminal_speech
+                                else None
+                            ),
+                            diagnostics_json=_stage_immutable_diagnostics(
+                                stage_name=stage_name,
+                                audio_content_hash=attempt.audio_content_hash,
+                                transcript_version_id=source_transcript_id,
+                                transcript_content_hash=(
+                                    transcript.content_hash
+                                    if transcript is not None
+                                    else None
+                                ),
+                                evaluation_contract_version=RUBRIC_CONTRACT,
+                                evidence_contract_version=EVIDENCE_GROUNDING_CONTRACT,
+                                follow_up_contract_version=FOLLOW_UP_CONTRACT,
+                            ),
+                        )
+                    )
+                await self._session.flush()
+        except _StaleFinalisation:
+            return None
+        return AttemptProcessingClaim(
+            session_id=session.id,
+            question_id=attempt.question_id or "",
+            recording_id=attempt.id,
+            transcript_version_id=source_transcript_id,
+            evaluation_version_id=evaluation.id,
+            processing_generation=next_generation,
+            job_id=job.id,
+            deadline_at=deadline,
+        )
+
     async def claim_attempt_processing(
         self,
         *,
@@ -1539,6 +2656,119 @@ class ConversationalSessionRepository:
         )
         return AttemptProcessingSnapshot(claim, attempt.attempt_state, evaluation.state)
 
+    async def persist_attempt_stage_counters(
+        self,
+        *,
+        claim: AttemptProcessingClaim,
+        stage_name: str,
+        attempt_count: int,
+        repair_count: int,
+    ) -> bool:
+        """Conditionally persist internal work without spending manual retries."""
+        limits = _PROCESSING_STAGE_COUNTER_LIMITS.get(stage_name)
+        now = datetime.utcnow()
+        if (
+            limits is None
+            or type(attempt_count) is not int
+            or type(repair_count) is not int
+            or attempt_count < 1
+            or repair_count < 0
+            or attempt_count > limits[0]
+            or repair_count > limits[1]
+            or now > claim.deadline_at
+        ):
+            return False
+        fence = await self._get_attempt_processing_fence(claim)
+        if (
+            fence is None
+            or fence.processing_contract_version != "coach_processing_v1"
+        ):
+            return False
+        expected_source = (
+            claim.transcript_version_id
+            if stage_name in _TRANSCRIPT_BOUND_STAGES
+            else None
+        )
+        current_session = exists().where(
+            InterviewSession.id == claim.session_id,
+            InterviewSession.experience_version == "conversational_v1",
+            InterviewSession.status == "active",
+            InterviewSession.conversation_state == "processing_answer",
+            InterviewSession.deletion_state == "not_requested",
+            InterviewSession.active_question_id == claim.question_id,
+            InterviewSession.active_recording_id == claim.recording_id,
+        )
+        current_attempt = exists().where(
+            SessionRecording.id == claim.recording_id,
+            SessionRecording.session_id == claim.session_id,
+            SessionRecording.question_id == claim.question_id,
+            SessionRecording.async_job_id == claim.job_id,
+            SessionRecording.processing_generation == claim.processing_generation,
+            SessionRecording.attempt_state == "pending_processing",
+            SessionRecording.evaluation_state == "pending",
+            SessionRecording.audio_content_hash == fence.expected_audio_content_hash,
+            SessionRecording.current_transcript_version_id
+            == claim.transcript_version_id,
+        )
+        current_evaluation = exists().where(
+            InterviewAttemptEvaluation.id == claim.evaluation_version_id,
+            InterviewAttemptEvaluation.recording_id == claim.recording_id,
+            InterviewAttemptEvaluation.async_job_id == claim.job_id,
+            InterviewAttemptEvaluation.transcript_version_id
+            == claim.transcript_version_id,
+            InterviewAttemptEvaluation.state == "pending",
+            InterviewAttemptEvaluation.diagnostics_json["processing_claim"]
+            ["processing_generation"].as_integer()
+            == claim.processing_generation,
+            InterviewAttemptEvaluation.diagnostics_json["processing_claim"]
+            ["job_deadline_at"].as_string()
+            == claim.deadline_at.isoformat(),
+            InterviewAttemptEvaluation.diagnostics_json["processing_claim"]
+            ["processing_contract_version"].as_string()
+            == fence.processing_contract_version,
+            InterviewAttemptEvaluation.diagnostics_json["processing_claim"]
+            ["claim_token"].as_string()
+            == fence.claim_token,
+        )
+        current_job = exists().where(
+            AsyncJob.id == claim.job_id,
+            AsyncJob.type == "coach_attempt_processing",
+            AsyncJob.status.in_(("pending", "running")),
+        )
+        changed = await self._session.execute(
+            update(InterviewAttemptStage)
+            .where(
+                InterviewAttemptStage.recording_id == claim.recording_id,
+                InterviewAttemptStage.evaluation_version_id
+                == claim.evaluation_version_id,
+                InterviewAttemptStage.stage_name == stage_name,
+                InterviewAttemptStage.stage_state.in_(("pending", "running")),
+                InterviewAttemptStage.job_id == claim.job_id,
+                InterviewAttemptStage.claim_token == fence.claim_token,
+                InterviewAttemptStage.expected_processing_generation
+                == claim.processing_generation,
+                InterviewAttemptStage.source_transcript_version_id
+                == expected_source,
+                InterviewAttemptStage.job_deadline_at == claim.deadline_at,
+                InterviewAttemptStage.job_deadline_at >= now,
+                InterviewAttemptStage.attempt_count <= attempt_count,
+                InterviewAttemptStage.repair_count <= repair_count,
+                current_session,
+                current_attempt,
+                current_evaluation,
+                current_job,
+            )
+            .values(
+                attempt_count=attempt_count,
+                repair_count=repair_count,
+                started_at=func.coalesce(
+                    InterviewAttemptStage.started_at,
+                    now,
+                ),
+            )
+        )
+        return changed.rowcount == 1
+
     async def finalise_attempt_processing(
         self, *, claim: AttemptProcessingClaim, result: AttemptProcessingResult
     ) -> bool:
@@ -1615,13 +2845,29 @@ class ConversationalSessionRepository:
                             InterviewAttemptStage.recording_id == claim.recording_id,
                             InterviewAttemptStage.evaluation_version_id
                             == claim.evaluation_version_id,
-                            InterviewAttemptStage.job_id == claim.job_id,
-                            InterviewAttemptStage.expected_processing_generation
-                            == claim.processing_generation,
                         )
                     )
                 ).all()
-                stage_by_name = {stage.stage_name: stage for stage in stages}
+                if attempt.audio_retention_state in {
+                    "delete_pending",
+                    "deleted",
+                    "delete_failed",
+                } and (
+                    len(stages) != len(_PROCESSING_STAGE_ORDER)
+                    or {stage.stage_name for stage in stages}
+                    != set(_PROCESSING_STAGE_ORDER)
+                ):
+                    raise _StaleFinalisation
+                partition = await partition_current_processing_stages(
+                    self._session,
+                    attempt=attempt,
+                    evaluation=evaluation,
+                    stages=stages,
+                    processing_job_id=claim.job_id,
+                )
+                if partition is None:
+                    raise _StaleFinalisation
+                processing_stages, independent_cleanup = partition
                 terminal_states = {
                     "completed",
                     "reused",
@@ -1629,11 +2875,38 @@ class ConversationalSessionRepository:
                     "unavailable",
                     "failed_terminal",
                 }
-                if not stages or any(
-                    stage.stage_state not in terminal_states for stage in stages
+                terminal_processing_stages = (
+                    processing_stages
+                    if independent_cleanup is not None
+                    else tuple(
+                        stage
+                        for stage in stages
+                        if stage.job_id == claim.job_id
+                        and stage.expected_processing_generation
+                        == claim.processing_generation
+                    )
+                )
+                stage_by_name = {
+                    stage.stage_name: stage for stage in terminal_processing_stages
+                }
+                if not terminal_processing_stages or any(
+                    stage.stage_state not in terminal_states
+                    for stage in terminal_processing_stages
                 ):
                     raise _StaleFinalisation
-                if any(stage.job_deadline_at != claim.deadline_at for stage in stages):
+                if any(
+                    stage.job_deadline_at != claim.deadline_at
+                    or (
+                        independent_cleanup is not None
+                        and (
+                            stage.job_id != claim.job_id
+                            or stage.expected_processing_generation
+                            != claim.processing_generation
+                            or stage.claim_token != fence.claim_token
+                        )
+                    )
+                    for stage in terminal_processing_stages
+                ):
                     raise _StaleFinalisation
                 transcript_bound_stages = {
                     "content_evaluation",
@@ -1645,22 +2918,45 @@ class ConversationalSessionRepository:
                     stage.stage_name in transcript_bound_stages
                     and stage.source_transcript_version_id
                     != result.transcript_version_id
-                    for stage in stages
+                    for stage in terminal_processing_stages
                 ):
                     raise _StaleFinalisation
 
+                from ..services.coach_processing_snapshot import (
+                    ProcessingSnapshot,
+                    current_processing_graph_reuse_is_valid,
+                )
+
+                if not await current_processing_graph_reuse_is_valid(
+                    self._session,
+                    attempt=attempt,
+                    evaluation=evaluation,
+                    stages=terminal_processing_stages,
+                    snapshot=ProcessingSnapshot(
+                        claim=claim_snapshot,
+                        deadline=claim.deadline_at,
+                        transcript_version_id=evaluation.transcript_version_id,
+                    ),
+                ):
+                    raise _StaleFinalisation
+                audio_retry_reuse = bool(
+                    attempt.recording_type == "audio"
+                    and fence.source_transcript_version_id is not None
+                )
                 transcript = None
                 if result.transcript_version_id is not None:
-                    transcript = await self._session.scalar(
-                        select(InterviewTranscriptVersion).where(
+                    transcript_query = select(InterviewTranscriptVersion).where(
                             InterviewTranscriptVersion.id
                             == result.transcript_version_id,
                             InterviewTranscriptVersion.recording_id
                             == claim.recording_id,
-                            InterviewTranscriptVersion.processing_generation
-                            == claim.processing_generation,
                         )
-                    )
+                    if not audio_retry_reuse:
+                        transcript_query = transcript_query.where(
+                            InterviewTranscriptVersion.processing_generation
+                            == claim.processing_generation
+                        )
+                    transcript = await self._session.scalar(transcript_query)
                 if result.evaluation_state == "completed":
                     if (
                         result.transcript_version_id is None
@@ -1672,7 +2968,10 @@ class ConversationalSessionRepository:
                         )
                         or (
                             attempt.recording_type == "audio"
-                            and fence.source_transcript_version_id is not None
+                            and (
+                                fence.source_transcript_version_id is not None
+                                and not audio_retry_reuse
+                            )
                         )
                         or attempt.current_transcript_version_id
                         != result.transcript_version_id
@@ -1745,9 +3044,13 @@ class ConversationalSessionRepository:
                             or (
                                 attempt.recording_type == "audio"
                                 and (
-                                    fence.source_transcript_version_id is not None
+                                    (
+                                        fence.source_transcript_version_id is not None
+                                        and not audio_retry_reuse
+                                    )
                                     or transcription is None
-                                    or transcription.stage_state != "completed"
+                                    or transcription.stage_state
+                                    not in {"completed", "reused"}
                                 )
                             )
                             or reason not in TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS
@@ -1882,6 +3185,191 @@ class ConversationalSessionRepository:
                     ),
                 )
                 await self._session.flush()
+        except _StaleFinalisation:
+            return False
+        return True
+
+    async def finalise_invalid_attempt_media(
+        self, *, claim: AttemptProcessingClaim, reason: str = "invalid_audio"
+    ) -> bool:
+        """Fence invalid media as a terminal, non-acceptable attempt."""
+        if reason != "invalid_audio":
+            return False
+        try:
+            async with self._session.begin_nested():
+                if datetime.utcnow() > claim.deadline_at:
+                    raise _StaleFinalisation
+                fence = await self._get_attempt_processing_fence(claim)
+                if (
+                    fence is None
+                    or fence.expected_audio_content_hash is None
+                    or fence.source_transcript_version_id is not None
+                    or fence.processing_contract_version != "coach_processing_v1"
+                ):
+                    raise _StaleFinalisation
+                evaluation = await self._session.get(
+                    InterviewAttemptEvaluation, claim.evaluation_version_id
+                )
+                expected_claim = {
+                    "processing_generation": claim.processing_generation,
+                    "job_deadline_at": claim.deadline_at.isoformat(),
+                    "source_audio_content_hash": fence.expected_audio_content_hash,
+                    "source_transcript_version_id": fence.source_transcript_version_id,
+                    "expected_session_state_version": fence.expected_session_state_version,
+                    "processing_contract_version": fence.processing_contract_version,
+                    "claim_token": fence.claim_token,
+                }
+                if (
+                    evaluation is None
+                    or (evaluation.diagnostics_json or {}).get("processing_claim") != expected_claim
+                ):
+                    raise _StaleFinalisation
+                stages = (
+                    await self._session.scalars(
+                        select(InterviewAttemptStage).where(
+                            InterviewAttemptStage.recording_id == claim.recording_id,
+                            InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id,
+                            InterviewAttemptStage.job_id == claim.job_id,
+                            InterviewAttemptStage.expected_processing_generation == claim.processing_generation,
+                            InterviewAttemptStage.claim_token == fence.claim_token,
+                            InterviewAttemptStage.job_deadline_at == claim.deadline_at,
+                        )
+                    )
+                ).all()
+                stage_by_name = {stage.stage_name: stage for stage in stages}
+                required_stages = {
+                    "audio_persist", "transcription", "speech_analysis",
+                    "content_evaluation", "evidence_grounding", "follow_up_decision",
+                    "coaching_enrichment", "audio_cleanup",
+                }
+                transcript_exists = await self._session.scalar(
+                    select(InterviewTranscriptVersion.id).where(
+                        InterviewTranscriptVersion.recording_id == claim.recording_id,
+                        InterviewTranscriptVersion.processing_generation
+                        == claim.processing_generation,
+                    )
+                )
+                downstream = {"content_evaluation", "evidence_grounding", "follow_up_decision", "coaching_enrichment"}
+                terminal = {"completed", "reused", "not_applicable", "unavailable", "failed_terminal"}
+                if (
+                    set(stage_by_name) != required_stages
+                    or len(stages) != 8
+                    or transcript_exists is not None
+                    or any(stage.stage_state not in terminal for stage in stages)
+                    or any(stage.source_transcript_version_id is not None for stage in stages)
+                    or stage_by_name["audio_persist"].stage_state != "unavailable"
+                    or stage_by_name["audio_persist"].last_error_code != reason
+                    or stage_by_name["transcription"].stage_state != "unavailable"
+                    or stage_by_name["transcription"].last_error_code != reason
+                    or any(stage_by_name[name].stage_state in {"completed", "reused"} for name in downstream)
+                ):
+                    raise _StaleFinalisation
+                prior_current_id = await self._session.scalar(
+                    select(SessionRecording.current_evaluation_version_id).where(
+                        SessionRecording.id == claim.recording_id,
+                        SessionRecording.session_id == claim.session_id,
+                        SessionRecording.question_id == claim.question_id,
+                        SessionRecording.async_job_id == claim.job_id,
+                        SessionRecording.processing_generation == claim.processing_generation,
+                        SessionRecording.attempt_state == "pending_processing",
+                    )
+                )
+                if (
+                    prior_current_id is not None
+                    and prior_current_id != claim.evaluation_version_id
+                ):
+                    superseded = await self._session.execute(
+                        update(InterviewAttemptEvaluation)
+                        .where(
+                            InterviewAttemptEvaluation.id == prior_current_id,
+                            InterviewAttemptEvaluation.recording_id == claim.recording_id,
+                            InterviewAttemptEvaluation.state.in_(
+                                ("completed", "unavailable", "invalid", "failed")
+                            ),
+                        )
+                        .values(state="superseded")
+                    )
+                    if superseded.rowcount != 1:
+                        raise _StaleFinalisation
+                attempt_change = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == claim.recording_id,
+                        SessionRecording.session_id == claim.session_id,
+                        SessionRecording.question_id == claim.question_id,
+                        SessionRecording.async_job_id == claim.job_id,
+                        SessionRecording.processing_generation == claim.processing_generation,
+                        SessionRecording.attempt_state == "pending_processing",
+                        SessionRecording.evaluation_state == "pending",
+                        SessionRecording.recording_type == "audio",
+                        SessionRecording.audio_content_hash == fence.expected_audio_content_hash,
+                        SessionRecording.current_transcript_version_id.is_(None),
+                    )
+                    .values(
+                        attempt_state="invalid", evaluation_state="invalid",
+                        evaluation_json=json.dumps({"answer_level": "not_assessed"}),
+                        current_evaluation_version_id=claim.evaluation_version_id,
+                        async_job_id=None, processing_completed_at=datetime.utcnow(),
+                    )
+                )
+                evaluation_change = await self._session.execute(
+                    update(InterviewAttemptEvaluation)
+                    .where(
+                        InterviewAttemptEvaluation.id == claim.evaluation_version_id,
+                        InterviewAttemptEvaluation.recording_id == claim.recording_id,
+                        InterviewAttemptEvaluation.async_job_id == claim.job_id,
+                        InterviewAttemptEvaluation.state == "pending",
+                        InterviewAttemptEvaluation.transcript_version_id.is_(None),
+                        InterviewAttemptEvaluation.diagnostics_json
+                        == {"processing_claim": expected_claim},
+                    )
+                    .values(
+                        state="invalid",
+                        diagnostics_json={
+                            "processing_claim": expected_claim,
+                            "result": {"reason": reason},
+                        },
+                        completed_at=datetime.utcnow(),
+                    )
+                )
+                session_change = await self._session.execute(
+                    update(InterviewSession)
+                    .where(
+                        InterviewSession.id == claim.session_id,
+                        InterviewSession.status == "active",
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.conversation_state == "processing_answer",
+                        InterviewSession.active_question_id == claim.question_id,
+                        InterviewSession.active_recording_id == claim.recording_id,
+                        InterviewSession.deletion_state == "not_requested",
+                    )
+                    .values(
+                        status="failed",
+                        conversation_state="failed",
+                        state_version=InterviewSession.state_version + 1,
+                        activity_version=InterviewSession.activity_version + 1,
+                        last_activity_at=datetime.utcnow(),
+                    )
+                    .returning(InterviewSession.state_version)
+                )
+                state_version = session_change.scalar_one_or_none()
+                if attempt_change.rowcount != 1 or evaluation_change.rowcount != 1 or state_version is None:
+                    raise _StaleFinalisation
+                await self.append_session_events(
+                    session_id=claim.session_id,
+                    events=(
+                        SessionEventInput(
+                            event_type="attempt_processing_failed",
+                            actor_type="worker",
+                            state_version=state_version,
+                            state_before="processing_answer",
+                            state_after="failed",
+                            question_id=claim.question_id,
+                            recording_id=claim.recording_id,
+                            payload_json={"state": "invalid", "reason": reason},
+                        ),
+                    ),
+                )
         except _StaleFinalisation:
             return False
         return True

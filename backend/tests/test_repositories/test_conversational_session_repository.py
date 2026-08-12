@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,7 @@ from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
+from app.models.async_job import AsyncJob
 from app.models.coach_session import (
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
@@ -32,6 +35,8 @@ from app.repositories.conversational_session_repository import (
     FollowUpAdmissionClaim,
     SessionEventInput,
     StaleVersion,
+    _audio_upload_request_hash,
+    _stage_immutable_diagnostics,
     canonical_request_hash,
 )
 from app.schemas.coach_conversation import ConversationCommandRequest
@@ -83,6 +88,18 @@ def test_canonical_hash_uses_semantic_defaults_and_domain_separation() -> None:
         )
         != expected
     )
+
+
+def test_audio_upload_request_hash_matches_the_v6_five_field_vector() -> None:
+    """Adding any non-V6 field would change this independently-derived digest."""
+    assert _audio_upload_request_hash(
+        session_id="session-not-in-v6-object",
+        attempt_id="attempt-fixed",
+        upload_id="upload-fixed",
+        content_sha256="0" * 64,
+        byte_size=12345,
+        mime_type="audio/webm",
+    ) == "4b74b5d10a8cf52f557e8c780c9b8a25e82e33965f259ecdb2658ab48bdaac6f"
 
 
 @pytest_asyncio.fixture
@@ -245,6 +262,51 @@ async def _processing_fence(db: AsyncSession, claim):
     )
     assert fence is not None
     return fence
+
+
+async def _seed_invalid_media_terminal_stages(
+    factory: async_sessionmaker[AsyncSession], claim
+) -> None:
+    async with factory.begin() as db:
+        fence = await _processing_fence(db, claim)
+        for stage_name in (
+            "audio_persist",
+            "transcription",
+            "speech_analysis",
+            "content_evaluation",
+            "evidence_grounding",
+            "follow_up_decision",
+            "coaching_enrichment",
+            "audio_cleanup",
+        ):
+            db.add(
+                InterviewAttemptStage(
+                    recording_id=claim.recording_id,
+                    evaluation_version_id=claim.evaluation_version_id,
+                    stage_name=stage_name,
+                    stage_state=(
+                        "unavailable"
+                        if stage_name
+                        in {"audio_persist", "transcription", "speech_analysis"}
+                        else "not_applicable"
+                    ),
+                    job_id=claim.job_id,
+                    claim_token=fence.claim_token,
+                    expected_processing_generation=claim.processing_generation,
+                    source_transcript_version_id=None,
+                    job_deadline_at=claim.deadline_at,
+                    completed_at=datetime.utcnow(),
+                    last_error_code=(
+                        "invalid_audio"
+                        if stage_name in {"audio_persist", "transcription"}
+                        else (
+                            "speech_analysis_unavailable"
+                            if stage_name == "speech_analysis"
+                            else None
+                        )
+                    ),
+                )
+            )
 
 
 async def _seed_terminal_attempt_for_acceptance(
@@ -1172,6 +1234,288 @@ async def test_version_creation_and_stale_processing_finaliser_are_fenced(
         assert attempt.current_evaluation_version_id == evaluation_id
         assert attempt.evaluation_state == "completed"
         assert session.conversation_state == "awaiting_next_action"
+
+
+@pytest.mark.asyncio
+async def test_stale_invalid_media_finaliser_rolls_back_every_authority_mutation(
+    repository_database,
+) -> None:
+    """A late session-fence miss must undo earlier attempt/evaluation updates."""
+    await _seed_session(repository_database)
+    claim, transcript_id = await _claim_attempt_for_finalisation(
+        repository_database,
+        recording_type="audio",
+        attempt_id="invalid-media-stale",
+        job_id="invalid-media-stale-job",
+    )
+    assert transcript_id is None
+    await _seed_invalid_media_terminal_stages(repository_database, claim)
+    async with repository_database.begin() as db:
+        session = await db.get(InterviewSession, claim.session_id)
+        assert session is not None
+        session.active_question_id = None
+
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        evaluation = await db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        session = await db.get(InterviewSession, claim.session_id)
+        assert attempt is not None and evaluation is not None and session is not None
+        before_attempt = (
+            attempt.attempt_state,
+            attempt.evaluation_state,
+            attempt.evaluation_json,
+            attempt.current_evaluation_version_id,
+            attempt.async_job_id,
+            attempt.processing_completed_at,
+        )
+        before_evaluation = (
+            evaluation.state,
+            evaluation.diagnostics_json,
+            evaluation.completed_at,
+        )
+        before_session = (
+            session.status,
+            session.conversation_state,
+            session.state_version,
+            session.activity_version,
+            session.event_version,
+        )
+        before_events = await db.scalar(select(func.count(InterviewSessionEvent.id)))
+
+    async with repository_database.begin() as db:
+        changed = await ConversationalSessionRepository(
+            db
+        ).finalise_invalid_attempt_media(claim=claim)
+        assert changed is False
+
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        evaluation = await db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        session = await db.get(InterviewSession, claim.session_id)
+        question = await db.get(SessionQuestion, claim.question_id)
+        assert (
+            attempt is not None
+            and evaluation is not None
+            and session is not None
+            and question is not None
+        )
+        assert (
+            attempt.attempt_state,
+            attempt.evaluation_state,
+            attempt.evaluation_json,
+            attempt.current_evaluation_version_id,
+            attempt.async_job_id,
+            attempt.processing_completed_at,
+        ) == before_attempt
+        assert (
+            evaluation.state,
+            evaluation.diagnostics_json,
+            evaluation.completed_at,
+        ) == before_evaluation
+        assert (
+            session.status,
+            session.conversation_state,
+            session.state_version,
+            session.activity_version,
+            session.event_version,
+        ) == before_session
+        assert question.accepted_recording_id is None
+        assert await db.scalar(select(func.count(InterviewSessionEvent.id))) == before_events
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "hidden_binding",
+    (
+        "orphan_transcript",
+        "audio_persist",
+        "transcription",
+        "speech_analysis",
+        "content_evaluation",
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+        "audio_cleanup",
+    ),
+)
+async def test_invalid_media_finaliser_rejects_every_hidden_transcript_binding(
+    repository_database, hidden_binding: str
+) -> None:
+    await _seed_session(repository_database)
+    claim, transcript_id = await _claim_attempt_for_finalisation(
+        repository_database,
+        recording_type="audio",
+        attempt_id=f"hidden-binding-{hidden_binding}",
+        job_id=f"hidden-binding-job-{hidden_binding}"[:36],
+    )
+    assert transcript_id is None
+    await _seed_invalid_media_terminal_stages(repository_database, claim)
+    async with repository_database.begin() as db:
+        if hidden_binding == "orphan_transcript":
+            db.add(
+                InterviewTranscriptVersion(
+                    id="orphan-invalid-media-transcript",
+                    recording_id=claim.recording_id,
+                    version_number=1,
+                    transcript="must not survive invalid-media authority",
+                    source="transcription",
+                    content_hash="a" * 64,
+                    created_by="system",
+                    processing_generation=claim.processing_generation,
+                )
+            )
+        else:
+            stage = await db.scalar(
+                select(InterviewAttemptStage).where(
+                    InterviewAttemptStage.evaluation_version_id
+                    == claim.evaluation_version_id,
+                    InterviewAttemptStage.stage_name == hidden_binding,
+                )
+            )
+            assert stage is not None
+            stage.source_transcript_version_id = "hidden-transcript"
+
+    async with repository_database.begin() as db:
+        changed = await ConversationalSessionRepository(
+            db
+        ).finalise_invalid_attempt_media(claim=claim)
+        assert changed is False
+
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        evaluation = await db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        session = await db.get(InterviewSession, claim.session_id)
+        question = await db.get(SessionQuestion, claim.question_id)
+        assert (
+            attempt is not None
+            and evaluation is not None
+            and session is not None
+            and question is not None
+        )
+        assert (
+            attempt.attempt_state,
+            attempt.evaluation_state,
+            attempt.current_transcript_version_id,
+            attempt.current_evaluation_version_id,
+            attempt.async_job_id,
+        ) == ("pending_processing", "pending", None, None, claim.job_id)
+        assert evaluation.state == "pending"
+        assert evaluation.transcript_version_id is None
+        assert session.status == "active"
+        assert session.conversation_state == "processing_answer"
+        assert question.accepted_recording_id is None
+        assert await db.scalar(select(func.count(InterviewSessionEvent.id))) == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_media_evaluation_claim_replacement_loses_write_fence(
+    repository_database,
+) -> None:
+    """Replacing diagnostics between pre-read and UPDATE must roll back authority."""
+    await _seed_session(repository_database)
+    claim, transcript_id = await _claim_attempt_for_finalisation(
+        repository_database,
+        recording_type="audio",
+        attempt_id="invalid-media-claim-race",
+        job_id="invalid-media-claim-race-job",
+    )
+    assert transcript_id is None
+    await _seed_invalid_media_terminal_stages(repository_database, claim)
+    async with repository_database.begin() as db:
+        db.add(
+            AsyncJob(
+                id=claim.job_id,
+                type="coach_attempt_processing",
+                status="pending",
+            )
+        )
+
+    replacement_injected = False
+
+    async with repository_database.begin() as db:
+        evaluation = await db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        assert evaluation is not None
+        original_diagnostics = evaluation.diagnostics_json
+
+        def replace_claim_before_conditional_update(
+            _connection,
+            cursor,
+            statement,
+            _parameters,
+            _context,
+            _executemany,
+        ) -> None:
+            nonlocal replacement_injected
+            if (
+                not replacement_injected
+                and statement.lstrip().startswith(
+                    "UPDATE interview_attempt_evaluations SET"
+                )
+            ):
+                replacement_injected = True
+                cursor.execute(
+                    "UPDATE interview_attempt_evaluations "
+                    "SET diagnostics_json = ? WHERE id = ?",
+                    (
+                        json.dumps(
+                            {"processing_claim": {"claim_token": "replacement"}}
+                        ),
+                        claim.evaluation_version_id,
+                    ),
+                )
+
+        event.listen(
+            db.sync_session.bind,
+            "before_cursor_execute",
+            replace_claim_before_conditional_update,
+        )
+        try:
+            changed = await ConversationalSessionRepository(
+                db
+            ).finalise_invalid_attempt_media(claim=claim)
+        finally:
+            event.remove(
+                db.sync_session.bind,
+                "before_cursor_execute",
+                replace_claim_before_conditional_update,
+            )
+        assert changed is False
+
+    assert replacement_injected is True
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        evaluation = await db.get(
+            InterviewAttemptEvaluation, claim.evaluation_version_id
+        )
+        session = await db.get(InterviewSession, claim.session_id)
+        job = await db.get(AsyncJob, claim.job_id)
+        assert (
+            attempt is not None
+            and evaluation is not None
+            and session is not None
+            and job is not None
+        )
+        assert (
+            attempt.attempt_state,
+            attempt.evaluation_state,
+            attempt.current_evaluation_version_id,
+            attempt.async_job_id,
+        ) == ("pending_processing", "pending", None, claim.job_id)
+        assert evaluation.state == "pending"
+        assert evaluation.diagnostics_json == original_diagnostics
+        assert evaluation.completed_at is None
+        assert session.status == "active"
+        assert session.conversation_state == "processing_answer"
+        assert job.status == "pending" and job.result_json is None
+        assert await db.scalar(select(func.count(InterviewSessionEvent.id))) == 0
 
 
 @pytest.mark.asyncio
@@ -2398,6 +2742,250 @@ async def test_processing_retry_claim_requires_attempt_scoped_recoverable_parent
             deadline=datetime.utcnow() + timedelta(minutes=5),
         )
         assert (claim is not None) is expected_claimed
+
+
+@pytest.mark.asyncio
+async def test_retry_claim_atomically_creates_one_fenced_generation(
+    repository_database,
+) -> None:
+    await _seed_session(repository_database)
+    deadline = datetime.utcnow() + timedelta(minutes=15)
+    async with repository_database.begin() as db:
+        session = await db.get(InterviewSession, "session-1")
+        assert session is not None
+        session.conversation_state = "recoverable_error"
+        session.recoverable_error_scope = "attempt_processing"
+        session.recoverable_error_code = "coach_evaluation_unavailable"
+        attempt = SessionRecording(
+            id="attempt-atomic-retry",
+            session_id=session.id,
+            question_id="question-1",
+            recording_type="text",
+            attempt_number=1,
+            attempt_kind="primary",
+            attempt_state="recoverable_error",
+            evaluation_state="failed",
+            processing_generation=4,
+            processing_retry_count=0,
+            processing_retry_limit=2,
+            audio_retention_policy="delete_after_processing",
+            audio_retention_state="not_applicable",
+            client_attempt_id="client-atomic-retry",
+        )
+        db.add(attempt)
+        await db.flush()
+        transcript = InterviewTranscriptVersion(
+            recording_id=attempt.id,
+            version_number=1,
+            transcript="An immutable typed answer.",
+            source="candidate_text",
+            content_hash="typed-transcript-hash",
+            created_by="candidate",
+            processing_generation=4,
+        )
+        db.add(transcript)
+        await db.flush()
+        attempt.current_transcript_version_id = transcript.id
+        prior_deadline = datetime.utcnow() - timedelta(seconds=1)
+        prior = InterviewAttemptEvaluation(
+            recording_id=attempt.id,
+            transcript_version_id=transcript.id,
+            version_number=1,
+            state="failed",
+            evaluation_contract_version="coach_conversational_rubric_v1",
+            evidence_contract_version="coach_evidence_grounding_v1",
+            follow_up_contract_version="coach_follow_up_v1",
+            async_job_id="prior-atomic-job",
+            diagnostics_json={
+                "processing_claim": {
+                    "processing_generation": 4,
+                    "job_deadline_at": prior_deadline.isoformat(),
+                    "source_audio_content_hash": None,
+                    "source_transcript_version_id": transcript.id,
+                    "expected_session_state_version": session.state_version - 1,
+                    "processing_contract_version": "coach_processing_v1",
+                    "claim_token": "prior-atomic-token",
+                },
+                "result": {"reason_code": "coach_evaluation_unavailable"},
+            },
+        )
+        db.add(prior)
+        await db.flush()
+        attempt.current_evaluation_version_id = prior.id
+        prior_states = {
+            "audio_persist": "not_applicable",
+            "transcription": "not_applicable",
+            "speech_analysis": "not_applicable",
+            "content_evaluation": "failed_retryable",
+            "evidence_grounding": "failed_retryable",
+            "follow_up_decision": "failed_retryable",
+            "coaching_enrichment": "failed_retryable",
+            "audio_cleanup": "not_applicable",
+        }
+        for stage_name, stage_state in prior_states.items():
+            db.add(
+                InterviewAttemptStage(
+                    recording_id=attempt.id,
+                    evaluation_version_id=prior.id,
+                    stage_name=stage_name,
+                        stage_state=stage_state,
+                        attempt_count=1,
+                        job_id="prior-atomic-job",
+                        claim_token="prior-atomic-token",
+                        expected_processing_generation=4,
+                    source_transcript_version_id=(
+                        transcript.id
+                        if stage_name
+                        in {
+                            "content_evaluation",
+                            "evidence_grounding",
+                            "follow_up_decision",
+                            "coaching_enrichment",
+                        }
+                        else None
+                        ),
+                        job_deadline_at=prior_deadline,
+                        completed_at=datetime.utcnow(),
+                    last_error_code=(
+                        "coach_evaluation_unavailable"
+                            if stage_state == "failed_retryable"
+                            else None
+                        ),
+                        diagnostics_json=_stage_immutable_diagnostics(
+                            stage_name=stage_name,
+                            audio_content_hash=None,
+                            transcript_version_id=transcript.id,
+                            transcript_content_hash=transcript.content_hash,
+                            evaluation_contract_version=(
+                                "coach_conversational_rubric_v1"
+                            ),
+                            evidence_contract_version=(
+                                "coach_evidence_grounding_v1"
+                            ),
+                            follow_up_contract_version="coach_follow_up_v1",
+                        ),
+                    )
+            )
+        job = AsyncJob(type="coach_attempt_processing", status="pending")
+        db.add(job)
+        await db.flush()
+        session.active_recording_id = attempt.id
+
+    async with repository_database.begin() as db:
+        repository = ConversationalSessionRepository(db)
+        claim = await repository.claim_retry_processing(
+            recording_id="attempt-atomic-retry",
+            job_id=job.id,
+            deadline=deadline,
+            expected_session_state_version=4,
+        )
+        assert claim is not None
+
+    async with repository_database() as db:
+        attempt = await db.get(SessionRecording, "attempt-atomic-retry")
+        session = await db.get(InterviewSession, "session-1")
+        assert attempt is not None and session is not None
+        assert (attempt.processing_generation, attempt.processing_retry_count) == (5, 1)
+        assert attempt.async_job_id == job.id
+        assert session.conversation_state == "processing_answer"
+        evaluations = list(
+            (
+                await db.scalars(
+                    select(InterviewAttemptEvaluation)
+                    .where(InterviewAttemptEvaluation.recording_id == attempt.id)
+                    .order_by(InterviewAttemptEvaluation.version_number)
+                )
+            ).all()
+        )
+        assert len(evaluations) == 2 and evaluations[-1].state == "pending"
+        stages = list(
+            (
+                await db.scalars(
+                    select(InterviewAttemptStage).where(
+                        InterviewAttemptStage.evaluation_version_id
+                        == evaluations[-1].id
+                    )
+                )
+            ).all()
+        )
+        assert len(stages) == 8
+        assert {stage.stage_name: stage.stage_state for stage in stages} == {
+            "audio_persist": "not_applicable",
+            "transcription": "not_applicable",
+            "speech_analysis": "not_applicable",
+            "content_evaluation": "pending",
+            "evidence_grounding": "pending",
+            "follow_up_decision": "pending",
+            "coaching_enrichment": "pending",
+            "audio_cleanup": "not_applicable",
+        }
+
+
+@pytest.mark.asyncio
+async def test_stage_counters_persist_only_under_current_processing_claim(
+    repository_database,
+) -> None:
+    """A stale internal retry must not mutate counters or manual retry budget."""
+    await _seed_session(repository_database)
+    claim, _ = await _claim_attempt_for_finalisation(
+        repository_database,
+        recording_type="text",
+        attempt_id="attempt-stage-counters",
+        job_id="job-stage-counters",
+    )
+
+    async with repository_database.begin() as db:
+        repository = ConversationalSessionRepository(db)
+        fence = await _processing_fence(db, claim)
+        db.add(
+            AsyncJob(
+                id=claim.job_id,
+                type="coach_attempt_processing",
+                status="running",
+            )
+        )
+        db.add(
+            InterviewAttemptStage(
+                recording_id=claim.recording_id,
+                evaluation_version_id=claim.evaluation_version_id,
+                stage_name="content_evaluation",
+                stage_state="pending",
+                job_id=claim.job_id,
+                claim_token=fence.claim_token,
+                expected_processing_generation=claim.processing_generation,
+                source_transcript_version_id=claim.transcript_version_id,
+                job_deadline_at=claim.deadline_at,
+            )
+        )
+        await db.flush()
+        assert await repository.persist_attempt_stage_counters(
+            claim=claim,
+            stage_name="content_evaluation",
+            attempt_count=1,
+            repair_count=0,
+        ) is True
+        assert await repository.persist_attempt_stage_counters(
+            claim=replace(
+                claim, processing_generation=claim.processing_generation + 1
+            ),
+            stage_name="content_evaluation",
+            attempt_count=2,
+            repair_count=1,
+        ) is False
+
+    async with repository_database() as db:
+        stage = await db.scalar(
+            select(InterviewAttemptStage).where(
+                InterviewAttemptStage.recording_id == claim.recording_id,
+                InterviewAttemptStage.evaluation_version_id
+                == claim.evaluation_version_id,
+                InterviewAttemptStage.stage_name == "content_evaluation",
+            )
+        )
+        attempt = await db.get(SessionRecording, claim.recording_id)
+        assert stage is not None and attempt is not None
+        assert (stage.attempt_count, stage.repair_count) == (1, 0)
+        assert attempt.processing_retry_count == 0
 
 
 @pytest.mark.asyncio

@@ -12,12 +12,15 @@ from app.models.async_job import AsyncJob
 from app.models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
+    InterviewAttemptUpload,
     InterviewSession,
     InterviewTranscriptVersion,
     SessionQuestion,
     SessionRecording,
 )
+from app.config import settings
 from app.services.coach_conversation_state import allowed_commands
+from app.services.coach_command_projection import contextual_allowed_commands
 from app.services.coach_live_view import CoachLiveViewError, CoachLiveViewService
 
 
@@ -205,7 +208,9 @@ async def test_live_reconciles_then_reloads_and_projects_registry_commands(
     assert view.active_question is not None
     assert view.active_question.id == question.id
     assert view.allowed_commands == list(
-        allowed_commands(state="asking", status="active")
+        command
+        for command in allowed_commands(state="asking", status="active")
+        if command != "delete_audio"
     )
     assert view.contract_version == "coach_live_view_v1"
 
@@ -603,6 +608,77 @@ async def test_live_contextual_commands_are_scope_and_report_compatible(
     assert "retry_processing" not in view.allowed_commands
     assert "retry_answer" not in view.allowed_commands
     assert "end_session" not in view.allowed_commands
+
+
+@pytest.mark.asyncio
+async def test_retry_processing_is_hidden_when_immutable_source_is_unavailable(
+    db_session, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, question = await _ready_session(db_session)
+    session.status = "active"
+    session.conversation_state = "recoverable_error"
+    session.recoverable_error_scope = "attempt_processing"
+    session.recoverable_error_code = "coach_evaluation_unavailable"
+    session.active_question_id = question.id
+    question.question_state = "asked"
+    media_root = tmp_path / "coach-media"
+    missing_audio = media_root / "session" / "missing.webm"
+    media_root.mkdir()
+    monkeypatch.setattr(settings, "HATCH_COACH_MEDIA_ROOT", media_root)
+    attempt = SessionRecording(
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="audio",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="recoverable_error",
+        evaluation_state="failed",
+        processing_generation=1,
+        processing_retry_count=0,
+        processing_retry_limit=2,
+        audio_content_hash="a" * 64,
+        audio_uri=str(missing_audio),
+    )
+    db_session.add(attempt)
+    await db_session.flush()
+    evaluation = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        version_number=1,
+        state="failed",
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add(evaluation)
+    await db_session.flush()
+    attempt.current_evaluation_version_id = evaluation.id
+    session.active_recording_id = attempt.id
+    db_session.add(
+        InterviewAttemptUpload(
+            attempt_id=attempt.id,
+            upload_id="missing-upload",
+            request_hash="request-hash",
+            content_sha256="a" * 64,
+            byte_size=12,
+            mime_type="audio/webm",
+            storage_uri=str(missing_audio),
+            result_state="completed",
+        )
+    )
+    db_session.add(
+        InterviewAttemptStage(
+            recording_id=attempt.id,
+            evaluation_version_id=evaluation.id,
+            stage_name="transcription",
+            stage_state="failed_retryable",
+            expected_processing_generation=1,
+        )
+    )
+    await db_session.commit()
+
+    commands = await contextual_allowed_commands(db_session, session)
+
+    assert "retry_processing" not in commands
 
 
 @pytest.mark.asyncio

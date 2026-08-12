@@ -75,6 +75,50 @@ def test_returns_speech_metrics_type(analyser: SpeechAnalyserService) -> None:
     assert isinstance(result, SpeechMetrics)
 
 
+def test_conversational_v1_projection_has_only_the_nine_observable_metrics(
+    analyser: SpeechAnalyserService,
+) -> None:
+    projection = analyser.analyse_conversational_v1(
+        "Um, I think I led the migration.", duration_ms=10_000
+    )
+    assert set(projection) == {
+        "duration_ms", "word_count", "words_per_minute", "filler_count",
+        "filler_rate_per_minute", "hedging_count", "pause_count",
+        "long_pause_count",
+    }
+    assert projection["long_pause_count"] is None
+    assert "restart_count" not in projection
+
+
+def test_conversational_v1_projection_uses_observed_word_timestamps(
+    analyser: SpeechAnalyserService,
+) -> None:
+    words = [
+        {"w": "I", "start": 0.0, "end": 0.2},
+        {"w": "worked", "start": 0.4, "end": 0.8},
+        {"w": "on", "start": 4.0, "end": 4.2},
+        {"w": "this", "start": 4.4, "end": 4.7},
+        {"w": "project", "start": 10.0, "end": 10.5},
+    ]
+
+    projection = analyser.analyse_conversational_v1(
+        "I worked on this project",
+        duration_ms=999,
+        words=words,
+    )
+
+    assert projection == {
+        "duration_ms": 10_500,
+        "word_count": 5,
+        "words_per_minute": 28.6,
+        "filler_count": 0,
+        "filler_rate_per_minute": 0.0,
+        "hedging_count": 0,
+        "pause_count": 2,
+        "long_pause_count": 2,
+    }
+
+
 # ── Timestamp-based delivery metrics (Phase A) ────────────────────────────────
 
 def _make_words(

@@ -100,6 +100,41 @@ FocusArea = Literal[
 AnswerMode = Literal["audio", "text"]
 AudioRetentionPolicy = Literal["delete_after_processing", "retain_until_deleted"]
 TranscriptRetentionPolicy = Literal["retain"]
+AudioUploadResult = Literal["pending", "completed", "failed", "deleted"]
+AudioRetentionState = Literal[
+    "not_applicable",
+    "temporary",
+    "retained",
+    "delete_pending",
+    "deleted",
+    "delete_failed",
+]
+AttemptStageName = Literal[
+    "audio_persist",
+    "transcription",
+    "speech_analysis",
+    "content_evaluation",
+    "evidence_grounding",
+    "follow_up_decision",
+    "coaching_enrichment",
+    "audio_cleanup",
+]
+AttemptStageState = Literal[
+    "not_started",
+    "pending",
+    "running",
+    "completed",
+    "reused",
+    "not_applicable",
+    "unavailable",
+    "failed_retryable",
+    "failed_terminal",
+]
+LowercaseSha256: TypeAlias = Annotated[
+    str, StringConstraints(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+]
+PositiveByteSize: TypeAlias = Annotated[int, Field(gt=0)]
+BoundedMimeType: TypeAlias = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 
 
 class StrictContractModel(BaseModel):
@@ -288,6 +323,10 @@ class CancelAttemptPayload(StrictContractModel):
     attempt_id: SafeToken
 
 
+class RecordCaptureHardStopPayload(StrictContractModel):
+    attempt_id: SafeToken
+
+
 class RetryAnswerPayload(StrictContractModel):
     question_id: SafeToken | None = None
 
@@ -404,6 +443,7 @@ CommandType = Literal[
     "pause",
     "resume",
     "cancel_attempt",
+    "record_capture_hard_stop",
     "retry_answer",
     "retry_setup",
     "rebuild_plan",
@@ -430,6 +470,7 @@ CommandPayload = (
     | PausePayload
     | ResumePayload
     | CancelAttemptPayload
+    | RecordCaptureHardStopPayload
     | RetryAnswerPayload
     | RetrySetupPayload
     | RebuildPlanPayload
@@ -456,6 +497,7 @@ COMMAND_PAYLOAD_TYPES: dict[str, type[StrictContractModel]] = {
     "pause": PausePayload,
     "resume": ResumePayload,
     "cancel_attempt": CancelAttemptPayload,
+    "record_capture_hard_stop": RecordCaptureHardStopPayload,
     "retry_answer": RetryAnswerPayload,
     "retry_setup": RetrySetupPayload,
     "rebuild_plan": RebuildPlanPayload,
@@ -725,17 +767,7 @@ class InterviewAttemptRead(StrictContractModel):
     processing_retry_limit: Annotated[int, Field(ge=0, le=5)]
     processing_retries_remaining: NonNegativeInt
     audio_retention_policy: AudioRetentionPolicy | None
-    audio_retention_state: (
-        Literal[
-            "not_applicable",
-            "temporary",
-            "retained",
-            "delete_pending",
-            "deleted",
-            "delete_failed",
-        ]
-        | None
-    )
+    audio_retention_state: AudioRetentionState | None
     transcript_version: TranscriptVersionRead | None
 
     @model_validator(mode="after")
@@ -752,30 +784,8 @@ class InterviewAttemptRead(StrictContractModel):
 
 class ProcessingProjection(StrictContractModel):
     job_id: SafeToken | None
-    stage: (
-        Literal[
-            "audio_persist",
-            "transcription",
-            "speech_analysis",
-            "content_evaluation",
-            "evidence_grounding",
-            "follow_up_decision",
-            "coaching_enrichment",
-            "audio_cleanup",
-        ]
-        | None
-    )
-    state: Literal[
-        "not_started",
-        "pending",
-        "running",
-        "completed",
-        "reused",
-        "not_applicable",
-        "unavailable",
-        "failed_retryable",
-        "failed_terminal",
-    ]
+    stage: AttemptStageName | None
+    state: AttemptStageState
     retryable: bool
     retry_count: NonNegativeInt
     retry_limit: Annotated[int, Field(ge=0, le=5)]
@@ -813,17 +823,21 @@ class ProgressProjection(StrictContractModel):
 
 class RetentionStatus(StrictContractModel):
     audio_policy: AudioRetentionPolicy
-    current_audio_state: (
-        Literal[
-            "not_applicable",
-            "temporary",
-            "retained",
-            "delete_pending",
-            "deleted",
-            "delete_failed",
-        ]
-        | None
-    )
+    current_audio_state: AudioRetentionState | None
+    retryable_audio_cleanup_attempt_id: SafeToken | None
+
+
+class AttemptAudioUploadRead(StrictContractModel):
+    """Public result for one hash-verified conversational audio upload."""
+
+    attempt_id: SafeToken
+    upload_id: SafeToken
+    result: AudioUploadResult
+    content_sha256: LowercaseSha256
+    byte_size: PositiveByteSize
+    mime_type: BoundedMimeType
+    audio_retention_state: AudioRetentionState
+    contract_version: Literal["coach_attempt_audio_upload_v1"]
 
 
 class SilencePolicy(StrictContractModel):

@@ -2,17 +2,58 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models.coach_session import InterviewSession, SessionQuestion, SessionRecording
+from ..models.coach_session import (
+    InterviewAttemptUpload,
+    InterviewSession,
+    SessionQuestion,
+    SessionRecording,
+)
+from .coach_media_storage import owned_audio_path_is_file
 from .coach_conversation_state import allowed_commands
 from .coach_conversational_contracts import ERROR_REGISTRY
+from .coach_processing_snapshot import load_retryable_processing_snapshot
+from .coach_retention import CoachRetentionService
+
+
+_UNSET_RETRYABLE_AUDIO_CLEANUP_ATTEMPT = object()
+
+
+async def _obvious_audio_retry_source_available(
+    db: AsyncSession, attempt: SessionRecording
+) -> bool:
+    """Cheap projection gate; command admission performs the authoritative hash read."""
+    if not attempt.audio_uri or not attempt.audio_content_hash:
+        return False
+    source = Path(attempt.audio_uri)
+    root = Path(settings.HATCH_COACH_MEDIA_ROOT).absolute()
+    try:
+        source.absolute().relative_to(root)
+    except (OSError, ValueError):
+        return False
+    upload_id = await db.scalar(
+        select(InterviewAttemptUpload.id).where(
+            InterviewAttemptUpload.attempt_id == attempt.id,
+            InterviewAttemptUpload.result_state == "completed",
+            InterviewAttemptUpload.content_sha256 == attempt.audio_content_hash,
+            InterviewAttemptUpload.storage_uri == attempt.audio_uri,
+        )
+    )
+    return upload_id is not None and owned_audio_path_is_file(source)
 
 
 async def contextual_allowed_commands(
-    db: AsyncSession, session: InterviewSession
+    db: AsyncSession,
+    session: InterviewSession,
+    *,
+    retryable_audio_cleanup_attempt_id: str | None | object = (
+        _UNSET_RETRYABLE_AUDIO_CLEANUP_ATTEMPT
+    ),
 ) -> tuple[str, ...]:
     """Filter the coarse registry through V6 persisted-state predicates."""
     commands = list(allowed_commands(session))
@@ -151,11 +192,63 @@ async def contextual_allowed_commands(
                 remove("retry_report")
             if not review_eligible:
                 remove("retry_answer")
+            retry_snapshot = (
+                await load_retryable_processing_snapshot(
+                    db,
+                    session=session,
+                    attempt=attempt,
+                )
+                if attempt is not None
+                else None
+            )
+            retry_stages = retry_snapshot.stages if retry_snapshot else ()
+            failed_retryable_names = {
+                stage.stage_name
+                for stage in retry_stages
+                if stage.stage_state == "failed_retryable"
+            }
+            audio_source_available = bool(
+                attempt is not None
+                and attempt.recording_type == "audio"
+                and await _obvious_audio_retry_source_available(db, attempt)
+            )
+            source_available = bool(
+                attempt is not None
+                and (
+                    (
+                        attempt.recording_type == "text"
+                        and attempt.current_transcript_version_id is not None
+                    )
+                    or (
+                        attempt.recording_type == "audio"
+                        and (
+                            (
+                                attempt.current_transcript_version_id is not None
+                                and (
+                                    "speech_analysis" not in failed_retryable_names
+                                    or audio_source_available
+                                )
+                            )
+                            or (
+                                attempt.current_transcript_version_id is None
+                                and audio_source_available
+                            )
+                        )
+                    )
+                )
+            )
+            processing_error = ERROR_REGISTRY.get(
+                session.recoverable_error_code or ""
+            )
             if (
                 attempt is None
                 or attempt.attempt_state != "recoverable_error"
                 or attempt.processing_retry_count >= attempt.processing_retry_limit
                 or attempt.async_job_id is not None
+                or processing_error is None
+                or not processing_error.retryable
+                or not failed_retryable_names
+                or not source_available
             ):
                 remove("retry_processing")
 
@@ -169,6 +262,14 @@ async def contextual_allowed_commands(
         }:
             remove("resume", "end_session")
 
+    if session.conversation_state == "listening" and (
+        attempt is None
+        or attempt.question_id != session.active_question_id
+        or attempt.recording_type != "audio"
+        or attempt.attempt_state not in {"draft", "uploaded"}
+    ):
+        remove("record_capture_hard_stop")
+
     if session.conversation_state == "completed" and not (
         session.report_state == "failed"
         and session.report_build_reason
@@ -176,6 +277,19 @@ async def contextual_allowed_commands(
         and session.report_job_id is None
     ):
         remove("retry_report")
+
+    if session.conversation_state == "asking":
+        if (
+            retryable_audio_cleanup_attempt_id
+            is _UNSET_RETRYABLE_AUDIO_CLEANUP_ATTEMPT
+        ):
+            retryable_audio_cleanup_attempt_id = (
+                await CoachRetentionService(
+                    db
+                ).find_retryable_cancelled_upload_cleanup_attempt(session.id)
+            )
+        if retryable_audio_cleanup_attempt_id is None:
+            remove("delete_audio")
 
     if audio_targets == 0:
         remove("delete_audio")

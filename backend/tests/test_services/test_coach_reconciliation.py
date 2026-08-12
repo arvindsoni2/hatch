@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
 from sqlalchemy import delete, select, text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.database import Base
 from app.models.async_job import AsyncJob
@@ -22,9 +23,13 @@ from app.models.coach_session import (
     SessionQuestion,
     SessionRecording,
 )
+from app.repositories.conversational_session_repository import (
+    _stage_immutable_diagnostics,
+)
 from app.repositories.session_repository import SessionRepository
 from app.schemas.coach_conversation import ConversationCommandRequest
 from app.services.coach_conversation_commands import ConversationCommandService
+from app.services.coach_command_projection import contextual_allowed_commands
 from app.services.coach_conversational_contracts import RUBRIC_CONTRACT
 from app.services.coach_reconciliation import (
     reconcile_conversational_session,
@@ -32,6 +37,7 @@ from app.services.coach_reconciliation import (
     reconcile_session,
     reconcile_stale_coach_state,
 )
+from app.services.coach_attempt_pipeline import _process_attempt_claim
 from app.services.coach_service import CoachService
 
 
@@ -439,7 +445,13 @@ async def test_processing_claim_within_deadline_is_noop(db_session) -> None:
 @pytest.mark.asyncio
 async def test_real_finish_answer_terminal_claim_reconciles_after_state_increment(
     db_session,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    dispatched = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        dispatched.append,
+    )
     session = await _conversational_session(db_session, state="asking")
     question = SessionQuestion(
         session_id=session.id,
@@ -485,14 +497,23 @@ async def test_real_finish_answer_terminal_claim_reconciles_after_state_incremen
             attempt_id=attempt.id, version=begun.state_version
         ),
     )
+    assert len(dispatched) == 1
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(dispatched[0], session_factory=session_factory)
     await db_session.refresh(session)
+    await db_session.refresh(attempt)
     evaluation = await db_session.get(
         InterviewAttemptEvaluation, attempt.current_evaluation_version_id
     )
     assert evaluation is not None
     claim = evaluation.diagnostics_json["processing_claim"]
     assert claim["expected_session_state_version"] + 2 == session.state_version
-    assert result.state == session.conversation_state == "awaiting_next_action"
+    assert result.state == "processing_answer"
+    assert session.conversation_state == "awaiting_next_action"
     session.conversation_state = "processing_answer"
     session.state_version = claim["expected_session_state_version"] + 1
     session.activity_version -= 1
@@ -538,6 +559,271 @@ async def test_expired_processing_claim_becomes_recoverable_without_retry_spend(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reconcile_mode", ("targeted", "startup"))
+@pytest.mark.parametrize(
+    "lineage_corruption",
+    (
+        None,
+        "token",
+        "source_transcript",
+        "contract",
+        "downstream_link",
+        "nonreused_link",
+    ),
+)
+async def test_expired_audio_retry_with_reused_transcription_reconciles_once(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    reconcile_mode: str,
+    lineage_corruption: str | None,
+) -> None:
+    """A retry may bind an earlier immutable transcript only through reuse provenance."""
+    now = datetime.utcnow()
+    session, _, attempt, evaluation, content, job = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=1, limit=2
+    )
+    transcript_id = attempt.current_transcript_version_id
+    assert transcript_id is not None
+    transcript = await db_session.get(InterviewTranscriptVersion, transcript_id)
+    assert transcript is not None
+    attempt.processing_generation = 3
+    content.expected_processing_generation = 3
+    transcript.processing_generation = 1
+    evaluation.version_number = 3
+    attempt.recording_type = "audio"
+    attempt.audio_content_hash = "b" * 64
+    retry_claim = dict(evaluation.diagnostics_json["processing_claim"])
+    retry_claim["source_audio_content_hash"] = attempt.audio_content_hash
+    retry_claim["source_transcript_version_id"] = transcript_id
+    retry_claim["processing_generation"] = 3
+    evaluation.diagnostics_json = {"processing_claim": retry_claim}
+    prior_deadline = now - timedelta(minutes=1)
+    prior_job = AsyncJob(type="coach_attempt_processing", status="failed")
+    db_session.add(prior_job)
+    await db_session.flush()
+    prior_evaluation = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        transcript_version_id=transcript_id,
+        version_number=1,
+        state="failed",
+        evaluation_contract_version=evaluation.evaluation_contract_version,
+        evidence_contract_version=evaluation.evidence_contract_version,
+        follow_up_contract_version=evaluation.follow_up_contract_version,
+        async_job_id=prior_job.id,
+        diagnostics_json={
+            "processing_claim": {
+                "processing_generation": 1,
+                "job_deadline_at": prior_deadline.isoformat(),
+                "source_audio_content_hash": attempt.audio_content_hash,
+                "source_transcript_version_id": None,
+                "expected_session_state_version": session.state_version - 1,
+                "processing_contract_version": "coach_processing_v1",
+                "claim_token": "prior-audio-retry-token",
+            },
+            "result": {"reason_code": "transcription_unavailable"},
+        },
+    )
+    db_session.add(prior_evaluation)
+    await db_session.flush()
+    prior_transcription = InterviewAttemptStage(
+        recording_id=attempt.id,
+        evaluation_version_id=prior_evaluation.id,
+        stage_name="transcription",
+        stage_state="completed",
+        attempt_count=1,
+        job_id=prior_job.id,
+        claim_token="prior-audio-retry-token",
+        expected_processing_generation=1,
+        job_deadline_at=prior_deadline,
+        completed_at=now - timedelta(minutes=1),
+        diagnostics_json=_stage_immutable_diagnostics(
+            stage_name="transcription",
+            audio_content_hash=attempt.audio_content_hash,
+            transcript_version_id=transcript_id,
+            transcript_content_hash=transcript.content_hash,
+            evaluation_contract_version=evaluation.evaluation_contract_version,
+            evidence_contract_version=evaluation.evidence_contract_version,
+            follow_up_contract_version=evaluation.follow_up_contract_version,
+        ),
+    )
+    db_session.add(prior_transcription)
+    await db_session.flush()
+    prior_content = InterviewAttemptStage(
+        recording_id=attempt.id,
+        evaluation_version_id=prior_evaluation.id,
+        stage_name="content_evaluation",
+        stage_state="completed",
+        attempt_count=1,
+        job_id=prior_job.id,
+        claim_token="prior-audio-retry-token",
+        expected_processing_generation=1,
+        source_transcript_version_id=transcript_id,
+        job_deadline_at=prior_deadline,
+        completed_at=prior_deadline,
+        diagnostics_json=_stage_immutable_diagnostics(
+            stage_name="content_evaluation",
+            audio_content_hash=attempt.audio_content_hash,
+            transcript_version_id=transcript_id,
+            transcript_content_hash=transcript.content_hash,
+            evaluation_contract_version=evaluation.evaluation_contract_version,
+            evidence_contract_version=evaluation.evidence_contract_version,
+            follow_up_contract_version=evaluation.follow_up_contract_version,
+        ),
+    )
+    db_session.add(prior_content)
+    await db_session.flush()
+    middle_deadline = now - timedelta(seconds=30)
+    middle_job = AsyncJob(type="coach_attempt_processing", status="failed")
+    db_session.add(middle_job)
+    await db_session.flush()
+    middle_evaluation = InterviewAttemptEvaluation(
+        recording_id=attempt.id,
+        transcript_version_id=transcript_id,
+        version_number=2,
+        state="failed",
+        evaluation_contract_version=evaluation.evaluation_contract_version,
+        evidence_contract_version=evaluation.evidence_contract_version,
+        follow_up_contract_version=evaluation.follow_up_contract_version,
+        async_job_id=middle_job.id,
+        diagnostics_json={
+            "processing_claim": {
+                "processing_generation": 2,
+                "job_deadline_at": middle_deadline.isoformat(),
+                "source_audio_content_hash": attempt.audio_content_hash,
+                "source_transcript_version_id": transcript_id,
+                "expected_session_state_version": session.state_version - 1,
+                "processing_contract_version": "coach_processing_v1",
+                "claim_token": "middle-audio-retry-token",
+            }
+        },
+    )
+    db_session.add(middle_evaluation)
+    await db_session.flush()
+    middle_transcription = InterviewAttemptStage(
+        recording_id=attempt.id,
+        evaluation_version_id=middle_evaluation.id,
+        stage_name="transcription",
+        stage_state="reused",
+        attempt_count=0,
+        job_id=middle_job.id,
+        claim_token="middle-audio-retry-token",
+        expected_processing_generation=2,
+        reused_from_stage_id=prior_transcription.id,
+        job_deadline_at=middle_deadline,
+        completed_at=middle_deadline,
+        diagnostics_json=prior_transcription.diagnostics_json,
+    )
+    db_session.add(middle_transcription)
+    await db_session.flush()
+    middle_content = InterviewAttemptStage(
+        recording_id=attempt.id,
+        evaluation_version_id=middle_evaluation.id,
+        stage_name="content_evaluation",
+        stage_state="reused",
+        attempt_count=0,
+        job_id=middle_job.id,
+        claim_token="middle-audio-retry-token",
+        expected_processing_generation=2,
+        source_transcript_version_id=transcript_id,
+        reused_from_stage_id=prior_content.id,
+        job_deadline_at=middle_deadline,
+        completed_at=middle_deadline,
+        diagnostics_json=prior_content.diagnostics_json,
+    )
+    db_session.add(middle_content)
+    await db_session.flush()
+    if lineage_corruption == "token":
+        middle_transcription.claim_token = "forged-middle-token"
+    elif lineage_corruption == "source_transcript":
+        forged_claim = dict(middle_evaluation.diagnostics_json["processing_claim"])
+        forged_claim["source_transcript_version_id"] = None
+        middle_evaluation.diagnostics_json = {"processing_claim": forged_claim}
+    elif lineage_corruption == "contract":
+        middle_evaluation.evaluation_contract_version = "forged-contract"
+    reused_transcription = InterviewAttemptStage(
+        recording_id=attempt.id,
+        evaluation_version_id=evaluation.id,
+        stage_name="transcription",
+        stage_state="reused",
+        attempt_count=0,
+        job_id=job.id,
+        claim_token=content.claim_token,
+        expected_processing_generation=attempt.processing_generation,
+        source_transcript_version_id=None,
+        reused_from_stage_id=middle_transcription.id,
+        job_deadline_at=content.job_deadline_at,
+        completed_at=now - timedelta(seconds=2),
+        diagnostics_json=prior_transcription.diagnostics_json,
+    )
+    db_session.add(reused_transcription)
+    content.stage_state = "reused"
+    content.reused_from_stage_id = middle_content.id
+    content.completed_at = now - timedelta(seconds=2)
+    content.diagnostics_json = prior_content.diagnostics_json
+    evidence = InterviewAttemptStage(
+        recording_id=attempt.id,
+        evaluation_version_id=evaluation.id,
+        stage_name="evidence_grounding",
+        stage_state="running",
+        attempt_count=1,
+        job_id=job.id,
+        claim_token=content.claim_token,
+        expected_processing_generation=attempt.processing_generation,
+        source_transcript_version_id=transcript_id,
+        job_deadline_at=content.job_deadline_at,
+        diagnostics_json=_stage_immutable_diagnostics(
+            stage_name="evidence_grounding",
+            audio_content_hash=attempt.audio_content_hash,
+            transcript_version_id=transcript_id,
+            transcript_content_hash=transcript.content_hash,
+            evaluation_contract_version=evaluation.evaluation_contract_version,
+            evidence_contract_version=evaluation.evidence_contract_version,
+            follow_up_contract_version=evaluation.follow_up_contract_version,
+        ),
+    )
+    db_session.add(evidence)
+    if lineage_corruption == "downstream_link":
+        content.reused_from_stage_id = prior_content.id
+    elif lineage_corruption == "nonreused_link":
+        evidence.reused_from_stage_id = middle_content.id
+    await db_session.commit()
+
+    if lineage_corruption is not None:
+        if reconcile_mode == "startup":
+            factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+            monkeypatch.setattr(
+                "app.services.coach_reconciliation.AsyncSessionLocal", factory
+            )
+            assert await reconcile_stale_coach_state(batch_size=1) == 0
+        else:
+            assert await reconcile_conversational_session(
+                db_session, session.id, now
+            ) == 0
+        return
+
+    if reconcile_mode == "startup":
+        factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+        monkeypatch.setattr(
+            "app.services.coach_reconciliation.AsyncSessionLocal", factory
+        )
+        assert await reconcile_stale_coach_state(batch_size=1) == 1
+        assert await reconcile_stale_coach_state(batch_size=1) == 0
+        db_session.expire_all()
+    else:
+        assert await reconcile_conversational_session(db_session, session.id, now) == 1
+        assert await reconcile_conversational_session(db_session, session.id, now) == 0
+    for row in (session, attempt, evaluation, content, evidence, job):
+        await db_session.refresh(row)
+    assert session.conversation_state == "recoverable_error"
+    assert attempt.attempt_state == "recoverable_error"
+    assert attempt.processing_retry_count == 1
+    assert evaluation.state == "failed"
+    assert content.stage_state == "reused"
+    assert evidence.stage_state == "failed_retryable"
+    assert job.status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_lazy_expiry_resolves_owned_pending_evaluation_not_terminal_pointer(
     db_session,
 ) -> None:
@@ -561,6 +847,138 @@ async def test_lazy_expiry_resolves_owned_pending_evaluation_not_terminal_pointe
     assert pending.state == "failed"
     assert stage.stage_state == "failed_retryable"
     assert job.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_real_reconciled_failure_is_claimable_without_publishing_failed_evaluation(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.utcnow()
+    session, _, attempt, pending, content, _ = await _processing_claim(
+        db_session, deadline=now - timedelta(seconds=1), retries=0, limit=2
+    )
+    pending.evaluation_contract_version = RUBRIC_CONTRACT
+    prior = await _preserve_terminal_evaluation_pointer(
+        db_session, attempt=attempt, pending=pending
+    )
+    transcript = await db_session.get(
+        InterviewTranscriptVersion, attempt.current_transcript_version_id
+    )
+    assert transcript is not None
+    transcript.content_hash = "real-reconciled-transcript-hash"
+    diagnostics = _stage_immutable_diagnostics(
+        stage_name="content_evaluation",
+        audio_content_hash=None,
+        transcript_version_id=transcript.id,
+        transcript_content_hash=transcript.content_hash,
+        evaluation_contract_version=pending.evaluation_contract_version,
+        evidence_contract_version=pending.evidence_contract_version,
+        follow_up_contract_version=pending.follow_up_contract_version,
+    )
+    content.diagnostics_json = diagnostics
+    for stage_name in (
+        "audio_persist",
+        "transcription",
+        "speech_analysis",
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+        "audio_cleanup",
+    ):
+        transcript_bound = stage_name in {
+            "evidence_grounding",
+            "follow_up_decision",
+            "coaching_enrichment",
+        }
+        not_applicable = stage_name in {
+            "audio_persist",
+            "transcription",
+            "speech_analysis",
+            "audio_cleanup",
+        }
+        db_session.add(
+            InterviewAttemptStage(
+                recording_id=attempt.id,
+                evaluation_version_id=pending.id,
+                stage_name=stage_name,
+                stage_state="not_applicable" if not_applicable else "pending",
+                attempt_count=0,
+                repair_count=0,
+                job_id=content.job_id,
+                claim_token=content.claim_token,
+                expected_processing_generation=attempt.processing_generation,
+                source_transcript_version_id=(
+                    transcript.id if transcript_bound else None
+                ),
+                job_deadline_at=content.job_deadline_at,
+                completed_at=now if not_applicable else None,
+                diagnostics_json=_stage_immutable_diagnostics(
+                    stage_name=stage_name,
+                    audio_content_hash=None,
+                    transcript_version_id=transcript.id,
+                    transcript_content_hash=transcript.content_hash,
+                    evaluation_contract_version=pending.evaluation_contract_version,
+                    evidence_contract_version=pending.evidence_contract_version,
+                    follow_up_contract_version=pending.follow_up_contract_version,
+                ),
+            )
+        )
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == 1
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    await db_session.refresh(pending)
+    assert attempt.current_evaluation_version_id == prior.id
+    assert pending.state == "failed"
+    projected = await contextual_allowed_commands(db_session, session)
+    assert "retry_processing" in projected
+    valid_diagnostics = pending.diagnostics_json
+    pending.diagnostics_json = {
+        **valid_diagnostics,
+        "result": {"reason_code": "coach_grounding_source_unavailable"},
+    }
+    await db_session.commit()
+    assert "retry_processing" not in await contextual_allowed_commands(
+        db_session, session
+    )
+    pending.diagnostics_json = valid_diagnostics
+    await db_session.commit()
+    valid_token = content.claim_token
+    content.claim_token = "forged-stale-stage-token"
+    await db_session.commit()
+    assert "retry_processing" not in await contextual_allowed_commands(
+        db_session, session
+    )
+    content.claim_token = valid_token
+    await db_session.commit()
+
+    dispatched = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        dispatched.append,
+    )
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=ConversationCommandRequest.model_validate(
+            {
+                "command_id": "retry-real-reconciled-failure",
+                "command_type": "retry_processing",
+                "expected_state_version": session.state_version,
+                "payload": {},
+                "contract_version": "coach_conversation_command_v1",
+            }
+        ),
+    )
+
+    await db_session.refresh(attempt)
+    assert result.result == "accepted_processing"
+    assert len(dispatched) == 1
+    assert attempt.processing_retry_count == 1
+    assert attempt.processing_generation == 3
+    assert attempt.current_evaluation_version_id == prior.id
 
 
 @pytest.mark.asyncio
@@ -925,7 +1343,7 @@ async def test_expired_processing_fences_every_owned_active_stage_atomically(
     await db_session.refresh(stage)
     await db_session.refresh(sibling)
     assert stage.stage_state == sibling.stage_state == "failed_retryable"
-    assert stage.claim_token is sibling.claim_token is None
+    assert stage.claim_token == sibling.claim_token == "stage-token"
 
 
 @pytest.mark.asyncio
@@ -1571,6 +1989,70 @@ async def test_startup_limit_is_applied_after_stale_candidate_filter(
     assert await reconcile_stale_coach_state(batch_size=1) == 1
     db_session.expire_all()
     recovered = await db_session.get(InterviewSession, stale_id)
+    assert recovered is not None
+    assert recovered.conversation_state == "recoverable_error"
+
+
+@pytest.mark.asyncio
+async def test_startup_pages_past_early_unreconciled_candidate_with_bounded_discovery(
+    db_session, monkeypatch
+) -> None:
+    """A lost fence in an early row must not consume the startup success budget."""
+    from app.services import coach_reconciliation as reconciliation
+
+    now = datetime.utcnow()
+
+    async def expired_setup(created_at: datetime, token: str) -> InterviewSession:
+        session = await _conversational_session(
+            db_session, state="planning", status="setup"
+        )
+        job = AsyncJob(type="coach_session_setup", status="running")
+        db_session.add(job)
+        await db_session.flush()
+        session.created_at = created_at
+        session.setup_generation = 1
+        session.setup_attempt_count = 1
+        session.setup_job_id = job.id
+        session.setup_claim_token = token
+        session.setup_claim_expires_at = now - timedelta(minutes=1)
+        return session
+
+    early = await expired_setup(now - timedelta(days=2), "early-stale-token")
+    later = await expired_setup(now - timedelta(days=1), "later-stale-token")
+    early_id, later_id = early.id, later.id
+    await db_session.commit()
+
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False)
+    monkeypatch.setattr(reconciliation, "AsyncSessionLocal", factory)
+    original_execute = AsyncSession.execute
+    candidate_page_limits = []
+
+    async def observe_candidate_pages(self, statement, *args, **kwargs):
+        columns = set(getattr(statement, "selected_columns", {}).keys())
+        if {"id", "experience_version"}.issubset(columns):
+            candidate_page_limits.append(statement._limit_clause)
+        return await original_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "execute", observe_candidate_pages)
+    original = reconciliation.reconcile_conversational_session
+    reconciled_ids: list[str] = []
+
+    async def lose_early_fence(db, session_id: str) -> int:
+        reconciled_ids.append(session_id)
+        if session_id == early_id:
+            return 0
+        return await original(db, session_id)
+
+    monkeypatch.setattr(
+        reconciliation, "reconcile_conversational_session", lose_early_fence
+    )
+
+    assert await reconciliation.reconcile_stale_coach_state(batch_size=1) == 1
+    assert reconciled_ids == [early_id, later_id]
+    assert candidate_page_limits
+    assert all(limit is not None for limit in candidate_page_limits)
+    db_session.expire_all()
+    recovered = await db_session.get(InterviewSession, later_id)
     assert recovered is not None
     assert recovered.conversation_state == "recoverable_error"
 

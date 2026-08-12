@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..database import get_db
+from ..repositories.conversational_session_repository import (
+    ConversationalRepositoryError,
+    ConversationalSessionRepository,
+)
 from ..schemas.coach_conversation import (
+    AttemptAudioUploadRead,
     ConversationCommandRequest,
     ConversationCommandResult,
     ConversationErrorResponse,
@@ -21,6 +29,14 @@ from ..services.coach_conversation_commands import (
 )
 from ..services.coach_conversational_contracts import ERROR_REGISTRY
 from ..services.coach_live_view import CoachLiveViewError, CoachLiveViewService
+from ..services.coach_media_storage import (
+    CoachMediaError,
+    StagedAudio,
+    cleanup_staged_audio,
+    coach_upload_temp_dir,
+    resolve_owned_audio_path,
+    stream_audio_upload,
+)
 from .coach import _require_safe_id
 
 router = APIRouter(prefix="/api/coach", tags=["coach"])
@@ -124,3 +140,77 @@ async def get_live(
         )
     except CoachLiveViewError as error:
         return conversation_error_response(error.code)
+
+
+@router.post(
+    "/sessions/{session_id}/attempts/{attempt_id}/audio",
+    response_model=AttemptAudioUploadRead,
+    responses=CANONICAL_ERROR_RESPONSES,
+)
+async def upload_attempt_audio(
+    session_id: str,
+    attempt_id: str,
+    upload_id: Annotated[str, Form(min_length=1, max_length=64)],
+    content_sha256: Annotated[str, Form(pattern=r"^[0-9a-f]{64}$")],
+    audio: UploadFile = File(),
+    db: AsyncSession = Depends(get_db),
+) -> AttemptAudioUploadRead | JSONResponse:
+    """Stream and persist one idempotent, attempt-owned browser recording."""
+    staged: StagedAudio | None = None
+    audio_closed = False
+    try:
+        for value, field in (
+            (session_id, "session_id"),
+            (attempt_id, "attempt_id"),
+            (upload_id, "upload_id"),
+        ):
+            _require_safe_id(value, field)
+        storage_root = Path(settings.HATCH_COACH_MEDIA_ROOT)
+        staged = await stream_audio_upload(
+            audio,
+            max_bytes=settings.HATCH_COACH_MAX_AUDIO_BYTES,
+            temp_dir=coach_upload_temp_dir(storage_root),
+        )
+        try:
+            await audio.close()
+            audio_closed = True
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                pass
+            return conversation_error_response("coach_attempt_upload_conflict")
+        destination = resolve_owned_audio_path(
+            storage_root, session_id, attempt_id, upload_id, ".webm"
+        )
+        repository = ConversationalSessionRepository(db)
+        result = await repository.persist_audio_upload(
+            session_id=session_id,
+            attempt_id=attempt_id,
+            upload_id=upload_id,
+            declared_sha256=content_sha256,
+            staged=staged,
+            destination=destination,
+        )
+        await repository.commit_audio_upload()
+        return result
+    except HTTPException:
+        return conversation_error_response("coach_attempt_upload_conflict")
+    except (CoachMediaError, ConversationalRepositoryError) as error:
+        code = str(error)
+        if code not in ERROR_REGISTRY:
+            code = "coach_attempt_upload_conflict"
+        return conversation_error_response(code)
+    finally:
+        if staged is not None:
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                pass
+        if not audio_closed:
+            try:
+                await audio.close()
+            except Exception:
+                pass
