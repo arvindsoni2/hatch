@@ -43,6 +43,7 @@ from ..schemas.coach_conversation import (
     FinishAnswerPayload,
     KeepSpeakingPayload,
     RecordCaptureHardStopPayload,
+    RequestCoachingPayload,
     RequestHintPayload,
     RetryAnswerPayload,
     RetryProcessingPayload,
@@ -50,6 +51,7 @@ from ..schemas.coach_conversation import (
 )
 from .async_job_service import AsyncJobService
 from .coach_command_projection import contextual_allowed_commands
+from .coach_coaching import build_coaching_skeleton
 from .coach_attempt_pipeline import queue_attempt_processing
 from .coach_conversation_state import require_transition
 from .coach_conversational_contracts import (
@@ -319,6 +321,9 @@ class ConversationCommandService:
         if request.command_type == "request_hint":
             assert isinstance(request.payload, RequestHintPayload)
             return await self._request_hint(session, request, request.payload)
+        if request.command_type == "request_coaching":
+            assert isinstance(request.payload, RequestCoachingPayload)
+            return await self._request_coaching(session, request, request.payload)
         if request.command_type == "update_retention":
             assert isinstance(request.payload, UpdateRetentionPayload)
             return await self._update_retention(session, request, request.payload)
@@ -328,6 +333,89 @@ class ConversationCommandService:
         if request.command_type == "skip_question":
             return await self._skip_question(session, request)
         raise ConversationCommandError("coach_conversation_invalid_state")
+
+    async def _request_coaching(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: RequestCoachingPayload,
+    ) -> ConversationCommandResult:
+        attempt = await self._require_active_attempt(session, payload.attempt_id)
+        if (
+            attempt.attempt_state != "completed"
+            or attempt.evaluation_state != "completed"
+            or attempt.current_evaluation_version_id is None
+            or attempt.current_transcript_version_id is None
+        ):
+            raise ConversationCommandError("coach_attempt_not_active")
+        evaluation = await self.db.scalar(
+            select(InterviewAttemptEvaluation).where(
+                InterviewAttemptEvaluation.id
+                == attempt.current_evaluation_version_id,
+                InterviewAttemptEvaluation.recording_id == attempt.id,
+                InterviewAttemptEvaluation.transcript_version_id
+                == attempt.current_transcript_version_id,
+                InterviewAttemptEvaluation.state == "completed",
+            )
+        )
+        if evaluation is None or not isinstance(evaluation.rubric_json, dict):
+            raise ConversationCommandError("coach_attempt_not_active")
+        skeleton = build_coaching_skeleton(evaluation.rubric_json)
+        changed = await self.db.execute(
+            update(InterviewAttemptEvaluation)
+            .where(
+                InterviewAttemptEvaluation.id == evaluation.id,
+                InterviewAttemptEvaluation.recording_id == attempt.id,
+                InterviewAttemptEvaluation.transcript_version_id
+                == attempt.current_transcript_version_id,
+                InterviewAttemptEvaluation.state == "completed",
+                InterviewAttemptEvaluation.coaching_json.is_(None),
+            )
+            .values(coaching_json={
+                "answer_level": skeleton.answer_level,
+                "positive_observation": skeleton.positive_observation,
+                "priority_improvement": skeleton.priority_improvement,
+                "transcript_evidence": list(skeleton.transcript_evidence),
+                "evidence_review_items": list(skeleton.evidence_review_items),
+                "suggested_structure": skeleton.suggested_structure,
+                "practice_instruction": skeleton.practice_instruction,
+                "example_revision": skeleton.example_revision,
+            })
+        )
+        if changed.rowcount != 1:
+            raise ConversationCommandError("coach_conversation_invalid_state")
+        state_version = await self._change_session_state(
+            session,
+            request,
+            values={"conversation_state": "coaching"},
+            required_state="awaiting_next_action",
+        )
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=(
+                SessionEventInput(
+                    event_type="coaching_requested",
+                    actor_type="candidate",
+                    state_version=state_version,
+                    state_before="awaiting_next_action",
+                    state_after="coaching",
+                    question_id=attempt.question_id,
+                    recording_id=attempt.id,
+                    command_id=request.command_id,
+                ),
+                SessionEventInput(
+                    event_type="coaching_presented",
+                    actor_type="system",
+                    state_version=state_version,
+                    state_before="awaiting_next_action",
+                    state_after="coaching",
+                    question_id=attempt.question_id,
+                    recording_id=attempt.id,
+                    command_id=request.command_id,
+                ),
+            ),
+        )
+        return await self._result(session, request)
 
     async def _change_session_state(
         self,
