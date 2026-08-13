@@ -75,7 +75,6 @@ _TRANSITIONS: dict[str, TransitionRule] = {
     "record_self_assessment": _rule(
         ("awaiting_next_action", "active"),
         ("coaching", "active"),
-        ("completed", "completed"),
     ),
     "update_retention": _rule(
         ("ready", "setup"),

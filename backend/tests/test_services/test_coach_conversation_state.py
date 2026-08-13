@@ -93,7 +93,6 @@ COARSE_TRANSITION_PROJECTIONS: dict[tuple[str, str], frozenset[str]] = {
     ("reporting", "active"): frozenset(),
     ("completed", "completed"): frozenset(
         {
-            "record_self_assessment",
             "retry_report",
             "delete_audio",
             "delete_transcript",
@@ -243,6 +242,7 @@ def test_allowed_commands_are_derived_from_transition_registry() -> None:
     [
         ("completed", "active", "retry_report"),
         ("completed", "active", "record_self_assessment"),
+        ("completed", "completed", "record_self_assessment"),
         ("ready", "active", "update_retention"),
         ("completed", "active", "delete_audio"),
     ],
@@ -259,7 +259,6 @@ def test_transition_registry_rejects_unlisted_state_status_cross_products(
     ("state", "status", "command_type"),
     [
         ("completed", "completed", "retry_report"),
-        ("completed", "completed", "record_self_assessment"),
         ("ready", "setup", "update_retention"),
         ("listening", "active", "record_capture_hard_stop"),
         ("completed", "completed", "delete_audio"),
