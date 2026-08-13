@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..models.async_job import AsyncJob
 from ..models.coach_session import (
+    CoachSessionEvidenceRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewSession,
@@ -22,7 +23,15 @@ from ..models.coach_session import (
 )
 from ..schemas.coach_conversation import (
     CandidateSelfAssessment,
+    ConversationAnswerReviewRead,
+    ConversationAttemptHistoryRead,
+    ConversationCoachingReview,
+    ConversationDeliveryObservation,
+    ConversationDeliveryReview,
+    ConversationEvidenceFinding,
     ConversationLiveView,
+    ConversationReviewDimension,
+    ConversationalRubricDimension,
     ConversationalQuestionRead,
     InterviewAttemptRead,
     ProcessingProjection,
@@ -35,6 +44,7 @@ from ..schemas.coach_conversation import (
 )
 from .coach_command_projection import contextual_allowed_commands
 from .coach_conversational_contracts import ERROR_REGISTRY, LIVE_VIEW_CONTRACT
+from .coach_conversational_contracts import CONTENT_DIMENSIONS
 from .coach_processing_snapshot import (
     exact_processing_snapshot,
     load_owned_processing_evaluation,
@@ -89,6 +99,10 @@ class CoachLiveViewService:
         if len(questions) > 36:
             raise CoachLiveViewError("coach_conversation_invalid_state")
         await self._validate_projection_json(session, questions, active_attempt)
+        answer_review = await self._project_answer_review(session, active_attempt)
+        attempt_history = await self._project_attempt_history(
+            session, active_question
+        )
         retryable_audio_cleanup_attempt_id = (
             await CoachRetentionService(
                 self.db
@@ -113,6 +127,8 @@ class CoachLiveViewService:
                 active_question=self._project_question(active_question),
                 root_question=self._project_question(root_question),
                 active_attempt=await self._project_attempt(active_attempt),
+                answer_review=answer_review,
+                attempt_history=attempt_history,
                 processing=await self._project_processing(active_attempt),
                 progress=self._project_progress(
                     questions, session.active_root_question_id
@@ -141,6 +157,261 @@ class CoachLiveViewService:
             )
         except ValidationError as error:
             raise CoachLiveViewError("coach_conversation_invalid_state") from error
+
+    async def _current_terminal_evaluation(
+        self, attempt: SessionRecording
+    ) -> InterviewAttemptEvaluation | None:
+        if (
+            attempt.current_evaluation_version_id is None
+            or attempt.evaluation_state not in {"completed", "unavailable", "invalid"}
+        ):
+            return None
+        evaluation = await self.db.get(
+            InterviewAttemptEvaluation, attempt.current_evaluation_version_id
+        )
+        if (
+            evaluation is None
+            or evaluation.recording_id != attempt.id
+            or evaluation.state not in {"completed", "unavailable", "invalid"}
+            or evaluation.state != attempt.evaluation_state
+            or evaluation.transcript_version_id
+            != attempt.current_transcript_version_id
+        ):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        return evaluation
+
+    @staticmethod
+    def _source_disclosure(
+        records: list[CoachSessionEvidenceRecord],
+    ) -> tuple[str | None, str | None]:
+        if not records:
+            return None, None
+        normalized = {
+            "approved": "approved",
+            "confirmed": "approved",
+            "reviewed_final": "approved",
+            "reviewed": "reviewed",
+            "candidate_selected_unapproved": "candidate_selected_unapproved",
+            "draft": "draft",
+        }
+        rank = {
+            "draft": 0,
+            "candidate_selected_unapproved": 1,
+            "reviewed": 2,
+            "approved": 3,
+        }
+        approvals = [
+            normalized[record.approval_state]
+            for record in records
+            if record.approval_state in normalized
+        ]
+        if not approvals:
+            return None, None
+        approval = min(approvals, key=rank.__getitem__)
+        labels = {
+            "approved": "Approved source",
+            "reviewed": "Reviewed source",
+            "candidate_selected_unapproved": "Candidate-selected unapproved source",
+            "draft": "Draft source",
+        }
+        return labels[approval], approval
+
+    async def _project_answer_review(
+        self,
+        session: InterviewSession,
+        attempt: SessionRecording | None,
+    ) -> ConversationAnswerReviewRead | None:
+        if attempt is None:
+            return None
+        evaluation = await self._current_terminal_evaluation(attempt)
+        if evaluation is None:
+            return None
+        rubric = evaluation.rubric_json
+        if rubric is None:
+            return None
+        if not isinstance(rubric, Mapping):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        answer_level = rubric.get("answer_level")
+        if answer_level != evaluation.answer_level:
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        if evaluation.state != "completed":
+            if answer_level != "not_assessed":
+                raise CoachLiveViewError("coach_conversation_invalid_state")
+            return ConversationAnswerReviewRead(
+                evaluation_id=evaluation.id,
+                evaluation_state=evaluation.state,
+                answer_level="not_assessed",
+                dimensions={},
+                delivery=ConversationDeliveryReview(
+                    level="not_assessed", observations=[]
+                ),
+                evidence_consistency="not_assessed",
+                evidence_findings=[],
+                coaching=None,
+                accepted_at=attempt.accepted_at,
+            )
+        if set(rubric) != {
+            "answer_level",
+            "dimensions",
+            "delivery",
+            "evidence_consistency",
+        }:
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        dimensions_raw = rubric.get("dimensions")
+        if not isinstance(dimensions_raw, Mapping) or set(dimensions_raw) != set(
+            CONTENT_DIMENSIONS
+        ):
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        dimensions: dict[str, ConversationReviewDimension] = {}
+        try:
+            for name in CONTENT_DIMENSIONS:
+                dimension = ConversationalRubricDimension.model_validate(
+                    dimensions_raw[name]
+                )
+                dimensions[name] = ConversationReviewDimension(
+                    level=dimension.level,
+                    evidence=dimension.evidence,
+                    rationale=dimension.rationale,
+                    improvement=dimension.improvement,
+                )
+            delivery = ConversationalRubricDimension.model_validate(
+                rubric.get("delivery")
+            )
+        except ValidationError as error:
+            raise CoachLiveViewError("coach_conversation_invalid_state") from error
+        delivery_observations = [
+            ConversationDeliveryObservation(
+                severity=observation.severity,
+                label=(
+                    f"{metric.replace('_', ' ').capitalize()}: "
+                    f"{observation.severity.replace('_', ' ')} observation"
+                ),
+            )
+            for metric, observation in delivery.observations.items()
+        ]
+        grounding = rubric.get("evidence_consistency")
+        if not isinstance(grounding, Mapping) or set(grounding) != {
+            "level",
+            "claims",
+        }:
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        claims = grounding.get("claims")
+        if not isinstance(claims, list) or len(claims) > 30:
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        evidence_ids = {
+            evidence_id
+            for claim in claims
+            if isinstance(claim, Mapping)
+            for evidence_id in claim.get("evidence_ids", ())
+            if isinstance(evidence_id, str)
+        }
+        records = list(
+            (
+                await self.db.scalars(
+                    select(CoachSessionEvidenceRecord).where(
+                        CoachSessionEvidenceRecord.session_id == session.id,
+                        CoachSessionEvidenceRecord.evidence_id.in_(evidence_ids),
+                    )
+                )
+            ).all()
+        ) if evidence_ids else []
+        records_by_id = {record.evidence_id: record for record in records}
+        findings: list[ConversationEvidenceFinding] = []
+        expected_claim_keys = {
+            "claim_id", "claim_text", "transcript_start", "transcript_end",
+            "claim_type", "materiality", "centrality", "deduplication_key",
+            "status", "evidence_ids", "explanation", "candidate_action",
+        }
+        try:
+            for claim in claims:
+                if not isinstance(claim, Mapping) or set(claim) != expected_claim_keys:
+                    raise CoachLiveViewError("coach_conversation_invalid_state")
+                referenced_ids = claim.get("evidence_ids")
+                if (
+                    not isinstance(referenced_ids, list)
+                    and not isinstance(referenced_ids, tuple)
+                ) or any(not isinstance(item, str) for item in referenced_ids):
+                    raise CoachLiveViewError("coach_conversation_invalid_state")
+                referenced = [records_by_id[item] for item in referenced_ids if item in records_by_id]
+                if len(referenced) != len(referenced_ids):
+                    raise CoachLiveViewError("coach_conversation_invalid_state")
+                source_label, source_approval = self._source_disclosure(referenced)
+                findings.append(
+                    ConversationEvidenceFinding(
+                        claim_id=claim["claim_id"],
+                        claim_text=claim["claim_text"],
+                        transcript_start=claim["transcript_start"],
+                        transcript_end=claim["transcript_end"],
+                        status=claim["status"],
+                        source_label=source_label,
+                        source_approval=source_approval,
+                        explanation=claim["explanation"],
+                        candidate_action=claim["candidate_action"],
+                    )
+                )
+            coaching = (
+                ConversationCoachingReview.model_validate(evaluation.coaching_json)
+                if evaluation.coaching_json is not None
+                else None
+            )
+            return ConversationAnswerReviewRead(
+                evaluation_id=evaluation.id,
+                evaluation_state="completed",
+                answer_level=answer_level,
+                dimensions=dimensions,
+                delivery=ConversationDeliveryReview(
+                    level=delivery.level, observations=delivery_observations
+                ),
+                evidence_consistency=grounding["level"],
+                evidence_findings=findings,
+                coaching=coaching,
+                accepted_at=attempt.accepted_at,
+            )
+        except (KeyError, TypeError, ValidationError) as error:
+            raise CoachLiveViewError("coach_conversation_invalid_state") from error
+
+    async def _project_attempt_history(
+        self,
+        session: InterviewSession,
+        question: SessionQuestion | None,
+    ) -> list[ConversationAttemptHistoryRead]:
+        if question is None:
+            return []
+        limit = settings.HATCH_COACH_MAX_ATTEMPTS_PER_QUESTION
+        attempts = list(
+            (
+                await self.db.scalars(
+                    select(SessionRecording)
+                    .where(
+                        SessionRecording.session_id == session.id,
+                        SessionRecording.question_id == question.id,
+                        SessionRecording.attempt_state.in_(
+                            ("completed", "unavailable", "invalid")
+                        ),
+                    )
+                    .order_by(SessionRecording.attempt_number, SessionRecording.id)
+                    .limit(limit + 1)
+                )
+            ).all()
+        )
+        if len(attempts) > limit:
+            raise CoachLiveViewError("coach_conversation_invalid_state")
+        history: list[ConversationAttemptHistoryRead] = []
+        for attempt in attempts:
+            evaluation = await self._current_terminal_evaluation(attempt)
+            if evaluation is None:
+                raise CoachLiveViewError("coach_conversation_invalid_state")
+            history.append(
+                ConversationAttemptHistoryRead(
+                    attempt_id=attempt.id,
+                    attempt_number=attempt.attempt_number,
+                    answer_level=evaluation.answer_level or "not_assessed",
+                    accepted=attempt.accepted_at is not None,
+                    transcript_available=attempt.current_transcript_version_id is not None,
+                    audio_state=attempt.audio_retention_state,
+                )
+            )
+        return history
 
     @staticmethod
     def _bounded_json(value: object, *, root: type | tuple[type, ...]) -> bool:

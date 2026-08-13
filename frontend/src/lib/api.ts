@@ -1529,6 +1529,8 @@ export interface ConversationLiveView {
   active_question: ConversationalQuestionRead | null;
   root_question: ConversationalQuestionRead | null;
   active_attempt: InterviewAttemptRead | null;
+  answer_review: ConversationAnswerReviewRead | null;
+  attempt_history: ConversationAttemptHistoryRead[];
   processing: {
     job_id: string | null;
     stage: ConversationAttemptStage | null;

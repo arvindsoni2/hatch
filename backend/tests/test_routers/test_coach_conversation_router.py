@@ -751,6 +751,8 @@ def valid_live_view() -> dict:
             "audio_retention_state": "deleted",
             "transcript_version": None,
         },
+        "answer_review": None,
+        "attempt_history": [],
         "processing": {
             "job_id": None,
             "stage": None,
@@ -785,6 +787,8 @@ def test_live_view_models_the_complete_authoritative_projection() -> None:
     assert view.root_question.id == "question_1"
     assert view.active_question.attempts_remaining == 3
     assert view.active_attempt.processing_retries_remaining == 1
+    assert view.answer_review is None
+    assert view.attempt_history == []
     assert view.progress.current_planned_position == 3
     assert view.retention.retryable_audio_cleanup_attempt_id is None
     assert view.silence_policy.warning_ms == 4000

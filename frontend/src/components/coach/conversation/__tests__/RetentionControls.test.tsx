@@ -52,6 +52,8 @@ function live(overrides: Partial<ConversationLiveView> = {}): ConversationLiveVi
         created_at: "2026-08-09T10:00:00Z",
       },
     },
+    answer_review: null,
+    attempt_history: [],
     processing: {
       job_id: null,
       stage: null,

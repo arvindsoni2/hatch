@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.models.async_job import AsyncJob
 from app.models.coach_session import (
+    CoachSessionEvidenceRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewAttemptUpload,
@@ -315,6 +316,170 @@ async def test_live_reflection_commands_follow_active_review_state(
         "recorded_at": "2026-08-12T09:30:00",
         "contract_version": "coach_candidate_self_assessment_v1",
     }
+
+
+@pytest.mark.asyncio
+async def test_live_projects_exact_review_and_attempt_history_from_current_authority(
+    db_session,
+) -> None:
+    session, question = await _ready_session(db_session)
+    session.status = "active"
+    session.conversation_state = "awaiting_next_action"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    question.question_state = "answered"
+    dimensions = {
+        name: {
+            "level": "interview_ready",
+            "evidence": [
+                {
+                    "transcript_start": 0,
+                    "transcript_end": 5,
+                    "excerpt": "I led",
+                }
+            ],
+            "rationale": f"The {name} is grounded in the answer.",
+            "improvement": None,
+            "observations": {},
+        }
+        for name in (
+            "relevance",
+            "structure",
+            "specificity",
+            "impact",
+            "role_depth",
+            "clarity",
+            "conciseness",
+        )
+    }
+    attempts: list[SessionRecording] = []
+    for number, level, accepted in ((1, "developing", False), (2, "interview_ready", True)):
+        attempt = SessionRecording(
+            id=f"review-history-attempt-{number}",
+            session_id=session.id,
+            question_id=question.id,
+            recording_type="text",
+            attempt_number=number,
+            attempt_kind="primary" if number == 1 else "retry",
+            attempt_state="completed",
+            evaluation_state="completed",
+            processing_generation=1,
+            processing_retry_limit=2,
+            audio_retention_state="not_applicable",
+            accepted_at=datetime(2026, 8, 12, 9, 0) if accepted else None,
+        )
+        db_session.add(attempt)
+        await db_session.flush()
+        transcript = InterviewTranscriptVersion(
+            id=f"review-history-transcript-{number}",
+            recording_id=attempt.id,
+            version_number=1,
+            transcript="I led the migration across three regional teams.",
+            source="candidate_text",
+            created_by="candidate",
+            processing_generation=1,
+        )
+        db_session.add(transcript)
+        await db_session.flush()
+        evaluation = InterviewAttemptEvaluation(
+            id=f"review-history-evaluation-{number}",
+            recording_id=attempt.id,
+            transcript_version_id=transcript.id,
+            version_number=1,
+            state="completed",
+            answer_level=level,
+            rubric_json={
+                "answer_level": level,
+                "dimensions": dimensions,
+                "delivery": {
+                    "level": "not_assessed",
+                    "evidence": [],
+                    "rationale": "Typed answers do not have delivery observations.",
+                    "improvement": None,
+                    "observations": {},
+                },
+                "evidence_consistency": {
+                    "level": "interview_ready",
+                    "claims": [
+                        {
+                            "claim_id": "claim-review-1",
+                            "claim_text": "three regional teams",
+                            "transcript_start": 27,
+                            "transcript_end": 47,
+                            "claim_type": "team_scope",
+                            "materiality": "material",
+                            "centrality": "supporting",
+                            "deduplication_key": "sha256:" + "a" * 64,
+                            "status": "partially_supported",
+                            "evidence_ids": ["evidence-review-1"],
+                            "explanation": "Draft source: The selected record supports the team scope.",
+                            "candidate_action": "Confirm the detail before reusing the answer.",
+                        }
+                    ],
+                },
+            },
+            coaching_json={
+                "positive_observation": "The example is relevant.",
+                "priority_improvement": "Make the outcome clearer.",
+                "suggested_structure": "State the situation, action, and result.",
+                "practice_instruction": "Practise once using only verified details.",
+                "example_revision": "I led the migration and achieved [add verified metric].",
+            },
+            evaluation_contract_version="coach_conversational_rubric_v1",
+            evidence_contract_version="coach_evidence_grounding_v1",
+            follow_up_contract_version="coach_follow_up_v1",
+            completed_at=datetime(2026, 8, 12, 9, number),
+        )
+        db_session.add(evaluation)
+        attempt.current_transcript_version_id = transcript.id
+        attempt.current_evaluation_version_id = evaluation.id
+        attempts.append(attempt)
+    session.active_recording_id = attempts[1].id
+    question.accepted_recording_id = attempts[1].id
+    db_session.add(
+        CoachSessionEvidenceRecord(
+            session_id=session.id,
+            evidence_id="evidence-review-1",
+            source_type="question_bank",
+            source_record_id="record-review-1",
+            source_record_version="1",
+            source_path="question_bank/record-review-1",
+            snapshot_text="Synthetic draft evidence.",
+            approval_state="draft",
+            content_hash="sha256:" + "b" * 64,
+            snapshot_hash="sha256:" + "c" * 64,
+        )
+    )
+    await db_session.commit()
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+
+    assert view.answer_review is not None
+    assert view.answer_review.evaluation_id == "review-history-evaluation-2"
+    assert view.answer_review.answer_level == "interview_ready"
+    assert view.answer_review.delivery.level == "not_assessed"
+    assert view.answer_review.evidence_findings[0].source_label == "Draft source"
+    assert view.answer_review.coaching is not None
+    assert [item.model_dump(mode="json") for item in view.attempt_history] == [
+        {
+            "attempt_id": "review-history-attempt-1",
+            "attempt_number": 1,
+            "answer_level": "developing",
+            "accepted": False,
+            "transcript_available": True,
+            "audio_state": "not_applicable",
+        },
+        {
+            "attempt_id": "review-history-attempt-2",
+            "attempt_number": 2,
+            "answer_level": "interview_ready",
+            "accepted": True,
+            "transcript_available": True,
+            "audio_state": "not_applicable",
+        },
+    ]
 
 
 @pytest.mark.asyncio
