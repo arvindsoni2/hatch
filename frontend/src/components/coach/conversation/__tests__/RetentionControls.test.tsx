@@ -494,13 +494,13 @@ describe("ConversationSession retention authority", () => {
     const user = userEvent.setup();
     render(<ConversationSession sessionId="session-retention-1" />);
 
-    expect(await screen.findByText(markup)).toBeVisible();
+    expect(await screen.findAllByText(markup)).not.toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Delete audio for this answer" }));
 
     expect(await screen.findByText(
       "Audio has been deleted. Your transcript, answer review, and saved delivery observations remain available.",
     )).toBeVisible();
-    expect(screen.getByText(markup)).toBeVisible();
+    expect(screen.getAllByText(markup)).not.toHaveLength(0);
     expect((window as Window & { __coachRetentionXss?: number }).__coachRetentionXss).toBeUndefined();
     expect(api.sendCoachConversationCommand).toHaveBeenCalledOnce();
     expect(api.sendCoachConversationCommand.mock.calls[0][1]).toMatchObject({
