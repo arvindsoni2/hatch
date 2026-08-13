@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 from ..prompts import render_prompt
+from .prompt_catalog import prompt_contract_block
 from .coach_attempt_pipeline import SessionEvidenceSnapshot
 from .coach_conversational_contracts import (
     EVIDENCE_APPROVAL_STATES,
@@ -264,6 +265,7 @@ class EvidenceGrounder:
                 )
             user_prompt = render_prompt(
                 "coach_evidence_grounding.j2",
+                prompt_contract=prompt_contract_block("coach_evidence_grounding"),
                 transcript=request.normalized_transcript,
                 evidence_records=request.evidence_records,
                 repair_code=last_code if repair_count else "",

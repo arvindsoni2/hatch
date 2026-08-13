@@ -11,6 +11,7 @@ from typing import Literal, Protocol
 from pydantic import ValidationError
 
 from ..prompts import render_prompt
+from .prompt_catalog import prompt_contract_block
 from ..schemas.coach_conversation import ConversationalRubricDimension
 from .coach_attempt_pipeline import SpeechMetricsSnapshot
 from .coach_conversational_contracts import CONTENT_DIMENSIONS, RUBRIC_CONTRACT
@@ -212,6 +213,9 @@ class ConversationalEvaluator:
                 )
             user_prompt = render_prompt(
                 "coach_conversational_evaluation.j2",
+                prompt_contract=prompt_contract_block(
+                    "coach_conversational_evaluation"
+                ),
                 question=request.question,
                 transcript=transcript,
                 repair_code=last_code if repair_count else "",

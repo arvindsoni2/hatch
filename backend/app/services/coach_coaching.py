@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Protocol
 
 from ..prompts import render_prompt
+from .prompt_catalog import prompt_contract_block
 from .coach_text_spans import (
     ContractValidationError,
     normalize_contract_text,
@@ -188,6 +189,7 @@ class CoachCoachingService:
             return skeleton
         user_prompt = render_prompt(
             "coach_coaching.j2",
+            prompt_contract=prompt_contract_block("coach_coaching"),
             transcript=transcript,
             evidence_texts=evidence_texts,
             skeleton=skeleton,
