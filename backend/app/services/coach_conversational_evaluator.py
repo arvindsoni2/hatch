@@ -10,8 +10,8 @@ from typing import Literal, Protocol
 
 from pydantic import ValidationError
 
+from ..agents.tools.context_budgets import COACH_CONVERSATIONAL_EVALUATION
 from ..prompts import render_prompt
-from .prompt_catalog import prompt_contract_block
 from ..schemas.coach_conversation import ConversationalRubricDimension
 from .coach_attempt_pipeline import SpeechMetricsSnapshot
 from .coach_conversational_contracts import CONTENT_DIMENSIONS, RUBRIC_CONTRACT
@@ -22,6 +22,7 @@ from .coach_text_spans import (
     scan_prohibited_model_authorship,
     validate_code_point_span,
 )
+from .prompt_catalog import prompt_contract_block
 
 
 class JsonModel(Protocol):
@@ -223,7 +224,9 @@ class ConversationalEvaluator:
             try:
                 async with asyncio.timeout(remaining):
                     raw = await self._model.complete_json(
-                        system_prompt, user_prompt, max_tokens=4_096
+                        system_prompt,
+                        user_prompt,
+                        max_tokens=COACH_CONVERSATIONAL_EVALUATION.max_output,
                     )
                 dimensions = _validate_proposal(raw, transcript)
             except ContractValidationError as error:
