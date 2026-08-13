@@ -1,0 +1,10 @@
+{
+  "scenario_id": "rubric_strong",
+  "stage": "conversational_rubric",
+  "group": "rubric",
+  "description": "Synthetic strong named-level rubric contract.",
+  "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "I led a safe migration across three teams and reduced verified lead time by 18 percent.", "recording_type": "text", "case": "strong"},
+  "expected": {"outcome": "completed", "named_level": "strong"},
+  "scoring": {}, "quality_dimensions": [], "acceptance_smoke": true
+}

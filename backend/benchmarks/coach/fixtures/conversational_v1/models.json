@@ -1,0 +1,11 @@
+{
+  "models": [
+    {
+      "id": "deterministic-contract",
+      "runtime": "llamacpp",
+      "model": "synthetic-contract-double",
+      "endpoint": "http://127.0.0.1:8080",
+      "context_size": 32768
+    }
+  ]
+}

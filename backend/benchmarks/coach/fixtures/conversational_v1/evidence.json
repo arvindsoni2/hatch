@@ -1,0 +1,16 @@
+{
+  "candidate_name": "Synthetic Candidate",
+  "evidence": [
+    {
+      "evidence_id": "501c4cfa172d4d13a25f9359",
+      "source_path": "synthetic/cv/atlas-delivery",
+      "text": "Synthetic candidate evidence: led a safe migration across three teams and reduced verified lead time by 18 percent.",
+      "source_type": "application_cv",
+      "source_record_id": "synthetic-cv-record",
+      "source_record_version": "1",
+      "approval_state": "approved",
+      "content_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "snapshot_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ]
+}

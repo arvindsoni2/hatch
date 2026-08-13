@@ -1,4 +1,5 @@
 """Deterministic Coach stage contract gates applied after production validation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -104,10 +105,18 @@ def _validate_model_answer(
     expected = scenario.expected.outcome
     actual = execution.diagnostic.outcome
     if expected == "withheld_insufficient_evidence":
-        if actual != expected or output.get("model_answer") or output.get("evidence_references"):
+        if (
+            actual != expected
+            or output.get("model_answer")
+            or output.get("evidence_references")
+        ):
             _add(findings, "coach_model_answer_no_evidence")
         return
-    if actual != "completed" or not isinstance(output.get("model_answer"), str) or not output["model_answer"].strip():
+    if (
+        actual != "completed"
+        or not isinstance(output.get("model_answer"), str)
+        or not output["model_answer"].strip()
+    ):
         _add(findings, "coach_model_answer_empty")
     star = output.get("star_breakdown")
     if not isinstance(star, dict) or any(
@@ -152,7 +161,10 @@ def _validate_answer_evaluation(
     overall = output.get("overall")
     if not isinstance(overall, int | float) or isinstance(overall, bool):
         _add(findings, "coach_evaluation_score_out_of_range")
-    elif abs(float(overall) - sum(float(item) for item in scores.values()) / len(scores)) > 1:
+    elif (
+        abs(float(overall) - sum(float(item) for item in scores.values()) / len(scores))
+        > 1
+    ):
         _add(findings, "coach_evaluation_overall_inconsistent")
 
 
@@ -187,7 +199,9 @@ def _validate_report(
         "question_count_skipped",
         "question_count_unavailable",
     )
-    if any(output.get(field, 0) != authoritative.get(field, 0) for field in count_fields):
+    if any(
+        output.get(field, 0) != authoritative.get(field, 0) for field in count_fields
+    ):
         _add(findings, "coach_report_count_mismatch")
     if output.get("overall_score") != authoritative.get("overall_score") or output.get(
         "category_scores"
@@ -237,6 +251,114 @@ def _validate_end_to_end(
         _add(findings, "coach_persistence_failed")
     if output.get("follow_up_focus") != scenario.expected.expected_priority_dimensions:
         _add(findings, "coach_report_priority_mismatch")
+
+
+def _contains_prohibited_output(value: object, *, key: str = "") -> bool:
+    prohibited_keys = {
+        "score",
+        "scores",
+        "confidence",
+        "personality",
+        "culture_fit",
+        "deception",
+    }
+    if isinstance(value, dict):
+        return any(
+            child_key.casefold() in prohibited_keys
+            or _contains_prohibited_output(child, key=child_key)
+            for child_key, child in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(_contains_prohibited_output(item, key=key) for item in value)
+    return False
+
+
+def _validate_conversational(
+    scenario: CoachScenario,
+    output: dict[str, Any],
+    findings: list[ValidationFinding],
+) -> None:
+    if _contains_prohibited_output(output):
+        _add(findings, "coach_stage_failed")
+    expected = scenario.expected
+    if scenario.stage in {"conversational_rubric", "prohibited_inference"}:
+        if output.get("state") != expected.outcome:
+            _add(findings, "coach_evaluation_fallback_unclassified")
+        if (
+            expected.named_level is not None
+            and output.get("answer_level") != expected.named_level
+        ):
+            _add(findings, "coach_stage_failed")
+        if (
+            expected.error_code is not None
+            and output.get("error_code") != expected.error_code
+        ):
+            _add(findings, "coach_stage_failed")
+        dimensions = output.get("dimensions")
+        if output.get("state") == "completed" and (
+            not isinstance(dimensions, dict)
+            or set(dimensions)
+            != {
+                "relevance",
+                "structure",
+                "specificity",
+                "impact",
+                "role_depth",
+                "clarity",
+                "conciseness",
+            }
+        ):
+            _add(findings, "coach_evaluation_dimension_missing")
+    elif scenario.stage == "evidence_grounding":
+        if output.get("state") != expected.outcome:
+            _add(findings, "coach_stage_failed")
+        if (
+            expected.error_code is not None
+            and output.get("error_code") != expected.error_code
+        ):
+            _add(findings, "coach_stage_failed")
+        claims = output.get("claims")
+        observed = (
+            claims[0].get("status") if isinstance(claims, list) and claims else None
+        )
+        if (
+            expected.evidence_status is not None
+            and observed != expected.evidence_status
+        ):
+            _add(findings, "coach_model_answer_unsupported_claim")
+        allowed = set(expected.allowed_evidence_ids)
+        if isinstance(claims, list) and any(
+            set(claim.get("evidence_ids", [])) - allowed
+            for claim in claims
+            if isinstance(claim, dict)
+        ):
+            _add(findings, "coach_model_answer_unknown_evidence_id")
+    elif scenario.stage == "follow_up":
+        if output.get("admitted") is not expected.admitted:
+            _add(findings, "coach_stage_failed")
+        if (
+            expected.error_code is not None
+            and output.get("error_code") != expected.error_code
+        ):
+            _add(findings, "coach_stage_failed")
+    elif scenario.stage == "coaching":
+        if expected.outcome == "fallback" and output.get("fallback") is not True:
+            _add(findings, "coach_stage_failed")
+        if expected.outcome == "completed" and output.get("fallback") is True:
+            _add(findings, "coach_stage_failed")
+    elif scenario.stage == "conversational_end_to_end":
+        if output.get("state") != expected.outcome:
+            _add(findings, "coach_stage_failed")
+        if (
+            expected.named_level is not None
+            and output.get("answer_level") != expected.named_level
+        ):
+            _add(findings, "coach_stage_failed")
+        if (
+            expected.admitted is not None
+            and output.get("follow_up_admitted") is not expected.admitted
+        ):
+            _add(findings, "coach_stage_failed")
 
 
 def validate_execution(
@@ -293,4 +415,6 @@ def validate_execution(
             _add(findings, "coach_question_prompt_injection_followed")
     elif scenario.stage == "end_to_end":
         _validate_end_to_end(scenario, output, findings)
+    elif scenario.group is not None:
+        _validate_conversational(scenario, output, findings)
     return ValidationResult(tuple(findings))

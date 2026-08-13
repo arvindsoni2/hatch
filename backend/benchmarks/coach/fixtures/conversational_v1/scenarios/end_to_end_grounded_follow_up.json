@@ -1,0 +1,10 @@
+{
+  "scenario_id": "end_to_end_grounded_follow_up",
+  "stage": "conversational_end_to_end",
+  "group": "end_to_end",
+  "description": "Synthetic end-to-end evaluation, grounding, and follow-up contract.",
+  "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "I led a safe migration across three teams.", "evidence_ids": ["501c4cfa172d4d13a25f9359"], "case": "supported"},
+  "expected": {"outcome": "completed", "named_level": "strong", "admitted": true},
+  "scoring": {}, "quality_dimensions": [], "acceptance_smoke": true
+}

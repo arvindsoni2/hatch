@@ -1,0 +1,6 @@
+{
+  "scenario_id": "evidence_partial", "stage": "evidence_grounding", "group": "evidence_grounding",
+  "description": "Synthetic partial support remains distinct from full support.", "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration across three teams.", "evidence_ids": ["501c4cfa172d4d13a25f9359"], "draft_evidence_consent": false, "case": "partial"},
+  "expected": {"outcome": "completed", "evidence_status": "partially_supported", "allowed_evidence_ids": ["501c4cfa172d4d13a25f9359"]}, "scoring": {}, "quality_dimensions": []
+}

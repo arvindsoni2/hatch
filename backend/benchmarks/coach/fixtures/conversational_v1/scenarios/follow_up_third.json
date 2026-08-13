@@ -1,0 +1,10 @@
+{
+  "scenario_id": "follow_up_third",
+  "stage": "follow_up",
+  "group": "follow_up",
+  "description": "Synthetic third follow-up is rejected by the persisted cap.",
+  "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration.", "accepted_attempt_id": "attempt-1", "current_accepted_attempt_id": "attempt-1", "target_dimension_levels": {"impact": "developing"}, "existing_duplicate_keys": [], "persisted_follow_up_count": 2, "root_skipped": false, "session_ended": false, "case": "third"},
+  "expected": {"outcome": "completed", "admitted": false, "error_code": "coach_followup_reason_invalid"},
+  "scoring": {}, "quality_dimensions": []
+}

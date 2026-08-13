@@ -1,0 +1,10 @@
+{
+  "scenario_id": "coaching_safe",
+  "stage": "coaching",
+  "group": "coaching",
+  "description": "Synthetic coaching preserves facts and uses a missing-metric token.",
+  "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration.", "evidence_ids": ["501c4cfa172d4d13a25f9359"], "evaluation": {"answer_level": "developing", "dimensions": {"impact": {"level": "developing", "rationale": "The result is relevant.", "improvement": "Add one verified result.", "evidence": [{"excerpt": "I led a safe migration."}]}}}, "case": "safe"},
+  "expected": {"outcome": "completed"},
+  "scoring": {}, "quality_dimensions": [], "acceptance_smoke": true
+}
