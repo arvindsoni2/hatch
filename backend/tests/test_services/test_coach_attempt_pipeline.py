@@ -33,6 +33,7 @@ from app.repositories.conversational_session_repository import (
     partition_current_processing_stages,
 )
 from app.models.coach_session import (
+    CoachSessionEvidenceRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewAttemptUpload,
@@ -48,10 +49,20 @@ from app.services.coach_conversation_commands import (
     ConversationCommandError,
     ConversationCommandService,
 )
+from app.services.coach_conversational_contracts import CONTENT_DIMENSIONS
 from app.config import settings
 from app.services.coach_command_projection import contextual_allowed_commands
 from app.services.coach_retention import CoachRetentionService
 from sqlalchemy import func, select, update
+
+
+@pytest.fixture(autouse=True)
+def disable_real_review_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    class UnavailableModel:
+        async def complete_json(self, *_args, **_kwargs):
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("app.services.llm_client.LLMClient", UnavailableModel)
 
 
 async def _active_session(db) -> tuple[InterviewSession, SessionQuestion]:
@@ -229,6 +240,56 @@ async def test_audio_transcription_binds_context_before_content_sibling_runs() -
     assert seen == ["transcription", "speech_analysis", "content_evaluation"]
     assert result.transcript_version_id == "tv-1"
     assert result.evaluation_json["answer_level"] == "not_assessed"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_returns_the_completed_content_evaluation_projection() -> None:
+    claim = AttemptProcessingClaim(
+        session_id="session-1", question_id="question-1", recording_id="recording-1",
+        transcript_version_id=None, evaluation_version_id="evaluation-1",
+        processing_generation=1, job_id="job-1",
+        deadline_at=datetime.utcnow() + timedelta(seconds=30),
+    )
+
+    class Transcription:
+        name = "transcription"
+
+        async def run(self, _context):
+            return StageResult(
+                self.name,
+                "completed",
+                {"transcript_version_id": "tv-1", "normalized_transcript": "answer"},
+                None,
+                False,
+                1,
+                0,
+            )
+
+    class Content:
+        name = "content_evaluation"
+
+        async def run(self, _context):
+            return StageResult(
+                self.name,
+                "completed",
+                {"answer_level": "interview_ready", "dimensions": {}},
+                None,
+                False,
+                1,
+                0,
+            )
+
+    result = await run_attempt_pipeline(claim, (Transcription(), Content()))
+
+    assert result.evaluation_state == "completed"
+    assert result.evaluation_json == {
+        "answer_level": "interview_ready",
+        "dimensions": {},
+    }
+    assert result.diagnostics == {
+        "code": "completed",
+        "execution_mode": "conversational_v1",
+    }
 
 
 @pytest.mark.asyncio
@@ -416,6 +477,152 @@ async def test_typed_worker_terminalises_durable_claim(db_session, monkeypatch: 
     await db_session.refresh(session)
     assert attempt is not None and attempt.attempt_state == "unavailable"
     assert session.conversation_state == "awaiting_next_action"
+
+
+@pytest.mark.asyncio
+async def test_typed_worker_publishes_model_review_and_follow_up_proposal(
+    db_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, _ = await _active_session(db_session)
+    evidence_hash = "sha256:" + "2" * 64
+    db_session.add(
+        CoachSessionEvidenceRecord(
+            id="task11-evidence-row",
+            session_id=session.id,
+            evidence_id="task11-evidence",
+            source_type="application_cv",
+            source_record_id="cv-1",
+            source_record_version="1",
+            source_path="experience/0",
+            snapshot_text="I led the migration and reduced deployment time by three hours.",
+            approval_state="approved",
+            content_hash="sha256:" + "1" * 64,
+            snapshot_hash=evidence_hash,
+        )
+    )
+    await db_session.commit()
+    claims: list[AttemptProcessingClaim] = []
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_attempt_processing",
+        claims.append,
+    )
+    service = ConversationCommandService(db_session)
+    begun = await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "begin_answer",
+            0,
+            {"recording_type": "text", "client_attempt_id": "task11-worker"},
+        ),
+    )
+    transcript = "I led the migration and reduced deployment time by three hours."
+    await service.execute(
+        user_id="local",
+        session_id=session.id,
+        request=_command(
+            "finish_answer",
+            begun.state_version,
+            {"attempt_id": begun.active_attempt_id, "transcript": transcript},
+        ),
+    )
+
+    span = {
+        "transcript_start": 0,
+        "transcript_end": len(transcript),
+        "excerpt": transcript,
+    }
+    evaluation_proposal = {
+        "dimensions": {
+            name: {
+                "level": "interview_ready",
+                "evidence": [span],
+                "rationale": "The answer gives a relevant concrete example.",
+                "improvement": "Add one more constraint.",
+            }
+            for name in CONTENT_DIMENSIONS
+        }
+    }
+    follow_up_proposal = {
+        "should_ask": False,
+        "reason": None,
+        "question": None,
+        "transcript_evidence": None,
+        "target_dimension": None,
+        "aggregation_role": None,
+        "duplicate_key": None,
+    }
+    grounding_proposal = {
+        "claims": [
+            {
+                "claim_id": "task11-claim",
+                "claim_text": transcript,
+                "transcript_start": 0,
+                "transcript_end": len(transcript),
+                "claim_type": "action",
+                "materiality": "material",
+                "centrality": "central",
+                "deduplication_key": "sha256:" + "3" * 64,
+                "status": "supported",
+                "evidence_references": [
+                    {
+                        "evidence_id": "task11-evidence",
+                        "snapshot_hash": evidence_hash,
+                    }
+                ],
+                "explanation": "The selected CV supports this claim.",
+                "candidate_action": "Keep this example current.",
+            }
+        ]
+    }
+
+    class Model:
+        async def complete_json(self, system_prompt, _user_prompt, *, max_tokens):
+            del max_tokens
+            if "evaluate interview answer content" in system_prompt:
+                return evaluation_proposal
+            if "Ground candidate claims" in system_prompt:
+                return grounding_proposal
+            if "adaptive interview follow-up" in system_prompt:
+                return follow_up_proposal
+            raise AssertionError(system_prompt)
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claims[0],
+        session_factory=session_factory,
+        json_model_factory=Model,
+    )
+
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None and attempt.attempt_state == "completed"
+    evaluation = await db_session.get(
+        InterviewAttemptEvaluation, attempt.current_evaluation_version_id
+    )
+    assert evaluation is not None
+    assert evaluation.answer_level == "interview_ready"
+    assert evaluation.follow_up_proposal_json == follow_up_proposal
+    assert evaluation.evidence_findings_json["level"] == "strong"
+    assert set((evaluation.rubric_json or {})["dimensions"]) == set(
+        CONTENT_DIMENSIONS
+    )
+    stages = (
+        await db_session.scalars(
+            select(InterviewAttemptStage).where(
+                InterviewAttemptStage.evaluation_version_id == evaluation.id
+            )
+        )
+    ).all()
+    by_name = {stage.stage_name: stage for stage in stages}
+    assert by_name["content_evaluation"].stage_state == "completed"
+    assert by_name["content_evaluation"].last_error_code is None
+    assert by_name["content_evaluation"].attempt_count == 1
+    assert by_name["evidence_grounding"].attempt_count == 1
+    assert by_name["evidence_grounding"].stage_state == "completed"
+    assert by_name["follow_up_decision"].stage_state == "completed"
 
 
 @pytest.mark.asyncio

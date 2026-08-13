@@ -105,6 +105,14 @@ def build_schedule(
     if unknown:
         raise ValueError("unknown Coach model: " + ", ".join(sorted(unknown)))
     scenario_ids = profile.scenario_ids or tuple(suite.scenarios)
+    if profile.name == "acceptance-smoke" and any(
+        scenario_id not in suite.scenarios for scenario_id in scenario_ids
+    ):
+        scenario_ids = tuple(
+            scenario.scenario_id
+            for scenario in suite.scenarios.values()
+            if scenario.acceptance_smoke
+        )
     schedule: list[ScheduleEntry] = []
     for model_id in model_ids:
         for repetition in range(1, profile.repetitions + 1):
@@ -336,9 +344,18 @@ def _scenario_result(
                 Decimal(str(overall_range[0])) + Decimal(str(overall_range[1]))
             ) / Decimal(2)
             calibration_error = str(abs(Decimal(str(overall)) - centre))
+    status = _status(stage_execution.diagnostic.outcome)
+    if (
+        scenario.qualification_scope == "harness_contract"
+        and validation.eligible
+        and status in {"fallback", "unavailable", "invalid"}
+    ):
+        # Expected fail-closed production results complete a harness scenario;
+        # the truthful adverse outcome is still retained in stage_outcome.
+        status = "completed"
     return ScenarioResult(
         attempt=attempt,
-        status=_status(stage_execution.diagnostic.outcome),
+        status=status,
         stage_outcome=stage_execution.diagnostic.outcome,
         duration_ms=duration_ms,
         prompt_metadata=stage_execution.prompt_metadata,
@@ -584,7 +601,10 @@ async def _execute_run(
                                     client_context = _single_client(
                                         HarnessFailureClient(scenario.forced_failure)
                                     )
-                                elif profile.name == "contract-smoke":
+                                elif (
+                                    profile.name == "contract-smoke"
+                                    or attempt.model_id == "deterministic-contract"
+                                ):
                                     client_context = _single_client(
                                         DeterministicCoachClient(
                                             scenario,

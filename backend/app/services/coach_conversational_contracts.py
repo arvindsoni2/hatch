@@ -17,6 +17,73 @@ FOLLOW_UP_CONTRACT = "coach_follow_up_v1"
 REPORT_CONTRACT = "coach_conversational_report_v1"
 PROGRESS_CONTRACT = "coach_conversational_progress_v2"
 DELIVERY_POLICY = "coach_delivery_policy_v1"
+SELF_ASSESSMENT_CONTRACT = "coach_candidate_self_assessment_v1"
+
+CONTENT_DIMENSIONS: Final[tuple[str, ...]] = (
+    "relevance",
+    "structure",
+    "specificity",
+    "impact",
+    "role_depth",
+    "clarity",
+    "conciseness",
+)
+CONVERSATIONAL_LEVELS: Final[tuple[str, ...]] = (
+    "needs_work",
+    "developing",
+    "interview_ready",
+    "strong",
+    "not_assessed",
+)
+EVIDENCE_STATUSES: Final[tuple[str, ...]] = (
+    "supported",
+    "partially_supported",
+    "not_found",
+    "conflicting",
+    "not_verifiable",
+)
+EVIDENCE_APPROVAL_STATES: Final[tuple[str, ...]] = (
+    "approved",
+    "confirmed",
+    "reviewed_final",
+    "reviewed",
+    "candidate_selected_unapproved",
+    "draft",
+    "context_only",
+)
+EVIDENCE_CLAIM_TYPES: Final[tuple[str, ...]] = (
+    "role",
+    "responsibility",
+    "action",
+    "technology",
+    "scope",
+    "metric",
+    "outcome",
+    "duration",
+    "date",
+    "team_size",
+    "experience_scope",
+)
+FOLLOW_UP_REASONS: Final[tuple[str, ...]] = (
+    "clarify_example",
+    "measurable_result",
+    "personal_action",
+    "reasoning",
+    "role_depth",
+    "resolve_ambiguity",
+    "evidence_consistency",
+)
+FOLLOW_UP_REASON_MAPPING: Final[Mapping[str, tuple[str, str]]] = MappingProxyType(
+    {
+        "clarify_example": ("specificity", "gap_repair"),
+        "measurable_result": ("impact", "gap_repair"),
+        "personal_action": ("specificity", "gap_repair"),
+        "reasoning": ("role_depth", "primary_evidence"),
+        "role_depth": ("role_depth", "primary_evidence"),
+        "resolve_ambiguity": ("clarity", "gap_repair"),
+        "evidence_consistency": ("evidence_consistency", "primary_evidence"),
+    }
+)
 
 TRANSCRIPT_TERMINAL_UNAVAILABLE_REASONS: Final[frozenset[str]] = frozenset(
     {

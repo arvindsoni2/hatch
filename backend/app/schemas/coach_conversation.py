@@ -54,6 +54,14 @@ SafeToken: TypeAlias = Annotated[
 ]
 NonNegativeInt: TypeAlias = Annotated[int, Field(ge=0)]
 
+ConversationalLevel = Literal[
+    "needs_work", "developing", "interview_ready", "strong", "not_assessed"
+]
+DeliverySeverity = Literal["none", "moderate", "material", "severe"]
+DeliveryMetricFamily = Literal[
+    "pace", "fillers_per_minute", "long_pauses", "hedging", "restarts"
+]
+
 ExperienceVersion = Literal["legacy_v1", "conversational_v1"]
 InterviewType = Literal["behavioural", "role_specific_verbal", "mixed"]
 ConversationalDifficulty = Literal["supportive", "realistic", "challenging"]
@@ -141,6 +149,36 @@ class StrictContractModel(BaseModel):
     """Base for new contracts: reject unknown fields and non-JSON numbers."""
 
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+
+
+class TranscriptEvidenceSpan(StrictContractModel):
+    transcript_start: NonNegativeInt
+    transcript_end: Annotated[int, Field(gt=0)]
+    excerpt: Annotated[str, Field(min_length=1, max_length=2_000)]
+
+    @model_validator(mode="after")
+    def require_half_open_span(self) -> Self:
+        if self.transcript_start >= self.transcript_end:
+            raise ValueError("transcript evidence span must be non-empty")
+        return self
+
+
+class DeliveryObservation(StrictContractModel):
+    measured_value: int | float
+    threshold_bucket: str
+    severity: DeliverySeverity
+
+
+class ConversationalRubricDimension(StrictContractModel):
+    level: ConversationalLevel
+    evidence: Annotated[list[TranscriptEvidenceSpan], Field(max_length=2)] = Field(
+        default_factory=list
+    )
+    rationale: Annotated[str, Field(min_length=1, max_length=2_000)] | None = None
+    improvement: Annotated[str, Field(min_length=1, max_length=2_000)] | None = None
+    observations: dict[DeliveryMetricFamily, DeliveryObservation] = Field(
+        default_factory=dict
+    )
 
 
 def _normalized_bounded_text(
@@ -386,6 +424,25 @@ class RecordSelfAssessmentPayload(StrictContractModel):
     comfort_level: Literal["low", "medium", "high"]
     felt_complete: bool
     note: str | None = None
+
+    @field_validator("note")
+    @classmethod
+    def validate_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _normalized_bounded_text(
+            value, field_name="note", minimum=1, maximum=1_000
+        )
+
+
+class CandidateSelfAssessment(StrictContractModel):
+    comfort_level: Literal["low", "medium", "high"]
+    felt_complete: bool
+    note: str | None = None
+    recorded_at: datetime | None = None
+    contract_version: Literal["coach_candidate_self_assessment_v1"] = (
+        "coach_candidate_self_assessment_v1"
+    )
 
     @field_validator("note")
     @classmethod
@@ -769,6 +826,7 @@ class InterviewAttemptRead(StrictContractModel):
     audio_retention_policy: AudioRetentionPolicy | None
     audio_retention_state: AudioRetentionState | None
     transcript_version: TranscriptVersionRead | None
+    self_assessment: CandidateSelfAssessment | None = None
 
     @model_validator(mode="after")
     def validate_processing_retry_budget(self) -> Self:
@@ -904,6 +962,76 @@ class RecoverableErrorProjection(RegisteredErrorMetadata):
     details: EmptyErrorDetails = Field(default_factory=EmptyErrorDetails)
 
 
+class ConversationReviewDimension(StrictContractModel):
+    level: ConversationalLevel
+    evidence: Annotated[list[TranscriptEvidenceSpan], Field(max_length=2)] = Field(
+        default_factory=list
+    )
+    rationale: Annotated[str, Field(min_length=1, max_length=2_000)] | None = None
+    improvement: Annotated[str, Field(min_length=1, max_length=2_000)] | None = None
+
+
+class ConversationDeliveryObservation(StrictContractModel):
+    severity: DeliverySeverity
+    label: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class ConversationDeliveryReview(StrictContractModel):
+    level: ConversationalLevel
+    observations: Annotated[
+        list[ConversationDeliveryObservation], Field(max_length=5)
+    ] = Field(default_factory=list)
+
+
+class ConversationEvidenceFinding(StrictContractModel):
+    claim_id: Annotated[str, Field(min_length=1, max_length=128)]
+    claim_text: Annotated[str, Field(min_length=1, max_length=2_000)]
+    transcript_start: NonNegativeInt
+    transcript_end: Annotated[int, Field(gt=0)]
+    status: Literal["supported", "partially_supported", "not_found", "conflicting"]
+    source_label: Annotated[str, Field(min_length=1, max_length=80)] | None
+    source_approval: Literal[
+        "approved", "reviewed", "candidate_selected_unapproved", "draft"
+    ] | None
+    explanation: Annotated[str, Field(min_length=1, max_length=2_000)]
+    candidate_action: Annotated[str, Field(min_length=1, max_length=1_000)]
+
+    @model_validator(mode="after")
+    def require_half_open_claim_span(self) -> Self:
+        if self.transcript_start >= self.transcript_end:
+            raise ValueError("claim evidence span must be non-empty")
+        return self
+
+
+class ConversationCoachingReview(StrictContractModel):
+    positive_observation: Annotated[str, Field(min_length=1, max_length=2_000)]
+    priority_improvement: Annotated[str, Field(min_length=1, max_length=2_000)]
+    suggested_structure: Annotated[str, Field(min_length=1, max_length=2_000)]
+    practice_instruction: Annotated[str, Field(min_length=1, max_length=2_000)]
+    example_revision: Annotated[str, Field(min_length=1, max_length=2_000)]
+
+
+class ConversationAnswerReviewRead(StrictContractModel):
+    evaluation_id: SafeToken
+    evaluation_state: Literal["completed", "unavailable", "invalid"]
+    answer_level: ConversationalLevel
+    dimensions: dict[str, ConversationReviewDimension]
+    delivery: ConversationDeliveryReview
+    evidence_consistency: ConversationalLevel
+    evidence_findings: Annotated[list[ConversationEvidenceFinding], Field(max_length=30)]
+    coaching: ConversationCoachingReview | None
+    accepted_at: datetime | None
+
+
+class ConversationAttemptHistoryRead(StrictContractModel):
+    attempt_id: SafeToken
+    attempt_number: Annotated[int, Field(ge=1, le=20)]
+    answer_level: ConversationalLevel
+    accepted: bool
+    transcript_available: bool
+    audio_state: AudioRetentionState | None
+
+
 class ConversationLiveView(StrictContractModel):
     session_id: SafeToken
     experience_version: Literal["conversational_v1"]
@@ -915,6 +1043,10 @@ class ConversationLiveView(StrictContractModel):
     active_question: ConversationalQuestionRead | None
     root_question: ConversationalQuestionRead | None
     active_attempt: InterviewAttemptRead | None
+    answer_review: ConversationAnswerReviewRead | None
+    attempt_history: Annotated[
+        list[ConversationAttemptHistoryRead], Field(max_length=20)
+    ]
     processing: ProcessingProjection
     progress: ProgressProjection
     retention: RetentionStatus

@@ -1,4 +1,5 @@
 """Strict loading and privacy checks for the committed Coach benchmark suite."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, ValidationError, model_validator
 
@@ -64,6 +65,27 @@ _STAGE_INPUT_FIELDS = {
     },
     "technical_drill": {"question_id", "question", "category", "requirement_id"},
     "end_to_end": {"company_name", "role_title", "question_count", "answers"},
+    "conversational_rubric": {"question", "transcript", "recording_type", "case"},
+    "evidence_grounding": {
+        "transcript",
+        "evidence_ids",
+        "draft_evidence_consent",
+        "case",
+    },
+    "follow_up": {
+        "transcript",
+        "accepted_attempt_id",
+        "current_accepted_attempt_id",
+        "target_dimension_levels",
+        "existing_duplicate_keys",
+        "persisted_follow_up_count",
+        "root_skipped",
+        "session_ended",
+        "case",
+    },
+    "coaching": {"transcript", "evidence_ids", "evaluation", "case"},
+    "prohibited_inference": {"question", "transcript", "case"},
+    "conversational_end_to_end": {"question", "transcript", "evidence_ids", "case"},
 }
 
 
@@ -79,11 +101,13 @@ class _SuiteManifest(StrictModel):
     suite_id: str = Field(min_length=1)
     version: str = Field(min_length=1)
     seeds: tuple[int, ...] = Field(min_length=2)
+    fixture_kind: Literal["legacy", "conversational"] = "legacy"
     models_file: str = "models.json"
-    candidate_evidence_file: str = "candidate_evidence.json"
-    job_description_file: str = "job_description.txt"
-    company_research_file: str = "company_research.json"
-    company_research_sources_file: str = "company_research_sources.json"
+    candidate_evidence_file: str | None = "candidate_evidence.json"
+    evidence_file: str | None = None
+    job_description_file: str | None = "job_description.txt"
+    company_research_file: str | None = "company_research.json"
+    company_research_sources_file: str | None = "company_research_sources.json"
     stopwords_file: str = "../stopwords_en.txt"
     scenario_files: tuple[str, ...] = Field(min_length=1)
 
@@ -96,13 +120,28 @@ class _SuiteManifest(StrictModel):
         return self
 
     def file_names(self) -> tuple[str, ...]:
-        return (
-            "suite.json",
-            self.models_file,
+        if self.fixture_kind == "conversational":
+            if self.evidence_file is None:
+                raise ValueError("conversational suites require evidence_file")
+            return (
+                "suite.json",
+                self.models_file,
+                self.evidence_file,
+                self.stopwords_file,
+                *self.scenario_files,
+            )
+        legacy = (
             self.candidate_evidence_file,
             self.job_description_file,
             self.company_research_file,
             self.company_research_sources_file,
+        )
+        if any(item is None for item in legacy):
+            raise ValueError("legacy suites require all legacy fixture files")
+        return (
+            "suite.json",
+            self.models_file,
+            *legacy,
             self.stopwords_file,
             *self.scenario_files,
         )
@@ -139,7 +178,9 @@ class LoadedCoachSuite:
         try:
             return self.scenarios[scenario_id]
         except KeyError as exc:
-            raise SuiteValidationError(f"unknown Coach scenario: {scenario_id}") from exc
+            raise SuiteValidationError(
+                f"unknown Coach scenario: {scenario_id}"
+            ) from exc
 
 
 def hash_file(path: Path) -> str:
@@ -195,11 +236,7 @@ def _privacy_findings(value: Any, *, key: str = "") -> list[str]:
 
 
 def _declared_root_files(manifest: _SuiteManifest) -> set[str]:
-    return {
-        name
-        for name in manifest.file_names()
-        if not name.startswith("../")
-    }
+    return {name for name in manifest.file_names() if not name.startswith("../")}
 
 
 def load_suite(path: Path | str) -> LoadedCoachSuite:
@@ -221,9 +258,7 @@ def load_suite(path: Path | str) -> LoadedCoachSuite:
         )
 
     discovered = {
-        item.relative_to(root).as_posix()
-        for item in root.rglob("*")
-        if item.is_file()
+        item.relative_to(root).as_posix() for item in root.rglob("*") if item.is_file()
     }
     undeclared = discovered - _declared_root_files(manifest)
     if undeclared:
@@ -270,23 +305,51 @@ def load_suite(path: Path | str) -> LoadedCoachSuite:
         "ae_h02_malformed_output",
         "sr_02_provider_fallback",
     }
-    missing_harness = mandatory_harness - set(scenarios)
+    missing_harness = (
+        mandatory_harness - set(scenarios)
+        if manifest.fixture_kind == "legacy"
+        else set()
+    )
     if missing_harness:
         raise SuiteValidationError(
             "missing mandatory harness scenarios: " + ", ".join(sorted(missing_harness))
         )
-    for scenario_id in mandatory_harness:
+    for scenario_id in mandatory_harness & set(scenarios):
         scenario = scenarios[scenario_id]
-        if scenario.qualification_scope != "harness_contract" or not scenario.forced_failure:
+        if (
+            scenario.qualification_scope != "harness_contract"
+            or not scenario.forced_failure
+        ):
             raise SuiteValidationError(
                 f"{scenario_id} must declare a harness_contract forced failure"
             )
 
-    candidate = raw_values[manifest.candidate_evidence_file]
-    research = raw_values[manifest.company_research_file]
-    research_sources = raw_values[manifest.company_research_sources_file]
-    if not all(isinstance(item, dict) for item in (candidate, research, research_sources)):
-        raise SuiteValidationError("Coach evidence and research fixtures must be objects")
+    candidate_file = (
+        manifest.evidence_file
+        if manifest.fixture_kind == "conversational"
+        else manifest.candidate_evidence_file
+    )
+    if candidate_file is None:
+        raise SuiteValidationError("Coach suite is missing evidence fixture authority")
+    candidate = raw_values[candidate_file]
+    research = (
+        raw_values[manifest.company_research_file]
+        if manifest.company_research_file is not None
+        and manifest.company_research_file in raw_values
+        else {}
+    )
+    research_sources = (
+        raw_values[manifest.company_research_sources_file]
+        if manifest.company_research_sources_file is not None
+        and manifest.company_research_sources_file in raw_values
+        else {}
+    )
+    if not all(
+        isinstance(item, dict) for item in (candidate, research, research_sources)
+    ):
+        raise SuiteValidationError(
+            "Coach evidence and research fixtures must be objects"
+        )
     evidence = candidate.get("evidence")
     if not isinstance(evidence, list) or not evidence:
         raise SuiteValidationError("candidate evidence must contain evidence items")
@@ -295,9 +358,13 @@ def load_suite(path: Path | str) -> LoadedCoachSuite:
             isinstance(item.get(field), str)
             for field in ("evidence_id", "source_path", "text")
         ):
-            raise SuiteValidationError("candidate evidence items require stable evidence fields")
+            raise SuiteValidationError(
+                "candidate evidence items require stable evidence fields"
+            )
         if item["evidence_id"] != stable_evidence_id(item["source_path"], item["text"]):
-            raise SuiteValidationError("candidate evidence item has an invalid stable evidence id")
+            raise SuiteValidationError(
+                "candidate evidence item has an invalid stable evidence id"
+            )
     evidence_ids = {item["evidence_id"] for item in evidence}
     for scenario in parsed_scenarios:
         references = (
@@ -321,11 +388,18 @@ def load_suite(path: Path | str) -> LoadedCoachSuite:
         models=tuple(models_file.models),
         scenarios=scenarios,
         candidate_evidence=candidate,
-        job_description=str(raw_values[manifest.job_description_file]),
+        job_description=(
+            str(raw_values[manifest.job_description_file])
+            if manifest.job_description_file is not None
+            and manifest.job_description_file in raw_values
+            else ""
+        ),
         company_research=research,
         company_research_sources=research_sources,
         stopwords=frozenset(str(raw_values[manifest.stopwords_file]).splitlines()),
-        input_hashes={name: hash_file(file_path) for name, file_path in resolved.items()},
+        input_hashes={
+            name: hash_file(file_path) for name, file_path in resolved.items()
+        },
         declared_files=declared,
         root=root,
     )

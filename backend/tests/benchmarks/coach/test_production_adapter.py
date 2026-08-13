@@ -38,6 +38,18 @@ class StaticJSONClient(FakeLiveClient):
         return self.response
 
 
+class CapturingJSONClient(StaticJSONClient):
+    def __init__(self, response: dict[str, object]) -> None:
+        super().__init__(response)
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+    async def complete_json(
+        self, system: str, user: str, **kwargs: object
+    ) -> dict[str, object]:
+        self.calls.append((system, user, kwargs))
+        return self.response
+
+
 def _diagnostic(*, execution_mode: str = "llm") -> CoachDiagnostic:
     return CoachDiagnostic(
         stage="question_generation",
@@ -52,6 +64,42 @@ def _diagnostic(*, execution_mode: str = "llm") -> CoachDiagnostic:
         gate_codes=[],
         duration_ms=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_follow_up_benchmark_renders_the_production_prompt() -> None:
+    suite = load_suite(
+        ROOT / "backend" / "benchmarks" / "coach" / "fixtures" / "conversational_v1"
+    )
+    scenario = suite.scenario("follow_up_admitted")
+    transcript = str(scenario.input["transcript"])
+    client = CapturingJSONClient(
+        {
+            "should_ask": True,
+            "reason": "measurable_result",
+            "question": "What measurable result followed your action?",
+            "transcript_evidence": {
+                "start": 0,
+                "end": len(transcript),
+                "excerpt": transcript,
+            },
+            "target_dimension": "impact",
+            "aggregation_role": "gap_repair",
+            "duplicate_key": "measurable-result",
+        }
+    )
+
+    result = await CoachProductionAdapter().execute(
+        scenario, client, ScenarioContext.from_suite(suite)
+    )
+
+    assert result.output["admitted"] is True
+    system, user, kwargs = client.calls[0]
+    assert "adaptive interview follow-up" in system
+    assert transcript in user
+    assert str(len(transcript)) in user
+    assert '"transcript_evidence"' in user
+    assert kwargs["max_tokens"] > 0
 
 
 @pytest.mark.asyncio

@@ -62,6 +62,11 @@ def disable_real_attempt_worker_dispatch(monkeypatch: pytest.MonkeyPatch) -> Non
         "app.services.coach_conversation_commands.queue_audio_cleanup",
         lambda _claim: None,
     )
+    class UnavailableModel:
+        async def complete_json(self, *_args, **_kwargs):
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("app.services.llm_client.LLMClient", UnavailableModel)
 
 
 @pytest_asyncio.fixture
@@ -2712,7 +2717,7 @@ async def test_later_command_fails_without_receipt_or_partial_mutation(
             user_id="local", session_id=session.id, request=request
         )
 
-    assert raised.value.code == "coach_conversation_invalid_state"
+    assert raised.value.code == "coach_attempt_not_active"
     assert (
         await db_session.scalar(
             select(func.count(ConversationCommandResultRecord.id)).where(
@@ -2721,6 +2726,659 @@ async def test_later_command_fails_without_receipt_or_partial_mutation(
         )
         == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_request_coaching_persists_skeleton_without_changing_evaluation(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="awaiting_next_action", status="active", version=5
+    )
+    question = questions[0]
+    session.active_question_id = question.id
+    question.question_state = "answered"
+    transcript = InterviewTranscriptVersion(
+        id="coaching-transcript",
+        recording_id="coaching-attempt",
+        version_number=1,
+        transcript="I led the migration and reduced deployment time by three hours.",
+        source="candidate_text",
+        content_hash="sha256:" + "1" * 64,
+        created_by="candidate",
+        processing_generation=1,
+    )
+    attempt = SessionRecording(
+        id="coaching-attempt",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        current_transcript_version_id=transcript.id,
+        current_evaluation_version_id="coaching-evaluation",
+        processing_generation=1,
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="coaching-evaluation",
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="completed",
+        answer_level="interview_ready",
+        rubric_json={
+            "answer_level": "interview_ready",
+            "dimensions": {
+                "impact": {
+                    "level": "developing",
+                    "evidence": [{"excerpt": transcript.transcript}],
+                    "rationale": "The outcome is concrete.",
+                    "improvement": "Explain why three hours mattered.",
+                }
+            },
+        },
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    session.active_recording_id = attempt.id
+    db_session.add_all((attempt, transcript, evaluation))
+    await db_session.commit()
+    before_rubric = evaluation.rubric_json
+    before_activity = session.activity_version
+    request = command(
+        "request_coaching",
+        version=5,
+        payload={"attempt_id": attempt.id},
+        command_id="coaching-request",
+    )
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(evaluation)
+    assert result == replay
+    assert result.state == "coaching"
+    assert session.state_version == 6
+    assert session.activity_version == before_activity
+    assert evaluation.rubric_json == before_rubric
+    assert evaluation.answer_level == "interview_ready"
+    assert evaluation.coaching_json["priority_improvement"] == (
+        "Explain why three hours mattered."
+    )
+    assert await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id)).where(
+            InterviewSessionEvent.event_type == "coaching_requested"
+        )
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_request_coaching_uses_valid_fact_safe_enrichment(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="awaiting_next_action", status="active", version=5
+    )
+    question = questions[0]
+    session.active_question_id = question.id
+    question.question_state = "answered"
+    transcript_text = "I led the migration and reduced deployment time by three hours."
+    transcript = InterviewTranscriptVersion(
+        id="enriched-coaching-transcript",
+        recording_id="enriched-coaching-attempt",
+        version_number=1,
+        transcript=transcript_text,
+        source="candidate_text",
+        content_hash="sha256:" + "2" * 64,
+        created_by="candidate",
+        processing_generation=1,
+    )
+    attempt = SessionRecording(
+        id="enriched-coaching-attempt",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        current_transcript_version_id=transcript.id,
+        current_evaluation_version_id="enriched-coaching-evaluation",
+        processing_generation=1,
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="enriched-coaching-evaluation",
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="completed",
+        answer_level="interview_ready",
+        rubric_json={
+            "answer_level": "interview_ready",
+            "dimensions": {
+                "impact": {
+                    "level": "developing",
+                    "evidence": [{"excerpt": transcript_text}],
+                    "rationale": "The outcome is concrete.",
+                    "improvement": "Explain why the result mattered.",
+                }
+            },
+        },
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    session.active_recording_id = attempt.id
+    db_session.add_all((attempt, transcript, evaluation))
+    await db_session.commit()
+
+    class Model:
+        async def complete_json(self, *_args, **_kwargs):
+            return {
+                "positive_observation": "The migration example is concrete.",
+                "priority_improvement": "Explain why the result mattered.",
+                "suggested_structure": "State the situation, action, and result.",
+                "practice_instruction": "Practise the answer once.",
+                "example_revision": "[add verified metric]",
+            }
+
+    request = command(
+        "request_coaching",
+        version=5,
+        payload={"attempt_id": attempt.id},
+        command_id="coaching-enrichment",
+    )
+    await ConversationCommandService(
+        db_session, coaching_model_factory=Model
+    ).execute(user_id="local", session_id=session.id, request=request)
+
+    await db_session.refresh(evaluation)
+    assert evaluation.coaching_json["positive_observation"] == (
+        "The migration example is concrete."
+    )
+    assert evaluation.coaching_json["answer_level"] == "interview_ready"
+
+
+@pytest.mark.asyncio
+async def test_request_coaching_rejects_stale_evaluation_without_mutation(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="awaiting_next_action", status="active", version=5
+    )
+    session.active_question_id = questions[0].id
+    session.active_recording_id = "missing-attempt"
+    await db_session.commit()
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local",
+            session_id=session.id,
+            request=command(
+                "request_coaching",
+                version=5,
+                payload={"attempt_id": "missing-attempt"},
+                command_id="missing-coaching",
+            ),
+        )
+
+    assert raised.value.code == "coach_attempt_not_active"
+    await db_session.refresh(session)
+    assert (session.conversation_state, session.state_version) == (
+        "awaiting_next_action",
+        5,
+    )
+    assert await db_session.scalar(
+        select(func.count(ConversationCommandResultRecord.id)).where(
+            ConversationCommandResultRecord.command_id == "missing-coaching"
+        )
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_return_to_review_changes_only_review_state_and_replays(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="coaching", status="active", version=7
+    )
+    session.active_question_id = questions[0].id
+    session.active_recording_id = "review-attempt"
+    attempt = SessionRecording(
+        id="review-attempt",
+        session_id=session.id,
+        question_id=questions[0].id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        current_evaluation_version_id="review-evaluation",
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="review-evaluation",
+        recording_id=attempt.id,
+        version_number=1,
+        state="completed",
+        answer_level="developing",
+        rubric_json={"answer_level": "developing"},
+        coaching_json={"priority_improvement": "Add an outcome."},
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add_all((attempt, evaluation))
+    await db_session.commit()
+    before_activity = session.activity_version
+    request = command("return_to_review", version=7, command_id="return-review")
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(evaluation)
+    assert result == replay
+    assert (session.conversation_state, session.state_version) == (
+        "awaiting_next_action",
+        8,
+    )
+    assert session.activity_version == before_activity
+    assert evaluation.answer_level == "developing"
+    assert evaluation.coaching_json == {"priority_improvement": "Add an outcome."}
+
+
+@pytest.mark.asyncio
+async def test_active_self_assessment_overwrites_without_changing_quality(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="awaiting_next_action", status="active", version=4
+    )
+    session.active_question_id = questions[0].id
+    session.active_recording_id = "reflection-attempt"
+    attempt = SessionRecording(
+        id="reflection-attempt",
+        session_id=session.id,
+        question_id=questions[0].id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        attempt_version=2,
+        evaluation_json=json.dumps({"answer_level": "strong"}),
+    )
+    db_session.add(attempt)
+    await db_session.commit()
+
+    first = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "record_self_assessment",
+            version=4,
+            command_id="reflection-one",
+            payload={
+                "attempt_id": attempt.id,
+                "comfort_level": "medium",
+                "felt_complete": True,
+                "note": "I want to make the outcome clearer.",
+            },
+        ),
+    )
+    second = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "record_self_assessment",
+            version=first.state_version,
+            command_id="reflection-two",
+            payload={
+                "attempt_id": attempt.id,
+                "comfort_level": "high",
+                "felt_complete": False,
+                "note": "Second reflection",
+            },
+        ),
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert second.state == "awaiting_next_action"
+    assert attempt.self_assessment_json == {
+        "comfort_level": "high",
+        "felt_complete": False,
+        "note": "Second reflection",
+        "recorded_at": attempt.self_assessment_updated_at.isoformat(),
+        "contract_version": "coach_candidate_self_assessment_v1",
+    }
+    assert attempt.attempt_version == 4
+    assert session.state_version == 6
+    assert session.activity_version == 2
+    assert json.loads(attempt.evaluation_json) == {"answer_level": "strong"}
+    events = (
+        await db_session.scalars(
+            select(InterviewSessionEvent).where(
+                InterviewSessionEvent.event_type == "self_assessment_recorded"
+            )
+        )
+    ).all()
+    assert len(events) == 2
+    assert "Second reflection" not in json.dumps(events[-1].payload_json)
+
+
+@pytest.mark.asyncio
+async def test_completed_self_assessment_is_rejected_without_receipt(
+    db_session: AsyncSession,
+) -> None:
+    session, _ = await seed_session(
+        db_session, state="completed", status="completed", version=9
+    )
+    request = command(
+        "record_self_assessment",
+        version=9,
+        command_id="completed-reflection",
+        payload={
+            "attempt_id": "completed-attempt",
+            "comfort_level": "low",
+            "felt_complete": False,
+            "note": None,
+        },
+    )
+
+    with pytest.raises(ConversationCommandError) as raised:
+        await ConversationCommandService(db_session).execute(
+            user_id="local", session_id=session.id, request=request
+        )
+
+    assert raised.value.code == "coach_conversation_invalid_state"
+    assert await db_session.scalar(
+        select(func.count(ConversationCommandResultRecord.id)).where(
+            ConversationCommandResultRecord.command_id == request.command_id
+        )
+    ) == 0
+
+
+async def _seed_review_attempt_for_acceptance(
+    db_session: AsyncSession,
+    *,
+    follow_up_proposal: dict[str, object] | None,
+) -> tuple[InterviewSession, list[SessionQuestion], SessionRecording]:
+    session, questions = await seed_session(
+        db_session,
+        state="awaiting_next_action",
+        status="active",
+        version=4,
+        question_count=2,
+    )
+    question = questions[0]
+    question.question_state = "asked"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    session.active_recording_id = "attempt-accept-command"
+    transcript_text = "I led the migration and the stakeholders were satisfied."
+    transcript = InterviewTranscriptVersion(
+        id="transcript-accept-command",
+        recording_id="attempt-accept-command",
+        version_number=1,
+        transcript=transcript_text,
+        source="candidate_text",
+        content_hash="a" * 64,
+        created_by="candidate",
+        processing_generation=1,
+    )
+    attempt = SessionRecording(
+        id="attempt-accept-command",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_kind="primary",
+        attempt_state="completed",
+        evaluation_state="completed",
+        processing_generation=1,
+        current_transcript_version_id=transcript.id,
+        current_evaluation_version_id="evaluation-accept-command",
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="evaluation-accept-command",
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="completed",
+        answer_level="developing",
+        rubric_json={
+            "answer_level": "developing",
+            "dimensions": {
+                "impact": {"level": "developing"},
+                "specificity": {"level": "interview_ready"},
+            },
+        },
+        follow_up_proposal_json=follow_up_proposal,
+        diagnostics_json={"processing_claim": {"processing_generation": 1}},
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    db_session.add_all((attempt, transcript, evaluation))
+    await db_session.commit()
+    return session, questions, attempt
+
+
+@pytest.mark.asyncio
+async def test_accept_attempt_admits_one_grounded_follow_up_and_replays(
+    db_session: AsyncSession,
+) -> None:
+    transcript_text = "I led the migration and the stakeholders were satisfied."
+    excerpt = "the stakeholders were satisfied"
+    start = transcript_text.index(excerpt)
+    session, questions, attempt = await _seed_review_attempt_for_acceptance(
+        db_session,
+        follow_up_proposal={
+            "should_ask": True,
+            "reason": "measurable_result",
+            "question": "What measurable outcome resulted from your intervention?",
+            "transcript_evidence": {
+                "start": start,
+                "end": start + len(excerpt),
+                "excerpt": excerpt,
+            },
+            "target_dimension": "impact",
+            "aggregation_role": "gap_repair",
+            "duplicate_key": "root-question:impact:result",
+        },
+    )
+    request = command(
+        "accept_attempt",
+        version=4,
+        command_id="accept-with-follow-up",
+        payload={"attempt_id": attempt.id},
+    )
+    session_id = session.id
+    root_question_id = questions[0].id
+    attempt_id = attempt.id
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    db_session.expire_all()
+    persisted_session = await db_session.get(InterviewSession, session_id)
+    root = await db_session.get(SessionQuestion, root_question_id)
+    follow_ups = list(
+        (
+            await db_session.scalars(
+                select(SessionQuestion).where(
+                    SessionQuestion.session_id == session_id,
+                    SessionQuestion.question_kind == "adaptive_follow_up",
+                )
+            )
+        ).all()
+    )
+    assert result == replay
+    assert persisted_session is not None and root is not None
+    assert (persisted_session.conversation_state, persisted_session.state_version) == (
+        "asking",
+        5,
+    )
+    assert root.accepted_recording_id == attempt_id
+    assert len(follow_ups) == 1
+    assert persisted_session.active_question_id == follow_ups[0].id
+    assert follow_ups[0].question_state == "asked"
+
+
+@pytest.mark.asyncio
+async def test_accept_attempt_rejects_invalid_follow_up_and_advances_planned_sequence(
+    db_session: AsyncSession,
+) -> None:
+    session, questions, attempt = await _seed_review_attempt_for_acceptance(
+        db_session,
+        follow_up_proposal={
+            "should_ask": True,
+            "reason": "measurable_result",
+            "question": "You scored 4/10, explain your confidence.",
+            "transcript_evidence": {
+                "start": 0,
+                "end": 1,
+                "excerpt": "I",
+            },
+            "target_dimension": "impact",
+            "aggregation_role": "gap_repair",
+            "duplicate_key": "unsafe-score",
+        },
+    )
+    session_id = session.id
+    next_question_id = questions[1].id
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "accept_attempt",
+            version=4,
+            command_id="accept-without-follow-up",
+            payload={"attempt_id": attempt.id},
+        ),
+    )
+
+    db_session.expire_all()
+    persisted_session = await db_session.get(InterviewSession, session_id)
+    next_question = await db_session.get(SessionQuestion, next_question_id)
+    assert persisted_session is not None and next_question is not None
+    assert (result.state, result.state_version) == ("asking", 5)
+    assert persisted_session.active_question_id == next_question.id
+    assert next_question.question_state == "asked"
+    assert await db_session.scalar(
+        select(func.count(SessionQuestion.id)).where(
+            SessionQuestion.session_id == session_id,
+            SessionQuestion.question_kind == "adaptive_follow_up",
+        )
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_edit_transcript_claims_new_generation_and_preserves_original_review(
+    db_session: AsyncSession,
+) -> None:
+    session, _, attempt = await _seed_review_attempt_for_acceptance(
+        db_session, follow_up_proposal=None
+    )
+    original_transcript_id = attempt.current_transcript_version_id
+    original_evaluation_id = attempt.current_evaluation_version_id
+    attempt_id = attempt.id
+    original_evaluation = await db_session.get(
+        InterviewAttemptEvaluation, original_evaluation_id
+    )
+    assert original_evaluation is not None
+    original_evaluation.rubric_json = {
+        **(original_evaluation.rubric_json or {}),
+        "delivery": {"level": "not_assessed", "observations": {}},
+    }
+    await db_session.commit()
+    request = command(
+        "edit_transcript",
+        version=4,
+        command_id="edit-review-transcript",
+        payload={
+            "attempt_id": attempt.id,
+            "transcript": "I led the corrected migration and reduced latency by 20 percent.",
+            "edit_reason": "transcription_error",
+        },
+    )
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+    replay = await ConversationCommandService(db_session).execute(
+        user_id="local", session_id=session.id, request=request
+    )
+
+    db_session.expire_all()
+    persisted_attempt = await db_session.get(SessionRecording, attempt_id)
+    original_transcript = await db_session.get(
+        InterviewTranscriptVersion, original_transcript_id
+    )
+    original_review = await db_session.get(
+        InterviewAttemptEvaluation, original_evaluation_id
+    )
+    assert result == replay
+    assert result.result == "accepted_processing"
+    assert (result.state, result.state_version) == ("processing_answer", 5)
+    assert persisted_attempt is not None
+    assert persisted_attempt.processing_generation == 2
+    assert persisted_attempt.attempt_version == 1
+    assert persisted_attempt.attempt_state == "pending_processing"
+    assert persisted_attempt.current_transcript_version_id != original_transcript_id
+    edited = await db_session.get(
+        InterviewTranscriptVersion,
+        persisted_attempt.current_transcript_version_id,
+    )
+    assert edited is not None
+    assert (
+        edited.version_number,
+        edited.source,
+        edited.created_by,
+        edited.edit_reason,
+        edited.processing_generation,
+    ) == (2, "candidate_edit", "candidate", "transcription_error", 2)
+    assert original_transcript is not None
+    assert original_transcript.transcript == (
+        "I led the migration and the stakeholders were satisfied."
+    )
+    assert original_review is not None
+    assert original_review.rubric_json["delivery"] == {
+        "level": "not_assessed",
+        "observations": {},
+    }
+    pending = await db_session.scalar(
+        select(InterviewAttemptEvaluation).where(
+            InterviewAttemptEvaluation.recording_id == attempt_id,
+            InterviewAttemptEvaluation.state == "pending",
+        )
+    )
+    assert pending is not None and pending.transcript_version_id == edited.id
+    assert await db_session.scalar(
+        select(func.count(InterviewAttemptStage.id)).where(
+            InterviewAttemptStage.recording_id == attempt_id,
+            InterviewAttemptStage.evaluation_version_id == pending.id,
+        )
+    ) == 8
+    assert await db_session.scalar(
+        select(func.count(InterviewTranscriptVersion.id)).where(
+            InterviewTranscriptVersion.recording_id == attempt_id
+        )
+    ) == 2
 
 
 @pytest.mark.asyncio

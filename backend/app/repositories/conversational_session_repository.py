@@ -37,6 +37,7 @@ from ..models.coach_session import (
 )
 from ..schemas.coach_conversation import (
     AttemptAudioUploadRead,
+    CandidateSelfAssessment,
     ConversationCommandRequest,
     SAFE_TOKEN_RE,
 )
@@ -167,6 +168,13 @@ class AcceptanceResult:
     current_state: str | None
     evaluation_version_id: str | None
     evaluation_state: str | None
+
+
+@dataclass(frozen=True)
+class SelfAssessmentMutationResult:
+    attempt_version: int
+    activity_version: int
+    state_version: int
 
 
 @dataclass(frozen=True)
@@ -1866,6 +1874,197 @@ class ConversationalSessionRepository:
         await self._session.flush()
         return row
 
+    async def claim_transcript_edit(
+        self,
+        *,
+        session_id: str,
+        recording_id: str,
+        transcript: str,
+        expected_attempt_version: int,
+        expected_session_state_version: int,
+        job_id: str,
+        deadline: datetime,
+    ) -> AttemptProcessingClaim | None:
+        normalised = unicodedata.normalize(
+            "NFC", transcript.replace("\r\n", "\n").replace("\r", "\n")
+        )
+        if not normalised or len(normalised) > self._max_transcript_characters:
+            raise ConversationalRepositoryError("coach_transcript_schema_invalid")
+        session = await self._session.get(InterviewSession, session_id)
+        attempt = await self._session.get(SessionRecording, recording_id)
+        current_transcript = (
+            await self._session.get(
+                InterviewTranscriptVersion,
+                attempt.current_transcript_version_id,
+            )
+            if attempt is not None
+            and attempt.current_transcript_version_id is not None
+            else None
+        )
+        current_evaluation = (
+            await self._session.get(
+                InterviewAttemptEvaluation,
+                attempt.current_evaluation_version_id,
+            )
+            if attempt is not None
+            and attempt.current_evaluation_version_id is not None
+            else None
+        )
+        job = await self._session.scalar(
+            select(AsyncJob).where(
+                AsyncJob.id == job_id,
+                AsyncJob.type == "coach_attempt_processing",
+                AsyncJob.status == "pending",
+            )
+        )
+        if (
+            session is None
+            or session.experience_version != "conversational_v1"
+            or session.status != "active"
+            or session.conversation_state
+            not in {"awaiting_next_action", "coaching"}
+            or session.state_version != expected_session_state_version
+            or session.active_question_id is None
+            or session.active_recording_id != recording_id
+            or session.deletion_state != "not_requested"
+            or attempt is None
+            or attempt.session_id != session_id
+            or attempt.question_id != session.active_question_id
+            or attempt.attempt_state not in {"completed", "unavailable"}
+            or attempt.evaluation_state != attempt.attempt_state
+            or attempt.attempt_version != expected_attempt_version
+            or attempt.async_job_id is not None
+            or current_transcript is None
+            or current_transcript.recording_id != recording_id
+            or current_evaluation is None
+            or current_evaluation.recording_id != recording_id
+            or current_evaluation.transcript_version_id != current_transcript.id
+            or current_evaluation.state != attempt.evaluation_state
+            or job is None
+        ):
+            return None
+        next_generation = attempt.processing_generation + 1
+        next_transcript_version = current_transcript.version_number + 1
+        latest_evaluation_version = await self._session.scalar(
+            select(func.max(InterviewAttemptEvaluation.version_number)).where(
+                InterviewAttemptEvaluation.recording_id == recording_id
+            )
+        )
+        transcript_id = str(uuid.uuid4())
+        evaluation_id = str(uuid.uuid4())
+        claim_token = str(uuid.uuid4())
+        claim_snapshot = {
+            "processing_generation": next_generation,
+            "job_deadline_at": deadline.isoformat(),
+            "source_audio_content_hash": attempt.audio_content_hash,
+            "source_transcript_version_id": transcript_id,
+            "expected_session_state_version": expected_session_state_version,
+            "processing_contract_version": "coach_processing_v1",
+            "claim_token": claim_token,
+        }
+        try:
+            async with self._session.begin_nested():
+                session_change = await self._session.execute(
+                    update(InterviewSession)
+                    .where(
+                        InterviewSession.id == session_id,
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.status == "active",
+                        InterviewSession.conversation_state
+                        == session.conversation_state,
+                        InterviewSession.state_version
+                        == expected_session_state_version,
+                        InterviewSession.active_question_id == attempt.question_id,
+                        InterviewSession.active_recording_id == recording_id,
+                        InterviewSession.deletion_state == "not_requested",
+                    )
+                    .values(
+                        conversation_state="processing_answer",
+                        state_version=InterviewSession.state_version + 1,
+                        activity_version=InterviewSession.activity_version + 1,
+                        last_activity_at=datetime.utcnow(),
+                    )
+                )
+                if session_change.rowcount != 1:
+                    raise _StaleFinalisation
+                self._session.add(
+                    InterviewTranscriptVersion(
+                        id=transcript_id,
+                        recording_id=recording_id,
+                        version_number=next_transcript_version,
+                        transcript=normalised,
+                        source="candidate_edit",
+                        edit_reason="transcription_error",
+                        content_hash=hashlib.sha256(
+                            normalised.encode("utf-8")
+                        ).hexdigest(),
+                        created_by="candidate",
+                        processing_generation=next_generation,
+                    )
+                )
+                self._session.add(
+                    InterviewAttemptEvaluation(
+                        id=evaluation_id,
+                        recording_id=recording_id,
+                        transcript_version_id=transcript_id,
+                        version_number=int(latest_evaluation_version or 0) + 1,
+                        state="pending",
+                        evaluation_contract_version=RUBRIC_CONTRACT,
+                        evidence_contract_version=EVIDENCE_GROUNDING_CONTRACT,
+                        follow_up_contract_version=FOLLOW_UP_CONTRACT,
+                        async_job_id=job_id,
+                        diagnostics_json={"processing_claim": claim_snapshot},
+                    )
+                )
+                await self._session.flush()
+                attempt_change = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == recording_id,
+                        SessionRecording.session_id == session_id,
+                        SessionRecording.question_id == attempt.question_id,
+                        SessionRecording.attempt_state == attempt.attempt_state,
+                        SessionRecording.evaluation_state
+                        == attempt.evaluation_state,
+                        SessionRecording.attempt_version
+                        == expected_attempt_version,
+                        SessionRecording.processing_generation
+                        == attempt.processing_generation,
+                        SessionRecording.current_transcript_version_id
+                        == current_transcript.id,
+                        SessionRecording.current_evaluation_version_id
+                        == current_evaluation.id,
+                        SessionRecording.async_job_id.is_(None),
+                        SessionRecording.accepted_at.is_(None),
+                    )
+                    .values(
+                        transcript=normalised,
+                        current_transcript_version_id=transcript_id,
+                        attempt_version=SessionRecording.attempt_version + 1,
+                        processing_generation=next_generation,
+                        attempt_state="pending_processing",
+                        evaluation_state="pending",
+                        async_job_id=job_id,
+                        processing_started_at=datetime.utcnow(),
+                        processing_completed_at=None,
+                    )
+                )
+                if attempt_change.rowcount != 1:
+                    raise _StaleFinalisation
+                await self._session.flush()
+        except _StaleFinalisation:
+            return None
+        return AttemptProcessingClaim(
+            session_id=session_id,
+            question_id=attempt.question_id or "",
+            recording_id=recording_id,
+            transcript_version_id=transcript_id,
+            evaluation_version_id=evaluation_id,
+            processing_generation=next_generation,
+            job_id=job_id,
+            deadline_at=deadline,
+        )
+
     async def claim_retry_processing(
         self,
         *,
@@ -2775,6 +2974,14 @@ class ConversationalSessionRepository:
         _validate_processing_diagnostics(
             result.diagnostics, evaluation_state=result.evaluation_state
         )
+        evaluation_payload = dict(result.evaluation_json)
+        follow_up_proposal = evaluation_payload.pop("_follow_up_proposal", None)
+        answer_level = evaluation_payload.get("answer_level")
+        if not isinstance(answer_level, str):
+            answer_level = None
+        evidence_findings = evaluation_payload.get("evidence_consistency")
+        if not isinstance(evidence_findings, dict):
+            evidence_findings = None
         try:
             async with self._session.begin_nested():
                 if datetime.utcnow() > claim.deadline_at:
@@ -3110,7 +3317,7 @@ class ConversationalSessionRepository:
                         attempt_state=result.evaluation_state,
                         evaluation_state=result.evaluation_state,
                         evaluation_json=json.dumps(
-                            result.evaluation_json,
+                            evaluation_payload,
                             sort_keys=True,
                             separators=(",", ":"),
                         ),
@@ -3133,7 +3340,14 @@ class ConversationalSessionRepository:
                     )
                     .values(
                         state=result.evaluation_state,
-                        rubric_json=result.evaluation_json,
+                        answer_level=answer_level,
+                        rubric_json=evaluation_payload,
+                        evidence_findings_json=evidence_findings,
+                        follow_up_proposal_json=(
+                            follow_up_proposal
+                            if isinstance(follow_up_proposal, dict)
+                            else None
+                        ),
                         diagnostics_json={
                             "processing_claim": claim_snapshot,
                             "result": result.diagnostics,
@@ -3373,6 +3587,110 @@ class ConversationalSessionRepository:
         except _StaleFinalisation:
             return False
         return True
+
+    async def record_attempt_self_assessment(
+        self,
+        *,
+        session_id: str,
+        attempt_id: str,
+        assessment: CandidateSelfAssessment,
+        expected_state_version: int,
+        recorded_at: datetime,
+    ) -> SelfAssessmentMutationResult:
+        session = await self._session.get(InterviewSession, session_id)
+        attempt = await self._session.get(SessionRecording, attempt_id)
+        if (
+            session is None
+            or session.experience_version != "conversational_v1"
+            or session.status != "active"
+            or session.conversation_state
+            not in {"awaiting_next_action", "coaching"}
+            or session.deletion_state != "not_requested"
+            or session.active_recording_id != attempt_id
+            or session.active_question_id is None
+            or session.state_version != expected_state_version
+            or attempt is None
+            or attempt.session_id != session_id
+            or attempt.question_id != session.active_question_id
+            or attempt.attempt_state not in {"completed", "unavailable"}
+            or attempt.evaluation_state != attempt.attempt_state
+        ):
+            raise ConversationalRepositoryError("coach_attempt_not_active")
+
+        persisted = assessment.model_copy(update={"recorded_at": recorded_at})
+        state_before = session.conversation_state
+        try:
+            async with self._session.begin_nested():
+                attempt_change = await self._session.execute(
+                    update(SessionRecording)
+                    .where(
+                        SessionRecording.id == attempt_id,
+                        SessionRecording.session_id == session_id,
+                        SessionRecording.question_id == session.active_question_id,
+                        SessionRecording.attempt_state == attempt.attempt_state,
+                        SessionRecording.evaluation_state == attempt.evaluation_state,
+                        SessionRecording.attempt_version == attempt.attempt_version,
+                    )
+                    .values(
+                        self_assessment_json=persisted.model_dump(mode="json"),
+                        self_assessment_updated_at=recorded_at,
+                        attempt_version=SessionRecording.attempt_version + 1,
+                    )
+                    .returning(SessionRecording.attempt_version)
+                )
+                attempt_version = attempt_change.scalar_one_or_none()
+                session_change = await self._session.execute(
+                    update(InterviewSession)
+                    .where(
+                        InterviewSession.id == session_id,
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.status == "active",
+                        InterviewSession.conversation_state == state_before,
+                        InterviewSession.state_version == expected_state_version,
+                        InterviewSession.active_question_id == attempt.question_id,
+                        InterviewSession.active_recording_id == attempt_id,
+                        InterviewSession.deletion_state == "not_requested",
+                    )
+                    .values(
+                        state_version=InterviewSession.state_version + 1,
+                        activity_version=InterviewSession.activity_version + 1,
+                        last_activity_at=recorded_at,
+                    )
+                    .returning(
+                        InterviewSession.state_version,
+                        InterviewSession.activity_version,
+                    )
+                )
+                version_row = session_change.one_or_none()
+                if attempt_version is None or version_row is None:
+                    raise _StaleFinalisation
+                state_version, activity_version = version_row
+                await self.append_session_events(
+                    session_id=session_id,
+                    events=(
+                        SessionEventInput(
+                            event_type="self_assessment_recorded",
+                            actor_type="candidate",
+                            state_version=state_version,
+                            state_before=state_before,
+                            state_after=state_before,
+                            question_id=attempt.question_id,
+                            recording_id=attempt_id,
+                            payload_json={
+                                "attempt_version": attempt_version,
+                                "activity_version": activity_version,
+                            },
+                        ),
+                    ),
+                )
+                await self._session.flush()
+        except _StaleFinalisation as error:
+            raise ConversationalRepositoryError("coach_attempt_not_active") from error
+        return SelfAssessmentMutationResult(
+            attempt_version=attempt_version,
+            activity_version=activity_version,
+            state_version=state_version,
+        )
 
     async def accept_attempt(
         self,

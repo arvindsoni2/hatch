@@ -1,4 +1,5 @@
 """Strict contracts for Coach benchmark fixtures, attempts, and reports."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +17,20 @@ CoachStage = Literal[
     "rubric_synthesis",
     "session_report",
     "technical_drill",
+    "end_to_end",
+    "conversational_rubric",
+    "evidence_grounding",
+    "follow_up",
+    "coaching",
+    "prohibited_inference",
+    "conversational_end_to_end",
+]
+ConversationalGroup = Literal[
+    "rubric",
+    "evidence_grounding",
+    "follow_up",
+    "coaching",
+    "prohibited_inference",
     "end_to_end",
 ]
 QualificationScope = Literal["model_capability", "harness_contract"]
@@ -63,6 +78,15 @@ class ScenarioExpected(StrictModel):
     expected_strength_tags: list[str] = Field(default_factory=list)
     expected_gap_tags: list[str] = Field(default_factory=list)
     expected_priority_dimensions: list[str] = Field(default_factory=list)
+    named_level: (
+        Literal["needs_work", "developing", "interview_ready", "strong", "not_assessed"]
+        | None
+    ) = None
+    evidence_status: (
+        Literal["supported", "partially_supported", "not_found", "conflicting"] | None
+    ) = None
+    admitted: bool | None = None
+    error_code: str | None = None
 
 
 class ScenarioScoring(StrictModel):
@@ -93,6 +117,7 @@ class CoachScenario(StrictModel):
     expected: ScenarioExpected
     scoring: ScenarioScoring
     quality_dimensions: list[str]
+    group: ConversationalGroup | None = None
     acceptance_smoke: bool = False
     forced_failure: ForcedFailureMode | None = None
 
@@ -100,6 +125,16 @@ class CoachScenario(StrictModel):
     def validate_forced_failure_scope(self) -> "CoachScenario":
         if self.forced_failure and self.qualification_scope != "harness_contract":
             raise ValueError("forced failures must be harness_contract")
+        conversational_stages = {
+            "conversational_rubric",
+            "evidence_grounding",
+            "follow_up",
+            "coaching",
+            "prohibited_inference",
+            "conversational_end_to_end",
+        }
+        if (self.stage in conversational_stages) != (self.group is not None):
+            raise ValueError("conversational scenarios require exactly one group")
         return self
 
 

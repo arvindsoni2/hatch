@@ -1,0 +1,10 @@
+{
+  "scenario_id": "rubric_prohibited",
+  "stage": "conversational_rubric",
+  "group": "rubric",
+  "description": "Synthetic rubric rejects prohibited inferred traits after repair.",
+  "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "I led a safe migration.", "recording_type": "text", "case": "prohibited"},
+  "expected": {"outcome": "unavailable", "named_level": "not_assessed", "error_code": "coach_evaluation_prohibited_inference"},
+  "scoring": {}, "quality_dimensions": []
+}

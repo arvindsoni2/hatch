@@ -229,6 +229,8 @@ function live(overrides: LiveOverrides = {}) {
       attempts_remaining: 5,
     },
     active_attempt: null,
+    answer_review: null,
+    attempt_history: [],
     processing: {
       job_id: null,
       stage: null,
@@ -247,6 +249,7 @@ function live(overrides: LiveOverrides = {}) {
     retention: {
       audio_policy: "delete_after_processing",
       current_audio_state: null,
+      retryable_audio_cleanup_attempt_id: null,
     },
     allowed_commands: ["begin_answer", "pause"],
     silence_policy: { warning_ms: 4000, finish_prompt_ms: 9000 },
@@ -254,6 +257,37 @@ function live(overrides: LiveOverrides = {}) {
     report_state: "not_started",
     contract_version: "coach_live_view_v1",
     ...overrides,
+  };
+}
+
+function answerReview() {
+  return {
+    evaluation_id: "evaluation-1",
+    evaluation_state: "completed",
+    answer_level: "interview_ready",
+    dimensions: {
+      relevance: {
+        level: "interview_ready",
+        evidence: [{ transcript_start: 0, transcript_end: 5, excerpt: "I led" }],
+        rationale: "The example answers the question.",
+        improvement: null,
+      },
+    },
+    delivery: { level: "not_assessed", observations: [] },
+    evidence_consistency: "developing",
+    evidence_findings: [{
+      claim_id: "claim-1",
+      claim_text: "three teams",
+      transcript_start: 27,
+      transcript_end: 38,
+      status: "partially_supported",
+      source_label: "Draft source",
+      source_approval: "draft",
+      explanation: "The draft supports part of this claim.",
+      candidate_action: "Confirm the detail before reuse.",
+    }],
+    coaching: null,
+    accepted_at: null,
   };
 }
 
@@ -537,8 +571,59 @@ describe("ConversationSession server authority", () => {
 
     render(<ConversationSession sessionId="session-1" />);
 
-    expect(await screen.findByText(markup)).toBeVisible();
+    expect(await screen.findAllByText(markup)).not.toHaveLength(0);
     expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("renders authoritative review, transcript editing, and attempt history and dispatches review commands", async () => {
+    const user = userEvent.setup();
+    const reviewed = live({
+      conversation_state: "awaiting_next_action",
+      state_version: 8,
+      active_attempt: textAttempt("I led the migration across three teams."),
+      answer_review: answerReview(),
+      attempt_history: [{
+        attempt_id: "attempt-1",
+        attempt_number: 1,
+        answer_level: "interview_ready",
+        accepted: false,
+        transcript_available: true,
+        audio_state: "not_applicable",
+      }],
+      allowed_commands: ["record_self_assessment", "edit_transcript", "accept_attempt"],
+    });
+    api.getCoachConversationLive.mockResolvedValue(reviewed);
+    api.sendCoachConversationCommand.mockResolvedValue({
+      command_id: "accepted-reflection",
+      result: "completed",
+      state: "awaiting_next_action",
+      state_version: 9,
+      active_attempt_id: "attempt-1",
+      job_id: null,
+      error: null,
+      contract_version: "coach_conversation_command_result_v1",
+    });
+
+    render(<ConversationSession sessionId="session-1" />);
+
+    expect(await screen.findByRole("heading", { name: "Answer quality" })).toBeVisible();
+    expect(screen.getByText("Overall: Interview-ready")).toBeVisible();
+    expect(screen.getByText("Draft source")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Transcript" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Attempt history" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Save reflection" }));
+    await waitFor(() => expect(api.sendCoachConversationCommand).toHaveBeenCalledOnce());
+    expect(api.sendCoachConversationCommand.mock.calls[0][1]).toMatchObject({
+      command_type: "record_self_assessment",
+      expected_state_version: 8,
+      payload: {
+        attempt_id: "attempt-1",
+        comfort_level: "medium",
+        felt_complete: false,
+        note: null,
+      },
+    });
   });
 
   it("uses one polite status region for loading, errors, and state announcements", async () => {

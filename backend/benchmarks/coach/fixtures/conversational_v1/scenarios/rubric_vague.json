@@ -1,0 +1,6 @@
+{
+  "scenario_id": "rubric_vague", "stage": "conversational_rubric", "group": "rubric",
+  "description": "Synthetic vague answer remains explicitly not assessed.", "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "We did some work and it went well.", "recording_type": "text", "case": "vague"},
+  "expected": {"outcome": "completed", "named_level": "not_assessed"}, "scoring": {}, "quality_dimensions": []
+}

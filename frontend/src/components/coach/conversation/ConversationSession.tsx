@@ -11,6 +11,8 @@ import {
   type ConversationLiveView,
 } from "@/lib/api";
 import { ConversationControls } from "./ConversationControls";
+import { AnswerReview, type ReviewCommandHandler } from "./AnswerReview";
+import { AttemptHistory } from "./AttemptHistory";
 import { ConversationProgress } from "./ConversationProgress";
 import { ConversationQuestion } from "./ConversationQuestion";
 import {
@@ -19,6 +21,7 @@ import {
   type RecorderTransitionOutcome,
 } from "./ConversationRecorder";
 import { RetentionStatus } from "./RetentionStatus";
+import { TranscriptEditor } from "./TranscriptEditor";
 
 const PROCESSING_LABELS: Record<NonNullable<ConversationLiveView["processing"]["stage"]>, string> = {
   audio_persist: "Uploading answer",
@@ -333,6 +336,16 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
     if (request !== null) void execute(request);
   }, [execute, live, newEnvelope]);
 
+  const executeReviewCommand = useCallback<ReviewCommandHandler>((command, payload) => {
+    const envelope = newEnvelope();
+    if (envelope === null) return;
+    void execute({
+      ...envelope,
+      command_type: command,
+      payload,
+    } as ConversationCommandRequest);
+  }, [execute, newEnvelope]);
+
   const executeRecorderRequest = useCallback(async (
     authority: { state_version: number },
     commandType: "pause" | "resume" | "keep_speaking" | "cancel_attempt" | "finish_answer" | "record_capture_hard_stop",
@@ -567,6 +580,31 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
                 </p>
               </section>
             ) : null}
+
+            {live.answer_review === null ? null : (
+              <AnswerReview
+                live={live}
+                pending={pending}
+                onCommand={executeReviewCommand}
+              />
+            )}
+
+            {live.active_attempt?.transcript_version === null
+              || live.active_attempt?.transcript_version === undefined ? null : (
+                <TranscriptEditor
+                  attempt={live.active_attempt}
+                  allowedCommands={live.allowed_commands}
+                  pending={pending}
+                  onCommand={executeReviewCommand}
+                />
+              )}
+
+            <AttemptHistory
+              attempts={live.attempt_history}
+              allowedCommands={live.allowed_commands}
+              pending={pending}
+              onCommand={executeReviewCommand}
+            />
 
             {live.conversation_state === "completed" || live.conversation_state === "abandoned" || live.conversation_state === "failed" ? (
               <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">

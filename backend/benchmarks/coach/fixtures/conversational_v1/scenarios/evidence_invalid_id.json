@@ -1,0 +1,6 @@
+{
+  "scenario_id": "evidence_invalid_id", "stage": "evidence_grounding", "group": "evidence_grounding",
+  "description": "Synthetic injected evidence identity fails closed after repair.", "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration across three teams.", "evidence_ids": ["501c4cfa172d4d13a25f9359"], "draft_evidence_consent": false, "case": "invalid_id"},
+  "expected": {"outcome": "unavailable", "error_code": "coach_grounding_evidence_id_invalid", "allowed_evidence_ids": ["501c4cfa172d4d13a25f9359"]}, "scoring": {}, "quality_dimensions": []
+}

@@ -1,0 +1,10 @@
+{
+  "scenario_id": "evidence_not_found",
+  "stage": "evidence_grounding",
+  "group": "evidence_grounding",
+  "description": "Synthetic absent claim remains explicitly not found.",
+  "qualification_scope": "harness_contract",
+  "input": {"transcript": "I doubled revenue in one week.", "evidence_ids": ["501c4cfa172d4d13a25f9359"], "draft_evidence_consent": false, "case": "not_found"},
+  "expected": {"outcome": "completed", "evidence_status": "not_found", "allowed_evidence_ids": []},
+  "scoring": {}, "quality_dimensions": []
+}
