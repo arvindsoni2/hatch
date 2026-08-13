@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -199,6 +200,14 @@ class ConversationalEvaluator:
 
     async def evaluate(self, request: EvaluationRequest) -> EvaluationStageResult:
         transcript = normalize_contract_text(request.normalized_transcript)
+        if re.search(
+            r"\b(?:label|rate|score|infer|diagnose)\s+(?:me|my)\b.{0,40}\b(?:anxious|anxiety|confidence|emotion|personality|deceptive|deception)\b",
+            transcript,
+            re.IGNORECASE,
+        ):
+            return self._unavailable(
+                request, 0, "coach_evaluation_prohibited_inference"
+            )
         system_prompt = (
             "You evaluate interview answer content under "
             f"{RUBRIC_CONTRACT}. Return only the seven requested content dimensions. "
@@ -219,6 +228,7 @@ class ConversationalEvaluator:
                 ),
                 question=request.question,
                 transcript=transcript,
+                transcript_length=len(transcript),
                 repair_code=last_code if repair_count else "",
             )
             try:

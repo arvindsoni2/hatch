@@ -2974,6 +2974,14 @@ class ConversationalSessionRepository:
         _validate_processing_diagnostics(
             result.diagnostics, evaluation_state=result.evaluation_state
         )
+        evaluation_payload = dict(result.evaluation_json)
+        follow_up_proposal = evaluation_payload.pop("_follow_up_proposal", None)
+        answer_level = evaluation_payload.get("answer_level")
+        if not isinstance(answer_level, str):
+            answer_level = None
+        evidence_findings = evaluation_payload.get("evidence_consistency")
+        if not isinstance(evidence_findings, dict):
+            evidence_findings = None
         try:
             async with self._session.begin_nested():
                 if datetime.utcnow() > claim.deadline_at:
@@ -3309,7 +3317,7 @@ class ConversationalSessionRepository:
                         attempt_state=result.evaluation_state,
                         evaluation_state=result.evaluation_state,
                         evaluation_json=json.dumps(
-                            result.evaluation_json,
+                            evaluation_payload,
                             sort_keys=True,
                             separators=(",", ":"),
                         ),
@@ -3332,7 +3340,14 @@ class ConversationalSessionRepository:
                     )
                     .values(
                         state=result.evaluation_state,
-                        rubric_json=result.evaluation_json,
+                        answer_level=answer_level,
+                        rubric_json=evaluation_payload,
+                        evidence_findings_json=evidence_findings,
+                        follow_up_proposal_json=(
+                            follow_up_proposal
+                            if isinstance(follow_up_proposal, dict)
+                            else None
+                        ),
                         diagnostics_json={
                             "processing_claim": claim_snapshot,
                             "result": result.diagnostics,

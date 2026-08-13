@@ -37,5 +37,6 @@ FEEDBACK        = ContextBudget(4096,  4096)   # feedback_generator
 COACH_RUBRIC    = ContextBudget(6144,  2048)   # coach rubric synthesiser
 COACH_CONVERSATIONAL_EVALUATION = ContextBudget(8192, 4096)
 COACH_EVIDENCE_GROUNDING = ContextBudget(8192, 4096)
+COACH_FOLLOW_UP = ContextBudget(4096, 2048)
 COACH_COACHING = ContextBudget(6144, 2048)
 GENERIC         = ContextBudget(3072,  4096)   # LLMClient signature default

@@ -62,6 +62,11 @@ def disable_real_attempt_worker_dispatch(monkeypatch: pytest.MonkeyPatch) -> Non
         "app.services.coach_conversation_commands.queue_audio_cleanup",
         lambda _claim: None,
     )
+    class UnavailableModel:
+        async def complete_json(self, *_args, **_kwargs):
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("app.services.llm_client.LLMClient", UnavailableModel)
 
 
 @pytest_asyncio.fixture
@@ -2812,6 +2817,92 @@ async def test_request_coaching_persists_skeleton_without_changing_evaluation(
             InterviewSessionEvent.event_type == "coaching_requested"
         )
     ) == 1
+
+
+@pytest.mark.asyncio
+async def test_request_coaching_uses_valid_fact_safe_enrichment(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="awaiting_next_action", status="active", version=5
+    )
+    question = questions[0]
+    session.active_question_id = question.id
+    question.question_state = "answered"
+    transcript_text = "I led the migration and reduced deployment time by three hours."
+    transcript = InterviewTranscriptVersion(
+        id="enriched-coaching-transcript",
+        recording_id="enriched-coaching-attempt",
+        version_number=1,
+        transcript=transcript_text,
+        source="candidate_text",
+        content_hash="sha256:" + "2" * 64,
+        created_by="candidate",
+        processing_generation=1,
+    )
+    attempt = SessionRecording(
+        id="enriched-coaching-attempt",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        current_transcript_version_id=transcript.id,
+        current_evaluation_version_id="enriched-coaching-evaluation",
+        processing_generation=1,
+    )
+    evaluation = InterviewAttemptEvaluation(
+        id="enriched-coaching-evaluation",
+        recording_id=attempt.id,
+        transcript_version_id=transcript.id,
+        version_number=1,
+        state="completed",
+        answer_level="interview_ready",
+        rubric_json={
+            "answer_level": "interview_ready",
+            "dimensions": {
+                "impact": {
+                    "level": "developing",
+                    "evidence": [{"excerpt": transcript_text}],
+                    "rationale": "The outcome is concrete.",
+                    "improvement": "Explain why the result mattered.",
+                }
+            },
+        },
+        evaluation_contract_version="coach_conversational_rubric_v1",
+        evidence_contract_version="coach_evidence_grounding_v1",
+        follow_up_contract_version="coach_follow_up_v1",
+    )
+    session.active_recording_id = attempt.id
+    db_session.add_all((attempt, transcript, evaluation))
+    await db_session.commit()
+
+    class Model:
+        async def complete_json(self, *_args, **_kwargs):
+            return {
+                "positive_observation": "The migration example is concrete.",
+                "priority_improvement": "Explain why the result mattered.",
+                "suggested_structure": "State the situation, action, and result.",
+                "practice_instruction": "Practise the answer once.",
+                "example_revision": "[add verified metric]",
+            }
+
+    request = command(
+        "request_coaching",
+        version=5,
+        payload={"attempt_id": attempt.id},
+        command_id="coaching-enrichment",
+    )
+    await ConversationCommandService(
+        db_session, coaching_model_factory=Model
+    ).execute(user_id="local", session_id=session.id, request=request)
+
+    await db_session.refresh(evaluation)
+    assert evaluation.coaching_json["positive_observation"] == (
+        "The migration example is concrete."
+    )
+    assert evaluation.coaching_json["answer_level"] == "interview_ready"
 
 
 @pytest.mark.asyncio

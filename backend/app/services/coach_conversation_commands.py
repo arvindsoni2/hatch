@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..models.async_job import AsyncJob
 from ..models.coach_session import (
+    CoachSessionEvidenceRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
     InterviewSession,
@@ -56,7 +57,7 @@ from ..schemas.coach_conversation import (
 )
 from .async_job_service import AsyncJobService
 from .coach_command_projection import contextual_allowed_commands
-from .coach_coaching import build_coaching_skeleton
+from .coach_coaching import CoachCoachingService, build_coaching_skeleton
 from .coach_attempt_pipeline import queue_attempt_processing
 from .coach_conversation_state import require_transition
 from .coach_followup_policy import FollowUpContext, FollowUpPolicy
@@ -124,11 +125,13 @@ class ConversationCommandService:
         db: AsyncSession,
         *,
         evaluator: DeterministicEvaluationStub | None = None,
+        coaching_model_factory=None,
         after_commit: Callable[[str | AttemptProcessingClaim], Awaitable[None]] | None = None,
     ) -> None:
         self.db = db
         self.repository = ConversationalSessionRepository(db)
         self.evaluator = evaluator or DeterministicEvaluationStub()
+        self.coaching_model_factory = coaching_model_factory
         self.after_commit = after_commit
         self._post_commit_job_id: str | None = None
         self._post_commit_attempt_claim: AttemptProcessingClaim | None = None
@@ -741,6 +744,33 @@ class ConversationCommandService:
         if evaluation is None or not isinstance(evaluation.rubric_json, dict):
             raise ConversationCommandError("coach_attempt_not_active")
         skeleton = build_coaching_skeleton(evaluation.rubric_json)
+        transcript = await self.db.get(
+            InterviewTranscriptVersion, attempt.current_transcript_version_id
+        )
+        if transcript is None or not isinstance(transcript.transcript, str):
+            raise ConversationCommandError("coach_attempt_not_active")
+        evidence_texts = tuple(
+            (
+                await self.db.scalars(
+                    select(CoachSessionEvidenceRecord.snapshot_text).where(
+                        CoachSessionEvidenceRecord.session_id == session.id
+                    )
+                )
+            ).all()
+        )
+        if self.coaching_model_factory is None:
+            from .llm_client import LLMClient
+
+            model = LLMClient()
+        else:
+            model = self.coaching_model_factory()
+        review = await CoachCoachingService(model).enrich(
+            skeleton,
+            transcript=transcript.transcript,
+            evidence_texts=evidence_texts,
+            deadline_at=datetime.utcnow()
+            + timedelta(seconds=settings.HATCH_COACH_TIMEOUT_COACHING_JOB_SECONDS),
+        )
         changed = await self.db.execute(
             update(InterviewAttemptEvaluation)
             .where(
@@ -752,14 +782,14 @@ class ConversationCommandService:
                 InterviewAttemptEvaluation.coaching_json.is_(None),
             )
             .values(coaching_json={
-                "answer_level": skeleton.answer_level,
-                "positive_observation": skeleton.positive_observation,
-                "priority_improvement": skeleton.priority_improvement,
-                "transcript_evidence": list(skeleton.transcript_evidence),
-                "evidence_review_items": list(skeleton.evidence_review_items),
-                "suggested_structure": skeleton.suggested_structure,
-                "practice_instruction": skeleton.practice_instruction,
-                "example_revision": skeleton.example_revision,
+                "answer_level": review.answer_level,
+                "positive_observation": review.positive_observation,
+                "priority_improvement": review.priority_improvement,
+                "transcript_evidence": list(review.transcript_evidence),
+                "evidence_review_items": list(review.evidence_review_items),
+                "suggested_structure": review.suggested_structure,
+                "practice_instruction": review.practice_instruction,
+                "example_revision": review.example_revision,
             })
         )
         if changed.rowcount != 1:

@@ -176,6 +176,7 @@ def validate_coaching_enrichment(
 class CoachCoachingService:
     def __init__(self, model: JsonModel) -> None:
         self._model = model
+        self.last_fallback = True
 
     async def enrich(
         self,
@@ -187,6 +188,7 @@ class CoachCoachingService:
     ) -> CoachAnswerReview:
         remaining = (deadline_at - datetime.utcnow()).total_seconds()
         if remaining <= 0:
+            self.last_fallback = True
             return skeleton
         user_prompt = render_prompt(
             "coach_coaching.j2",
@@ -202,11 +204,14 @@ class CoachCoachingService:
                     user_prompt,
                     max_tokens=COACH_COACHING.max_output,
                 )
-            return validate_coaching_enrichment(
+            result = validate_coaching_enrichment(
                 proposal,
                 transcript=transcript,
                 evidence_texts=evidence_texts,
                 skeleton=skeleton,
             )
+            self.last_fallback = False
+            return result
         except Exception:
+            self.last_fallback = True
             return skeleton
