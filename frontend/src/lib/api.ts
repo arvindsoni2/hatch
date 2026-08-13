@@ -1381,6 +1381,83 @@ export interface ConversationTranscriptVersionRead {
   created_at: string;
 }
 
+export type ConversationReviewLevel =
+  | "needs_work"
+  | "developing"
+  | "interview_ready"
+  | "strong"
+  | "not_assessed";
+
+export interface ConversationTranscriptEvidenceSpan {
+  transcript_start: number;
+  transcript_end: number;
+  excerpt: string;
+}
+
+export interface ConversationReviewDimension {
+  level: ConversationReviewLevel;
+  evidence: ReadonlyArray<ConversationTranscriptEvidenceSpan>;
+  rationale: string | null;
+  improvement: string | null;
+}
+
+export interface ConversationDeliveryReview {
+  level: ConversationReviewLevel;
+  observations: ReadonlyArray<{
+    severity: "none" | "moderate" | "material" | "severe";
+    label: string;
+  }>;
+}
+
+export interface ConversationEvidenceFinding {
+  claim_id: string;
+  claim_text: string;
+  transcript_start: number;
+  transcript_end: number;
+  status: "supported" | "partially_supported" | "not_found" | "conflicting";
+  source_label: string | null;
+  source_approval: "approved" | "reviewed" | "candidate_selected_unapproved" | "draft" | null;
+  explanation: string;
+  candidate_action: string;
+}
+
+export interface ConversationCoachingReview {
+  positive_observation: string;
+  priority_improvement: string;
+  suggested_structure: string;
+  practice_instruction: string;
+  example_revision: string;
+}
+
+export interface ConversationAnswerReviewRead {
+  evaluation_id: string;
+  evaluation_state: "completed" | "unavailable" | "invalid";
+  answer_level: ConversationReviewLevel;
+  dimensions: Readonly<Record<string, ConversationReviewDimension>>;
+  delivery: ConversationDeliveryReview;
+  evidence_consistency: ConversationReviewLevel;
+  evidence_findings: ReadonlyArray<ConversationEvidenceFinding>;
+  coaching: ConversationCoachingReview | null;
+  accepted_at: string | null;
+}
+
+export interface ConversationCandidateSelfAssessment {
+  comfort_level: "low" | "medium" | "high";
+  felt_complete: boolean;
+  note: string | null;
+  recorded_at: string | null;
+  contract_version: "coach_candidate_self_assessment_v1";
+}
+
+export interface ConversationAttemptHistoryRead {
+  attempt_id: string;
+  attempt_number: number;
+  answer_level: ConversationReviewLevel;
+  accepted: boolean;
+  transcript_available: boolean;
+  audio_state: ConversationAudioRetentionState | null;
+}
+
 export interface InterviewAttemptRead {
   id: string;
   question_id: string;
@@ -1405,6 +1482,19 @@ export interface InterviewAttemptRead {
   audio_retention_policy: ConversationAudioRetentionPolicy | null;
   audio_retention_state: ConversationAudioRetentionState | null;
   transcript_version: ConversationTranscriptVersionRead | null;
+  self_assessment?: ConversationCandidateSelfAssessment | null;
+}
+
+export interface ConversationReviewLiveView {
+  conversation_state: ConversationState;
+  allowed_commands: ReadonlyArray<ConversationCommandType>;
+  active_attempt: {
+    id: string;
+    attempt_number: number;
+    transcript_version: Pick<ConversationTranscriptVersionRead, "transcript"> | null;
+    self_assessment?: ConversationCandidateSelfAssessment | null;
+  } | null;
+  answer_review: ConversationAnswerReviewRead | null;
 }
 
 export type ConversationAttemptStage =
