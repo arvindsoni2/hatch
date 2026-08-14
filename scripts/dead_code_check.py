@@ -6,6 +6,7 @@ and reports modules that are never imported by anything in the graph.
 
 Allowlisted paths are never reported as dead:
 - FastAPI routers / entrypoints (discovered via include_router calls in main.py)
+- Operational entrypoints invoked directly by shell/Make targets
 - Alembic migration scripts (backend/alembic/)
 - Skill pipeline scripts (backend/app/skills/*/scripts/)
 - ORM model modules (imported via Base.metadata.create_all, not explicit imports)
@@ -23,6 +24,7 @@ _ALEMBIC = Path(__file__).parent.parent / "backend" / "alembic"
 _ALLOWLIST_PATTERNS = [
     "alembic",
     "main",            # FastAPI ASGI entrypoint loaded by uvicorn/Docker
+    "database_setup",  # invoked by backend/entrypoint.sh and make migrate
     "seed",            # Operational seed script invoked directly
     "skills",          # skill scripts loaded dynamically via spec_from_file_location
     "models",          # ORM models imported via Base.metadata.create_all

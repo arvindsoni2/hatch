@@ -1,4 +1,5 @@
 """Alembic environment configuration for async SQLAlchemy with SQLite."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,8 +26,12 @@ import app.models  # noqa: E402, F401 — register all models with Base.metadata
 
 config = context.config
 
-# Override sqlalchemy.url from app settings so it's always in sync
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# The canonical setup command supplies a disposable URL while preflighting an
+# existing database. Normal Alembic CLI calls continue to use app settings.
+config.set_main_option(
+    "sqlalchemy.url",
+    config.attributes.get("database_url", settings.DATABASE_URL),
+)
 
 # Interpret the alembic.ini file for Python logging if present
 if config.config_file_name is not None:
@@ -37,6 +42,7 @@ target_metadata = Base.metadata
 
 
 # ──────────────────────── Migration Modes ────────────────────────
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.

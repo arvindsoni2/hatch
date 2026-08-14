@@ -48,7 +48,7 @@
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "^15.5.21",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "knip": "^5.0.0",
     "playwright": "^1.58.2",
     "postcss": "^8",
@@ -57,7 +57,7 @@
     "vitest": "^3.2.6"
   },
   "overrides": {
-    "undici": "^7.28.0",
+    "undici": "^7.29.0",
     "next@^15.5.21": {
       "postcss": "^8.5.18",
       "sharp": "^0.35.0"
