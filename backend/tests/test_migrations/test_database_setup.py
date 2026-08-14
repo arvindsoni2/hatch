@@ -10,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.database import Base
 import app.models  # noqa: F401 - register every ORM table in Base.metadata
 from app import database_setup
@@ -17,8 +19,17 @@ from app import database_setup
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 REPOSITORY_DIR = BACKEND_DIR.parent
-HEAD_REVISION = "p3q4r5s6t7u8"
-PRIOR_HEAD_REVISION = "o2p3q4r5s6t7"
+
+ALEMBIC_CONFIG = Config(str(BACKEND_DIR / "alembic.ini"))
+ALEMBIC_CONFIG.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+ALEMBIC_SCRIPTS = ScriptDirectory.from_config(ALEMBIC_CONFIG)
+ALEMBIC_HEADS = ALEMBIC_SCRIPTS.get_heads()
+assert len(ALEMBIC_HEADS) == 1
+HEAD_REVISION = ALEMBIC_HEADS[0]
+HEAD_SCRIPT = ALEMBIC_SCRIPTS.get_revision(HEAD_REVISION)
+assert HEAD_SCRIPT is not None
+assert isinstance(HEAD_SCRIPT.down_revision, str)
+PRIOR_HEAD_REVISION = HEAD_SCRIPT.down_revision
 
 
 def _environment(database: Path, **overrides: str) -> dict[str, str]:
