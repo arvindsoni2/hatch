@@ -1,0 +1,10 @@
+{
+  "scenario_id": "coaching_invented_fact",
+  "stage": "coaching",
+  "group": "coaching",
+  "description": "Synthetic invented metric and project name trigger deterministic fallback.",
+  "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration.", "evidence_ids": ["501c4cfa172d4d13a25f9359"], "evaluation": {"answer_level": "developing", "dimensions": {"impact": {"level": "developing", "rationale": "The result is relevant.", "improvement": "Add one verified result.", "evidence": [{"excerpt": "I led a safe migration."}]}}}, "case": "invented_fact"},
+  "expected": {"outcome": "fallback"},
+  "scoring": {}, "quality_dimensions": []
+}

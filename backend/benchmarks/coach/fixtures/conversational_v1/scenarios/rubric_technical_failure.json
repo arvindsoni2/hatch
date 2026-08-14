@@ -1,0 +1,6 @@
+{
+  "scenario_id": "rubric_technical_failure", "stage": "conversational_rubric", "group": "rubric",
+  "description": "Synthetic provider failure downgrades evaluation without fabricated levels.", "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "I led a safe migration.", "recording_type": "text", "case": "technical_failure"},
+  "expected": {"outcome": "unavailable", "named_level": "not_assessed", "error_code": "coach_evaluation_unavailable"}, "scoring": {}, "quality_dimensions": []
+}

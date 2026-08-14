@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.coach_session import InterviewSession, SessionQuestion, SessionRecording
 from ..schemas.coach import SessionListItem
+from ..schemas.coach_conversation import project_retention_summary
 from ..services.coach_contracts import CoachConflictError, merge_stage_diagnostic
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,9 @@ class SessionRepository:
                 overall_score=r.overall_score,
                 created_at=r.created_at,
                 started_at=r.started_at,
+                experience_version=r.experience_version,
+                conversation_state=r.conversation_state,
+                retention_summary=project_retention_summary(r.retention_policy_json),
             )
             for r in rows
         ]

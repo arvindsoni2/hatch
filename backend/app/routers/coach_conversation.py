@@ -1,0 +1,216 @@
+"""Strict HTTP boundary for the conversational Coach experience."""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..config import settings
+from ..database import get_db
+from ..repositories.conversational_session_repository import (
+    ConversationalRepositoryError,
+    ConversationalSessionRepository,
+)
+from ..schemas.coach_conversation import (
+    AttemptAudioUploadRead,
+    ConversationCommandRequest,
+    ConversationCommandResult,
+    ConversationErrorResponse,
+    ConversationLiveView,
+)
+from ..services.coach_conversation_commands import (
+    ConversationCommandError,
+    ConversationCommandService,
+)
+from ..services.coach_conversational_contracts import ERROR_REGISTRY
+from ..services.coach_live_view import CoachLiveViewError, CoachLiveViewService
+from ..services.coach_media_storage import (
+    CoachMediaError,
+    StagedAudio,
+    cleanup_staged_audio,
+    coach_upload_temp_dir,
+    resolve_owned_audio_path,
+    stream_audio_upload,
+)
+from .coach import _require_safe_id
+
+router = APIRouter(prefix="/api/coach", tags=["coach"])
+
+CANONICAL_ERROR_RESPONSES = {
+    status: {"model": ConversationErrorResponse}
+    for status in sorted({definition.http_status for definition in ERROR_REGISTRY.values()})
+}
+
+
+def conversation_error_response(
+    code: str,
+    *,
+    current_state: str | None = None,
+    current_state_version: int | None = None,
+) -> JSONResponse:
+    """Render only registry-backed conversational errors at the HTTP boundary."""
+    if code not in ERROR_REGISTRY:
+        code = "coach_conversation_invalid_state"
+    definition = ERROR_REGISTRY[code]
+    try:
+        payload = ConversationErrorResponse.model_validate(
+            {
+                "error": {
+                    "code": code,
+                    "current_state": current_state,
+                    "current_state_version": current_state_version,
+                    "correlation_id": uuid.uuid4().hex,
+                    "details": {},
+                }
+            }
+        )
+    except ValueError:
+        payload = ConversationErrorResponse.model_validate(
+            {
+                "error": {
+                    "code": "coach_conversation_invalid_state",
+                    "correlation_id": uuid.uuid4().hex,
+                    "details": {},
+                }
+            }
+        )
+        definition = ERROR_REGISTRY["coach_conversation_invalid_state"]
+    return JSONResponse(
+        status_code=definition.http_status,
+        content=payload.model_dump(mode="json"),
+    )
+
+
+def require_safe_conversation_session_id(session_id: str) -> JSONResponse | None:
+    """Apply the shared ID semantics without exposing legacy validation details."""
+    try:
+        _require_safe_id(session_id, "session_id")
+    except HTTPException:
+        return conversation_error_response("coach_contract_unsupported")
+    return None
+
+
+@router.post(
+    "/sessions/{session_id}/commands",
+    response_model=ConversationCommandResult,
+    responses=CANONICAL_ERROR_RESPONSES,
+)
+async def execute_command(
+    session_id: str,
+    request: ConversationCommandRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ConversationCommandResult | JSONResponse:
+    """Execute one version-fenced conversational command."""
+    safe_id_error = require_safe_conversation_session_id(session_id)
+    if safe_id_error is not None:
+        return safe_id_error
+    try:
+        return await ConversationCommandService(db).execute(
+            user_id="local", session_id=session_id, request=request
+        )
+    except ConversationCommandError as error:
+        return conversation_error_response(
+            error.code,
+            current_state=error.current_state,
+            current_state_version=error.current_state_version,
+        )
+
+
+@router.get(
+    "/sessions/{session_id}/live",
+    response_model=ConversationLiveView,
+    responses=CANONICAL_ERROR_RESPONSES,
+)
+async def get_live(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ConversationLiveView | JSONResponse:
+    """Return the reconciled, privacy-bounded live conversational projection."""
+    safe_id_error = require_safe_conversation_session_id(session_id)
+    if safe_id_error is not None:
+        return safe_id_error
+    try:
+        return await CoachLiveViewService(db).get_live_view(
+            user_id="local", session_id=session_id
+        )
+    except CoachLiveViewError as error:
+        return conversation_error_response(error.code)
+
+
+@router.post(
+    "/sessions/{session_id}/attempts/{attempt_id}/audio",
+    response_model=AttemptAudioUploadRead,
+    responses=CANONICAL_ERROR_RESPONSES,
+)
+async def upload_attempt_audio(
+    session_id: str,
+    attempt_id: str,
+    upload_id: Annotated[str, Form(min_length=1, max_length=64)],
+    content_sha256: Annotated[str, Form(pattern=r"^[0-9a-f]{64}$")],
+    audio: UploadFile = File(),
+    db: AsyncSession = Depends(get_db),
+) -> AttemptAudioUploadRead | JSONResponse:
+    """Stream and persist one idempotent, attempt-owned browser recording."""
+    staged: StagedAudio | None = None
+    audio_closed = False
+    try:
+        for value, field in (
+            (session_id, "session_id"),
+            (attempt_id, "attempt_id"),
+            (upload_id, "upload_id"),
+        ):
+            _require_safe_id(value, field)
+        storage_root = Path(settings.HATCH_COACH_MEDIA_ROOT)
+        staged = await stream_audio_upload(
+            audio,
+            max_bytes=settings.HATCH_COACH_MAX_AUDIO_BYTES,
+            temp_dir=coach_upload_temp_dir(storage_root),
+        )
+        try:
+            await audio.close()
+            audio_closed = True
+        except BaseException as error:
+            if not isinstance(error, Exception):
+                raise
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                pass
+            return conversation_error_response("coach_attempt_upload_conflict")
+        destination = resolve_owned_audio_path(
+            storage_root, session_id, attempt_id, upload_id, ".webm"
+        )
+        repository = ConversationalSessionRepository(db)
+        result = await repository.persist_audio_upload(
+            session_id=session_id,
+            attempt_id=attempt_id,
+            upload_id=upload_id,
+            declared_sha256=content_sha256,
+            staged=staged,
+            destination=destination,
+        )
+        await repository.commit_audio_upload()
+        return result
+    except HTTPException:
+        return conversation_error_response("coach_attempt_upload_conflict")
+    except (CoachMediaError, ConversationalRepositoryError) as error:
+        code = str(error)
+        if code not in ERROR_REGISTRY:
+            code = "coach_attempt_upload_conflict"
+        return conversation_error_response(code)
+    finally:
+        if staged is not None:
+            try:
+                cleanup_staged_audio(staged)
+            except CoachMediaError:
+                pass
+        if not audio_closed:
+            try:
+                await audio.close()
+            except Exception:
+                pass

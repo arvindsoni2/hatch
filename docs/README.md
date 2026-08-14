@@ -12,6 +12,7 @@ Use this index to find the current product, operations, architecture, developmen
 
 ## Active Implementation Work
 
+- [Conversational AI Interview Coach Phase 1 implementation specification v6](implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md)
 - [Local writing model benchmark — 15 July 2026](benchmarks/LOCAL_WRITING_MODEL_BENCHMARK_2026-07-15.md)
 - [Representative local-model selection — 18 July 2026](benchmarks/LOCAL_WRITING_MODEL_SELECTION_2026-07-18.md)
 

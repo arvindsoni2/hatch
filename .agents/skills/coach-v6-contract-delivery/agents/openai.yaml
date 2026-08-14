@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coach V6 Contract Delivery"
+  short_description: "Deliver Phase 1 PRs against the locked V6 spec"
+  default_prompt: "Use $coach-v6-contract-delivery to plan or implement the next Phase 1 Coach PR against V6."

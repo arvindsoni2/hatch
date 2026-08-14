@@ -1,0 +1,6 @@
+{
+  "scenario_id": "follow_up_no_gap", "stage": "follow_up", "group": "follow_up",
+  "description": "Synthetic low-priority proposal without a gap is rejected.", "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration.", "accepted_attempt_id": "attempt-1", "current_accepted_attempt_id": "attempt-1", "target_dimension_levels": {"impact": "strong"}, "existing_duplicate_keys": [], "persisted_follow_up_count": 0, "root_skipped": false, "session_ended": false, "case": "no_gap"},
+  "expected": {"outcome": "completed", "admitted": false, "error_code": "coach_followup_reason_invalid"}, "scoring": {}, "quality_dimensions": []
+}

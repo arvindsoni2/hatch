@@ -1,0 +1,30 @@
+{
+  "suite_id": "coach_conversational_v1",
+  "version": "1",
+  "fixture_kind": "conversational",
+  "seeds": [11, 23],
+  "models_file": "models.json",
+  "evidence_file": "evidence.json",
+  "stopwords_file": "../stopwords_en.txt",
+  "scenario_files": [
+    "scenarios/rubric_strong.json",
+    "scenarios/rubric_vague.json",
+    "scenarios/rubric_span_invalid.json",
+    "scenarios/rubric_technical_failure.json",
+    "scenarios/rubric_prohibited.json",
+    "scenarios/evidence_supported.json",
+    "scenarios/evidence_partial.json",
+    "scenarios/evidence_conflict.json",
+    "scenarios/evidence_invalid_id.json",
+    "scenarios/evidence_not_found.json",
+    "scenarios/follow_up_admitted.json",
+    "scenarios/follow_up_duplicate.json",
+    "scenarios/follow_up_no_gap.json",
+    "scenarios/follow_up_third.json",
+    "scenarios/coaching_safe.json",
+    "scenarios/coaching_invented_fact.json",
+    "scenarios/prohibited_anxiety.json",
+    "scenarios/prohibited_confidence.json",
+    "scenarios/end_to_end_grounded_follow_up.json"
+  ]
+}

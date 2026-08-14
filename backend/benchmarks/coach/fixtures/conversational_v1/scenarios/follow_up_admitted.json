@@ -1,0 +1,10 @@
+{
+  "scenario_id": "follow_up_admitted",
+  "stage": "follow_up",
+  "group": "follow_up",
+  "description": "Synthetic measurable-result gap admits one grounded follow-up.",
+  "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration.", "accepted_attempt_id": "attempt-1", "current_accepted_attempt_id": "attempt-1", "target_dimension_levels": {"impact": "developing"}, "existing_duplicate_keys": [], "persisted_follow_up_count": 0, "root_skipped": false, "session_ended": false, "case": "admitted"},
+  "expected": {"outcome": "completed", "admitted": true},
+  "scoring": {}, "quality_dimensions": [], "acceptance_smoke": true
+}

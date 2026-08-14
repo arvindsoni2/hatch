@@ -1,0 +1,6 @@
+{
+  "scenario_id": "rubric_span_invalid", "stage": "conversational_rubric", "group": "rubric",
+  "description": "Synthetic mismatched transcript span fails closed after repair.", "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "I led a safe migration.", "recording_type": "text", "case": "span_invalid"},
+  "expected": {"outcome": "unavailable", "named_level": "not_assessed", "error_code": "coach_evaluation_evidence_span_invalid"}, "scoring": {}, "quality_dimensions": []
+}

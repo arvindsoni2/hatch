@@ -171,6 +171,20 @@ export interface JobFilters {
 
 // ──────────────────────── Helpers ────────────────────────
 
+export class ApiError<T = unknown> extends Error {
+  readonly status: number;
+  readonly data: T | null;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, data: T | null, code: string | null = null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
+    this.code = code;
+  }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE}${path}`;
   const isFormData = options?.body instanceof FormData;
@@ -182,13 +196,21 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     const raw = await res.text().catch(() => res.statusText);
     let detail = raw || res.statusText;
+    let data: unknown = raw || null;
+    let code: string | null = null;
     try {
-      const parsed = JSON.parse(raw) as { detail?: unknown };
+      const parsed = JSON.parse(raw) as {
+        detail?: unknown;
+        error?: { code?: unknown; message?: unknown };
+      };
+      data = parsed;
       if (typeof parsed.detail === "string") detail = parsed.detail;
+      if (typeof parsed.error?.message === "string") detail = parsed.error.message;
+      if (typeof parsed.error?.code === "string") code = parsed.error.code;
     } catch {
       // Preserve plain-text API errors as-is.
     }
-    throw new Error(detail);
+    throw new ApiError(detail, res.status, data, code);
   }
 
   if (res.status === 204) return undefined as T;
@@ -1182,6 +1204,389 @@ export interface AnswerEvaluation {
   retryable?: boolean;
 }
 
+export type CoachExperienceVersion = "legacy_v1" | "conversational_v1";
+
+export type ConversationState =
+  | "planning"
+  | "ready"
+  | "asking"
+  | "listening"
+  | "processing_answer"
+  | "awaiting_next_action"
+  | "coaching"
+  | "asking_follow_up"
+  | "advancing"
+  | "paused"
+  | "reporting"
+  | "completed"
+  | "recoverable_error"
+  | "abandoned"
+  | "failed";
+
+export type ConversationStatus = "setup" | "active" | "completed" | "abandoned" | "failed";
+export type ConversationAnswerMode = "audio" | "text";
+export type ConversationAudioRetentionPolicy = "delete_after_processing" | "retain_until_deleted";
+export type ConversationAudioRetentionState =
+  | "not_applicable"
+  | "temporary"
+  | "retained"
+  | "delete_pending"
+  | "deleted"
+  | "delete_failed";
+
+export type ConversationCommandType =
+  | "start"
+  | "begin_answer"
+  | "finish_answer"
+  | "keep_speaking"
+  | "pause"
+  | "resume"
+  | "cancel_attempt"
+  | "record_capture_hard_stop"
+  | "retry_answer"
+  | "retry_setup"
+  | "rebuild_plan"
+  | "retry_processing"
+  | "retry_report"
+  | "request_hint"
+  | "request_coaching"
+  | "return_to_review"
+  | "edit_transcript"
+  | "accept_attempt"
+  | "record_self_assessment"
+  | "update_retention"
+  | "skip_question"
+  | "end_session"
+  | "delete_audio"
+  | "delete_transcript";
+
+type EmptyConversationCommandPayload = { [key: string]: never };
+type ConversationCommandEnvelope<T extends ConversationCommandType, P> = {
+  command_id: string;
+  command_type: T;
+  expected_state_version: number;
+  payload: P;
+  contract_version: "coach_conversation_command_v1";
+};
+
+type FinishConversationAnswerPayload =
+  | { attempt_id: string; transcript: string; upload_id?: null }
+  | { attempt_id: string; transcript?: null; upload_id: string };
+
+type EndConversationSessionPayload =
+  | {
+      unaccepted_attempt_action: "accept_attempt";
+      attempt_id: string;
+      paused_draft_action?: "discard_draft" | null;
+    }
+  | {
+      unaccepted_attempt_action: "exclude_attempt" | "not_applicable";
+      attempt_id?: null;
+      paused_draft_action?: "discard_draft" | null;
+    };
+
+export type ConversationCommandRequest =
+  | ConversationCommandEnvelope<"start", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"begin_answer", { recording_type: ConversationAnswerMode; client_attempt_id: string }>
+  | ConversationCommandEnvelope<"finish_answer", FinishConversationAnswerPayload>
+  | ConversationCommandEnvelope<"keep_speaking", { attempt_id: string }>
+  | ConversationCommandEnvelope<"pause", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"resume", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"cancel_attempt", { attempt_id: string }>
+  | ConversationCommandEnvelope<"record_capture_hard_stop", { attempt_id: string }>
+  | ConversationCommandEnvelope<"retry_answer", { question_id?: string | null }>
+  | ConversationCommandEnvelope<"retry_setup", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"rebuild_plan", { refresh_sources: true }>
+  | ConversationCommandEnvelope<"retry_processing", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"retry_report", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"request_hint", {
+      hint_type: "star_structure" | "competency_reminder" | "experience_category" | "clarify_question";
+    }>
+  | ConversationCommandEnvelope<"request_coaching", { attempt_id: string }>
+  | ConversationCommandEnvelope<"return_to_review", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"edit_transcript", {
+      attempt_id: string;
+      transcript: string;
+      edit_reason: "transcription_error";
+    }>
+  | ConversationCommandEnvelope<"accept_attempt", { attempt_id: string }>
+  | ConversationCommandEnvelope<"record_self_assessment", {
+      attempt_id: string;
+      comfort_level: "low" | "medium" | "high";
+      felt_complete: boolean;
+      note?: string | null;
+    }>
+  | ConversationCommandEnvelope<"update_retention", { audio: ConversationAudioRetentionPolicy }>
+  | ConversationCommandEnvelope<"skip_question", EmptyConversationCommandPayload>
+  | ConversationCommandEnvelope<"end_session", EndConversationSessionPayload>
+  | ConversationCommandEnvelope<"delete_audio", { attempt_id: string }>
+  | ConversationCommandEnvelope<"delete_transcript", { attempt_id: string }>;
+
+export interface ConversationCommandResult {
+  command_id: string;
+  result:
+    | "completed"
+    | "accepted_processing"
+    | "duplicate"
+    | "invalid_state"
+    | "version_conflict"
+    | "idempotency_conflict"
+    | "invalid_payload"
+    | "resource_blocked"
+    | "not_found"
+    | "permission_denied"
+    | "stale_claim";
+  session_id: string;
+  state: ConversationState;
+  state_version: number;
+  active_question_id: string | null;
+  active_attempt_id: string | null;
+  async_job_id: string | null;
+  allowed_commands: ConversationCommandType[];
+  contract_version: "coach_conversation_command_result_v1";
+}
+
+export interface ConversationalQuestionRead {
+  id: string;
+  text: string;
+  category: "behavioural" | "situational" | "culture" | "technical" | "domain" | "commercial";
+  difficulty: "supportive" | "realistic" | "challenging";
+  question_kind: "planned" | "adaptive_follow_up";
+  question_state: "pending" | "asked" | "answered" | "skipped";
+  root_question_id: string | null;
+  parent_question_id: string | null;
+  follow_up_depth: number;
+  follow_up_reason:
+    | "clarify_example"
+    | "measurable_result"
+    | "personal_action"
+    | "reasoning"
+    | "role_depth"
+    | "resolve_ambiguity"
+    | "evidence_consistency"
+    | null;
+  attempts_created_count: number;
+  attempt_limit: number;
+  attempts_remaining: number;
+}
+
+export interface ConversationTranscriptVersionRead {
+  id: string;
+  version_number: number;
+  transcript: string;
+  source: "transcription" | "candidate_text" | "candidate_edit" | "recovered_transcription";
+  edit_reason: "transcription_error" | null;
+  created_by: "system" | "candidate";
+  processing_generation: number | null;
+  created_at: string;
+}
+
+export type ConversationReviewLevel =
+  | "needs_work"
+  | "developing"
+  | "interview_ready"
+  | "strong"
+  | "not_assessed";
+
+export interface ConversationTranscriptEvidenceSpan {
+  transcript_start: number;
+  transcript_end: number;
+  excerpt: string;
+}
+
+export interface ConversationReviewDimension {
+  level: ConversationReviewLevel;
+  evidence: ReadonlyArray<ConversationTranscriptEvidenceSpan>;
+  rationale: string | null;
+  improvement: string | null;
+}
+
+export interface ConversationDeliveryReview {
+  level: ConversationReviewLevel;
+  observations: ReadonlyArray<{
+    severity: "none" | "moderate" | "material" | "severe";
+    label: string;
+  }>;
+}
+
+export interface ConversationEvidenceFinding {
+  claim_id: string;
+  claim_text: string;
+  transcript_start: number;
+  transcript_end: number;
+  status: "supported" | "partially_supported" | "not_found" | "conflicting";
+  source_label: string | null;
+  source_approval: "approved" | "reviewed" | "candidate_selected_unapproved" | "draft" | null;
+  explanation: string;
+  candidate_action: string;
+}
+
+export interface ConversationCoachingReview {
+  positive_observation: string;
+  priority_improvement: string;
+  suggested_structure: string;
+  practice_instruction: string;
+  example_revision: string;
+}
+
+export interface ConversationAnswerReviewRead {
+  evaluation_id: string;
+  evaluation_state: "completed" | "unavailable" | "invalid";
+  answer_level: ConversationReviewLevel;
+  dimensions: Readonly<Record<string, ConversationReviewDimension>>;
+  delivery: ConversationDeliveryReview;
+  evidence_consistency: ConversationReviewLevel;
+  evidence_findings: ReadonlyArray<ConversationEvidenceFinding>;
+  coaching: ConversationCoachingReview | null;
+  accepted_at: string | null;
+}
+
+export interface ConversationCandidateSelfAssessment {
+  comfort_level: "low" | "medium" | "high";
+  felt_complete: boolean;
+  note: string | null;
+  recorded_at: string | null;
+  contract_version: "coach_candidate_self_assessment_v1";
+}
+
+export interface ConversationAttemptHistoryRead {
+  attempt_id: string;
+  attempt_number: number;
+  answer_level: ConversationReviewLevel;
+  accepted: boolean;
+  transcript_available: boolean;
+  audio_state: ConversationAudioRetentionState | null;
+}
+
+export interface InterviewAttemptRead {
+  id: string;
+  question_id: string;
+  recording_type: ConversationAnswerMode;
+  attempt_number: number;
+  attempt_state:
+    | "draft"
+    | "uploaded"
+    | "pending_processing"
+    | "completed"
+    | "recoverable_error"
+    | "unavailable"
+    | "invalid"
+    | "cancelled"
+    | "deleted"
+    | "skipped";
+  attempt_version: number;
+  processing_generation: number;
+  processing_retry_count: number;
+  processing_retry_limit: number;
+  processing_retries_remaining: number;
+  audio_retention_policy: ConversationAudioRetentionPolicy | null;
+  audio_retention_state: ConversationAudioRetentionState | null;
+  transcript_version: ConversationTranscriptVersionRead | null;
+  self_assessment?: ConversationCandidateSelfAssessment | null;
+}
+
+export interface ConversationReviewLiveView {
+  conversation_state: ConversationState;
+  allowed_commands: ReadonlyArray<ConversationCommandType>;
+  active_attempt: {
+    id: string;
+    attempt_number: number;
+    transcript_version: Pick<ConversationTranscriptVersionRead, "transcript"> | null;
+    self_assessment?: ConversationCandidateSelfAssessment | null;
+  } | null;
+  answer_review: ConversationAnswerReviewRead | null;
+}
+
+export type ConversationAttemptStage =
+  | "audio_persist"
+  | "transcription"
+  | "speech_analysis"
+  | "content_evaluation"
+  | "evidence_grounding"
+  | "follow_up_decision"
+  | "coaching_enrichment"
+  | "audio_cleanup";
+
+export type ConversationAttemptStageState =
+  | "not_started"
+  | "pending"
+  | "running"
+  | "completed"
+  | "reused"
+  | "not_applicable"
+  | "unavailable"
+  | "failed_retryable"
+  | "failed_terminal";
+
+export interface ConversationLiveView {
+  session_id: string;
+  experience_version: "conversational_v1";
+  status: ConversationStatus;
+  conversation_state: ConversationState;
+  state_version: number;
+  activity_version: number;
+  retention_version: number;
+  active_question: ConversationalQuestionRead | null;
+  root_question: ConversationalQuestionRead | null;
+  active_attempt: InterviewAttemptRead | null;
+  answer_review: ConversationAnswerReviewRead | null;
+  attempt_history: ConversationAttemptHistoryRead[];
+  processing: {
+    job_id: string | null;
+    stage: ConversationAttemptStage | null;
+    state: ConversationAttemptStageState;
+    retryable: boolean;
+    retry_count: number;
+    retry_limit: number;
+    retries_remaining: number;
+  };
+  progress: {
+    planned_questions_total: number;
+    planned_questions_completed: number;
+    follow_ups_completed: number;
+    current_planned_position: number | null;
+  };
+  retention: {
+    audio_policy: ConversationAudioRetentionPolicy;
+    current_audio_state: ConversationAudioRetentionState | null;
+    retryable_audio_cleanup_attempt_id: string | null;
+  };
+  allowed_commands: ConversationCommandType[];
+  silence_policy: { warning_ms: number; finish_prompt_ms: number };
+  recoverable_error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    scope: "setup" | "attempt_processing" | "initial_report" | "completed_report_rebuild";
+    details: Record<string, never>;
+  } | null;
+  report_state: "not_started" | "building" | "completed" | "fallback" | "failed" | "invalidated";
+  contract_version: "coach_live_view_v1";
+}
+
+export interface ConversationErrorResponse {
+  error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    current_state: ConversationState | null;
+    current_state_version: number | null;
+    correlation_id: string;
+    details: Record<string, never>;
+  };
+}
+
+export interface AttemptAudioUploadRead {
+  attempt_id: string;
+  upload_id: string;
+  result: "pending" | "completed" | "failed" | "deleted";
+  content_sha256: string;
+  byte_size: number;
+  mime_type: string;
+  audio_retention_state: ConversationAudioRetentionState;
+  contract_version: "coach_attempt_audio_upload_v1";
+}
+
 export interface SessionResponse {
   id: string;
   application_id: string | null;
@@ -1192,6 +1597,9 @@ export interface SessionResponse {
   questions: SessionQuestion[];
   created_at: string;
   interview_date?: string | null;
+  experience_version: CoachExperienceVersion | null;
+  conversation_state: string | null;
+  retention_summary: Record<string, unknown> | null;
 }
 
 export interface SessionListItem {
@@ -1202,6 +1610,10 @@ export interface SessionListItem {
   overall_score: number | null;
   created_at: string;
   started_at?: string | null;
+  experience_version: CoachExperienceVersion | null;
+  conversation_state: string | null;
+  session_level: string | null;
+  retention_summary: Record<string, unknown> | null;
 }
 
 export interface PracticePlanDay {
@@ -1273,6 +1685,43 @@ export async function listSessions(
 
 export async function getSession(id: string): Promise<SessionResponse> {
   return apiFetch<SessionResponse>(`/api/coach/sessions/${id}`);
+}
+
+export async function getCoachConversationLive(
+  sessionId: string,
+): Promise<ConversationLiveView> {
+  return apiFetch<ConversationLiveView>(
+    `/api/coach/sessions/${sessionId}/live`,
+    { cache: "no-store" },
+  );
+}
+
+export async function sendCoachConversationCommand(
+  sessionId: string,
+  command: ConversationCommandRequest,
+): Promise<ConversationCommandResult> {
+  return apiFetch<ConversationCommandResult>(
+    `/api/coach/sessions/${sessionId}/commands`,
+    {
+      method: "POST",
+      body: JSON.stringify(command),
+    },
+  );
+}
+
+export async function uploadCoachAttemptAudio(
+  sessionId: string,
+  attemptId: string,
+  request: { uploadId: string; contentSha256: string; audio: Blob },
+): Promise<AttemptAudioUploadRead> {
+  const form = new FormData();
+  form.set("upload_id", request.uploadId);
+  form.set("content_sha256", request.contentSha256);
+  form.set("audio", request.audio);
+  return apiFetch<AttemptAudioUploadRead>(
+    `/api/coach/sessions/${sessionId}/attempts/${attemptId}/audio`,
+    { method: "POST", body: form },
+  );
 }
 
 export async function retrySession(id: string): Promise<AsyncJobRef> {
