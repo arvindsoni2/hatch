@@ -1,0 +1,17 @@
+{
+  "job": {
+    "id": "synthetic-job-001",
+    "title": "Cloud Platform Architect",
+    "description": "Design AWS platforms with Terraform and Python for a remote UK team. Rate £650 per day.",
+    "location": "Remote, UK"
+  },
+  "profile": {
+    "title": "Cloud Architect",
+    "years_experience": 12,
+    "primary_skills": ["AWS", "Terraform"],
+    "secondary_skills": ["Python", "Kubernetes"],
+    "min_rate": 550,
+    "max_rate": 700,
+    "rate_type": "daily"
+  }
+}
