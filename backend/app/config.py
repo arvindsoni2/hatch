@@ -7,6 +7,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .runtime.migration import RuntimeMode
+
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
 
@@ -77,6 +79,13 @@ class Settings(BaseSettings):
     AGENT_LOG_LEVEL: str = "INFO"
     LANGGRAPH_CHECKPOINT_DB: str = "sqlite:///data/langgraph_checkpoints.db"
     SUPERVISOR_POLL_INTERVAL_SECONDS: int = 60
+
+    # Runtime strangler migration modes. Existing installations remain on the
+    # legacy path until a slice-specific promotion gate is approved.
+    HATCH_RUNTIME_JOB_SCORE_MODE: RuntimeMode = RuntimeMode.LEGACY
+    HATCH_RUNTIME_CV_TAILOR_MODE: RuntimeMode = RuntimeMode.LEGACY
+    HATCH_RUNTIME_COVER_LETTER_MODE: RuntimeMode = RuntimeMode.LEGACY
+    HATCH_RUNTIME_COACH_MODE: RuntimeMode = RuntimeMode.LEGACY
 
     # CORS — comma-separated list of allowed origins (set ALLOWED_ORIGINS env var in production)
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -187,9 +196,11 @@ class Settings(BaseSettings):
         """Return priority keywords as a list of stripped lowercase strings."""
         return [kw.strip().lower() for kw in self.PRIORITY_KEYWORDS.split(",") if kw.strip()]
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", env_parse_enums=True
+    )
 
 
 # Singleton instance — import this everywhere
-Settings.model_rebuild(_types_namespace={"Path": Path})
+Settings.model_rebuild(_types_namespace={"Path": Path, "RuntimeMode": RuntimeMode})
 settings = Settings()

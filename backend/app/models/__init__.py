@@ -40,6 +40,29 @@ from .company_watchlist import (
     DiscoveredRoleFingerprint,
 )  # noqa: F401
 from .question_bank import QuestionBankItem  # noqa: F401
+from ..runtime.evaluation.models import (  # noqa: F401
+    ContextPackageRecord,
+    EvaluationRunRecord,
+    EvidenceObservationRecord,
+    ExecutionRecord,
+    ModelEvidenceRecord,
+    PolicyDecisionRecord,
+    RoutingDecisionRecord,
+    ShadowComparisonRecord,
+    ValidationResultRecord,
+)
+from ..runtime.events.models import (  # noqa: F401
+    RuntimeEventRecord,
+    RuntimeOutboxAttemptRecord,
+    RuntimeOutboxRecord,
+)
+from ..runtime.workflow.models import (  # noqa: F401
+    ApprovalRecord,
+    ExecutionClaimRecord,
+    TaskAttemptRecord,
+    WorkflowRunRecord,
+    WorkflowStepRecord,
+)
 
 __all__ = [
     "JobPosting",
@@ -83,4 +106,21 @@ __all__ = [
     "WatchlistScanRun",
     "DiscoveredRoleFingerprint",
     "QuestionBankItem",
+    "WorkflowRunRecord",
+    "WorkflowStepRecord",
+    "TaskAttemptRecord",
+    "ExecutionClaimRecord",
+    "ApprovalRecord",
+    "RuntimeEventRecord",
+    "RuntimeOutboxRecord",
+    "RuntimeOutboxAttemptRecord",
+    "PolicyDecisionRecord",
+    "RoutingDecisionRecord",
+    "ExecutionRecord",
+    "ValidationResultRecord",
+    "EvaluationRunRecord",
+    "EvidenceObservationRecord",
+    "ModelEvidenceRecord",
+    "ContextPackageRecord",
+    "ShadowComparisonRecord",
 ]
