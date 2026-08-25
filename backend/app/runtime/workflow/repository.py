@@ -15,7 +15,10 @@ from .models import (
     TaskAttemptRecord,
     TaskAttemptStatus,
     WaitingReason,
+    WorkflowRunRecord,
+    WorkflowStepRecord,
 )
+from .retry import normalize_retry_metadata
 
 
 class SQLiteWorkflowRepository:
@@ -32,6 +35,7 @@ class SQLiteWorkflowRepository:
         input_ref: dict[str, object],
         domain_ref: dict[str, object],
         mode: str,
+        max_attempts: int,
     ):
         domain_type = str(domain_ref.get("domain_type") or "runtime")
         domain_id = domain_ref.get("domain_id")
@@ -44,6 +48,7 @@ class SQLiteWorkflowRepository:
                 domain_type=domain_type,
                 domain_id=domain_id,
                 runtime_mode=mode,
+                max_attempts=max_attempts,
                 input_ref_json=input_ref,
             )
             step = await uow.workflows.create_step(
@@ -285,6 +290,9 @@ class SQLiteWorkflowRepository:
         now: datetime,
     ) -> TaskAttemptRecord | None:
         """Terminalize the owned attempt and append an immutable retry atomically."""
+        reason, policy_id, policy_version = normalize_retry_metadata(
+            reason, policy_id, policy_version
+        )
         active_claim = exists().where(
             ExecutionClaimRecord.id == claim.id,
             ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
@@ -292,6 +300,21 @@ class SQLiteWorkflowRepository:
             ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
         )
         async with self._uow_factory.transaction() as uow:
+            current_attempt = await uow.session.get(
+                TaskAttemptRecord, claim.task_attempt_id
+            )
+            if current_attempt is None:
+                return None
+            max_attempts = await uow.session.scalar(
+                select(WorkflowRunRecord.max_attempts)
+                .join(
+                    WorkflowStepRecord,
+                    WorkflowStepRecord.workflow_run_id == WorkflowRunRecord.id,
+                )
+                .where(WorkflowStepRecord.id == current_attempt.workflow_step_id)
+            )
+            if max_attempts is None:
+                raise RuntimeError("workflow retry budget is missing")
             failed = await uow.session.execute(
                 update(TaskAttemptRecord)
                 .where(
@@ -320,6 +343,9 @@ class SQLiteWorkflowRepository:
             )
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during retry scheduling")
+            if current_attempt.attempt_number >= max_attempts:
+                await uow.commit()
+                return None
             retry = await uow.workflows.schedule_retry(
                 claim.task_attempt_id,
                 retry_reason=reason,

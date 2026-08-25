@@ -90,6 +90,9 @@ class WorkflowRunRecord(Base):
         String(24), default=WorkflowRunStatus.PENDING, server_default="pending"
     )
     runtime_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    max_attempts: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Mapping
+from collections.abc import Awaitable, Callable
+from typing import Any, Mapping, Protocol
 
 from sqlalchemy.exc import OperationalError
 
@@ -21,6 +22,19 @@ class InjectedFailure(RuntimeError):
     """Test-only deterministic failure used to verify durable crash boundaries."""
 
 
+class Clock(Protocol):
+    def now(self) -> datetime: ...
+
+
+class _SystemClock:
+    def now(self) -> datetime:
+        return datetime.utcnow()
+
+
+async def _sqlite_lock_wait(delay: float) -> None:
+    await asyncio.sleep(delay)
+
+
 class WorkflowKernel:
     """Creates durable work and grants only database-backed execution claims."""
 
@@ -32,6 +46,9 @@ class WorkflowKernel:
         worker_id: str = "workflow-kernel",
         fail_after: str | None = None,
         lock_retry_attempts: int = 3,
+        clock: Clock | None = None,
+        repository: SQLiteWorkflowRepository | None = None,
+        lock_wait: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
@@ -39,9 +56,11 @@ class WorkflowKernel:
             raise ValueError("lock_retry_attempts must be at least 1")
         self._uow_factory = uow_factory
         self._lease_duration = lease_duration
-        self._repository = SQLiteWorkflowRepository(uow_factory)
+        self._repository = repository or SQLiteWorkflowRepository(uow_factory)
         self._worker_id = worker_id
         self._lock_retry_attempts = lock_retry_attempts
+        self._clock = clock or _SystemClock()
+        self._lock_wait = lock_wait or _sqlite_lock_wait
         if fail_after not in (None, "claim_commit"):
             raise ValueError("unsupported test failure point")
         self._fail_after = fail_after
@@ -63,6 +82,7 @@ class WorkflowKernel:
             input_ref=dict(input_ref),
             domain_ref=dict(domain_ref),
             mode=runtime_mode,
+            max_attempts=spec.workflow_policy.max_attempts,
         )
 
     async def claim_next(
@@ -76,7 +96,7 @@ class WorkflowKernel:
             except OperationalError as error:
                 if "locked" not in str(error).lower() or attempt + 1 == self._lock_retry_attempts:
                     raise
-                await asyncio.sleep(0.005 * (2**attempt))
+                await self._lock_wait(0.005 * (2**attempt))
         return None
 
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None:
@@ -100,7 +120,10 @@ class WorkflowKernel:
         if not isinstance(result_ref.get("result_ref"), str) or not result_ref["result_ref"]:
             raise ValueError("result must contain a non-empty result_ref")
         enforce_metadata_only(result_ref, path="result_ref")
-        return await self._repository.finalize(claim, result_ref, datetime.utcnow())
+        finished_at = self._clock.now()
+        if finished_at < claim.claimed_at:
+            raise ValueError("clock must not finalize before the claim")
+        return await self._repository.finalize(claim, result_ref, finished_at)
 
     async def fail_or_retry(
         self,

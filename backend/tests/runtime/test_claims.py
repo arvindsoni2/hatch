@@ -30,6 +30,14 @@ class _Output(BaseModel):
     ref: str
 
 
+class _Clock:
+    def __init__(self, now: datetime) -> None:
+        self.now_value = now
+
+    def now(self) -> datetime:
+        return self.now_value
+
+
 @pytest_asyncio.fixture
 async def kernel(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'claims.db'}")
@@ -40,6 +48,7 @@ async def kernel(tmp_path):
         yield WorkflowKernel(
             SQLiteRuntimeUnitOfWorkFactory(session_factory),
             lease_duration=timedelta(seconds=30),
+            clock=_Clock(datetime(2030, 1, 2)),
         )
     finally:
         await engine.dispose()
@@ -115,3 +124,29 @@ async def test_invalid_result_does_not_consume_the_claim(kernel, spec) -> None:
     assert attempt is not None
     assert attempt.status == TaskAttemptStatus.RUNNING
     assert await kernel.finalize(claim, {"result_ref": "safe-reference"}) is True
+
+
+async def test_finalize_uses_the_injected_monotonic_clock(kernel, spec) -> None:
+    started_at = datetime(2030, 1, 1, 12, 0, 0)
+    finished_at = started_at + timedelta(seconds=7)
+    clock = _Clock(finished_at)
+    clock_kernel = WorkflowKernel(
+        kernel._uow_factory,
+        lease_duration=timedelta(seconds=30),
+        clock=clock,
+    )
+    await clock_kernel.start_run(
+        spec,
+        input_ref={"input_ref": "synthetic-input"},
+        domain_ref={"domain_id": "clock", "domain_type": "synthetic"},
+        mode="new",
+    )
+    claim = await clock_kernel.claim_next("worker-a", started_at)
+    assert claim is not None
+
+    assert await clock_kernel.finalize(claim, {"result_ref": "safe-reference"})
+    attempt = await clock_kernel.get_attempt(claim.task_attempt_id)
+    assert attempt is not None
+    assert attempt.started_at == started_at
+    assert attempt.finished_at == finished_at
+    assert attempt.finished_at >= attempt.started_at

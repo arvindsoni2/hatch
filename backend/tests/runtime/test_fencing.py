@@ -28,6 +28,11 @@ class _Output(BaseModel):
     ref: str
 
 
+class _Clock:
+    def now(self) -> datetime:
+        return datetime(2030, 1, 2)
+
+
 @pytest_asyncio.fixture
 async def kernel(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'fencing.db'}")
@@ -38,6 +43,7 @@ async def kernel(tmp_path):
         yield WorkflowKernel(
             SQLiteRuntimeUnitOfWorkFactory(session_factory),
             lease_duration=timedelta(seconds=30),
+            clock=_Clock(),
         )
     finally:
         await engine.dispose()

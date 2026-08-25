@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import pytest
 import pytest_asyncio
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
@@ -18,7 +20,7 @@ from app.runtime.contracts.task_spec import (
 )
 from app.runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
 from app.runtime.workflow.kernel import WorkflowKernel
-from app.runtime.workflow.models import TaskAttemptStatus, WaitingReason
+from app.runtime.workflow.models import TaskAttemptRecord, TaskAttemptStatus, WaitingReason
 from app.runtime.workflow.retry import RetryFailure
 
 
@@ -126,3 +128,98 @@ async def test_stale_worker_cannot_create_a_retry(kernel) -> None:
         )
         is None
     )
+
+
+async def test_retry_budget_makes_attempt_two_terminal_without_attempt_three(
+    kernel,
+) -> None:
+    now = datetime(2030, 1, 1)
+    await kernel.start_run(
+        _spec(),
+        input_ref={"input_ref": "synthetic-input"},
+        domain_ref={"domain_type": "synthetic", "domain_id": "retry-budget"},
+        mode="new",
+    )
+    first_claim = await kernel.claim_next("worker-a", now)
+    assert first_claim is not None
+    second = await kernel.fail_or_retry(
+        first_claim,
+        RetryFailure("transient_failure", "synthetic.backoff", 1),
+        now,
+    )
+    assert second is not None
+    restarted_kernel = WorkflowKernel(kernel._uow_factory)
+    second_claim = await restarted_kernel.claim_next("worker-b", now)
+    assert second_claim is not None
+    assert second_claim.task_attempt_id == second.id
+
+    assert (
+        await restarted_kernel.fail_or_retry(
+            second_claim,
+            RetryFailure("transient_failure", "synthetic.backoff", 1),
+            now,
+        )
+        is None
+    )
+    persisted_second = await restarted_kernel.get_attempt(second.id)
+    assert persisted_second is not None
+    assert persisted_second.status == TaskAttemptStatus.FAILED
+    assert await restarted_kernel.claim_next("worker-c", now) is None
+
+    async with kernel._uow_factory.session_factory() as session:
+        attempt_count = await session.scalar(
+            select(func.count())
+            .select_from(TaskAttemptRecord)
+            .where(TaskAttemptRecord.workflow_step_id == second.workflow_step_id)
+        )
+    assert attempt_count == 2
+
+
+async def test_repository_rejects_retry_metadata_that_bypasses_the_kernel(kernel) -> None:
+    now = datetime(2030, 1, 1)
+    await kernel.start_run(
+        _spec(),
+        input_ref={"input_ref": "synthetic-input"},
+        domain_ref={"domain_type": "synthetic", "domain_id": "retry-bypass"},
+        mode="new",
+    )
+    claim = await kernel.claim_next("worker-a", now)
+    assert claim is not None
+
+    with pytest.raises(ValueError, match="stable code"):
+        await kernel._repository.fail_or_retry(
+            claim,
+            reason="prompt: synthetic-canary",
+            policy_id="synthetic.backoff",
+            policy_version=1,
+            not_before=None,
+            now=now,
+        )
+    attempt = await kernel.get_attempt(claim.task_attempt_id)
+    assert attempt is not None
+    assert attempt.status == TaskAttemptStatus.RUNNING
+
+
+@pytest.mark.parametrize(
+    ("reason", "policy_id", "policy_version"),
+    [
+        (" ", "synthetic.backoff", 1),
+        ("transient_failure", " ", 1),
+        ("/tmp/synthetic-canary", "synthetic.backoff", 1),
+        ("transient_failure", "prompt: synthetic-canary", 1),
+        ("x" * 129, "synthetic.backoff", 1),
+        ("transient_failure", "synthetic.backoff", True),
+    ],
+)
+def test_retry_failure_rejects_unbounded_or_sensitive_metadata(
+    reason: str, policy_id: str, policy_version: int
+) -> None:
+    with pytest.raises(ValueError):
+        RetryFailure(reason, policy_id, policy_version)
+
+
+def test_retry_failure_normalizes_stable_metadata_at_the_length_boundary() -> None:
+    failure = RetryFailure(" synthetic.retry ", " synthetic.backoff ", 1)
+    assert failure.reason == "synthetic.retry"
+    assert failure.policy_id == "synthetic.backoff"
+    assert RetryFailure("a" * 128, "b" * 128, 1).reason == "a" * 128

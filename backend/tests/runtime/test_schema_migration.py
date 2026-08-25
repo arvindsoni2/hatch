@@ -85,10 +85,10 @@ def _tables(database: Path) -> set[str]:
 
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["r5s6t7u8v9w0"]
-    head = scripts.get_revision("r5s6t7u8v9w0")
+    assert scripts.get_heads() == ["s6t7u8v9w0x"]
+    head = scripts.get_revision("s6t7u8v9w0x")
     assert head is not None
-    assert head.down_revision == "q4r5s6t7u8v9"
+    assert head.down_revision == "r5s6t7u8v9w0"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
@@ -105,6 +105,8 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
         "current_claim_id",
         "context_package_id",
     } <= set(attempts.columns.keys())
+    runs = Base.metadata.tables["runtime_workflow_runs"]
+    assert "max_attempts" in runs.columns
     executions = Base.metadata.tables["runtime_execution_records"]
     assert "parent_execution_id" in executions.columns
     shadow = Base.metadata.tables["runtime_shadow_comparisons"]
