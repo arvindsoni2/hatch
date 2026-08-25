@@ -20,6 +20,7 @@ _config_py = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 _spec = importlib.util.spec_from_file_location("app._config_module", _config_py)
 _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+Settings = _mod.Settings
 settings = _mod.settings
 
 # ──────────────────────── Master profile ────────────────────────
