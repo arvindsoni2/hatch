@@ -1,0 +1,383 @@
+"""Short transactional persistence operations for durable workflow ownership."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta
+
+from sqlalchemy import exists, select, update
+
+from ..storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from .claims import require_worker_id
+from .models import (
+    ExecutionClaimRecord,
+    ExecutionClaimStatus,
+    TaskAttemptRecord,
+    TaskAttemptStatus,
+    WaitingReason,
+)
+
+
+class SQLiteWorkflowRepository:
+    """Durable workflow operations, each enclosed in a small database transaction."""
+
+    def __init__(self, uow_factory: SQLiteRuntimeUnitOfWorkFactory) -> None:
+        self._uow_factory = uow_factory
+
+    async def create_run(
+        self,
+        *,
+        workflow_definition_id: str,
+        workflow_definition_version: int,
+        input_ref: dict[str, object],
+        domain_ref: dict[str, object],
+        mode: str,
+    ):
+        domain_type = str(domain_ref.get("domain_type") or "runtime")
+        domain_id = domain_ref.get("domain_id")
+        if domain_id is not None:
+            domain_id = str(domain_id)
+        async with self._uow_factory.transaction() as uow:
+            run = await uow.workflows.create_run(
+                workflow_definition_id=workflow_definition_id,
+                workflow_definition_version=workflow_definition_version,
+                domain_type=domain_type,
+                domain_id=domain_id,
+                runtime_mode=mode,
+                input_ref_json=input_ref,
+            )
+            step = await uow.workflows.create_step(
+                workflow_run_id=run.id,
+                step_key="execute",
+                step_order=1,
+                task_id=workflow_definition_id,
+                task_version=workflow_definition_version,
+            )
+            await uow.workflows.create_attempt(
+                workflow_step_id=step.id, attempt_number=1
+            )
+            await uow.commit()
+            return run
+
+    async def _claim_pending(
+        self, worker_id: str, now: datetime, lease_duration: timedelta
+    ) -> ExecutionClaimRecord | None:
+        async with self._uow_factory.transaction() as uow:
+            await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
+                    TaskAttemptRecord.waiting_reason == WaitingReason.RETRY_TIME,
+                    TaskAttemptRecord.not_before <= now,
+                )
+                .values(
+                    status=TaskAttemptStatus.PENDING,
+                    waiting_reason=None,
+                    updated_at=now,
+                )
+            )
+            candidate = await uow.session.scalar(
+                select(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.status == TaskAttemptStatus.PENDING,
+                    (TaskAttemptRecord.not_before.is_(None))
+                    | (TaskAttemptRecord.not_before <= now),
+                )
+                .order_by(TaskAttemptRecord.created_at, TaskAttemptRecord.id)
+                .limit(1)
+            )
+            if candidate is None:
+                return None
+            claim_id = str(uuid.uuid4())
+            lease_expires_at = now + lease_duration
+            token = await uow.session.scalar(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == candidate.id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.PENDING,
+                    TaskAttemptRecord.claim_fencing_token == candidate.claim_fencing_token,
+                    (TaskAttemptRecord.not_before.is_(None))
+                    | (TaskAttemptRecord.not_before <= now),
+                )
+                .values(
+                    status=TaskAttemptStatus.RUNNING,
+                    claim_fencing_token=TaskAttemptRecord.claim_fencing_token + 1,
+                    current_claim_id=claim_id,
+                    started_at=now,
+                    updated_at=now,
+                )
+                .returning(TaskAttemptRecord.claim_fencing_token)
+            )
+            if token is None:
+                return None
+            await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.task_attempt_id == candidate.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.SUPERSEDED, released_at=now)
+            )
+            claim = ExecutionClaimRecord(
+                id=claim_id,
+                task_attempt_id=candidate.id,
+                fencing_token=token,
+                claimed_by=worker_id,
+                claimed_at=now,
+                lease_expires_at=lease_expires_at,
+                status=ExecutionClaimStatus.ACTIVE,
+            )
+            uow.session.add(claim)
+            await uow.session.flush()
+            await uow.commit()
+            return claim
+
+    async def claim_next(
+        self, worker_id: str, now: datetime, lease_duration: timedelta
+    ) -> ExecutionClaimRecord | None:
+        return await self._claim_pending(
+            require_worker_id(worker_id), now, lease_duration
+        )
+
+    async def reclaim(
+        self,
+        attempt_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionClaimRecord | None:
+        """Replace an expired owner with a strictly newer fencing token."""
+        worker_id = require_worker_id(worker_id)
+        async with self._uow_factory.transaction() as uow:
+            previous = await uow.session.scalar(
+                select(ExecutionClaimRecord).where(
+                    ExecutionClaimRecord.task_attempt_id == attempt_id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    ExecutionClaimRecord.lease_expires_at <= now,
+                )
+            )
+            if previous is None:
+                return None
+            claim_id = str(uuid.uuid4())
+            lease_expires_at = now + lease_duration
+            token = await uow.session.scalar(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == previous.id,
+                    TaskAttemptRecord.claim_fencing_token == previous.fencing_token,
+                )
+                .values(
+                    current_claim_id=claim_id,
+                    claim_fencing_token=TaskAttemptRecord.claim_fencing_token + 1,
+                    updated_at=now,
+                )
+                .returning(TaskAttemptRecord.claim_fencing_token)
+            )
+            if token is None:
+                return None
+            await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == previous.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.SUPERSEDED, released_at=now)
+            )
+            claim = ExecutionClaimRecord(
+                id=claim_id,
+                task_attempt_id=attempt_id,
+                fencing_token=token,
+                claimed_by=worker_id,
+                claimed_at=now,
+                lease_expires_at=lease_expires_at,
+                status=ExecutionClaimStatus.ACTIVE,
+            )
+            uow.session.add(claim)
+            await uow.session.flush()
+            await uow.commit()
+            return claim
+
+    async def renew_claim(
+        self,
+        claim: ExecutionClaimRecord,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> bool:
+        """Extend a lease only while the claim is still current durable owner."""
+        current_attempt = exists().where(
+            TaskAttemptRecord.id == claim.task_attempt_id,
+            TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+            TaskAttemptRecord.current_claim_id == claim.id,
+            TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+        )
+        async with self._uow_factory.transaction() as uow:
+            result = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
+                    ExecutionClaimRecord.fencing_token == claim.fencing_token,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    current_attempt,
+                )
+                .values(lease_expires_at=now + lease_duration)
+            )
+            if result.rowcount != 1:
+                return False
+            await uow.commit()
+            return True
+
+    async def finalize(
+        self,
+        claim: ExecutionClaimRecord,
+        result_ref: dict[str, object],
+        now: datetime,
+    ) -> bool:
+        """Persist a result only when the supplied claim remains the owner."""
+        active_claim = exists().where(
+            ExecutionClaimRecord.id == claim.id,
+            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
+            ExecutionClaimRecord.fencing_token == claim.fencing_token,
+            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+        )
+        async with self._uow_factory.transaction() as uow:
+            finalized = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    active_claim,
+                )
+                .values(
+                    status=TaskAttemptStatus.SUCCEEDED,
+                    result_ref_json=result_ref,
+                    finished_at=now,
+                    updated_at=now,
+                )
+            )
+            if finalized.rowcount != 1:
+                return False
+            released = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
+            )
+            if released.rowcount != 1:
+                raise RuntimeError("claim ownership changed during finalization")
+            await uow.commit()
+            return True
+
+    async def fail_or_retry(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        reason: str,
+        policy_id: str,
+        policy_version: int,
+        not_before: datetime | None,
+        now: datetime,
+    ) -> TaskAttemptRecord | None:
+        """Terminalize the owned attempt and append an immutable retry atomically."""
+        active_claim = exists().where(
+            ExecutionClaimRecord.id == claim.id,
+            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
+            ExecutionClaimRecord.fencing_token == claim.fencing_token,
+            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+        )
+        async with self._uow_factory.transaction() as uow:
+            failed = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    active_claim,
+                )
+                .values(
+                    status=TaskAttemptStatus.FAILED,
+                    failure_code=reason,
+                    finished_at=now,
+                    updated_at=now,
+                )
+            )
+            if failed.rowcount != 1:
+                return None
+            released = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
+            )
+            if released.rowcount != 1:
+                raise RuntimeError("claim ownership changed during retry scheduling")
+            retry = await uow.workflows.schedule_retry(
+                claim.task_attempt_id,
+                retry_reason=reason,
+                retry_policy_id=policy_id,
+                retry_policy_version=policy_version,
+                not_before=not_before,
+            )
+            await uow.commit()
+            return retry
+
+    async def reconcile_expired_claims(self, now: datetime) -> int:
+        """Release abandoned ownership without relying on a process-local registry."""
+        recovered = 0
+        async with self._uow_factory.transaction() as uow:
+            expired_claims = list(
+                (
+                    await uow.session.scalars(
+                        select(ExecutionClaimRecord).where(
+                            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                            ExecutionClaimRecord.lease_expires_at <= now,
+                        )
+                    )
+                ).all()
+            )
+            for claim in expired_claims:
+                still_current = exists().where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    ExecutionClaimRecord.lease_expires_at <= now,
+                )
+                restored = await uow.session.execute(
+                    update(TaskAttemptRecord)
+                    .where(
+                        TaskAttemptRecord.id == claim.task_attempt_id,
+                        TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                        TaskAttemptRecord.current_claim_id == claim.id,
+                        TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                        still_current,
+                    )
+                    .values(
+                        status=TaskAttemptStatus.PENDING,
+                        current_claim_id=None,
+                        updated_at=now,
+                    )
+                )
+                if restored.rowcount != 1:
+                    continue
+                expired = await uow.session.execute(
+                    update(ExecutionClaimRecord)
+                    .where(
+                        ExecutionClaimRecord.id == claim.id,
+                        ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    )
+                    .values(status=ExecutionClaimStatus.EXPIRED, released_at=now)
+                )
+                if expired.rowcount != 1:
+                    raise RuntimeError("claim ownership changed during reconciliation")
+                recovered += 1
+            if recovered:
+                await uow.commit()
+            return recovered

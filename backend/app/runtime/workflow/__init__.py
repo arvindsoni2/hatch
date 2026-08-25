@@ -13,6 +13,8 @@ from .models import (
     WorkflowStepRecord,
     WorkflowStepStatus,
 )
+from .kernel import InjectedFailure, WorkflowKernel
+from .retry import RetryFailure
 
 __all__ = [
     "ApprovalRecord",
@@ -26,4 +28,7 @@ __all__ = [
     "WorkflowRunStatus",
     "WorkflowStepRecord",
     "WorkflowStepStatus",
+    "WorkflowKernel",
+    "InjectedFailure",
+    "RetryFailure",
 ]
