@@ -14,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from datetime import datetime
+from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -800,7 +801,7 @@ class _RecordingAlembicOperations:
 def _load_migration_module():
     path = (
         BACKEND_DIR
-        / "alembic/versions/20260725_0001_q4r5s6t7u8v9_add_conversational_coach_foundation.py"
+        / f"alembic/versions/20260725_0001_{COACH_REVISION}_add_conversational_coach_foundation.py"
     )
     spec = importlib.util.spec_from_file_location("coach_q4_migration_order", path)
     assert spec is not None and spec.loader is not None
@@ -819,6 +820,20 @@ def _run_alembic(database: Path, *args: str) -> subprocess.CompletedProcess[str]
         capture_output=True,
         text=True,
     )
+
+
+@cache
+def _repository_head() -> str:
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "heads"],
+        cwd=BACKEND_DIR,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    head_lines = [line.split()[0] for line in result.stdout.splitlines() if line.strip()]
+    assert len(head_lines) == 1
+    return head_lines[0]
 
 
 def _schema_blocks(sql: str) -> list[tuple[str, str, str]]:
@@ -1008,7 +1023,7 @@ def _upgrade(database: Path) -> None:
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == (COACH_REVISION,)
+        ).fetchone() == (_repository_head(),)
 
 
 def _column_names(connection: sqlite3.Connection, table: str) -> set[str]:
@@ -1049,16 +1064,8 @@ def test_fixture_is_hash_locked_complete_prior_head(prior_head_template: Path) -
         ).fetchone() == (SOURCE_REVISION,)
 
 
-def test_revision_is_the_only_alembic_head() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", "heads"],
-        cwd=BACKEND_DIR,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    head_lines = [line for line in result.stdout.splitlines() if line.strip()]
-    assert head_lines == [f"{COACH_REVISION} (head)"]
+def test_repository_has_exactly_one_alembic_head() -> None:
+    assert isinstance(_repository_head(), str)
 
 
 @pytest.mark.parametrize(
@@ -1912,7 +1919,7 @@ def test_upgrade_rejects_all_malformed_membership_shapes_without_partial_state(
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
             "SELECT version_num FROM alembic_version"
-        ).fetchone() == (COACH_REVISION,)
+        ).fetchone() == (_repository_head(),)
 
 
 def test_upgrade_classifies_pydantic_float_string_families(
@@ -2137,7 +2144,7 @@ def test_upgrade_current_check_downgrade_and_reupgrade(prior_head_db: Path) -> N
             WHERE id='roundtrip-session'
             """
         )
-    assert COACH_REVISION in _run_alembic(prior_head_db, "current").stdout
+    assert _repository_head() in _run_alembic(prior_head_db, "current").stdout
     assert "No new upgrade operations detected" in (
         _run_alembic(prior_head_db, "check").stdout
         + _run_alembic(prior_head_db, "check").stderr
@@ -2197,8 +2204,8 @@ def test_supported_fresh_install_matches_new_head_metadata(tmp_path: Path) -> No
         capture_output=True,
         text=True,
     )
-    _run_alembic(database, "stamp", COACH_REVISION)
-    assert COACH_REVISION in _run_alembic(database, "current").stdout
+    _run_alembic(database, "stamp", _repository_head())
+    assert _repository_head() in _run_alembic(database, "current").stdout
     check_result = _run_alembic(database, "check")
     assert (
         "No new upgrade operations detected"
