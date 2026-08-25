@@ -128,3 +128,21 @@ async def test_repositories_share_one_session_and_do_not_commit_internally(
             await session.scalar(select(func.count()).select_from(WorkflowRunRecord))
             == 0
         )
+
+
+async def test_uow_exposes_complete_semantic_store_methods(runtime_uow_factory) -> None:
+    async with runtime_uow_factory.transaction() as uow:
+        required = {
+            uow.approvals: {"request", "decide", "invalidate_for_payload_change"},
+            uow.evaluations: {
+                "record_policy_decision",
+                "record_routing_decision",
+                "record_execution",
+                "record_validation",
+                "record_evaluation",
+                "record_observation",
+            },
+            uow.shadow: {"record", "purge_expired"},
+        }
+        for store, methods in required.items():
+            assert all(hasattr(store, method) for method in methods)
