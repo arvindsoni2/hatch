@@ -89,6 +89,9 @@ async def init_db() -> None:
     from .models import tailoring_review as _tailoring_review_models  # noqa: F401
     from .models import company_watchlist as _company_watchlist_models  # noqa: F401
     from .models import question_bank as _question_bank_models  # noqa: F401
+    from .runtime.evaluation import models as _runtime_evaluation_models  # noqa: F401
+    from .runtime.events import models as _runtime_event_models  # noqa: F401
+    from .runtime.workflow import models as _runtime_workflow_models  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
