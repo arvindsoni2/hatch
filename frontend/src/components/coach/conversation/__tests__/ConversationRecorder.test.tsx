@@ -324,6 +324,13 @@ describe("ConversationRecorder browser capture", () => {
     vi.useFakeTimers();
     installMedia();
     FakeMediaRecorder.deferStop = true;
+    const expectedSha = "275c5abc46b1fb244d1389b396c35c5edf8144654717963c426dc76b5525052c";
+    const digest = vi.spyOn(crypto.subtle, "digest").mockResolvedValue(
+      Uint8Array.from(
+        expectedSha.match(/../g) ?? [],
+        (byte) => Number.parseInt(byte, 16),
+      ).buffer,
+    );
     const events: string[] = [];
     api.uploadCoachAttemptAudio.mockImplementation(async () => {
       events.push("upload");
@@ -361,7 +368,10 @@ describe("ConversationRecorder browser capture", () => {
     expect(events).toEqual(["upload", "finish"]);
     const upload = api.uploadCoachAttemptAudio.mock.calls[0][2];
     expect(upload.audio.size).toBeGreaterThan(new Blob(["first"]).size);
-    expect(upload.contentSha256).toBe("275c5abc46b1fb244d1389b396c35c5edf8144654717963c426dc76b5525052c");
+    expect(digest).toHaveBeenCalledOnce();
+    expect(digest.mock.calls[0][0]).toBe("SHA-256");
+    expect(new TextDecoder().decode(digest.mock.calls[0][1])).toBe("firstfinal");
+    expect(upload.contentSha256).toBe(expectedSha);
   });
 
   it("fences deferred hashing and upload when fresh authority removes the captured attempt", async () => {
