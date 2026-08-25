@@ -49,14 +49,14 @@ The unrelated untracked Coach PDF in the original checkout remains untouched.
 
 Independent specification and quality/security reviews were requested after the first Task 4 implementation. Important findings covered incomplete semantic store operations, privacy enforcement outside events, unrestricted outbox error detail, and SQLite claim contention.
 
-The implementation was revised to add the full Approval/Evaluation/Shadow/Outbox store seams, metadata-only enforcement across JSON-bearing store operations, strict event metadata/sensitivity validation, disabled raw outbox error details, conditional fencing, bounded lock retry, and regression tests for each finding. The optional `(event_id, destination)` uniqueness suggestion was not adopted because the approved schema declares no such uniqueness and the delivery contract is explicitly at-least-once with consumer deduplication by `event_id`.
+The implementation was revised to add the full Approval/Evaluation/Shadow/Outbox store seams, metadata-only enforcement across JSON-bearing store operations, strict event metadata/sensitivity validation, disabled raw outbox error details, conditional fencing, bounded claim and finalization lock retries, and regression tests for each finding. The optional `(event_id, destination)` uniqueness suggestion was not adopted because the approved schema declares no such uniqueness and the delivery contract is explicitly at-least-once with consumer deduplication by `event_id`.
 
 ## Verification results
 
 R1 invariant gate:
 
 ```text
-45 passed
+46 passed
 ```
 
 Canonical database setup suite:

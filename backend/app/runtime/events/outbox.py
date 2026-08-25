@@ -204,7 +204,7 @@ class OutboxPublisher:
                 await asyncio.sleep(0.005 * (2**attempt))
         return None
 
-    async def finalize_delivery(
+    async def _finalize_once(
         self,
         claim: OutboxClaim,
         *,
@@ -226,3 +226,32 @@ class OutboxPublisher:
                 dead_letter=dead_letter,
                 now=now,
             )
+
+    async def finalize_delivery(
+        self,
+        claim: OutboxClaim,
+        *,
+        delivered: bool,
+        error_code: str | None = None,
+        error_detail: str | None = None,
+        retry_not_before: datetime | None = None,
+        dead_letter: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        finished_at = now or datetime.utcnow()
+        for attempt in range(self.lock_retry_attempts):
+            try:
+                return await self._finalize_once(
+                    claim,
+                    delivered=delivered,
+                    error_code=error_code,
+                    error_detail=error_detail,
+                    retry_not_before=retry_not_before,
+                    dead_letter=dead_letter,
+                    now=finished_at,
+                )
+            except OperationalError as error:
+                if "locked" not in str(error).lower() or attempt + 1 == self.lock_retry_attempts:
+                    raise
+                await asyncio.sleep(0.005 * (2**attempt))
+        return False

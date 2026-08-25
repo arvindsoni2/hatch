@@ -126,3 +126,25 @@ async def test_concurrent_publishers_issue_one_claim(outbox_context) -> None:
     issued = [claim for claim in claims if claim is not None]
     assert len(issued) == 1
     assert issued[0].entry_id == entry_id
+
+
+async def test_finalize_retries_short_sqlite_lock_contention(outbox_context) -> None:
+    session_factory, entry_id, _ = outbox_context
+    publisher = OutboxPublisher(session_factory, lock_retry_attempts=10)
+    claim = await publisher.claim_next()
+    assert claim is not None
+
+    database = session_factory.kw["bind"].url.database
+    assert database is not None
+    lock = sqlite3.connect(database, timeout=0.01)
+    lock.execute("BEGIN EXCLUSIVE")
+    task = asyncio.create_task(publisher.finalize_delivery(claim, delivered=True))
+    await asyncio.sleep(0.03)
+    lock.rollback()
+    lock.close()
+
+    assert await task
+    async with session_factory() as session:
+        entry = await session.get(RuntimeOutboxRecord, entry_id)
+    assert entry is not None
+    assert entry.status == "delivered"
