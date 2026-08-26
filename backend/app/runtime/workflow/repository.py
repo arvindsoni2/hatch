@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+import re
 
 from sqlalchemy import exists, select, update
 
-from ..storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from ..storage.contracts import RuntimeUnitOfWorkFactory
 from .claims import require_worker_id
 from .models import (
     ExecutionClaimRecord,
+    ExecutionClaimPurpose,
     ExecutionClaimStatus,
     TaskAttemptRecord,
     TaskAttemptStatus,
@@ -21,10 +23,55 @@ from .models import (
 from .retry import normalize_retry_metadata
 
 
+_RECONCILIATION_CODE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
+_IDEMPOTENCY_CLASSES = {
+    "idempotent",
+    "idempotent_with_key",
+    "check_before_retry",
+    "non_retryable_side_effect",
+}
+
+
+def normalize_reconciliation_binding(
+    capability_id: object,
+    capability_version: object,
+    idempotency_class: object,
+    reconciliation_reference: object,
+) -> tuple[str, int, str, str]:
+    """Accept only bounded metadata-safe durable ambiguity descriptors."""
+    values = {
+        "capability_id": capability_id,
+        "idempotency_class": idempotency_class,
+        "reconciliation_reference": reconciliation_reference,
+    }
+    normalized: dict[str, str] = {}
+    for field, value in values.items():
+        if not isinstance(value, str):
+            raise ValueError(f"{field} must be a bounded stable code")
+        item = value.strip()
+        if not item or len(item) > 128 or _RECONCILIATION_CODE.fullmatch(item) is None:
+            raise ValueError(f"{field} must be a bounded stable code")
+        normalized[field] = item
+    if normalized["idempotency_class"] not in _IDEMPOTENCY_CLASSES:
+        raise ValueError("idempotency_class must be a supported stable code")
+    if (
+        isinstance(capability_version, bool)
+        or not isinstance(capability_version, int)
+        or capability_version < 1
+    ):
+        raise ValueError("capability_version must be positive")
+    return (
+        normalized["capability_id"],
+        capability_version,
+        normalized["idempotency_class"],
+        normalized["reconciliation_reference"],
+    )
+
+
 class SQLiteWorkflowRepository:
     """Durable workflow operations, each enclosed in a small database transaction."""
 
-    def __init__(self, uow_factory: SQLiteRuntimeUnitOfWorkFactory) -> None:
+    def __init__(self, uow_factory: RuntimeUnitOfWorkFactory) -> None:
         self._uow_factory = uow_factory
 
     async def create_run(
@@ -110,7 +157,9 @@ class SQLiteWorkflowRepository:
             await uow.commit()
             return True
 
-    async def resume_waiting(self, attempt_id: str, *, now: datetime) -> bool:
+    async def resume_waiting(
+        self, attempt_id: str, *, now: datetime
+    ) -> TaskAttemptRecord | None:
         """Make a human-blocked attempt claimable without reviving an old claim."""
         async with self._uow_factory.transaction() as uow:
             resumed = await uow.session.execute(
@@ -130,9 +179,12 @@ class SQLiteWorkflowRepository:
                 )
             )
             if resumed.rowcount != 1:
-                return False
+                return None
+            attempt = await uow.session.get(TaskAttemptRecord, attempt_id)
+            if attempt is None:
+                raise RuntimeError("resumed attempt disappeared before commit")
             await uow.commit()
-            return True
+            return attempt
 
     async def _claim_pending(
         self, worker_id: str, now: datetime, lease_duration: timedelta
@@ -198,6 +250,7 @@ class SQLiteWorkflowRepository:
                 task_attempt_id=candidate.id,
                 fencing_token=token,
                 claimed_by=worker_id,
+                purpose=ExecutionClaimPurpose.EXECUTION,
                 claimed_at=now,
                 lease_expires_at=lease_expires_at,
                 status=ExecutionClaimStatus.ACTIVE,
@@ -265,6 +318,7 @@ class SQLiteWorkflowRepository:
                 task_attempt_id=attempt_id,
                 fencing_token=token,
                 claimed_by=worker_id,
+                purpose=ExecutionClaimPurpose.EXECUTION,
                 claimed_at=now,
                 lease_expires_at=lease_expires_at,
                 status=ExecutionClaimStatus.ACTIVE,
@@ -283,7 +337,9 @@ class SQLiteWorkflowRepository:
         """Extend a lease only while the claim is still current durable owner."""
         current_attempt = exists().where(
             TaskAttemptRecord.id == claim.task_attempt_id,
-            TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+            TaskAttemptRecord.status.in_(
+                (TaskAttemptStatus.RUNNING, TaskAttemptStatus.OUTCOME_UNKNOWN)
+            ),
             TaskAttemptRecord.current_claim_id == claim.id,
             TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
         )
@@ -322,7 +378,9 @@ class SQLiteWorkflowRepository:
                 update(TaskAttemptRecord)
                 .where(
                     TaskAttemptRecord.id == claim.task_attempt_id,
-                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.status.in_(
+                        (TaskAttemptStatus.RUNNING, TaskAttemptStatus.OUTCOME_UNKNOWN)
+                    ),
                     TaskAttemptRecord.current_claim_id == claim.id,
                     TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
                     active_claim,
@@ -350,9 +408,24 @@ class SQLiteWorkflowRepository:
             return True
 
     async def mark_outcome_unknown(
-        self, claim: ExecutionClaimRecord, *, now: datetime
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        now: datetime,
+        capability_id: str,
+        capability_version: int,
+        idempotency_class: str,
+        reconciliation_reference: str,
     ) -> bool:
         """Durably stop execution before an ambiguous external outcome is checked."""
+        capability_id, capability_version, idempotency_class, reconciliation_reference = (
+            normalize_reconciliation_binding(
+                capability_id,
+                capability_version,
+                idempotency_class,
+                reconciliation_reference,
+            )
+        )
         active_claim = exists().where(
             ExecutionClaimRecord.id == claim.id,
             ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
@@ -372,6 +445,10 @@ class SQLiteWorkflowRepository:
                 .values(
                     status=TaskAttemptStatus.OUTCOME_UNKNOWN,
                     current_claim_id=None,
+                    capability_id=capability_id,
+                    capability_version=capability_version,
+                    idempotency_class=idempotency_class,
+                    reconciliation_reference=reconciliation_reference,
                     updated_at=now,
                 )
             )
@@ -413,7 +490,6 @@ class SQLiteWorkflowRepository:
                     TaskAttemptRecord.claim_fencing_token == candidate.claim_fencing_token,
                 )
                 .values(
-                    status=TaskAttemptStatus.RUNNING,
                     current_claim_id=claim_id,
                     claim_fencing_token=TaskAttemptRecord.claim_fencing_token + 1,
                     updated_at=now,
@@ -427,6 +503,7 @@ class SQLiteWorkflowRepository:
                 task_attempt_id=attempt_id,
                 fencing_token=token,
                 claimed_by=worker_id,
+                purpose=ExecutionClaimPurpose.RECONCILIATION,
                 claimed_at=now,
                 lease_expires_at=now + lease_duration,
                 status=ExecutionClaimStatus.ACTIVE,
@@ -449,14 +526,12 @@ class SQLiteWorkflowRepository:
                 update(TaskAttemptRecord)
                 .where(
                     TaskAttemptRecord.id == claim.task_attempt_id,
-                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.status == TaskAttemptStatus.OUTCOME_UNKNOWN,
                     TaskAttemptRecord.current_claim_id == claim.id,
                     TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
                     active_claim,
                 )
-                .values(
-                    status=TaskAttemptStatus.OUTCOME_UNKNOWN,
-                    current_claim_id=None,
+                .values(current_claim_id=None,
                     updated_at=now,
                 )
             )
@@ -488,7 +563,9 @@ class SQLiteWorkflowRepository:
                 update(TaskAttemptRecord)
                 .where(
                     TaskAttemptRecord.id == claim.task_attempt_id,
-                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.status.in_(
+                        (TaskAttemptStatus.RUNNING, TaskAttemptStatus.OUTCOME_UNKNOWN)
+                    ),
                     TaskAttemptRecord.current_claim_id == claim.id,
                     TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
                     active_claim,
@@ -556,7 +633,9 @@ class SQLiteWorkflowRepository:
                 update(TaskAttemptRecord)
                 .where(
                     TaskAttemptRecord.id == claim.task_attempt_id,
-                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.status.in_(
+                        (TaskAttemptStatus.RUNNING, TaskAttemptStatus.OUTCOME_UNKNOWN)
+                    ),
                     TaskAttemptRecord.current_claim_id == claim.id,
                     TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
                     active_claim,
@@ -617,13 +696,22 @@ class SQLiteWorkflowRepository:
                     update(TaskAttemptRecord)
                     .where(
                         TaskAttemptRecord.id == claim.task_attempt_id,
-                        TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                        TaskAttemptRecord.status
+                        == (
+                            TaskAttemptStatus.OUTCOME_UNKNOWN
+                            if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
+                            else TaskAttemptStatus.RUNNING
+                        ),
                         TaskAttemptRecord.current_claim_id == claim.id,
                         TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
                         still_current,
                     )
                     .values(
-                        status=TaskAttemptStatus.PENDING,
+                        status=(
+                            TaskAttemptStatus.OUTCOME_UNKNOWN
+                            if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
+                            else TaskAttemptStatus.PENDING
+                        ),
                         current_claim_id=None,
                         updated_at=now,
                     )

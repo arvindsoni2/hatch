@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from .kernel import WorkflowKernel
+from .models import TaskAttemptStatus
 from .retry import RetryFailure
 
 
@@ -25,17 +26,24 @@ class ReconciliationRegistry:
     """In-process handler lookup; workflow state remains in the repository."""
 
     def __init__(self) -> None:
-        self._handlers: dict[str, ReconciliationHandler] = {}
+        self._handlers: dict[tuple[str, int], ReconciliationHandler] = {}
 
-    def register(self, capability_id: str, handler: ReconciliationHandler) -> None:
+    def register(
+        self,
+        capability_id: str,
+        capability_version: int,
+        handler: ReconciliationHandler,
+    ) -> None:
         if not isinstance(capability_id, str) or not capability_id.strip():
             raise ValueError("capability_id is required")
+        if isinstance(capability_version, bool) or not isinstance(capability_version, int) or capability_version < 1:
+            raise ValueError("capability_version must be positive")
         if not callable(handler):
             raise ValueError("reconciliation handler must be callable")
-        self._handlers[capability_id.strip()] = handler
+        self._handlers[(capability_id.strip(), capability_version)] = handler
 
-    def require(self, capability_id: str) -> ReconciliationHandler:
-        handler = self._handlers.get(capability_id)
+    def require(self, capability_id: str, capability_version: int) -> ReconciliationHandler:
+        handler = self._handlers.get((capability_id, capability_version))
         if handler is None:
             raise LookupError("no reconciliation handler registered for capability")
         return handler
@@ -58,20 +66,31 @@ class WorkflowReconciler:
     async def reconcile_outcome_unknown(
         self,
         attempt_id: str,
-        capability_id: str,
         now: datetime,
         *,
         retry_failure: RetryFailure | None = None,
     ) -> ReconciliationDecision | None:
         """Check first, then finalize or explicitly schedule an allowed retry."""
-        handler = self._registry.require(capability_id)
+        attempt = await self._kernel.get_attempt(attempt_id)
+        if (
+            attempt is None
+            or attempt.status != TaskAttemptStatus.OUTCOME_UNKNOWN
+            or attempt.capability_id is None
+            or attempt.capability_version is None
+            or attempt.idempotency_class != "check_before_retry"
+            or attempt.reconciliation_reference is None
+        ):
+            return None
+        handler = self._registry.require(attempt.capability_id, attempt.capability_version)
         claim = await self._kernel.claim_outcome_unknown(attempt_id, self._worker_id, now)
         if claim is None:
             return None
         try:
             decision = await handler(
                 task_attempt_id=attempt_id,
-                capability_id=capability_id,
+                capability_id=attempt.capability_id,
+                capability_version=attempt.capability_version,
+                reconciliation_reference=attempt.reconciliation_reference,
                 fencing_token=claim.fencing_token,
             )
             if not isinstance(decision, ReconciliationDecision):
@@ -84,9 +103,11 @@ class WorkflowReconciler:
                     return None
                 return decision
             if retry_failure is None:
-                await self._kernel.fail_terminal(claim, "outcome_not_found", now)
+                if not await self._kernel.fail_terminal(claim, "outcome_not_found", now):
+                    return None
             else:
-                await self._kernel.fail_or_retry(claim, retry_failure, now)
+                if await self._kernel.fail_or_retry(claim, retry_failure, now) is None:
+                    return None
             return decision
         except BaseException:
             await self._kernel.return_outcome_unknown(claim, now)

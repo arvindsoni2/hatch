@@ -64,6 +64,11 @@ class ExecutionClaimStatus(str, Enum):
     SUPERSEDED = "superseded"
 
 
+class ExecutionClaimPurpose(str, Enum):
+    EXECUTION = "execution"
+    RECONCILIATION = "reconciliation"
+
+
 class WaitingReason(str, Enum):
     APPROVAL = "approval"
     USER_INPUT = "user_input"
@@ -154,6 +159,10 @@ class TaskAttemptRecord(Base):
     retry_reason: Mapped[str | None] = mapped_column(String(128))
     retry_policy_id: Mapped[str | None] = mapped_column(String(128))
     retry_policy_version: Mapped[int | None] = mapped_column(Integer)
+    capability_id: Mapped[str | None] = mapped_column(String(128))
+    capability_version: Mapped[int | None] = mapped_column(Integer)
+    idempotency_class: Mapped[str | None] = mapped_column(String(64))
+    reconciliation_reference: Mapped[str | None] = mapped_column(String(128))
     claim_fencing_token: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0", nullable=False
     )
@@ -183,6 +192,12 @@ class ExecutionClaimRecord(Base):
     )
     fencing_token: Mapped[int] = mapped_column(BigInteger, nullable=False)
     claimed_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    purpose: Mapped[str] = mapped_column(
+        String(24),
+        default=ExecutionClaimPurpose.EXECUTION,
+        server_default="execution",
+        nullable=False,
+    )
     claimed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     lease_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     released_at: Mapped[datetime | None] = mapped_column(DateTime)

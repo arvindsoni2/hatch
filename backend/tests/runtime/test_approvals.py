@@ -13,6 +13,7 @@ from app.runtime.workflow.approvals import (
     ApprovalManager,
     canonical_payload_hash,
 )
+from app.runtime.events.models import RuntimeEventRecord, RuntimeOutboxRecord
 from app.runtime.workflow.models import ApprovalRecord, ApprovalStatus
 from workflow_test_support import start_and_claim
 
@@ -34,12 +35,18 @@ async def test_approval_for_payload_a_does_not_authorize_b(workflow_runtime) -> 
     )
     assert await approvals.is_valid(
         record.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.publish",
         payload={"path": "A"},
         now=now,
     )
     assert not await approvals.is_valid(
         record.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.publish",
         payload={"path": "B"},
         now=now,
@@ -64,18 +71,27 @@ async def test_exact_payload_algorithm_and_expiry_bind_approval(workflow_runtime
     )
     assert await approvals.is_valid(
         record.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.publish",
         payload={"options": {"dry_run": True}, "path": "A"},
         now=now,
     )
     assert not await approvals.is_valid(
         record.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.publish",
         payload={"path": "B"},
         now=now,
     )
     assert not await approvals.is_valid(
         record.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.delete",
         payload={"path": "A", "options": {"dry_run": True}},
         now=now,
@@ -87,12 +103,18 @@ async def test_exact_payload_algorithm_and_expiry_bind_approval(workflow_runtime
         await session.commit()
     assert not await approvals.is_valid(
         record.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.publish",
         payload={"path": "A", "options": {"dry_run": True}},
         now=now,
     )
     assert not await approvals.is_valid(
         record.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.publish",
         payload={"path": "A"},
         now=now + timedelta(minutes=5),
@@ -105,10 +127,80 @@ def test_canonical_payload_hash_is_utf8_order_independent_and_rejects_non_json()
     assert canonical_payload_hash({"label": "£", "a": [2, 1]}) == canonical_payload_hash(
         {"a": [2, 1], "label": "£"}
     )
-    with pytest.raises(ValueError, match="canonical JSON"):
+    with pytest.raises(ValueError, match="finite JSON numbers"):
         canonical_payload_hash({"not_a_number": float("nan")})
     with pytest.raises(ValueError, match="algorithm"):
         canonical_payload_hash({"path": "A"}, algorithm="sha1")
+
+
+def test_canonical_payload_hash_rejects_key_and_sequence_type_collisions() -> None:
+    """Would fail if non-JSON types serialized into a different payload authority."""
+    assert canonical_payload_hash({"a": [2, 1], "label": "£"}) == (
+        "04437b86df2b3b2c80f2aca08cbf88bc63133d27f61b490c5a7c6229052826a1"
+    )
+    with pytest.raises(ValueError, match="keys must be strings"):
+        canonical_payload_hash({1: "A"})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="list"):
+        canonical_payload_hash({"items": ("A",)})
+
+
+async def _step_id(factory, attempt_id: str) -> str:
+    async with factory.session_factory() as session:
+        attempt = await session.get(__import__("app.runtime.workflow.models", fromlist=["TaskAttemptRecord"]).TaskAttemptRecord, attempt_id)
+        assert attempt is not None
+        return attempt.workflow_step_id
+
+
+async def test_approval_id_is_not_authority_across_run_step_or_attempt(workflow_runtime) -> None:
+    """Would fail if approval IDs could be replayed outside their durable exact scope."""
+    kernel, factory = workflow_runtime
+    now = datetime(2030, 1, 1)
+    run_a, claim_a = await start_and_claim(kernel, now=now)
+    run_b, claim_b = await start_and_claim(kernel, now=now)
+    approvals = ApprovalManager(factory, clock=lambda: now)
+    record = await approvals.request(
+        workflow_run_id=run_a.id,
+        task_attempt_id=claim_a.task_attempt_id,
+        capability_id="artifact.publish",
+        payload={"path": "A"},
+    )
+    assert await approvals.decide(record.id, decided_by="synthetic-user", approved=True, now=now)
+    step_a = await _step_id(factory, claim_a.task_attempt_id)
+    step_b = await _step_id(factory, claim_b.task_attempt_id)
+    assert await approvals.is_valid(record.id, workflow_run_id=run_a.id, workflow_step_id=step_a, task_attempt_id=claim_a.task_attempt_id, capability_id="artifact.publish", payload={"path": "A"}, now=now)
+    assert not await approvals.is_valid(record.id, workflow_run_id=run_b.id, workflow_step_id=step_b, task_attempt_id=claim_b.task_attempt_id, capability_id="artifact.publish", payload={"path": "A"}, now=now)
+    assert not await approvals.is_valid(record.id, workflow_run_id=run_a.id, workflow_step_id=step_a, task_attempt_id=claim_b.task_attempt_id, capability_id="artifact.publish", payload={"path": "A"}, now=now)
+
+
+@pytest.mark.parametrize("canary", ["synthetic transcript content", "synthetic CV content", "prompt-injection", "/tmp/private-path", "model-output"])
+async def test_decision_reason_rejects_content_canaries_at_public_and_store_boundaries(workflow_runtime, canary: str) -> None:
+    """Would fail if free-text decision metadata could leak into durable approval state."""
+    kernel, factory = workflow_runtime
+    now = datetime(2030, 1, 1)
+    run, claim = await start_and_claim(kernel, now=now)
+    approvals = ApprovalManager(factory, clock=lambda: now)
+    record = await approvals.request(workflow_run_id=run.id, task_attempt_id=claim.task_attempt_id, capability_id="artifact.publish", payload={"path": "A"})
+    with pytest.raises(ValueError, match="stable code"):
+        await approvals.decide(record.id, decided_by="synthetic-user", approved=True, reason=canary, now=now)
+    async with factory.transaction() as uow:
+        with pytest.raises(ValueError, match="stable code"):
+            await uow.approvals.decide(record.id, status=ApprovalStatus.APPROVED, decided_by="synthetic-user", decision_reason=canary, decided_at=now)
+
+
+async def test_approval_decision_and_event_roll_back_together_on_injected_failure(workflow_runtime) -> None:
+    """Would fail if approval state committed without its required metadata event."""
+    kernel, factory = workflow_runtime
+    now = datetime(2030, 1, 1)
+    run, claim = await start_and_claim(kernel, now=now)
+    approvals = ApprovalManager(factory, clock=lambda: now, fail_after_state_change=True)
+    record = await approvals.request(workflow_run_id=run.id, task_attempt_id=claim.task_attempt_id, capability_id="artifact.publish", payload={"path": "A"})
+    with pytest.raises(RuntimeError, match="approval_state_change"):
+        await approvals.decide(record.id, decided_by="synthetic-user", approved=True, now=now)
+    async with factory.session_factory() as session:
+        persisted = await session.get(ApprovalRecord, record.id)
+        events = list((await session.scalars(select(RuntimeEventRecord))).all())
+    assert persisted is not None and persisted.status == ApprovalStatus.PENDING
+    assert [event.event_type for event in events] == ["approval.requested"]
 
 
 async def test_request_rejects_misaligned_scope_without_creating_record(workflow_runtime) -> None:
@@ -202,6 +294,9 @@ async def test_payload_change_invalidates_pending_and_approved_records_after_res
     )
     assert not await restarted.is_valid(
         approved.id,
+        workflow_run_id=run.id,
+        workflow_step_id=(await _step_id(factory, claim.task_attempt_id)),
+        task_attempt_id=claim.task_attempt_id,
         capability_id="artifact.publish",
         payload={"path": "A"},
         now=now,
@@ -263,3 +358,95 @@ async def test_invalid_decision_metadata_leaves_approval_pending(workflow_runtim
         persisted = await session.get(ApprovalRecord, record.id)
     assert persisted is not None
     assert persisted.status == ApprovalStatus.PENDING
+
+
+async def test_store_rejects_unsafe_actor_and_unregistered_reason_code(workflow_runtime) -> None:
+    """Would fail if direct storage writes bypassed the approval privacy boundary."""
+    kernel, factory = workflow_runtime
+    now = datetime(2030, 1, 1)
+    run, claim = await start_and_claim(kernel, now=now)
+    approvals = ApprovalManager(factory, clock=lambda: now)
+    record = await approvals.request(
+        workflow_run_id=run.id,
+        task_attempt_id=claim.task_attempt_id,
+        capability_id="artifact.publish",
+        payload={"path": "A"},
+    )
+    async with factory.transaction() as uow:
+        with pytest.raises(ValueError, match="safe identifier"):
+            await uow.approvals.decide(
+                record.id,
+                status=ApprovalStatus.APPROVED,
+                decided_by="synthetic\nuser",
+                decision_reason="granted",
+                decided_at=now,
+            )
+        with pytest.raises(ValueError, match="stable code"):
+            await uow.approvals.decide(
+                record.id,
+                status=ApprovalStatus.APPROVED,
+                decided_by="synthetic-user",
+                decision_reason="prompt-injection",
+                decided_at=now,
+            )
+
+
+async def test_each_approval_transition_appends_one_metadata_event_without_outbox(
+    workflow_runtime,
+) -> None:
+    """Would fail if an approval transition diverged from its ARCH-08 event."""
+    kernel, factory = workflow_runtime
+    now = datetime(2030, 1, 1)
+    run, claim = await start_and_claim(kernel, now=now)
+    approvals = ApprovalManager(factory, clock=lambda: now)
+    granted = await approvals.request(
+        workflow_run_id=run.id,
+        task_attempt_id=claim.task_attempt_id,
+        capability_id="artifact.publish",
+        payload={"path": "grant"},
+    )
+    denied = await approvals.request(
+        workflow_run_id=run.id,
+        task_attempt_id=claim.task_attempt_id,
+        capability_id="artifact.publish",
+        payload={"path": "deny"},
+    )
+    expired = await approvals.request(
+        workflow_run_id=run.id,
+        task_attempt_id=claim.task_attempt_id,
+        capability_id="artifact.publish",
+        payload={"path": "expire"},
+        expires_at=now + timedelta(seconds=1),
+    )
+    await approvals.request(
+        workflow_run_id=run.id,
+        task_attempt_id=claim.task_attempt_id,
+        capability_id="artifact.publish",
+        payload={"path": "invalidate"},
+    )
+    assert await approvals.decide(
+        granted.id, decided_by="synthetic-user", approved=True, now=now
+    )
+    assert await approvals.decide(
+        denied.id, decided_by="synthetic-user", approved=False, now=now
+    )
+    assert not await approvals.decide(
+        expired.id,
+        decided_by="synthetic-user",
+        approved=True,
+        now=now + timedelta(seconds=1),
+    )
+    assert await approvals.invalidate_for_payload_change(
+        claim.task_attempt_id, {"path": "changed"}, now=now + timedelta(seconds=2)
+    ) == 2
+    async with factory.session_factory() as session:
+        events = list((await session.scalars(select(RuntimeEventRecord))).all())
+        outbox_count = await session.scalar(select(func.count()).select_from(RuntimeOutboxRecord))
+    event_types = [event.event_type for event in events]
+    assert event_types.count("approval.requested") == 4
+    assert event_types.count("approval.granted") == 1
+    assert event_types.count("approval.denied") == 1
+    assert event_types.count("approval.expired") == 1
+    assert event_types.count("approval.invalidated") == 2
+    assert all(event.sensitivity == "metadata" for event in events)
+    assert outbox_count == 0

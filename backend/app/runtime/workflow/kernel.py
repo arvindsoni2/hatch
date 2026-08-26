@@ -12,7 +12,7 @@ from sqlalchemy.exc import OperationalError
 from ..contracts.task_spec import TaskSpec
 from ..events.repository import enforce_metadata_only
 from ..migration.modes import RuntimeMode
-from ..storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from ..storage.contracts import DurableWorkflowStore, RuntimeUnitOfWorkFactory
 from .models import ExecutionClaimRecord, TaskAttemptRecord, WaitingReason
 from .repository import SQLiteWorkflowRepository
 from .retry import RetryFailure
@@ -40,14 +40,14 @@ class WorkflowKernel:
 
     def __init__(
         self,
-        uow_factory: SQLiteRuntimeUnitOfWorkFactory,
+        uow_factory: RuntimeUnitOfWorkFactory,
         *,
         lease_duration: timedelta = timedelta(seconds=30),
         worker_id: str = "workflow-kernel",
         fail_after: str | None = None,
         lock_retry_attempts: int = 3,
         clock: Clock | None = None,
-        repository: SQLiteWorkflowRepository | None = None,
+        repository: DurableWorkflowStore | None = None,
         lock_wait: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         if lease_duration <= timedelta(0):
@@ -155,15 +155,33 @@ class WorkflowKernel:
     ) -> bool:
         if not isinstance(reason, WaitingReason):
             raise ValueError("waiting reason must be a supported WaitingReason")
+        if reason is WaitingReason.RETRY_TIME:
+            raise ValueError("RETRY_TIME is scheduler-only and cannot be requested by a worker")
         return await self._repository.transition_waiting(claim, reason=reason, now=now)
 
-    async def resume_waiting(self, attempt_id: str, now: datetime) -> bool:
+    async def resume_waiting(
+        self, attempt_id: str, now: datetime
+    ) -> TaskAttemptRecord | None:
         return await self._repository.resume_waiting(attempt_id, now=now)
 
     async def mark_outcome_unknown(
-        self, claim: ExecutionClaimRecord, now: datetime
+        self,
+        claim: ExecutionClaimRecord,
+        now: datetime,
+        *,
+        capability_id: str,
+        capability_version: int,
+        idempotency_class: str,
+        reconciliation_reference: str,
     ) -> bool:
-        return await self._repository.mark_outcome_unknown(claim, now=now)
+        return await self._repository.mark_outcome_unknown(
+            claim,
+            now=now,
+            capability_id=capability_id,
+            capability_version=capability_version,
+            idempotency_class=idempotency_class,
+            reconciliation_reference=reconciliation_reference,
+        )
 
     async def claim_outcome_unknown(
         self, attempt_id: str, worker_id: str, now: datetime

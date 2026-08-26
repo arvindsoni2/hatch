@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
 from app.runtime.events.models import RuntimeEventRecord, RuntimeOutboxRecord
+from app.runtime.storage.contracts import DurableWorkflowStore
 from app.runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from app.runtime.workflow.repository import SQLiteWorkflowRepository
 from app.runtime.workflow.models import (
     TaskAttemptStatus,
     WorkflowRunRecord,
@@ -165,3 +167,12 @@ async def test_uow_exposes_complete_semantic_store_methods(runtime_uow_factory) 
         }
         for store, methods in required.items():
             assert all(hasattr(store, method) for method in methods)
+
+
+def test_sqlite_repository_conforms_to_backend_neutral_workflow_store(
+    runtime_uow_factory,
+) -> None:
+    """Would fail if Task 6 workflow semantics existed only as SQLite-only calls."""
+    assert isinstance(
+        SQLiteWorkflowRepository(runtime_uow_factory), DurableWorkflowStore
+    )

@@ -33,7 +33,9 @@ async def test_waiting_owns_no_claim_and_resume_gets_a_new_fence(workflow_runtim
     assert claim is not None
     assert claim.status == ExecutionClaimStatus.RELEASED
 
-    assert await kernel.resume_waiting(waiting.id, now + timedelta(seconds=1)) is True
+    resumed_record = await kernel.resume_waiting(waiting.id, now + timedelta(seconds=1))
+    assert resumed_record is not None
+    assert resumed_record.id == waiting.id
     resumed = await kernel.get_attempt(waiting.id)
     assert resumed is not None
     assert resumed.status == TaskAttemptStatus.PENDING
@@ -79,6 +81,23 @@ async def test_invalid_wait_reason_rolls_back_without_releasing_owner(
     assert attempt.current_claim_id == claim.id
 
 
+async def test_public_wait_for_rejects_scheduler_only_retry_time_without_releasing_owner(
+    workflow_runtime,
+) -> None:
+    """Would fail if callers could turn an active worker into a retry scheduler."""
+    kernel, _ = workflow_runtime
+    now = datetime(2030, 1, 1)
+    _, claim = await start_and_claim(kernel, now=now)
+
+    with pytest.raises(ValueError, match="RETRY_TIME"):
+        await kernel.wait_for(claim, WaitingReason.RETRY_TIME, now)
+
+    attempt = await kernel.get_attempt(claim.task_attempt_id)
+    assert attempt is not None
+    assert attempt.status == TaskAttemptStatus.RUNNING
+    assert attempt.current_claim_id == claim.id
+
+
 async def test_only_approval_and_user_input_waits_are_manually_resumable(
     workflow_runtime,
 ) -> None:
@@ -98,7 +117,7 @@ async def test_only_approval_and_user_input_waits_are_manually_resumable(
     )
     assert retry is not None
     assert retry.waiting_reason == WaitingReason.RETRY_TIME
-    assert await kernel.resume_waiting(retry.id, now) is False
+    assert await kernel.resume_waiting(retry.id, now) is None
     persisted = await kernel.get_attempt(retry.id)
     assert persisted is not None
     assert persisted.status == TaskAttemptStatus.WAITING
@@ -111,4 +130,4 @@ async def test_completed_attempt_cannot_be_resumed_as_waiting(workflow_runtime) 
     now = datetime(2030, 1, 1)
     _, claim = await start_and_claim(kernel, now=now)
     assert await kernel.finalize(claim, {"result_ref": "synthetic-result"}) is True
-    assert await kernel.resume_waiting(claim.task_attempt_id, now) is False
+    assert await kernel.resume_waiting(claim.task_attempt_id, now) is None

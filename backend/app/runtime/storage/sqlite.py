@@ -29,6 +29,12 @@ from ..workflow.models import (
     WorkflowRunRecord,
     WorkflowStepRecord,
 )
+from ..workflow.approvals import (
+    normalize_approval_actor_id,
+    normalize_approval_decision_status,
+    normalize_approval_store_values,
+    normalize_decision_reason,
+)
 from ..workflow.retry import normalize_retry_metadata
 
 
@@ -91,6 +97,7 @@ class SQLiteWorkflowStore(_SessionBoundStore):
 
 class SQLiteApprovalStore(_SessionBoundStore):
     async def request(self, **values: Any) -> ApprovalRecord:
+        normalize_approval_store_values(values)
         return await self._add(ApprovalRecord(**values))
 
     async def decide(
@@ -102,6 +109,9 @@ class SQLiteApprovalStore(_SessionBoundStore):
         decision_reason: str | None = None,
         decided_at: datetime | None = None,
     ) -> bool:
+        status = normalize_approval_decision_status(status)
+        decided_by = normalize_approval_actor_id(decided_by)
+        decision_reason = normalize_decision_reason(decision_reason)
         result = await self.session.execute(
             update(ApprovalRecord)
             .where(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -17,19 +17,42 @@ from app.runtime.workflow.models import TaskAttemptStatus
 from workflow_test_support import start_and_claim
 
 
+async def mark_unknown(kernel, claim, now: datetime) -> bool:
+    return await kernel.mark_outcome_unknown(
+        claim,
+        now,
+        capability_id="artifact.publish",
+        capability_version=1,
+        idempotency_class="check_before_retry",
+        reconciliation_reference="synthetic.publish.1",
+    )
+
+
 async def test_unknown_outcome_requires_registered_handler_and_is_not_replayed(workflow_runtime) -> None:
     """Would fail if OUTCOME_UNKNOWN fell through to an automatic retry."""
     kernel, _ = workflow_runtime
     now = datetime(2030, 1, 1)
     _, claim = await start_and_claim(kernel, now=now)
-    assert await kernel.mark_outcome_unknown(claim, now) is True
+    assert await mark_unknown(kernel, claim, now) is True
 
     reconciler = WorkflowReconciler(kernel, ReconciliationRegistry(), worker_id="reconciler-a")
     with pytest.raises(LookupError, match="handler"):
-        await reconciler.reconcile_outcome_unknown(claim.task_attempt_id, "artifact.publish", now)
+        await reconciler.reconcile_outcome_unknown(claim.task_attempt_id, now)
     persisted = await kernel.get_attempt(claim.task_attempt_id)
     assert persisted is not None
     assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
+    restarted = ReconciliationRegistry()
+
+    async def confirmed_after_restart(**_: object) -> ReconciliationDecision:
+        return ReconciliationDecision.CONFIRMED
+
+    restarted.register("artifact.publish", 1, confirmed_after_restart)
+    assert (
+        await WorkflowReconciler(
+            kernel, restarted, worker_id="reconciler-b"
+        ).reconcile_outcome_unknown(claim.task_attempt_id, now)
+        is ReconciliationDecision.CONFIRMED
+    )
     assert await kernel.claim_next("worker-b", now) is None
 
 
@@ -38,14 +61,14 @@ async def test_confirmed_reconciliation_finishes_unknown_attempt_without_replay(
     kernel, _ = workflow_runtime
     now = datetime(2030, 1, 1)
     _, claim = await start_and_claim(kernel, now=now)
-    assert await kernel.mark_outcome_unknown(claim, now)
+    assert await mark_unknown(kernel, claim, now)
     registry = ReconciliationRegistry()
 
     async def confirmed(**_: object) -> ReconciliationDecision:
         return ReconciliationDecision.CONFIRMED
 
-    registry.register("artifact.publish", confirmed)
-    result = await WorkflowReconciler(kernel, registry, worker_id="reconciler-a").reconcile_outcome_unknown(claim.task_attempt_id, "artifact.publish", now)
+    registry.register("artifact.publish", 1, confirmed)
+    result = await WorkflowReconciler(kernel, registry, worker_id="reconciler-a").reconcile_outcome_unknown(claim.task_attempt_id, now)
     assert result is ReconciliationDecision.CONFIRMED
     persisted = await kernel.get_attempt(claim.task_attempt_id)
     assert persisted is not None
@@ -59,16 +82,15 @@ async def test_not_found_retries_only_after_check_before_retry_handler(workflow_
     kernel, _ = workflow_runtime
     now = datetime(2030, 1, 1)
     _, claim = await start_and_claim(kernel, now=now)
-    assert await kernel.mark_outcome_unknown(claim, now)
+    assert await mark_unknown(kernel, claim, now)
     registry = ReconciliationRegistry()
 
     async def not_found(**_: object) -> ReconciliationDecision:
         return ReconciliationDecision.NOT_FOUND
 
-    registry.register("artifact.publish", not_found)
+    registry.register("artifact.publish", 1, not_found)
     retry = await WorkflowReconciler(kernel, registry, worker_id="reconciler-a").reconcile_outcome_unknown(
         claim.task_attempt_id,
-        "artifact.publish",
         now,
         retry_failure=RetryFailure("outcome_not_found", "artifact.publish.check", 1),
     )
@@ -86,15 +108,15 @@ async def test_reconciliation_handler_failure_restores_unknown_for_restart(workf
     kernel, _ = workflow_runtime
     now = datetime(2030, 1, 1)
     _, claim = await start_and_claim(kernel, now=now)
-    assert await kernel.mark_outcome_unknown(claim, now)
+    assert await mark_unknown(kernel, claim, now)
     registry = ReconciliationRegistry()
 
     async def fails(**_: object) -> ReconciliationDecision:
         raise RuntimeError("synthetic handler failure")
 
-    registry.register("artifact.publish", fails)
+    registry.register("artifact.publish", 1, fails)
     with pytest.raises(RuntimeError, match="synthetic handler failure"):
-        await WorkflowReconciler(kernel, registry, worker_id="reconciler-a").reconcile_outcome_unknown(claim.task_attempt_id, "artifact.publish", now)
+        await WorkflowReconciler(kernel, registry, worker_id="reconciler-a").reconcile_outcome_unknown(claim.task_attempt_id, now)
     persisted = await kernel.get_attempt(claim.task_attempt_id)
     assert persisted is not None
     assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
@@ -124,7 +146,7 @@ async def test_only_one_reconciler_can_own_unknown_attempt(workflow_runtime) -> 
     kernel, _ = workflow_runtime
     now = datetime(2030, 1, 1)
     _, claim = await start_and_claim(kernel, now=now)
-    assert await kernel.mark_outcome_unknown(claim, now)
+    assert await mark_unknown(kernel, claim, now)
     started = asyncio.Event()
     release = asyncio.Event()
     registry = ReconciliationRegistry()
@@ -134,11 +156,114 @@ async def test_only_one_reconciler_can_own_unknown_attempt(workflow_runtime) -> 
         await release.wait()
         return ReconciliationDecision.CONFIRMED
 
-    registry.register("artifact.publish", blocked)
+    registry.register("artifact.publish", 1, blocked)
     first = WorkflowReconciler(kernel, registry, worker_id="reconciler-a")
     second = WorkflowReconciler(kernel, registry, worker_id="reconciler-b")
-    first_task = asyncio.create_task(first.reconcile_outcome_unknown(claim.task_attempt_id, "artifact.publish", now))
-    await started.wait()
-    assert await second.reconcile_outcome_unknown(claim.task_attempt_id, "artifact.publish", now) is None
+    first_task = asyncio.create_task(first.reconcile_outcome_unknown(claim.task_attempt_id, now))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert await second.reconcile_outcome_unknown(claim.task_attempt_id, now) is None
     release.set()
     assert await first_task is ReconciliationDecision.CONFIRMED
+
+
+async def test_reconciliation_claim_survives_crash_and_expiry_as_outcome_unknown(
+    workflow_runtime,
+) -> None:
+    """Would fail if an abandoned reconciler returned ambiguous work to normal execution."""
+    kernel, _ = workflow_runtime
+    now = datetime(2030, 1, 1)
+    _, claim = await start_and_claim(kernel, now=now)
+    assert await kernel.mark_outcome_unknown(
+        claim,
+        now,
+        capability_id="artifact.publish",
+        capability_version=1,
+        idempotency_class="check_before_retry",
+        reconciliation_reference="synthetic.publish.1",
+    )
+    first = await kernel.claim_outcome_unknown(claim.task_attempt_id, "reconciler-a", now)
+    assert first is not None
+    assert await kernel.claim_next("normal-worker", now) is None
+
+    restarted = await kernel.reconcile(first.lease_expires_at)
+    assert restarted == 1
+    persisted = await kernel.get_attempt(claim.task_attempt_id)
+    assert persisted is not None
+    assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
+    assert persisted.current_claim_id is None
+    second = await kernel.claim_outcome_unknown(claim.task_attempt_id, "reconciler-b", first.lease_expires_at)
+    assert second is not None
+    assert second.fencing_token > first.fencing_token
+
+
+async def test_reconciler_dispatches_only_the_capability_durably_bound_to_attempt(
+    workflow_runtime,
+) -> None:
+    """Would fail if a caller could select capability B for attempt A after restart."""
+    kernel, _ = workflow_runtime
+    now = datetime(2030, 1, 1)
+    _, claim = await start_and_claim(kernel, now=now)
+    assert await kernel.mark_outcome_unknown(
+        claim,
+        now,
+        capability_id="artifact.publish",
+        capability_version=1,
+        idempotency_class="check_before_retry",
+        reconciliation_reference="synthetic.publish.1",
+    )
+    registry = ReconciliationRegistry()
+    called: list[str] = []
+
+    async def handler_a(**_: object) -> ReconciliationDecision:
+        called.append("a")
+        return ReconciliationDecision.CONFIRMED
+
+    async def handler_b(**_: object) -> ReconciliationDecision:
+        called.append("b")
+        return ReconciliationDecision.CONFIRMED
+
+    registry.register("artifact.publish", 1, handler_a)
+    registry.register("artifact.delete", 1, handler_b)
+    reconciler = WorkflowReconciler(kernel, registry, worker_id="reconciler-a")
+    assert await reconciler.reconcile_outcome_unknown(claim.task_attempt_id, now) is ReconciliationDecision.CONFIRMED
+    assert called == ["a"]
+
+
+async def test_stale_not_found_reconciliation_reports_ownership_loss(workflow_runtime) -> None:
+    """Would fail if a stale reconciler reported NOT_FOUND after losing its fence."""
+    kernel, _ = workflow_runtime
+    now = datetime(2030, 1, 1)
+    _, claim = await start_and_claim(kernel, now=now)
+    assert await mark_unknown(kernel, claim, now)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    registry = ReconciliationRegistry()
+
+    async def blocked_not_found(**_: object) -> ReconciliationDecision:
+        started.set()
+        await release.wait()
+        return ReconciliationDecision.NOT_FOUND
+
+    registry.register("artifact.publish", 1, blocked_not_found)
+    reconciler = WorkflowReconciler(kernel, registry, worker_id="reconciler-a")
+    task = asyncio.create_task(
+        reconciler.reconcile_outcome_unknown(
+            claim.task_attempt_id,
+            now,
+            retry_failure=RetryFailure("outcome_not_found", "artifact.publish.check", 1),
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    first = await kernel.get_attempt(claim.task_attempt_id)
+    assert first is not None and first.current_claim_id is not None
+    assert await kernel.reconcile(now + timedelta(seconds=31)) == 1
+    replacement = await kernel.claim_outcome_unknown(
+        claim.task_attempt_id, "reconciler-b", now + timedelta(seconds=31)
+    )
+    assert replacement is not None
+    release.set()
+    assert await task is None
+    persisted = await kernel.get_attempt(claim.task_attempt_id)
+    assert persisted is not None
+    assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
+    assert persisted.current_claim_id == replacement.id

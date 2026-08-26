@@ -2,6 +2,7 @@
 
 from .contracts import (
     ApprovalStore,
+    DurableWorkflowStore,
     EvaluationStore,
     EventStore,
     OutboxStore,
@@ -14,6 +15,7 @@ from .sqlite import SQLiteRuntimeUnitOfWorkFactory
 
 __all__ = [
     "ApprovalStore",
+    "DurableWorkflowStore",
     "EvaluationStore",
     "EventStore",
     "OutboxStore",

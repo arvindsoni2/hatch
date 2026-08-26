@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 
 import pytest_asyncio
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.database import Base
+from app.database import Base, create_sqlite_engine
 from app.runtime.contracts.enums import ExecutionStrategy, RiskClass
 from app.runtime.contracts.task_spec import (
     EvaluationPolicy,
@@ -51,9 +51,8 @@ def synthetic_spec(*, max_attempts: int = 2) -> TaskSpec[SyntheticInput, Synthet
 
 @pytest_asyncio.fixture
 async def workflow_runtime(tmp_path):
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///{tmp_path / 'workflow-contracts.db'}",
-        connect_args={"timeout": 5},
+    engine = create_sqlite_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'workflow-contracts.db'}"
     )
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
