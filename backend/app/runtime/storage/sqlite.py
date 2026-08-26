@@ -28,6 +28,7 @@ from ..workflow.models import (
     WorkflowRunRecord,
     WorkflowStepRecord,
 )
+from ..workflow.retry import normalize_retry_metadata
 
 
 class _SessionBoundStore:
@@ -65,6 +66,9 @@ class SQLiteWorkflowStore(_SessionBoundStore):
         retry_policy_version: int,
         not_before: datetime | None = None,
     ) -> TaskAttemptRecord:
+        retry_reason, retry_policy_id, retry_policy_version = normalize_retry_metadata(
+            retry_reason, retry_policy_id, retry_policy_version
+        )
         prior = await self.get_attempt(attempt_id)
         if prior is None:
             raise LookupError(f"task attempt not found: {attempt_id}")

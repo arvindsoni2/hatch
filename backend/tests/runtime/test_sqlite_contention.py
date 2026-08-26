@@ -9,11 +9,10 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
-from sqlalchemy import event
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.database import Base
+from app.database import Base, create_sqlite_engine
 from app.runtime.contracts.enums import ExecutionStrategy, RiskClass
 from app.runtime.contracts.task_spec import (
     EvaluationPolicy,
@@ -68,14 +67,7 @@ def _spec() -> TaskSpec[_Input, _Output]:
 
 @pytest_asyncio.fixture
 async def kernel_factory(tmp_path):
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'contention.db'}")
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def _configure_sqlite(connection, _record) -> None:
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=50")
-        cursor.close()
+    engine = create_sqlite_engine(f"sqlite+aiosqlite:///{tmp_path / 'contention.db'}")
 
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)

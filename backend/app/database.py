@@ -25,26 +25,27 @@ _db_dir = os.path.dirname(_db_path)
 if _db_dir and not os.path.exists(_db_dir):
     os.makedirs(_db_dir, exist_ok=True)
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.LOG_LEVEL == "DEBUG",
-    poolclass=NullPool,
-    connect_args={
-        "check_same_thread": False,
-        "timeout": 30,
-    },
-)
+def create_sqlite_engine(database_url: str, *, echo: bool = False):
+    sqlite_engine = create_async_engine(
+        database_url,
+        echo=echo,
+        poolclass=NullPool,
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+
+    @event.listens_for(sqlite_engine.sync_engine, "connect")
+    def _set_wal_mode(dbapi_connection: object, _connection_record: object) -> None:
+        """Enable WAL journal mode for better concurrent write performance."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+    return sqlite_engine
 
 
-@event.listens_for(engine.sync_engine, "connect")
-def _set_wal_mode(dbapi_connection: object, _connection_record: object) -> None:
-    """Enable WAL journal mode for better concurrent write performance."""
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+engine = create_sqlite_engine(settings.DATABASE_URL, echo=settings.LOG_LEVEL == "DEBUG")
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

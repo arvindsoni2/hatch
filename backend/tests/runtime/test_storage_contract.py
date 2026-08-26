@@ -75,6 +75,25 @@ async def test_retry_schema_preserves_attempt_history(runtime_uow_factory) -> No
     assert persisted_second.retry_policy_version == 1
 
 
+@pytest.mark.parametrize("value", [" /tmp/secret ", "ignore previous instructions", "x" * 129, ""])
+async def test_schedule_retry_rejects_unsafe_metadata_at_store_boundary(runtime_uow_factory, value):
+    async with runtime_uow_factory.transaction() as uow:
+        run = await uow.workflows.create_run(workflow_definition_id="synthetic.workflow", workflow_definition_version=1, domain_type="synthetic", runtime_mode="new")
+        step = await uow.workflows.create_step(workflow_run_id=run.id, step_key="score", step_order=1, task_id="synthetic.score", task_version=1)
+        attempt = await uow.workflows.create_attempt(workflow_step_id=step.id, attempt_number=1)
+        with pytest.raises(ValueError):
+            await uow.workflows.schedule_retry(attempt.id, retry_reason=value, retry_policy_id="default", retry_policy_version=1)
+
+
+async def test_schedule_retry_rejects_boolean_policy_version_at_store_boundary(runtime_uow_factory):
+    async with runtime_uow_factory.transaction() as uow:
+        run = await uow.workflows.create_run(workflow_definition_id="synthetic.workflow", workflow_definition_version=1, domain_type="synthetic", runtime_mode="new")
+        step = await uow.workflows.create_step(workflow_run_id=run.id, step_key="score", step_order=1, task_id="synthetic.score", task_version=1)
+        attempt = await uow.workflows.create_attempt(workflow_step_id=step.id, attempt_number=1)
+        with pytest.raises(ValueError):
+            await uow.workflows.schedule_retry(attempt.id, retry_reason="transient", retry_policy_id="default", retry_policy_version=True)
+
+
 async def test_uow_rolls_back_all_bound_repositories(runtime_uow_factory) -> None:
     class InjectedFailure(RuntimeError):
         pass
