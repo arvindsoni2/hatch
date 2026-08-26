@@ -15,6 +15,8 @@ from .models import (
 )
 from .kernel import InjectedFailure, WorkflowKernel
 from .retry import RetryFailure
+from .approvals import ApprovalManager, canonical_payload_hash
+from .reconciliation import ReconciliationDecision, ReconciliationRegistry, WorkflowReconciler
 
 __all__ = [
     "ApprovalRecord",
@@ -31,4 +33,9 @@ __all__ = [
     "WorkflowKernel",
     "InjectedFailure",
     "RetryFailure",
+    "ApprovalManager",
+    "canonical_payload_hash",
+    "ReconciliationDecision",
+    "ReconciliationRegistry",
+    "WorkflowReconciler",
 ]

@@ -1,4 +1,4 @@
-"""Synthetic fixture loading for runtime characterization tests."""
+"""Synthetic fixture loading for runtime characterization and workflow tests."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from workflow_test_support import workflow_runtime  # noqa: F401
 
 
 _FIXTURE_ROOT = Path(__file__).parent / "fixtures"

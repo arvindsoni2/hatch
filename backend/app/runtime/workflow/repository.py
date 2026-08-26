@@ -64,6 +64,76 @@ class SQLiteWorkflowRepository:
             await uow.commit()
             return run
 
+    async def transition_waiting(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        reason: WaitingReason,
+        now: datetime,
+    ) -> bool:
+        """Release only the current fenced owner into a durable wait state."""
+        active_claim = exists().where(
+            ExecutionClaimRecord.id == claim.id,
+            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
+            ExecutionClaimRecord.fencing_token == claim.fencing_token,
+            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+        )
+        async with self._uow_factory.transaction() as uow:
+            transitioned = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    active_claim,
+                )
+                .values(
+                    status=TaskAttemptStatus.WAITING,
+                    waiting_reason=reason,
+                    current_claim_id=None,
+                    updated_at=now,
+                )
+            )
+            if transitioned.rowcount != 1:
+                return False
+            released = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
+            )
+            if released.rowcount != 1:
+                raise RuntimeError("claim ownership changed during waiting transition")
+            await uow.commit()
+            return True
+
+    async def resume_waiting(self, attempt_id: str, *, now: datetime) -> bool:
+        """Make a human-blocked attempt claimable without reviving an old claim."""
+        async with self._uow_factory.transaction() as uow:
+            resumed = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
+                    TaskAttemptRecord.waiting_reason.in_(
+                        (WaitingReason.APPROVAL, WaitingReason.USER_INPUT)
+                    ),
+                    TaskAttemptRecord.current_claim_id.is_(None),
+                )
+                .values(
+                    status=TaskAttemptStatus.PENDING,
+                    waiting_reason=None,
+                    updated_at=now,
+                )
+            )
+            if resumed.rowcount != 1:
+                return False
+            await uow.commit()
+            return True
+
     async def _claim_pending(
         self, worker_id: str, now: datetime, lease_duration: timedelta
     ) -> ExecutionClaimRecord | None:
@@ -276,6 +346,173 @@ class SQLiteWorkflowRepository:
             )
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during finalization")
+            await uow.commit()
+            return True
+
+    async def mark_outcome_unknown(
+        self, claim: ExecutionClaimRecord, *, now: datetime
+    ) -> bool:
+        """Durably stop execution before an ambiguous external outcome is checked."""
+        active_claim = exists().where(
+            ExecutionClaimRecord.id == claim.id,
+            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
+            ExecutionClaimRecord.fencing_token == claim.fencing_token,
+            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+        )
+        async with self._uow_factory.transaction() as uow:
+            marked = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    active_claim,
+                )
+                .values(
+                    status=TaskAttemptStatus.OUTCOME_UNKNOWN,
+                    current_claim_id=None,
+                    updated_at=now,
+                )
+            )
+            if marked.rowcount != 1:
+                return False
+            released = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
+            )
+            if released.rowcount != 1:
+                raise RuntimeError("claim ownership changed during unknown-outcome transition")
+            await uow.commit()
+            return True
+
+    async def claim_outcome_unknown(
+        self,
+        attempt_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionClaimRecord | None:
+        """Fence one reconciler before it invokes a capability check externally."""
+        worker_id = require_worker_id(worker_id)
+        async with self._uow_factory.transaction() as uow:
+            candidate = await uow.session.get(TaskAttemptRecord, attempt_id)
+            if candidate is None or candidate.status != TaskAttemptStatus.OUTCOME_UNKNOWN:
+                return None
+            claim_id = str(uuid.uuid4())
+            token = await uow.session.scalar(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.OUTCOME_UNKNOWN,
+                    TaskAttemptRecord.current_claim_id.is_(None),
+                    TaskAttemptRecord.claim_fencing_token == candidate.claim_fencing_token,
+                )
+                .values(
+                    status=TaskAttemptStatus.RUNNING,
+                    current_claim_id=claim_id,
+                    claim_fencing_token=TaskAttemptRecord.claim_fencing_token + 1,
+                    updated_at=now,
+                )
+                .returning(TaskAttemptRecord.claim_fencing_token)
+            )
+            if token is None:
+                return None
+            claim = ExecutionClaimRecord(
+                id=claim_id,
+                task_attempt_id=attempt_id,
+                fencing_token=token,
+                claimed_by=worker_id,
+                claimed_at=now,
+                lease_expires_at=now + lease_duration,
+                status=ExecutionClaimStatus.ACTIVE,
+            )
+            uow.session.add(claim)
+            await uow.session.flush()
+            await uow.commit()
+            return claim
+
+    async def return_outcome_unknown(
+        self, claim: ExecutionClaimRecord, *, now: datetime
+    ) -> bool:
+        """Safely release a failed reconciler so a restarted process can retry it."""
+        active_claim = exists().where(
+            ExecutionClaimRecord.id == claim.id,
+            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+        )
+        async with self._uow_factory.transaction() as uow:
+            restored = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    active_claim,
+                )
+                .values(
+                    status=TaskAttemptStatus.OUTCOME_UNKNOWN,
+                    current_claim_id=None,
+                    updated_at=now,
+                )
+            )
+            if restored.rowcount != 1:
+                return False
+            released = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
+            )
+            if released.rowcount != 1:
+                raise RuntimeError("claim ownership changed during reconciliation rollback")
+            await uow.commit()
+            return True
+
+    async def fail_terminal(
+        self, claim: ExecutionClaimRecord, *, reason: str, now: datetime
+    ) -> bool:
+        """Terminalize a fenced attempt without creating another execution attempt."""
+        active_claim = exists().where(
+            ExecutionClaimRecord.id == claim.id,
+            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+        )
+        async with self._uow_factory.transaction() as uow:
+            failed = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    active_claim,
+                )
+                .values(
+                    status=TaskAttemptStatus.FAILED,
+                    failure_code=reason,
+                    current_claim_id=None,
+                    finished_at=now,
+                    updated_at=now,
+                )
+            )
+            if failed.rowcount != 1:
+                return False
+            released = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                )
+                .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
+            )
+            if released.rowcount != 1:
+                raise RuntimeError("claim ownership changed during terminal failure")
             await uow.commit()
             return True
 

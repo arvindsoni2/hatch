@@ -13,7 +13,7 @@ from ..contracts.task_spec import TaskSpec
 from ..events.repository import enforce_metadata_only
 from ..migration.modes import RuntimeMode
 from ..storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
-from .models import ExecutionClaimRecord, TaskAttemptRecord
+from .models import ExecutionClaimRecord, TaskAttemptRecord, WaitingReason
 from .repository import SQLiteWorkflowRepository
 from .retry import RetryFailure
 
@@ -149,3 +149,35 @@ class WorkflowKernel:
 
     async def reconcile(self, now: datetime) -> int:
         return await self._repository.reconcile_expired_claims(now)
+
+    async def wait_for(
+        self, claim: ExecutionClaimRecord, reason: WaitingReason, now: datetime
+    ) -> bool:
+        if not isinstance(reason, WaitingReason):
+            raise ValueError("waiting reason must be a supported WaitingReason")
+        return await self._repository.transition_waiting(claim, reason=reason, now=now)
+
+    async def resume_waiting(self, attempt_id: str, now: datetime) -> bool:
+        return await self._repository.resume_waiting(attempt_id, now=now)
+
+    async def mark_outcome_unknown(
+        self, claim: ExecutionClaimRecord, now: datetime
+    ) -> bool:
+        return await self._repository.mark_outcome_unknown(claim, now=now)
+
+    async def claim_outcome_unknown(
+        self, attempt_id: str, worker_id: str, now: datetime
+    ) -> ExecutionClaimRecord | None:
+        return await self._repository.claim_outcome_unknown(
+            attempt_id, worker_id, now, self._lease_duration
+        )
+
+    async def return_outcome_unknown(
+        self, claim: ExecutionClaimRecord, now: datetime
+    ) -> bool:
+        return await self._repository.return_outcome_unknown(claim, now=now)
+
+    async def fail_terminal(
+        self, claim: ExecutionClaimRecord, reason: str, now: datetime
+    ) -> bool:
+        return await self._repository.fail_terminal(claim, reason=reason, now=now)
