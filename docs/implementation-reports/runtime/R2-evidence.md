@@ -2,7 +2,8 @@
 
 ## Scope and authority
 
-- Baseline/head: `f7e678f`; Task 6 implementation/fix commits `f614e20`, `aa5af4a`.
+- Current fix verification range: `f614e20..HEAD` (symbolic `HEAD` until the immutable
+  fix-round commit is created).
 - Architecture SHA-256: `ef426195f1234ad5c394ca4aefd63019d7ed05321df6cbd8f14f4baddf21eb36`.
 - Foundation spec SHA-256: `578d6f9d0050014bde074e1ef72588733e305f46acad017f90bfb6ac95aa65a0`.
 - Coach V6 SHA-256: `39b0a616a0edb564b221ac11cf53aba5160710c034b67786c8e639b1495c00b8`.
@@ -13,7 +14,7 @@
 |---|---|---|---|---|
 | `INV-WF-004`: waiting owns no worker claim | Initial Task 6 RED collection failed because `wait_for`, `resume_waiting`, and the new contract modules were absent. | `workflow/kernel.py`, `workflow/repository.py`, `test_waiting.py` | Python 3.12 focused suite | Waiting releases the current fenced claim atomically; only approval/user-input waits may resume and their next claim advances fencing. |
 | `INV-APP-001`: approval binds exact payload | Initial Task 6 RED collection failed because `approvals.py` was absent. | `workflow/approvals.py`, `storage/sqlite.py`, `test_approvals.py` | Python 3.12 focused suite | SHA-256 canonical UTF-8 JSON, algorithm identity, capability, expiry, scope, and one-shot decisions are all checked. Payload change invalidates pending and approved records. |
-| `INV-EXE-003`: ambiguous external outcome reconciles before retry | Initial Task 6 RED collection failed because `reconciliation.py` and `mark_outcome_unknown` were absent. | `workflow/reconciliation.py`, `workflow/kernel.py`, `workflow/repository.py`, `test_reconciliation.py` | Python 3.12 focused suite | An `OUTCOME_UNKNOWN` attempt has no normal claimant; one fenced reconciler invokes the registered check. Confirmed finalizes; not-found can retry only through explicit retry policy; non-retryable effects terminalize. |
+| `INV-EXE-003`: ambiguous external outcome reconciles before retry | Initial Task 6 RED collection failed because `reconciliation.py` and `mark_outcome_unknown` were absent. | `workflow/reconciliation.py`, `workflow/kernel.py`, `workflow/repository.py`, `test_reconciliation.py` | Python 3.12 focused suite | An `OUTCOME_UNKNOWN` attempt has no normal claimant; one fenced reconciler invokes the durably-bound capability check. Confirmed finalizes; not-found can retry only through explicit retry policy; non-retryable effects terminalize. |
 | Atomic rollback / stale ownership | Negative waiting, invalid approval-scope, expiry/race, handler-failure, and concurrent reconciler tests. | Same as above | Python 3.12 focused suite | Conditional updates preserve prior state on invalid/stale inputs; handler failures restore durable `OUTCOME_UNKNOWN`. |
 
 ### Fix round 1 audit additions
@@ -26,6 +27,23 @@ approval scope, JSON-native canonical values and string keys, fixed digest vecto
 bounded reason-code and actor metadata at public and store boundaries, stale `NOT_FOUND`
 ownership loss, reconciling crash/lease expiry, durable capability/version/idempotency/
 reference binding, and direct restart recovery after a handler failure.
+
+### Fix round 2 audit additions
+
+The final review corrections replace the coarse runtime-only conformance check with an
+explicit `WorkflowStore` semantic protocol whose method names, parameter kinds, and defaults
+match `SQLiteWorkflowRepository`. `WorkflowRecordStore` is the intentionally narrower
+transaction-bound CRUD interface used by `RuntimeUnitOfWork.workflows`. A protocol-compatible
+in-memory workflow repository proves `WorkflowKernel.get_attempt` delegates through the injected
+semantic store rather than opening a SQLite unit of work directly.
+
+Restart evidence is now a real reconstruction rather than reuse of the same object: each test
+persists synthetic data to file-backed SQLite, disposes the first engine, then creates a new
+engine/session factory/repository/kernel and a new reconciliation registry/reconciler. The
+durable `artifact.publish` capability/version binding dispatches handler A even when handler B
+is present in the restarted registry. A reconciliation claim abandoned before process loss is
+recovered only as `OUTCOME_UNKNOWN` by the reconstructed kernel, never as normal executable
+work. The same tests retain atomic rollback coverage through conditional claim transitions.
 
 ARCH-08 coverage additionally proves `approval.requested`, `approval.granted`,
 `approval.denied`, `approval.expired`, and `approval.invalidated` append metadata-only
@@ -77,6 +95,30 @@ python scripts/check_docs.py && git diff --check
 
 alembic heads && python -m app.database_setup && alembic current --check-heads
 # sole head t7u8v9w0x1y2; canonical isolated bootstrap/current-head passed
+```
+
+```text
+# Fix round 2 RED, before the semantic-store implementation
+python -m pytest -q tests/runtime/test_storage_contract.py tests/runtime/test_reconciliation.py
+# failed because the protocol exposed lower-level **values CRUD and get_attempt bypassed
+# the injected repository.
+
+# Fix round 2 GREEN, isolated synthetic SQLite databases
+python -m pytest -q --no-cov tests/runtime/test_storage_contract.py tests/runtime/test_reconciliation.py
+# Python 3.12.13: 20 passed in 3.24s
+
+# Full R2 runtime gate, same isolated Python 3.12.13 container copy
+python -m pytest -q --no-cov [claims, fencing, retries, waiting, approvals,
+  reconciliation, restart recovery, SQLite contention, event atomicity, storage, schema]
+# 79 passed in 20.18s
+
+# Scoped Ruff, docs, and diff checks
+# all passed
+
+alembic heads && DATABASE_URL=sqlite+aiosqlite:////tmp/runtime-r2/runtime-r2.db \
+  python -m app.database_setup && DATABASE_URL=sqlite+aiosqlite:////tmp/runtime-r2/runtime-r2.db \
+  alembic current --check-heads
+# sole head t7u8v9w0x1y2; canonical bootstrap/current-head passed
 ```
 
 ## Controller verification

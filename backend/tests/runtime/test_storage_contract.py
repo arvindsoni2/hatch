@@ -3,26 +3,32 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import inspect
+from typing import Any
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.database import Base
+from app.database import Base, create_sqlite_engine
 from app.runtime.events.models import RuntimeEventRecord, RuntimeOutboxRecord
-from app.runtime.storage.contracts import DurableWorkflowStore
+from app.runtime.storage.contracts import WorkflowStore
 from app.runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from app.runtime.workflow.kernel import WorkflowKernel
 from app.runtime.workflow.repository import SQLiteWorkflowRepository
 from app.runtime.workflow.models import (
+    ExecutionClaimRecord,
+    TaskAttemptRecord,
     TaskAttemptStatus,
+    WaitingReason,
     WorkflowRunRecord,
 )
 
 
 @pytest_asyncio.fixture
 async def runtime_uow_factory(tmp_path):
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
+    engine = create_sqlite_engine(f"sqlite+aiosqlite:///{tmp_path / 'runtime.db'}")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -169,10 +175,133 @@ async def test_uow_exposes_complete_semantic_store_methods(runtime_uow_factory) 
             assert all(hasattr(store, method) for method in methods)
 
 
-def test_sqlite_repository_conforms_to_backend_neutral_workflow_store(
+def _signature_shape(callable_: Any) -> tuple[tuple[str, inspect._ParameterKind, object], ...]:
+    return tuple(
+        (parameter.name, parameter.kind, parameter.default)
+        for parameter in inspect.signature(callable_).parameters.values()
+    )
+
+
+def test_sqlite_repository_matches_the_kernel_workflow_store_contract(
     runtime_uow_factory,
 ) -> None:
-    """Would fail if Task 6 workflow semantics existed only as SQLite-only calls."""
-    assert isinstance(
-        SQLiteWorkflowRepository(runtime_uow_factory), DurableWorkflowStore
+    """Would fail if a kernel-facing repository changed its durable semantic API."""
+    repository = SQLiteWorkflowRepository(runtime_uow_factory)
+    method_names = (
+        "create_run",
+        "get_attempt",
+        "claim_next",
+        "reclaim",
+        "renew_claim",
+        "finalize",
+        "fail_or_retry",
+        "reconcile_expired_claims",
+        "transition_waiting",
+        "resume_waiting",
+        "mark_outcome_unknown",
+        "claim_outcome_unknown",
+        "return_outcome_unknown",
+        "fail_terminal",
     )
+
+    for name in method_names:
+        assert _signature_shape(getattr(type(repository), name)) == _signature_shape(
+            getattr(WorkflowStore, name)
+        )
+
+    # Runtime protocol membership is supplementary; signatures above are the
+    # architecture seam that backend implementations must preserve.
+    assert isinstance(repository, WorkflowStore)
+
+
+class _RepositoryInjectedIntoKernel:
+    """Small in-memory implementation of the public workflow repository seam."""
+
+    def __init__(self, attempt: TaskAttemptRecord) -> None:
+        self._attempt = attempt
+
+    async def create_run(
+        self,
+        *,
+        workflow_definition_id: str,
+        workflow_definition_version: int,
+        input_ref: dict[str, object],
+        domain_ref: dict[str, object],
+        mode: str,
+        max_attempts: int,
+    ) -> WorkflowRunRecord:
+        raise AssertionError("not used by this contract test")
+
+    async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None:
+        return self._attempt if attempt_id == self._attempt.id else None
+
+    async def claim_next(self, worker_id: str, now: datetime, lease_duration: timedelta) -> ExecutionClaimRecord | None:
+        raise AssertionError("not used by this contract test")
+
+    async def reclaim(self, attempt_id: str, worker_id: str, now: datetime, lease_duration: timedelta) -> ExecutionClaimRecord | None:
+        raise AssertionError("not used by this contract test")
+
+    async def renew_claim(self, claim: ExecutionClaimRecord, now: datetime, lease_duration: timedelta) -> bool:
+        raise AssertionError("not used by this contract test")
+
+    async def finalize(self, claim: ExecutionClaimRecord, result_ref: dict[str, object], now: datetime) -> bool:
+        raise AssertionError("not used by this contract test")
+
+    async def fail_or_retry(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        reason: str,
+        policy_id: str,
+        policy_version: int,
+        not_before: datetime | None,
+        now: datetime,
+    ) -> TaskAttemptRecord | None:
+        raise AssertionError("not used by this contract test")
+
+    async def reconcile_expired_claims(self, now: datetime) -> int:
+        raise AssertionError("not used by this contract test")
+
+    async def transition_waiting(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        reason: WaitingReason,
+        now: datetime,
+    ) -> bool:
+        raise AssertionError("not used by this contract test")
+
+    async def resume_waiting(
+        self, attempt_id: str, *, now: datetime
+    ) -> TaskAttemptRecord | None:
+        raise AssertionError("not used by this contract test")
+
+    async def mark_outcome_unknown(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        now: datetime,
+        capability_id: str,
+        capability_version: int,
+        idempotency_class: str,
+        reconciliation_reference: str,
+    ) -> bool:
+        raise AssertionError("not used by this contract test")
+
+    async def claim_outcome_unknown(self, attempt_id: str, worker_id: str, now: datetime, lease_duration: timedelta) -> ExecutionClaimRecord | None:
+        raise AssertionError("not used by this contract test")
+
+    async def return_outcome_unknown(self, claim: ExecutionClaimRecord, *, now: datetime) -> bool:
+        raise AssertionError("not used by this contract test")
+
+    async def fail_terminal(self, claim: ExecutionClaimRecord, *, reason: str, now: datetime) -> bool:
+        raise AssertionError("not used by this contract test")
+
+
+async def test_kernel_get_attempt_uses_the_injected_workflow_store() -> None:
+    """Would fail if a kernel bypassed a non-SQLite durable repository."""
+    attempt = TaskAttemptRecord(workflow_step_id="synthetic-step", attempt_number=1)
+    repository = _RepositoryInjectedIntoKernel(attempt)
+    kernel = WorkflowKernel(object(), repository=repository)  # type: ignore[arg-type]
+
+    assert await kernel.get_attempt(attempt.id) is attempt

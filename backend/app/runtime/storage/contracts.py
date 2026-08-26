@@ -29,14 +29,25 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class DurableWorkflowStore(Protocol):
+class WorkflowStore(Protocol):
     """Backend-neutral durable workflow semantics used by the kernel.
 
     Implementations may use SQLite conditional updates or PostgreSQL row locks, but
     must preserve the same fencing, waiting, and ambiguous-outcome behavior.
     """
 
-    async def create_run(self, **values: Any) -> WorkflowRunRecord: ...
+    async def create_run(
+        self,
+        *,
+        workflow_definition_id: str,
+        workflow_definition_version: int,
+        input_ref: dict[str, object],
+        domain_ref: dict[str, object],
+        mode: str,
+        max_attempts: int,
+    ) -> WorkflowRunRecord: ...
+
+    async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None: ...
 
     async def claim_next(
         self, worker_id: str, now: datetime, lease_duration: timedelta
@@ -117,7 +128,13 @@ class DurableWorkflowStore(Protocol):
     ) -> bool: ...
 
 
-class WorkflowStore(Protocol):
+class WorkflowRecordStore(Protocol):
+    """Transaction-bound record operations used inside a runtime unit of work.
+
+    This intentionally does not expose claim or reconciliation operations. Those
+    are kernel-facing durable semantics on :class:`WorkflowStore` above.
+    """
+
     async def create_run(self, **values: Any) -> WorkflowRunRecord: ...
 
     async def create_step(self, **values: Any) -> WorkflowStepRecord: ...
@@ -203,7 +220,7 @@ class ShadowComparisonStore(Protocol):
 
 
 class RuntimeUnitOfWork(Protocol):
-    workflows: WorkflowStore
+    workflows: WorkflowRecordStore
     approvals: ApprovalStore
     events: EventStore
     outbox: OutboxStore

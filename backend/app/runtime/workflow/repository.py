@@ -111,6 +111,11 @@ class SQLiteWorkflowRepository:
             await uow.commit()
             return run
 
+    async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None:
+        """Read one durable attempt through the repository boundary."""
+        async with self._uow_factory.transaction() as uow:
+            return await uow.workflows.get_attempt(attempt_id)
+
     async def transition_waiting(
         self,
         claim: ExecutionClaimRecord,

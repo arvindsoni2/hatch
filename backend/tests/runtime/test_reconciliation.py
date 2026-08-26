@@ -6,7 +6,11 @@ import asyncio
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.database import Base, create_sqlite_engine
+from app.runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from app.runtime.workflow.kernel import WorkflowKernel
 from app.runtime.workflow.reconciliation import (
     ReconciliationDecision,
     ReconciliationRegistry,
@@ -15,6 +19,14 @@ from app.runtime.workflow.reconciliation import (
 from app.runtime.workflow.retry import RetryFailure
 from app.runtime.workflow.models import TaskAttemptStatus
 from workflow_test_support import start_and_claim
+
+
+class _FixedClock:
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+
+    def now(self) -> datetime:
+        return self._now
 
 
 async def mark_unknown(kernel, claim, now: datetime) -> bool:
@@ -167,49 +179,87 @@ async def test_only_one_reconciler_can_own_unknown_attempt(workflow_runtime) -> 
 
 
 async def test_reconciliation_claim_survives_crash_and_expiry_as_outcome_unknown(
-    workflow_runtime,
+    tmp_path,
 ) -> None:
-    """Would fail if an abandoned reconciler returned ambiguous work to normal execution."""
-    kernel, _ = workflow_runtime
+    """Would fail if a new process revived ambiguous work as normal execution."""
     now = datetime(2030, 1, 1)
-    _, claim = await start_and_claim(kernel, now=now)
-    assert await kernel.mark_outcome_unknown(
-        claim,
-        now,
-        capability_id="artifact.publish",
-        capability_version=1,
-        idempotency_class="check_before_retry",
-        reconciliation_reference="synthetic.publish.1",
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'reconciliation-restart.db'}"
+    first_engine = create_sqlite_engine(database_url)
+    async with first_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    first_factory = SQLiteRuntimeUnitOfWorkFactory(
+        async_sessionmaker(first_engine, expire_on_commit=False)
     )
-    first = await kernel.claim_outcome_unknown(claim.task_attempt_id, "reconciler-a", now)
-    assert first is not None
-    assert await kernel.claim_next("normal-worker", now) is None
+    first_kernel = WorkflowKernel(
+        first_factory, lease_duration=timedelta(seconds=30), clock=_FixedClock(now)
+    )
+    try:
+        _, claim = await start_and_claim(first_kernel, now=now)
+        assert await mark_unknown(first_kernel, claim, now)
+        abandoned = await first_kernel.claim_outcome_unknown(
+            claim.task_attempt_id, "reconciler-a", now
+        )
+        assert abandoned is not None
+    finally:
+        await first_engine.dispose()
 
-    restarted = await kernel.reconcile(first.lease_expires_at)
-    assert restarted == 1
-    persisted = await kernel.get_attempt(claim.task_attempt_id)
-    assert persisted is not None
-    assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
-    assert persisted.current_claim_id is None
-    second = await kernel.claim_outcome_unknown(claim.task_attempt_id, "reconciler-b", first.lease_expires_at)
-    assert second is not None
-    assert second.fencing_token > first.fencing_token
+    second_engine = create_sqlite_engine(database_url)
+    second_factory = SQLiteRuntimeUnitOfWorkFactory(
+        async_sessionmaker(second_engine, expire_on_commit=False)
+    )
+    restarted_kernel = WorkflowKernel(
+        second_factory, lease_duration=timedelta(seconds=30), clock=_FixedClock(now)
+    )
+    try:
+        assert await restarted_kernel.claim_next("normal-worker", now) is None
+        assert await restarted_kernel.reconcile(abandoned.lease_expires_at) == 1
+        persisted = await restarted_kernel.get_attempt(claim.task_attempt_id)
+        assert persisted is not None
+        assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
+        assert persisted.current_claim_id is None
+        second = await restarted_kernel.claim_outcome_unknown(
+            claim.task_attempt_id, "reconciler-b", abandoned.lease_expires_at
+        )
+        assert second is not None
+        assert second.fencing_token > abandoned.fencing_token
+    finally:
+        await second_engine.dispose()
 
 
 async def test_reconciler_dispatches_only_the_capability_durably_bound_to_attempt(
-    workflow_runtime,
+    tmp_path,
 ) -> None:
     """Would fail if a caller could select capability B for attempt A after restart."""
-    kernel, _ = workflow_runtime
     now = datetime(2030, 1, 1)
-    _, claim = await start_and_claim(kernel, now=now)
-    assert await kernel.mark_outcome_unknown(
-        claim,
-        now,
-        capability_id="artifact.publish",
-        capability_version=1,
-        idempotency_class="check_before_retry",
-        reconciliation_reference="synthetic.publish.1",
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'capability-restart.db'}"
+    first_engine = create_sqlite_engine(database_url)
+    async with first_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    first_factory = SQLiteRuntimeUnitOfWorkFactory(
+        async_sessionmaker(first_engine, expire_on_commit=False)
+    )
+    first_kernel = WorkflowKernel(
+        first_factory, lease_duration=timedelta(seconds=30), clock=_FixedClock(now)
+    )
+    try:
+        _, claim = await start_and_claim(first_kernel, now=now)
+        assert await first_kernel.mark_outcome_unknown(
+            claim,
+            now,
+            capability_id="artifact.publish",
+            capability_version=1,
+            idempotency_class="check_before_retry",
+            reconciliation_reference="synthetic.publish.1",
+        )
+    finally:
+        await first_engine.dispose()
+
+    second_engine = create_sqlite_engine(database_url)
+    second_factory = SQLiteRuntimeUnitOfWorkFactory(
+        async_sessionmaker(second_engine, expire_on_commit=False)
+    )
+    restarted_kernel = WorkflowKernel(
+        second_factory, lease_duration=timedelta(seconds=30), clock=_FixedClock(now)
     )
     registry = ReconciliationRegistry()
     called: list[str] = []
@@ -224,9 +274,17 @@ async def test_reconciler_dispatches_only_the_capability_durably_bound_to_attemp
 
     registry.register("artifact.publish", 1, handler_a)
     registry.register("artifact.delete", 1, handler_b)
-    reconciler = WorkflowReconciler(kernel, registry, worker_id="reconciler-a")
-    assert await reconciler.reconcile_outcome_unknown(claim.task_attempt_id, now) is ReconciliationDecision.CONFIRMED
-    assert called == ["a"]
+    try:
+        reconciler = WorkflowReconciler(
+            restarted_kernel, registry, worker_id="reconciler-b"
+        )
+        assert (
+            await reconciler.reconcile_outcome_unknown(claim.task_attempt_id, now)
+            is ReconciliationDecision.CONFIRMED
+        )
+        assert called == ["a"]
+    finally:
+        await second_engine.dispose()
 
 
 async def test_stale_not_found_reconciliation_reports_ownership_loss(workflow_runtime) -> None:

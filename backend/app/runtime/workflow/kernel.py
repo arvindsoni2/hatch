@@ -12,7 +12,7 @@ from sqlalchemy.exc import OperationalError
 from ..contracts.task_spec import TaskSpec
 from ..events.repository import enforce_metadata_only
 from ..migration.modes import RuntimeMode
-from ..storage.contracts import DurableWorkflowStore, RuntimeUnitOfWorkFactory
+from ..storage.contracts import RuntimeUnitOfWorkFactory, WorkflowStore
 from .models import ExecutionClaimRecord, TaskAttemptRecord, WaitingReason
 from .repository import SQLiteWorkflowRepository
 from .retry import RetryFailure
@@ -47,7 +47,7 @@ class WorkflowKernel:
         fail_after: str | None = None,
         lock_retry_attempts: int = 3,
         clock: Clock | None = None,
-        repository: DurableWorkflowStore | None = None,
+        repository: WorkflowStore | None = None,
         lock_wait: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         if lease_duration <= timedelta(0):
@@ -100,8 +100,7 @@ class WorkflowKernel:
         return None
 
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None:
-        async with self._uow_factory.transaction() as uow:
-            return await uow.workflows.get_attempt(attempt_id)
+        return await self._repository.get_attempt(attempt_id)
 
     async def reclaim(
         self, attempt_id: str, worker_id: str, now: datetime
