@@ -1,101 +1,107 @@
 # R2 workflow-kernel evidence
 
-## Scope and provenance
+## Scope and immutable provenance
 
-- Baseline: `fb4d6d2` (the R1 merge).
-- R2 implementation commits: `f637490..4834991`; release-hardening implementation
-  commit: `394bbfb`.
-- This evidence is a docs-only follow-up; it intentionally does not self-reference
-  its own commit ID.
+- R1 baseline: `fb4d6d2`.
+- Overall R2 implementation range: `fb4d6d2..e9ae56c`.
+- Latest release-fix implementation head: `e9ae56c`
+  (`fix(workflow): harden release reconciliation recovery`).
+- Task 5 implementation and fixes: `f637490`, `c3d5f3e`, `f7e678f`.
+- Task 6 implementation and fixes: `f614e20`, `eb9c4bb`, `68a6570`, `4834991`.
+- Prior release hardening: `394bbfb`; current release hardening: `e9ae56c`.
+- Prior evidence-only commits: `bb59fe6`, `eeeb184`. This evidence is a docs-only
+  follow-up and does not self-reference its own commit ID.
 - Architecture SHA-256: `ef426195f1234ad5c394ca4aefd63019d7ed05321df6cbd8f14f4baddf21eb36`.
 - Foundation spec SHA-256: `578d6f9d0050014bde074e1ef72588733e305f46acad017f90bfb6ac95aa65a0`.
 - Coach V6 SHA-256: `39b0a616a0edb564b221ac11cf53aba5160710c034b67786c8e639b1495c00b8`.
 
-All active tests use disposable, file-backed SQLite databases with synthetic IDs,
-metadata references, and result references only. No Coach product boundary was
-changed by R2.
+All runtime tests use disposable SQLite databases and synthetic identifiers,
+metadata references, and result references only. R2 changes generic workflow
+records; it does not change Coach routes, commands, media, transcripts, deletion,
+exports, UI sinks, telemetry, or domain finalizers.
 
-## Release hardening covered
+## Release-fix controls
 
-- Every execution or reconciliation worker mutation verifies the durable active
-  claim, attempt identity, fencing token, and `lease_expires_at > now`. Exact-expiry
-  and just-after-expiry tests cover renewal, finalization, waiting, unknown-outcome,
-  terminal failure, retry, and reconciliation confirmed/not-found/return paths.
-- Workflow step and run state are derived atomically from attempts in the same UoW:
-  claim/run, wait/resume, retry, terminal failure, success, normal expired recovery,
-  and ambiguous-outcome reconciliation preserve coherent aggregates.
-- Terminal failure codes are bounded stable identifiers at the lowest repository
-  boundary; boolean, whitespace, long, path, prompt, transcript/CV, and model-output
-  canaries reject without changing the claim, attempt, step, or run.
-- Recovery has a validated `batch_size` (default 25, maximum 100), pages expired
-  claims deterministically, and commits each recovered claim in a short transaction.
-  A later injected record failure does not roll back an earlier recovered claim.
-- All terminal attempt transitions clear `current_claim_id`, including success and
-  the failed predecessor of a scheduled retry.
+- Reconciliation reads a fresh injected clock after every external handler outcome.
+  Confirmed, retry, terminal not-found, and handler-error paths refuse to mutate at
+  exact lease expiry and just after it.
+- Claim, attempt, step, and run lifecycles are synchronized in the same UoW for
+  claim, wait/resume, retry, terminal failure, success, expiry recovery, and
+  `OUTCOME_UNKNOWN` recovery. An injected aggregate-sync failure rolls all of those
+  records back together.
+- Terminal failure reasons and recovery errors are bounded stable codes. Unsafe
+  prompt, transcript/CV, path, model-output, whitespace, boolean, and oversized
+  values reject without changing durable ownership.
+- Expired-claim recovery validates batch sizes (1--100), pages deterministically,
+  commits per record, and continues after a poisoned record. A failed recovery stores
+  only `recovery_not_before`, incremented `recovery_failure_count`, and
+  `recovery_failed`; it does not extend the execution lease or store exception text.
+  Deferred work becomes eligible again after the bounded delay, so it cannot starve
+  later records.
+- Additive migration `u8v9w0x1y2z3` extends `runtime_execution_claims` with the
+  recovery disposition fields. It follows `t7u8v9w0x1y2` and leaves one Alembic head.
 
-## TDD and verification evidence
+## TDD and verification
+
+The release-contract suite was written RED first (20 intended failures for missing
+lease, aggregate, stable-code, and recovery controls), then turned GREEN. The final
+release-fix audit added deterministic post-handler clock and poisoned-recovery cases
+to the inherited partial change; their focused Python 3.12 gates are below.
 
 ```text
-# Release hardening RED before implementation
-python -m pytest -q tests/runtime/test_release_contract.py
-# 20 failed for the intended missing expiry, aggregate, failure-code, and bounded-
-# recovery protections (coverage threshold also reported because this was a focused run).
-
-# Focused GREEN after implementation
-python -m pytest -q --no-cov [release-contract, claims, fencing, retries, waiting,
-# reconciliation, storage-contract]
-# 61 passed in 9.24s before final exact-after-expiry and partial-isolation additions.
-
-# Final runtime gate (host Python 3.14.7; python3.12 is unavailable on this host)
-python -m pytest -q --no-cov tests/runtime
-# 148 passed in 31.33s; requests/urllib3 compatibility warning only.
-
-# Affected persistence, migration, event, and contention regression
-python -m pytest -q --no-cov [storage-contract, schema-migration, event-atomicity,
-# sqlite-contention]
-# 22 passed in 11.94s; same host dependency warning only.
-
-# Required composite backend gate
-python -m pytest -q
-# 3420 passed, 2 skipped, 127 warnings in 440.22s; coverage 77.96%.
-# The prior approved composite provenance gate recorded 3402 passed plus one host
-# provenance test passed; this release rerun adds the release-contract cases and
-# therefore reports 3420 rather than reusing the stale 3384 result.
-
-python -m ruff check app/runtime/workflow tests/runtime/test_release_contract.py \
+# Isolated Python 3.12.13 backend image; synthetic disposable SQLite only
+python -m pytest -q --no-cov \
   tests/runtime/test_claims.py tests/runtime/test_fencing.py \
-  tests/runtime/workflow_test_support.py
+  tests/runtime/test_retries.py tests/runtime/test_waiting.py \
+  tests/runtime/test_approvals.py tests/runtime/test_runtime_restart_recovery.py \
+  tests/runtime/test_sqlite_contention.py tests/runtime/test_event_atomicity.py \
+  tests/runtime/test_storage_contract.py
+# 66 passed in 10.54s
+
+python -m pytest -q --no-cov \
+  tests/runtime/test_reconciliation.py tests/runtime/test_release_contract.py
+# 56 passed in 12.02s
+
+python -m pytest -q --no-cov tests/runtime/test_schema_migration.py
+# 4 passed in 14.14s
+
+# The three commands collect 126 cases in total.
+
+python -m ruff check --no-cache [all changed runtime, migration, and test paths]
 # All checks passed.
 
 python scripts/check_docs.py
 git diff --check
 # Documentation validation passed; diff check passed.
 
+python -m app.database_setup
 alembic heads
-# sole head: t7u8v9w0x1y2.
+alembic current --check-heads
+# Canonical isolated SQLite setup succeeded; sole/current head is u8v9w0x1y2z3.
 ```
 
-`python3.12` is not installed in this host environment. The full suite above ran
-under the available Python 3.14.7 interpreter. An isolated `alembic current
---check-heads` attempt with a disposable SQLite URL blocked without output and was
-interrupted; no schema state was changed. The sole-head check and the repository's
-existing migration tests pass. The supported canonical bootstrap/current-head result
-from the prior R2 gate remains recorded in its implementation history.
+The full Python 3.12 backend suite was also run in the same isolated container:
+`3448 passed, 2 failed, 6 warnings in 441.65s`. The two failures are verification
+container limitations outside this diff: the benchmark manifest cannot read the
+worktree's Git metadata through the disposable mount and records
+`working_tree_clean_before="not_recorded"`; the canonical setup server test cannot
+find `make` in the image. Both exact tests reran on the host where Git metadata and
+`/usr/bin/make` are available: `2 passed in 0.51s` (host Python 3.14.7; one existing
+requests/urllib3 compatibility warning). This is not a claim that the container full
+suite passed; the focused Python 3.12 release gate above is the authoritative R2
+product result.
 
-The full suite's warnings are existing negative-path log output (temporary SQLite
-fixtures, deliberate provider connection failures, and Coach recovery tests) plus the
-requests/urllib3 dependency compatibility warning. They are not failures and contain
-no test fixture secrets or candidate content.
+## Security disposition, rollback, and review
 
-## Security disposition and rollback
+Applicable generic controls are covered by isolated synthetic fixtures, negative
+state/claim/approval input validation, replay/race and stale-worker fencing,
+exact-expiry fencing, contention/restart coverage, bounded recovery fairness, and
+atomic rollback. No candidate, transcript, evidence, CV, raw media, secret, or
+untrusted exception text is captured in this evidence. Coach-specific V6 boundary
+classes are not applicable because no Coach boundary changed.
 
-R2 changes generic workflow records only. Coach routes, commands, media, transcripts,
-deletion, exports, UI sinks, telemetry, and domain finalizers are out of scope and
-untouched. Applicable generic controls are covered by stable-code input rejection,
-replay/race and stale-worker fencing, expiry-bound ownership, bounded recovery,
-isolated synthetic fixtures, and atomic rollback assertions.
-
-Rollback is code-first: revert the R2 implementation range after confirming no active
-workflow claims require recovery. No new migration was introduced by release hardening;
-the existing R2 migration remains additive. Review disposition: pending scoped
-re-review of the release hardening changes.
+Rollback is code-first. Revert `e9ae56c` together with the R2 implementation range
+only after checking for active workflow claims that need recovery. Migration
+`u8v9w0x1y2z3` has an additive downgrade that removes only its three recovery
+disposition columns; use it only after confirming those durable fields are no longer
+needed. Review disposition: final whole-branch review pending.
