@@ -461,10 +461,21 @@ class SQLiteWorkflowRepository:
                     ExecutionClaimRecord.task_attempt_id == attempt_id,
                     ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
                     ExecutionClaimRecord.lease_expires_at <= now,
+                    (ExecutionClaimRecord.recovery_not_before.is_(None))
+                    | (ExecutionClaimRecord.recovery_not_before <= now),
                 )
             )
             if previous is None:
                 return None
+            still_reclaimable = exists().where(
+                ExecutionClaimRecord.id == previous.id,
+                ExecutionClaimRecord.task_attempt_id == attempt_id,
+                ExecutionClaimRecord.fencing_token == previous.fencing_token,
+                ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                ExecutionClaimRecord.lease_expires_at <= now,
+                (ExecutionClaimRecord.recovery_not_before.is_(None))
+                | (ExecutionClaimRecord.recovery_not_before <= now),
+            )
             claim_id = str(uuid.uuid4())
             lease_expires_at = now + lease_duration
             token = await uow.session.scalar(
@@ -474,6 +485,7 @@ class SQLiteWorkflowRepository:
                     TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
                     TaskAttemptRecord.current_claim_id == previous.id,
                     TaskAttemptRecord.claim_fencing_token == previous.fencing_token,
+                    still_reclaimable,
                 )
                 .values(
                     current_claim_id=claim_id,
@@ -489,6 +501,9 @@ class SQLiteWorkflowRepository:
                 .where(
                     ExecutionClaimRecord.id == previous.id,
                     ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    ExecutionClaimRecord.lease_expires_at <= now,
+                    (ExecutionClaimRecord.recovery_not_before.is_(None))
+                    | (ExecutionClaimRecord.recovery_not_before <= now),
                 )
                 .values(status=ExecutionClaimStatus.SUPERSEDED, released_at=now)
             )
@@ -871,6 +886,8 @@ class SQLiteWorkflowRepository:
                 ExecutionClaimRecord.id == claim.id,
                 ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
                 ExecutionClaimRecord.lease_expires_at <= now,
+                (ExecutionClaimRecord.recovery_not_before.is_(None))
+                | (ExecutionClaimRecord.recovery_not_before <= now),
             )
             restored = await uow.session.execute(
                 update(TaskAttemptRecord)
@@ -904,6 +921,8 @@ class SQLiteWorkflowRepository:
                     ExecutionClaimRecord.id == claim.id,
                     ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
                     ExecutionClaimRecord.lease_expires_at <= now,
+                    (ExecutionClaimRecord.recovery_not_before.is_(None))
+                    | (ExecutionClaimRecord.recovery_not_before <= now),
                 )
                 .values(status=ExecutionClaimStatus.EXPIRED, released_at=now)
             )
