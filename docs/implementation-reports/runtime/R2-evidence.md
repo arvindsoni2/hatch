@@ -2,8 +2,9 @@
 
 ## Scope and authority
 
-- Current fix verification range: `f614e20..HEAD` (symbolic `HEAD` until the immutable
-  fix-round commit is created).
+- Overall implementation range: `f614e20..4834991`.
+- Fix Round 2 range: `eb9c4bb..68a6570`.
+- Fix Round 3 base and implementation commit: `68a6570` -> `4834991`.
 - Architecture SHA-256: `ef426195f1234ad5c394ca4aefd63019d7ed05321df6cbd8f14f4baddf21eb36`.
 - Foundation spec SHA-256: `578d6f9d0050014bde074e1ef72588733e305f46acad017f90bfb6ac95aa65a0`.
 - Coach V6 SHA-256: `39b0a616a0edb564b221ac11cf53aba5160710c034b67786c8e639b1495c00b8`.
