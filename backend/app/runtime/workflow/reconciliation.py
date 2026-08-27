@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from .kernel import WorkflowKernel
+from .kernel import Clock, WorkflowKernel
 from .models import TaskAttemptStatus
 from .retry import RetryFailure
 
@@ -58,10 +58,12 @@ class WorkflowReconciler:
         registry: ReconciliationRegistry,
         *,
         worker_id: str,
+        clock: Clock | None = None,
     ) -> None:
         self._kernel = kernel
         self._registry = registry
         self._worker_id = worker_id
+        self._clock = clock or kernel.clock
 
     async def reconcile_outcome_unknown(
         self,
@@ -95,22 +97,30 @@ class WorkflowReconciler:
             )
             if not isinstance(decision, ReconciliationDecision):
                 raise ValueError("reconciliation handler returned an invalid decision")
+            completed_at = self._clock.now()
             if decision is ReconciliationDecision.CONFIRMED:
                 finalized = await self._kernel.finalize(
-                    claim, {"result_ref": "reconciled-confirmed"}
+                    claim, {"result_ref": "reconciled-confirmed"}, now=completed_at
                 )
                 if not finalized:
                     return None
                 return decision
             if retry_failure is None:
-                if not await self._kernel.fail_terminal(claim, "outcome_not_found", now):
+                if not await self._kernel.fail_terminal(
+                    claim, "outcome_not_found", completed_at
+                ):
                     return None
             else:
-                if await self._kernel.fail_or_retry(claim, retry_failure, now) is None:
+                if (
+                    await self._kernel.fail_or_retry(
+                        claim, retry_failure, completed_at
+                    )
+                    is None
+                ):
                     return None
             return decision
         except BaseException:
-            await self._kernel.return_outcome_unknown(claim, now)
+            await self._kernel.return_outcome_unknown(claim, self._clock.now())
             raise
 
     async def fail_non_retryable_side_effect(

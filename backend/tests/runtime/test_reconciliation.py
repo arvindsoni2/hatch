@@ -29,6 +29,19 @@ class _FixedClock:
         return self._now
 
 
+class _SequenceClock:
+    """A deterministic clock that proves completion uses post-handler time."""
+
+    def __init__(self, values: list[datetime]) -> None:
+        self._values = iter(values)
+        self.calls: list[datetime] = []
+
+    def now(self) -> datetime:
+        value = next(self._values)
+        self.calls.append(value)
+        return value
+
+
 async def mark_unknown(kernel, claim, now: datetime) -> bool:
     return await kernel.mark_outcome_unknown(
         claim,
@@ -325,3 +338,68 @@ async def test_stale_not_found_reconciliation_reports_ownership_loss(workflow_ru
     assert persisted is not None
     assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
     assert persisted.current_claim_id == replacement.id
+
+
+@pytest.mark.parametrize("offset", [timedelta(), timedelta(microseconds=1)], ids=["at-expiry", "after-expiry"])
+@pytest.mark.parametrize("outcome", ["confirmed", "retry", "terminal", "handler-error"])
+async def test_reconciler_uses_fresh_post_handler_time_and_never_mutates_with_an_expired_fence(
+    workflow_runtime, outcome: str, offset: timedelta
+) -> None:
+    """Would fail if reconciliation reused acquisition time after an external check."""
+    kernel, _ = workflow_runtime
+    acquisition_now = datetime(2030, 1, 1)
+    _, execution_claim = await start_and_claim(kernel, now=acquisition_now)
+    assert await mark_unknown(kernel, execution_claim, acquisition_now)
+
+    registry = ReconciliationRegistry()
+    if outcome == "handler-error":
+        async def handler(**_: object) -> ReconciliationDecision:
+            raise RuntimeError("synthetic reconciliation handler failure")
+    elif outcome == "confirmed":
+        async def handler(**_: object) -> ReconciliationDecision:
+            return ReconciliationDecision.CONFIRMED
+    else:
+        async def handler(**_: object) -> ReconciliationDecision:
+            return ReconciliationDecision.NOT_FOUND
+
+    registry.register("artifact.publish", 1, handler)
+    # The reconciler acquires at acquisition_now; only the handler completion time
+    # is at or beyond the lease boundary.
+    completion_now = acquisition_now + timedelta(seconds=30) + offset
+    clock = _SequenceClock([completion_now])
+    reconciler = WorkflowReconciler(
+        kernel, registry, worker_id="first-reconciler", clock=clock
+    )
+
+    if outcome == "handler-error":
+        with pytest.raises(RuntimeError, match="synthetic reconciliation handler failure"):
+            await reconciler.reconcile_outcome_unknown(
+                execution_claim.task_attempt_id, acquisition_now
+            )
+    else:
+        retry_failure = (
+            RetryFailure("outcome_not_found", "artifact.publish.check", 1)
+            if outcome == "retry"
+            else None
+        )
+        assert (
+            await reconciler.reconcile_outcome_unknown(
+                execution_claim.task_attempt_id,
+                acquisition_now,
+                retry_failure=retry_failure,
+            )
+            is None
+        )
+
+    assert clock.calls == [completion_now]
+    persisted = await kernel.get_attempt(execution_claim.task_attempt_id)
+    assert persisted is not None
+    assert persisted.status == TaskAttemptStatus.OUTCOME_UNKNOWN
+    assert persisted.current_claim_id is not None
+    first_fence = persisted.claim_fencing_token
+    assert await kernel.reconcile(completion_now) == 1
+    replacement = await kernel.claim_outcome_unknown(
+        execution_claim.task_attempt_id, "second-reconciler", completion_now
+    )
+    assert replacement is not None
+    assert replacement.fencing_token > first_fence

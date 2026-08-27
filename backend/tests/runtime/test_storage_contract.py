@@ -265,7 +265,13 @@ class _RepositoryInjectedIntoKernel:
     ) -> TaskAttemptRecord | None:
         raise AssertionError("not used by this contract test")
 
-    async def reconcile_expired_claims(self, now: datetime) -> int:
+    async def reconcile_expired_claims(
+        self,
+        now: datetime,
+        *,
+        batch_size: int = 25,
+        recovery_backoff_seconds: int = 1,
+    ) -> int:
         raise AssertionError("not used by this contract test")
 
     async def transition_waiting(

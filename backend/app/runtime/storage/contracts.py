@@ -86,7 +86,13 @@ class WorkflowStore(Protocol):
         now: datetime,
     ) -> TaskAttemptRecord | None: ...
 
-    async def reconcile_expired_claims(self, now: datetime, *, batch_size: int = 25) -> int: ...
+    async def reconcile_expired_claims(
+        self,
+        now: datetime,
+        *,
+        batch_size: int = 25,
+        recovery_backoff_seconds: int = 1,
+    ) -> int: ...
 
     async def transition_waiting(
         self,

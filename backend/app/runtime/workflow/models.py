@@ -200,6 +200,11 @@ class ExecutionClaimRecord(Base):
     )
     claimed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     lease_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    recovery_not_before: Mapped[datetime | None] = mapped_column(DateTime)
+    recovery_failure_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    last_recovery_error_code: Mapped[str | None] = mapped_column(String(128))
     released_at: Mapped[datetime | None] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(
         String(24), default=ExecutionClaimStatus.ACTIVE, server_default="active"

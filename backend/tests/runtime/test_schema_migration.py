@@ -85,10 +85,10 @@ def _tables(database: Path) -> set[str]:
 
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["t7u8v9w0x1y2"]
-    head = scripts.get_revision("t7u8v9w0x1y2")
+    assert scripts.get_heads() == ["u8v9w0x1y2z3"]
+    head = scripts.get_revision("u8v9w0x1y2z3")
     assert head is not None
-    assert head.down_revision == "s6t7u8v9w0x"
+    assert head.down_revision == "t7u8v9w0x1y2"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
@@ -112,7 +112,12 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
     runs = Base.metadata.tables["runtime_workflow_runs"]
     assert "max_attempts" in runs.columns
     claims = Base.metadata.tables["runtime_execution_claims"]
-    assert "purpose" in claims.columns
+    assert {
+        "purpose",
+        "recovery_not_before",
+        "recovery_failure_count",
+        "last_recovery_error_code",
+    } <= set(claims.columns.keys())
     executions = Base.metadata.tables["runtime_execution_records"]
     assert "parent_execution_id" in executions.columns
     shadow = Base.metadata.tables["runtime_shadow_comparisons"]
@@ -156,7 +161,7 @@ def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) ->
         ).fetchone() == ("preserved-session",)
 
 
-def test_reconciliation_binding_migration_downgrades_and_reupgrades(tmp_path: Path) -> None:
+def test_recovery_disposition_migration_downgrades_and_reupgrades(tmp_path: Path) -> None:
     database = tmp_path / "reconciliation-binding.db"
     setup = _run_setup(database)
     assert setup.returncode == 0, setup.stderr
@@ -173,17 +178,27 @@ def test_reconciliation_binding_migration_downgrades_and_reupgrades(tmp_path: Pa
         assert "purpose" in {
             row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")
         }
-
-    downgrade = _run_alembic(database, "downgrade", "s6t7u8v9w0x")
-    assert downgrade.returncode == 0, downgrade.stderr
-    with sqlite3.connect(database) as connection:
-        assert not (
-            upgraded_columns
-            & {row[1] for row in connection.execute("PRAGMA table_info(runtime_task_attempts)")}
-        )
-        assert "purpose" not in {
+        assert {
+            "recovery_not_before",
+            "recovery_failure_count",
+            "last_recovery_error_code",
+        } <= {
             row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")
         }
 
-    reupgrade = _run_alembic(database, "upgrade", "t7u8v9w0x1y2")
+    downgrade = _run_alembic(database, "downgrade", "t7u8v9w0x1y2")
+    assert downgrade.returncode == 0, downgrade.stderr
+    with sqlite3.connect(database) as connection:
+        assert upgraded_columns <= {
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_task_attempts)")
+        }
+        assert "purpose" in {
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")
+        }
+        assert not (
+            {"recovery_not_before", "recovery_failure_count", "last_recovery_error_code"}
+            & {row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")}
+        )
+
+    reupgrade = _run_alembic(database, "upgrade", "u8v9w0x1y2z3")
     assert reupgrade.returncode == 0, reupgrade.stderr

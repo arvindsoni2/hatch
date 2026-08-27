@@ -85,6 +85,11 @@ class WorkflowKernel:
             max_attempts=spec.workflow_policy.max_attempts,
         )
 
+    @property
+    def clock(self) -> Clock:
+        """The durable workflow time source shared with related orchestrators."""
+        return self._clock
+
     async def claim_next(
         self, worker_id: str, now: datetime
     ) -> ExecutionClaimRecord | None:
@@ -113,13 +118,17 @@ class WorkflowKernel:
         return await self._repository.renew_claim(claim, now, self._lease_duration)
 
     async def finalize(
-        self, claim: ExecutionClaimRecord, result: Mapping[str, object]
+        self,
+        claim: ExecutionClaimRecord,
+        result: Mapping[str, object],
+        *,
+        now: datetime | None = None,
     ) -> bool:
         result_ref = dict(result)
         if not isinstance(result_ref.get("result_ref"), str) or not result_ref["result_ref"]:
             raise ValueError("result must contain a non-empty result_ref")
         enforce_metadata_only(result_ref, path="result_ref")
-        finished_at = self._clock.now()
+        finished_at = now or self._clock.now()
         if finished_at < claim.claimed_at:
             raise ValueError("clock must not finalize before the claim")
         return await self._repository.finalize(claim, result_ref, finished_at)
@@ -146,8 +155,18 @@ class WorkflowKernel:
             raise InjectedFailure("claim_commit")
         return claim
 
-    async def reconcile(self, now: datetime, *, batch_size: int = 25) -> int:
-        return await self._repository.reconcile_expired_claims(now, batch_size=batch_size)
+    async def reconcile(
+        self,
+        now: datetime,
+        *,
+        batch_size: int = 25,
+        recovery_backoff_seconds: int = 1,
+    ) -> int:
+        return await self._repository.reconcile_expired_claims(
+            now,
+            batch_size=batch_size,
+            recovery_backoff_seconds=recovery_backoff_seconds,
+        )
 
     async def wait_for(
         self, claim: ExecutionClaimRecord, reason: WaitingReason, now: datetime

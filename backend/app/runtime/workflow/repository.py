@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+import logging
 import re
 
 from sqlalchemy import exists, select, update
@@ -34,6 +35,11 @@ _IDEMPOTENCY_CLASSES = {
 }
 _DEFAULT_RECOVERY_BATCH_SIZE = 25
 _MAX_RECOVERY_BATCH_SIZE = 100
+_DEFAULT_RECOVERY_BACKOFF_SECONDS = 1
+_MAX_RECOVERY_BACKOFF_SECONDS = 3600
+_RECOVERY_ERROR_CODE = "recovery_failed"
+
+logger = logging.getLogger(__name__)
 
 
 def validate_recovery_batch_size(batch_size: object) -> int:
@@ -46,6 +52,20 @@ def validate_recovery_batch_size(batch_size: object) -> int:
             f"batch_size must be an integer from 1 to {_MAX_RECOVERY_BATCH_SIZE}"
         )
     return batch_size
+
+
+def validate_recovery_backoff_seconds(backoff_seconds: object) -> int:
+    """Accept a small, bounded retry delay for individual recovery failures."""
+    if (
+        isinstance(backoff_seconds, bool)
+        or not isinstance(backoff_seconds, int)
+        or not 1 <= backoff_seconds <= _MAX_RECOVERY_BACKOFF_SECONDS
+    ):
+        raise ValueError(
+            "recovery_backoff_seconds must be an integer from 1 to "
+            f"{_MAX_RECOVERY_BACKOFF_SECONDS}"
+        )
+    return backoff_seconds
 
 
 def normalize_reconciliation_binding(
@@ -896,11 +916,59 @@ class SQLiteWorkflowRepository:
             await uow.commit()
             return True
 
+    async def _defer_failed_recovery(
+        self, claim_id: str, now: datetime, recovery_backoff_seconds: int
+    ) -> tuple[str, str] | None:
+        """Persist a non-authorizing recovery disposition in a separate transaction."""
+        async with self._uow_factory.transaction() as uow:
+            claim = await uow.session.get(ExecutionClaimRecord, claim_id)
+            if (
+                claim is None
+                or claim.status != ExecutionClaimStatus.ACTIVE
+                or claim.lease_expires_at > now
+                or (
+                    claim.recovery_not_before is not None
+                    and claim.recovery_not_before > now
+                )
+            ):
+                return None
+            deferred = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim_id,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    ExecutionClaimRecord.lease_expires_at <= now,
+                    (ExecutionClaimRecord.recovery_not_before.is_(None))
+                    | (ExecutionClaimRecord.recovery_not_before <= now),
+                )
+                .values(
+                    recovery_not_before=now
+                    + timedelta(seconds=recovery_backoff_seconds),
+                    recovery_failure_count=ExecutionClaimRecord.recovery_failure_count
+                    + 1,
+                    last_recovery_error_code=_RECOVERY_ERROR_CODE,
+                )
+            )
+            if deferred.rowcount != 1:
+                return None
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                raise RuntimeError("recovery attempt disappeared before deferral commit")
+            await uow.commit()
+            return claim.id, attempt.id
+
     async def reconcile_expired_claims(
-        self, now: datetime, *, batch_size: int = _DEFAULT_RECOVERY_BATCH_SIZE
+        self,
+        now: datetime,
+        *,
+        batch_size: int = _DEFAULT_RECOVERY_BATCH_SIZE,
+        recovery_backoff_seconds: int = _DEFAULT_RECOVERY_BACKOFF_SECONDS,
     ) -> int:
         """Recover a bounded, deterministic page without holding the backlog lock."""
         batch_size = validate_recovery_batch_size(batch_size)
+        recovery_backoff_seconds = validate_recovery_backoff_seconds(
+            recovery_backoff_seconds
+        )
         async with self._uow_factory.transaction() as uow:
             claim_ids = list(
                 (
@@ -909,6 +977,8 @@ class SQLiteWorkflowRepository:
                         .where(
                             ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
                             ExecutionClaimRecord.lease_expires_at <= now,
+                            (ExecutionClaimRecord.recovery_not_before.is_(None))
+                            | (ExecutionClaimRecord.recovery_not_before <= now),
                         )
                         .order_by(
                             ExecutionClaimRecord.lease_expires_at,
@@ -920,6 +990,27 @@ class SQLiteWorkflowRepository:
             )
         recovered = 0
         for claim_id in claim_ids:
-            if await self._reconcile_one_expired_claim(claim_id, now):
-                recovered += 1
+            try:
+                if await self._reconcile_one_expired_claim(claim_id, now):
+                    recovered += 1
+            except Exception:
+                try:
+                    deferred = await self._defer_failed_recovery(
+                        claim_id, now, recovery_backoff_seconds
+                    )
+                except Exception:
+                    logger.warning(
+                        "workflow recovery disposition unavailable claim_id=%s code=%s",
+                        claim_id,
+                        _RECOVERY_ERROR_CODE,
+                    )
+                else:
+                    if deferred is not None:
+                        deferred_claim_id, task_attempt_id = deferred
+                        logger.warning(
+                            "workflow recovery deferred claim_id=%s task_attempt_id=%s code=%s",
+                            deferred_claim_id,
+                            task_attempt_id,
+                            _RECOVERY_ERROR_CODE,
+                        )
         return recovered
