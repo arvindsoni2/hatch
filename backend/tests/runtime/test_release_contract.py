@@ -44,6 +44,43 @@ async def _claim_by_id(factory, claim_id: str) -> ExecutionClaimRecord:
     return claim
 
 
+def _lifecycle_snapshot(attempt, step, run, claim):
+    """Capture every lifecycle-bearing value for rollback/proof comparisons."""
+    attempt_fields = (
+        "id", "status", "waiting_reason", "not_before", "retry_reason",
+        "retry_policy_id", "retry_policy_version", "claim_fencing_token",
+        "current_claim_id", "result_ref_json", "failure_code", "started_at",
+        "finished_at", "prior_attempt_id", "attempt_number",
+    )
+    step_fields = ("id", "status", "waiting_reason", "completed_at", "failure_code", "updated_at")
+    run_fields = ("id", "status", "completed_at", "result_ref_json", "failure_code", "updated_at")
+    claim_fields = (
+        "id", "status", "released_at", "claimed_at", "claimed_by",
+        "lease_expires_at", "fencing_token", "task_attempt_id", "purpose",
+        "recovery_not_before", "recovery_failure_count", "last_recovery_error_code",
+    )
+    return {
+        "attempt": {field: getattr(attempt, field) for field in attempt_fields},
+        "step": {field: getattr(step, field) for field in step_fields},
+        "run": {field: getattr(run, field) for field in run_fields},
+        "claim": None if claim is None else {field: getattr(claim, field) for field in claim_fields},
+    }
+
+
+async def _scoped_counts(factory, step_id: str):
+    async with factory.session_factory() as session:
+        attempts = list((await session.scalars(
+            select(TaskAttemptRecord).where(TaskAttemptRecord.workflow_step_id == step_id)
+        )).all())
+        attempt_ids = [item.id for item in attempts]
+        claims = []
+        if attempt_ids:
+            claims = list((await session.scalars(
+                select(ExecutionClaimRecord).where(ExecutionClaimRecord.task_attempt_id.in_(attempt_ids))
+            )).all())
+    return len(attempts), len(claims)
+
+
 async def _assert_original_claim_lifecycle(
     factory,
     original: ExecutionClaimRecord,
@@ -445,22 +482,8 @@ async def test_aggregate_sync_failure_rolls_back_attempt_claim_step_and_run(
         factory, claim.task_attempt_id
     )
     assert before_current is not None
-    before = (
-        before_attempt.status,
-        before_attempt.current_claim_id,
-        before_attempt.finished_at,
-        before_attempt.updated_at,
-        before_step.status,
-        before_step.completed_at,
-        before_step.failure_code,
-        before_run.status,
-        before_run.completed_at,
-        before_run.failure_code,
-        before_current.status,
-        before_current.released_at,
-        before_current.lease_expires_at,
-        before_current.fencing_token,
-    )
+    before = _lifecycle_snapshot(before_attempt, before_step, before_run, before_current)
+    before_counts = await _scoped_counts(factory, before_step.id)
     failing_kernel = WorkflowKernel(
         factory,
         repository=_SyncFailureRepository(factory),
@@ -478,39 +501,56 @@ async def test_aggregate_sync_failure_rolls_back_attempt_claim_step_and_run(
         WorkflowRunStatus.RUNNING,
     )
     assert current is not None
-    assert (current.status, current.fencing_token, current.lease_expires_at) == (
-        "active",
-        claim.fencing_token,
-        claim.lease_expires_at,
+    assert _lifecycle_snapshot(attempt, step, run, current) == before
+    assert await _scoped_counts(factory, step.id) == before_counts
+
+
+async def test_deferred_outcome_unknown_reconciliation_claim_blocks_alternate_owner_until_due(
+    workflow_runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deferred reconciliation owner retains OUTCOME_UNKNOWN until durable reclaim is due."""
+    kernel, factory = workflow_runtime
+    now = datetime(2030, 1, 1)
+    _, execution = await start_and_claim(kernel, now=now)
+    assert await kernel.mark_outcome_unknown(
+        execution, now, capability_id="synthetic.check", capability_version=1,
+        idempotency_class="check_before_retry", reconciliation_reference="synthetic.ref",
     )
-    after = (
-        attempt.status,
-        attempt.current_claim_id,
-        attempt.finished_at,
-        attempt.updated_at,
-        step.status,
-        step.completed_at,
-        step.failure_code,
-        run.status,
-        run.completed_at,
-        run.failure_code,
-        current.status,
-        current.released_at,
-        current.lease_expires_at,
-        current.fencing_token,
-    )
-    assert after == before
-    async with factory.session_factory() as session:
-        attempts = list(
-            (
-                await session.scalars(
-                    select(TaskAttemptRecord).where(
-                        TaskAttemptRecord.workflow_step_id == attempt.workflow_step_id
-                    )
-                )
-            ).all()
-        )
-    assert [item.id for item in attempts] == [claim.task_attempt_id]
+    recon = await kernel.claim_outcome_unknown(execution.task_attempt_id, "reconciler-a", now)
+    assert recon is not None
+    expiry = recon.lease_expires_at
+    poison = kernel._repository._reconcile_one_expired_claim
+
+    poisoned = False
+
+    async def fail_recovery(claim_id: str, operation_now: datetime) -> bool:
+        nonlocal poisoned
+        if claim_id == recon.id and not poisoned:
+            poisoned = True
+            raise RuntimeError("synthetic reconciliation poison")
+        return await poison(claim_id, operation_now)
+
+    monkeypatch.setattr(kernel._repository, "_reconcile_one_expired_claim", fail_recovery)
+    assert await kernel.reconcile(expiry, recovery_backoff_seconds=10) == 0
+    deferred = await _claim_by_id(factory, recon.id)
+    assert deferred.recovery_not_before == expiry + timedelta(seconds=10)
+    attempt, step, run, current = await _records(factory, execution.task_attempt_id)
+    assert attempt.status == TaskAttemptStatus.OUTCOME_UNKNOWN
+    assert attempt.current_claim_id == recon.id
+    assert current is not None and current.id == recon.id and current.fencing_token == recon.fencing_token
+    assert await kernel.claim_outcome_unknown(execution.task_attempt_id, "reconciler-b", expiry + timedelta(seconds=1)) is None
+    assert await kernel._repository.finalize(recon, {"result_ref": "stale"}, expiry + timedelta(seconds=1)) is False
+    assert await kernel.fail_terminal(recon, "stale_failure", expiry + timedelta(seconds=1)) is False
+
+    due = expiry + timedelta(seconds=10)
+    assert await kernel.reconcile(due) == 1
+    recovered = await _claim_by_id(factory, recon.id)
+    assert recovered.status == "expired" and recovered.released_at == due
+    attempt, step, run, current = await _records(factory, execution.task_attempt_id)
+    assert attempt.status == TaskAttemptStatus.OUTCOME_UNKNOWN and attempt.current_claim_id is None
+    assert current is None and step.status == WorkflowStepStatus.WAITING and run.status == WorkflowRunStatus.WAITING
+    replacement = await kernel.claim_outcome_unknown(execution.task_attempt_id, "reconciler-c", due)
+    assert replacement is not None and replacement.fencing_token > recon.fencing_token
 
 
 @pytest.mark.parametrize("backoff_seconds", [True, 0, -1, 3601])
