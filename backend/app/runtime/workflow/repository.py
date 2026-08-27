@@ -18,9 +18,11 @@ from .models import (
     TaskAttemptStatus,
     WaitingReason,
     WorkflowRunRecord,
+    WorkflowRunStatus,
     WorkflowStepRecord,
+    WorkflowStepStatus,
 )
-from .retry import normalize_retry_metadata
+from .retry import normalize_failure_code, normalize_retry_metadata
 
 
 _RECONCILIATION_CODE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
@@ -30,6 +32,20 @@ _IDEMPOTENCY_CLASSES = {
     "check_before_retry",
     "non_retryable_side_effect",
 }
+_DEFAULT_RECOVERY_BATCH_SIZE = 25
+_MAX_RECOVERY_BATCH_SIZE = 100
+
+
+def validate_recovery_batch_size(batch_size: object) -> int:
+    if (
+        isinstance(batch_size, bool)
+        or not isinstance(batch_size, int)
+        or not 1 <= batch_size <= _MAX_RECOVERY_BATCH_SIZE
+    ):
+        raise ValueError(
+            f"batch_size must be an integer from 1 to {_MAX_RECOVERY_BATCH_SIZE}"
+        )
+    return batch_size
 
 
 def normalize_reconciliation_binding(
@@ -73,6 +89,126 @@ class SQLiteWorkflowRepository:
 
     def __init__(self, uow_factory: RuntimeUnitOfWorkFactory) -> None:
         self._uow_factory = uow_factory
+
+    @staticmethod
+    def _active_claim(
+        claim: ExecutionClaimRecord, now: datetime
+    ) -> object:
+        """A durable, unexpired ownership predicate; caller objects are untrusted."""
+        return exists().where(
+            ExecutionClaimRecord.id == claim.id,
+            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
+            ExecutionClaimRecord.fencing_token == claim.fencing_token,
+            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+            ExecutionClaimRecord.lease_expires_at > now,
+        )
+
+    async def _sync_lifecycle(
+        self, uow: object, workflow_step_id: str, now: datetime
+    ) -> None:
+        """Derive step/run aggregates from durable child state in the same UoW.
+
+        R2 creates one step per run, but deriving from all attempts and all steps
+        keeps the persistence rule safe when a later release introduces siblings.
+        """
+        session = uow.session  # type: ignore[attr-defined]
+        step = await session.get(WorkflowStepRecord, workflow_step_id)
+        if step is None:
+            raise RuntimeError("workflow step disappeared during lifecycle update")
+        attempts = list(
+            (await session.scalars(
+                select(TaskAttemptRecord)
+                .where(TaskAttemptRecord.workflow_step_id == workflow_step_id)
+                .order_by(TaskAttemptRecord.attempt_number)
+            )).all()
+        )
+        statuses = {attempt.status for attempt in attempts}
+        latest = attempts[-1] if attempts else None
+        if TaskAttemptStatus.RUNNING in statuses:
+            step_status = WorkflowStepStatus.RUNNING
+        elif statuses & {TaskAttemptStatus.WAITING, TaskAttemptStatus.OUTCOME_UNKNOWN}:
+            step_status = WorkflowStepStatus.WAITING
+        elif TaskAttemptStatus.PENDING in statuses:
+            step_status = WorkflowStepStatus.PENDING
+        elif TaskAttemptStatus.SUCCEEDED in statuses:
+            step_status = WorkflowStepStatus.COMPLETED
+        elif attempts and statuses <= {TaskAttemptStatus.FAILED, TaskAttemptStatus.CANCELLED}:
+            step_status = WorkflowStepStatus.FAILED
+        else:
+            step_status = WorkflowStepStatus.PENDING
+        await session.execute(
+            update(WorkflowStepRecord)
+            .where(WorkflowStepRecord.id == workflow_step_id)
+            .values(
+                status=step_status,
+                waiting_reason=(
+                    latest.waiting_reason
+                    if step_status == WorkflowStepStatus.WAITING and latest is not None
+                    else None
+                ),
+                completed_at=(
+                    now
+                    if step_status
+                    in (WorkflowStepStatus.COMPLETED, WorkflowStepStatus.FAILED)
+                    else None
+                ),
+                failure_code=(
+                    latest.failure_code
+                    if step_status == WorkflowStepStatus.FAILED and latest is not None
+                    else None
+                ),
+                updated_at=now,
+            )
+        )
+        steps = list(
+            (await session.scalars(
+                select(WorkflowStepRecord)
+                .where(WorkflowStepRecord.workflow_run_id == step.workflow_run_id)
+                .order_by(WorkflowStepRecord.step_order)
+            )).all()
+        )
+        step_statuses = {item.status for item in steps}
+        if WorkflowStepStatus.RUNNING in step_statuses:
+            run_status = WorkflowRunStatus.RUNNING
+        elif WorkflowStepStatus.WAITING in step_statuses:
+            run_status = WorkflowRunStatus.WAITING
+        elif WorkflowStepStatus.PENDING in step_statuses:
+            run_status = WorkflowRunStatus.PENDING
+        elif steps and step_statuses == {WorkflowStepStatus.COMPLETED}:
+            run_status = WorkflowRunStatus.COMPLETED
+        elif steps and step_statuses <= {WorkflowStepStatus.FAILED, WorkflowStepStatus.CANCELLED}:
+            run_status = WorkflowRunStatus.FAILED
+        else:
+            run_status = WorkflowRunStatus.PENDING
+        result_ref = None
+        if run_status == WorkflowRunStatus.COMPLETED:
+            succeeded = next(
+                (attempt for attempt in reversed(attempts) if attempt.status == TaskAttemptStatus.SUCCEEDED),
+                None,
+            )
+            result_ref = succeeded.result_ref_json if succeeded is not None else None
+        failure_code = None
+        if run_status == WorkflowRunStatus.FAILED:
+            failed_step = next(
+                (item for item in reversed(steps) if item.status == WorkflowStepStatus.FAILED),
+                None,
+            )
+            failure_code = failed_step.failure_code if failed_step is not None else None
+        await session.execute(
+            update(WorkflowRunRecord)
+            .where(WorkflowRunRecord.id == step.workflow_run_id)
+            .values(
+                status=run_status,
+                completed_at=(
+                    now
+                    if run_status in (WorkflowRunStatus.COMPLETED, WorkflowRunStatus.FAILED)
+                    else None
+                ),
+                result_ref_json=result_ref,
+                failure_code=failure_code,
+                updated_at=now,
+            )
+        )
 
     async def create_run(
         self,
@@ -124,12 +260,7 @@ class SQLiteWorkflowRepository:
         now: datetime,
     ) -> bool:
         """Release only the current fenced owner into a durable wait state."""
-        active_claim = exists().where(
-            ExecutionClaimRecord.id == claim.id,
-            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
-            ExecutionClaimRecord.fencing_token == claim.fencing_token,
-            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-        )
+        active_claim = self._active_claim(claim, now)
         async with self._uow_factory.transaction() as uow:
             transitioned = await uow.session.execute(
                 update(TaskAttemptRecord)
@@ -159,6 +290,10 @@ class SQLiteWorkflowRepository:
             )
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during waiting transition")
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                raise RuntimeError("waiting attempt disappeared before commit")
+            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
             await uow.commit()
             return True
 
@@ -188,6 +323,7 @@ class SQLiteWorkflowRepository:
             attempt = await uow.session.get(TaskAttemptRecord, attempt_id)
             if attempt is None:
                 raise RuntimeError("resumed attempt disappeared before commit")
+            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
             await uow.commit()
             return attempt
 
@@ -195,6 +331,17 @@ class SQLiteWorkflowRepository:
         self, worker_id: str, now: datetime, lease_duration: timedelta
     ) -> ExecutionClaimRecord | None:
         async with self._uow_factory.transaction() as uow:
+            promoted_step_ids = set(
+                (
+                    await uow.session.scalars(
+                        select(TaskAttemptRecord.workflow_step_id).where(
+                            TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
+                            TaskAttemptRecord.waiting_reason == WaitingReason.RETRY_TIME,
+                            TaskAttemptRecord.not_before <= now,
+                        )
+                    )
+                ).all()
+            )
             await uow.session.execute(
                 update(TaskAttemptRecord)
                 .where(
@@ -219,6 +366,10 @@ class SQLiteWorkflowRepository:
                 .limit(1)
             )
             if candidate is None:
+                for workflow_step_id in promoted_step_ids:
+                    await self._sync_lifecycle(uow, workflow_step_id, now)
+                if promoted_step_ids:
+                    await uow.commit()
                 return None
             claim_id = str(uuid.uuid4())
             lease_expires_at = now + lease_duration
@@ -262,6 +413,9 @@ class SQLiteWorkflowRepository:
             )
             uow.session.add(claim)
             await uow.session.flush()
+            promoted_step_ids.add(candidate.workflow_step_id)
+            for workflow_step_id in promoted_step_ids:
+                await self._sync_lifecycle(uow, workflow_step_id, now)
             await uow.commit()
             return claim
 
@@ -330,6 +484,10 @@ class SQLiteWorkflowRepository:
             )
             uow.session.add(claim)
             await uow.session.flush()
+            current_attempt = await uow.session.get(TaskAttemptRecord, attempt_id)
+            if current_attempt is None:
+                raise RuntimeError("reclaimed attempt disappeared before commit")
+            await self._sync_lifecycle(uow, current_attempt.workflow_step_id, now)
             await uow.commit()
             return claim
 
@@ -356,6 +514,7 @@ class SQLiteWorkflowRepository:
                     ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
                     ExecutionClaimRecord.fencing_token == claim.fencing_token,
                     ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    ExecutionClaimRecord.lease_expires_at > now,
                     current_attempt,
                 )
                 .values(lease_expires_at=now + lease_duration)
@@ -372,12 +531,7 @@ class SQLiteWorkflowRepository:
         now: datetime,
     ) -> bool:
         """Persist a result only when the supplied claim remains the owner."""
-        active_claim = exists().where(
-            ExecutionClaimRecord.id == claim.id,
-            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
-            ExecutionClaimRecord.fencing_token == claim.fencing_token,
-            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-        )
+        active_claim = self._active_claim(claim, now)
         async with self._uow_factory.transaction() as uow:
             finalized = await uow.session.execute(
                 update(TaskAttemptRecord)
@@ -393,6 +547,7 @@ class SQLiteWorkflowRepository:
                 .values(
                     status=TaskAttemptStatus.SUCCEEDED,
                     result_ref_json=result_ref,
+                    current_claim_id=None,
                     finished_at=now,
                     updated_at=now,
                 )
@@ -409,6 +564,10 @@ class SQLiteWorkflowRepository:
             )
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during finalization")
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                raise RuntimeError("finalized attempt disappeared before commit")
+            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
             await uow.commit()
             return True
 
@@ -431,12 +590,7 @@ class SQLiteWorkflowRepository:
                 reconciliation_reference,
             )
         )
-        active_claim = exists().where(
-            ExecutionClaimRecord.id == claim.id,
-            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
-            ExecutionClaimRecord.fencing_token == claim.fencing_token,
-            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-        )
+        active_claim = self._active_claim(claim, now)
         async with self._uow_factory.transaction() as uow:
             marked = await uow.session.execute(
                 update(TaskAttemptRecord)
@@ -469,6 +623,10 @@ class SQLiteWorkflowRepository:
             )
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during unknown-outcome transition")
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                raise RuntimeError("unknown-outcome attempt disappeared before commit")
+            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
             await uow.commit()
             return True
 
@@ -515,6 +673,7 @@ class SQLiteWorkflowRepository:
             )
             uow.session.add(claim)
             await uow.session.flush()
+            await self._sync_lifecycle(uow, candidate.workflow_step_id, now)
             await uow.commit()
             return claim
 
@@ -522,10 +681,7 @@ class SQLiteWorkflowRepository:
         self, claim: ExecutionClaimRecord, *, now: datetime
     ) -> bool:
         """Safely release a failed reconciler so a restarted process can retry it."""
-        active_claim = exists().where(
-            ExecutionClaimRecord.id == claim.id,
-            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-        )
+        active_claim = self._active_claim(claim, now)
         async with self._uow_factory.transaction() as uow:
             restored = await uow.session.execute(
                 update(TaskAttemptRecord)
@@ -552,6 +708,10 @@ class SQLiteWorkflowRepository:
             )
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during reconciliation rollback")
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                raise RuntimeError("ambiguous attempt disappeared before commit")
+            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
             await uow.commit()
             return True
 
@@ -559,10 +719,8 @@ class SQLiteWorkflowRepository:
         self, claim: ExecutionClaimRecord, *, reason: str, now: datetime
     ) -> bool:
         """Terminalize a fenced attempt without creating another execution attempt."""
-        active_claim = exists().where(
-            ExecutionClaimRecord.id == claim.id,
-            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-        )
+        reason = normalize_failure_code(reason)
+        active_claim = self._active_claim(claim, now)
         async with self._uow_factory.transaction() as uow:
             failed = await uow.session.execute(
                 update(TaskAttemptRecord)
@@ -595,6 +753,10 @@ class SQLiteWorkflowRepository:
             )
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during terminal failure")
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                raise RuntimeError("failed attempt disappeared before commit")
+            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
             await uow.commit()
             return True
 
@@ -612,12 +774,7 @@ class SQLiteWorkflowRepository:
         reason, policy_id, policy_version = normalize_retry_metadata(
             reason, policy_id, policy_version
         )
-        active_claim = exists().where(
-            ExecutionClaimRecord.id == claim.id,
-            ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
-            ExecutionClaimRecord.fencing_token == claim.fencing_token,
-            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-        )
+        active_claim = self._active_claim(claim, now)
         async with self._uow_factory.transaction() as uow:
             current_attempt = await uow.session.get(
                 TaskAttemptRecord, claim.task_attempt_id
@@ -648,6 +805,7 @@ class SQLiteWorkflowRepository:
                 .values(
                     status=TaskAttemptStatus.FAILED,
                     failure_code=reason,
+                    current_claim_id=None,
                     finished_at=now,
                     updated_at=now,
                 )
@@ -665,6 +823,7 @@ class SQLiteWorkflowRepository:
             if released.rowcount != 1:
                 raise RuntimeError("claim ownership changed during retry scheduling")
             if current_attempt.attempt_number >= max_attempts:
+                await self._sync_lifecycle(uow, current_attempt.workflow_step_id, now)
                 await uow.commit()
                 return None
             retry = await uow.workflows.schedule_retry(
@@ -674,66 +833,93 @@ class SQLiteWorkflowRepository:
                 retry_policy_version=policy_version,
                 not_before=not_before,
             )
+            await self._sync_lifecycle(uow, current_attempt.workflow_step_id, now)
             await uow.commit()
             return retry
 
-    async def reconcile_expired_claims(self, now: datetime) -> int:
-        """Release abandoned ownership without relying on a process-local registry."""
-        recovered = 0
+    async def _reconcile_one_expired_claim(self, claim_id: str, now: datetime) -> bool:
+        """Recover one ownership record in its own short transaction."""
         async with self._uow_factory.transaction() as uow:
-            expired_claims = list(
-                (
-                    await uow.session.scalars(
-                        select(ExecutionClaimRecord).where(
-                            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-                            ExecutionClaimRecord.lease_expires_at <= now,
-                        )
-                    )
-                ).all()
+            claim = await uow.session.get(ExecutionClaimRecord, claim_id)
+            if (
+                claim is None
+                or claim.status != ExecutionClaimStatus.ACTIVE
+                or claim.lease_expires_at > now
+            ):
+                return False
+            still_current = exists().where(
+                ExecutionClaimRecord.id == claim.id,
+                ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                ExecutionClaimRecord.lease_expires_at <= now,
             )
-            for claim in expired_claims:
-                still_current = exists().where(
+            restored = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status
+                    == (
+                        TaskAttemptStatus.OUTCOME_UNKNOWN
+                        if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
+                        else TaskAttemptStatus.RUNNING
+                    ),
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    still_current,
+                )
+                .values(
+                    status=(
+                        TaskAttemptStatus.OUTCOME_UNKNOWN
+                        if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
+                        else TaskAttemptStatus.PENDING
+                    ),
+                    current_claim_id=None,
+                    updated_at=now,
+                )
+            )
+            if restored.rowcount != 1:
+                return False
+            expired = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
                     ExecutionClaimRecord.id == claim.id,
                     ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
                     ExecutionClaimRecord.lease_expires_at <= now,
                 )
-                restored = await uow.session.execute(
-                    update(TaskAttemptRecord)
-                    .where(
-                        TaskAttemptRecord.id == claim.task_attempt_id,
-                        TaskAttemptRecord.status
-                        == (
-                            TaskAttemptStatus.OUTCOME_UNKNOWN
-                            if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
-                            else TaskAttemptStatus.RUNNING
-                        ),
-                        TaskAttemptRecord.current_claim_id == claim.id,
-                        TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
-                        still_current,
+                .values(status=ExecutionClaimStatus.EXPIRED, released_at=now)
+            )
+            if expired.rowcount != 1:
+                raise RuntimeError("claim ownership changed during reconciliation")
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                raise RuntimeError("recovered attempt disappeared before commit")
+            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
+            await uow.commit()
+            return True
+
+    async def reconcile_expired_claims(
+        self, now: datetime, *, batch_size: int = _DEFAULT_RECOVERY_BATCH_SIZE
+    ) -> int:
+        """Recover a bounded, deterministic page without holding the backlog lock."""
+        batch_size = validate_recovery_batch_size(batch_size)
+        async with self._uow_factory.transaction() as uow:
+            claim_ids = list(
+                (
+                    await uow.session.scalars(
+                        select(ExecutionClaimRecord.id)
+                        .where(
+                            ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                            ExecutionClaimRecord.lease_expires_at <= now,
+                        )
+                        .order_by(
+                            ExecutionClaimRecord.lease_expires_at,
+                            ExecutionClaimRecord.id,
+                        )
+                        .limit(batch_size)
                     )
-                    .values(
-                        status=(
-                            TaskAttemptStatus.OUTCOME_UNKNOWN
-                            if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
-                            else TaskAttemptStatus.PENDING
-                        ),
-                        current_claim_id=None,
-                        updated_at=now,
-                    )
-                )
-                if restored.rowcount != 1:
-                    continue
-                expired = await uow.session.execute(
-                    update(ExecutionClaimRecord)
-                    .where(
-                        ExecutionClaimRecord.id == claim.id,
-                        ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
-                    )
-                    .values(status=ExecutionClaimStatus.EXPIRED, released_at=now)
-                )
-                if expired.rowcount != 1:
-                    raise RuntimeError("claim ownership changed during reconciliation")
+                ).all()
+            )
+        recovered = 0
+        for claim_id in claim_ids:
+            if await self._reconcile_one_expired_claim(claim_id, now):
                 recovered += 1
-            if recovered:
-                await uow.commit()
-            return recovered
+        return recovered

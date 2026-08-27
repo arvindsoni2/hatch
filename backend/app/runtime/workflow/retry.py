@@ -39,6 +39,11 @@ def normalize_retry_metadata(
     return normalized_reason, normalized_policy_id, policy_version
 
 
+def normalize_failure_code(value: object) -> str:
+    """Normalize terminal failure metadata at every durable storage boundary."""
+    return _normalized_code(value, field="failure_code")
+
+
 @dataclass(frozen=True)
 class RetryFailure:
     """Metadata-only failure classification used to create a durable retry."""

@@ -48,7 +48,7 @@ async def kernel(tmp_path):
         yield WorkflowKernel(
             SQLiteRuntimeUnitOfWorkFactory(session_factory),
             lease_duration=timedelta(seconds=30),
-            clock=_Clock(datetime(2030, 1, 2)),
+            clock=_Clock(datetime(2030, 1, 1)),
         )
     finally:
         await engine.dispose()

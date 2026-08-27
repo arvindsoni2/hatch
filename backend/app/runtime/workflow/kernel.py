@@ -146,8 +146,8 @@ class WorkflowKernel:
             raise InjectedFailure("claim_commit")
         return claim
 
-    async def reconcile(self, now: datetime) -> int:
-        return await self._repository.reconcile_expired_claims(now)
+    async def reconcile(self, now: datetime, *, batch_size: int = 25) -> int:
+        return await self._repository.reconcile_expired_claims(now, batch_size=batch_size)
 
     async def wait_for(
         self, claim: ExecutionClaimRecord, reason: WaitingReason, now: datetime

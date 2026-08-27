@@ -30,7 +30,7 @@ class _Output(BaseModel):
 
 class _Clock:
     def now(self) -> datetime:
-        return datetime(2030, 1, 2)
+        return datetime(2030, 1, 1, 0, 0, 30)
 
 
 @pytest_asyncio.fixture

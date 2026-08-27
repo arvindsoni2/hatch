@@ -30,7 +30,7 @@ class SyntheticOutput(BaseModel):
 
 class _FixedClock:
     def now(self) -> datetime:
-        return datetime(2031, 1, 1)
+        return datetime(2030, 1, 1)
 
 
 def synthetic_spec(*, max_attempts: int = 2) -> TaskSpec[SyntheticInput, SyntheticOutput]:
