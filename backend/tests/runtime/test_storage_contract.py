@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import inspect
-from typing import Any
+from typing import Any, get_type_hints
 
 import pytest
 import pytest_asyncio
@@ -175,11 +175,17 @@ async def test_uow_exposes_complete_semantic_store_methods(runtime_uow_factory) 
             assert all(hasattr(store, method) for method in methods)
 
 
-def _signature_shape(callable_: Any) -> tuple[tuple[str, inspect._ParameterKind, object], ...]:
-    return tuple(
+def _signature_shape(
+    callable_: Any,
+) -> tuple[tuple[tuple[str, inspect._ParameterKind, object], ...], object]:
+    parameters = tuple(
         (parameter.name, parameter.kind, parameter.default)
         for parameter in inspect.signature(callable_).parameters.values()
     )
+    module_globals = vars(inspect.getmodule(callable_))
+    module_globals.update(vars(__import__("app.runtime.workflow.models", fromlist=["*"])))
+    annotations = get_type_hints(callable_, globalns=module_globals)
+    return parameters, annotations.get("return")
 
 
 def test_sqlite_repository_matches_the_kernel_workflow_store_contract(

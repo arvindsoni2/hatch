@@ -83,7 +83,7 @@ class SQLiteWorkflowRepository:
         domain_ref: dict[str, object],
         mode: str,
         max_attempts: int,
-    ):
+    ) -> WorkflowRunRecord:
         domain_type = str(domain_ref.get("domain_type") or "runtime")
         domain_id = domain_ref.get("domain_id")
         if domain_id is not None:
