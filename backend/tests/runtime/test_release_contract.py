@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 
 import pytest
@@ -47,13 +48,24 @@ async def _claim_by_id(factory, claim_id: str) -> ExecutionClaimRecord:
 def _lifecycle_snapshot(attempt, step, run, claim):
     """Capture every lifecycle-bearing value for rollback/proof comparisons."""
     attempt_fields = (
-        "id", "status", "waiting_reason", "not_before", "retry_reason",
-        "retry_policy_id", "retry_policy_version", "claim_fencing_token",
-        "current_claim_id", "result_ref_json", "failure_code", "started_at",
-        "finished_at", "prior_attempt_id", "attempt_number",
+        "id", "workflow_step_id", "attempt_number", "prior_attempt_id", "status",
+        "waiting_reason", "not_before", "retry_reason", "retry_policy_id",
+        "retry_policy_version", "capability_id", "capability_version",
+        "idempotency_class", "reconciliation_reference", "claim_fencing_token",
+        "current_claim_id", "context_package_id", "result_ref_json", "failure_code",
+        "started_at", "finished_at", "created_at", "updated_at",
     )
-    step_fields = ("id", "status", "waiting_reason", "completed_at", "failure_code", "updated_at")
-    run_fields = ("id", "status", "completed_at", "result_ref_json", "failure_code", "updated_at")
+    step_fields = (
+        "id", "workflow_run_id", "step_key", "step_order", "task_id", "task_version",
+        "status", "waiting_reason", "created_at", "updated_at", "completed_at",
+        "failure_code",
+    )
+    run_fields = (
+        "id", "workflow_definition_id", "workflow_definition_version", "domain_type",
+        "domain_id", "status", "runtime_mode", "max_attempts", "created_at",
+        "updated_at", "completed_at", "input_ref_json", "result_ref_json", "failure_code",
+        "trace_id",
+    )
     claim_fields = (
         "id", "status", "released_at", "claimed_at", "claimed_by",
         "lease_expires_at", "fencing_token", "task_attempt_id", "purpose",
@@ -64,6 +76,53 @@ def _lifecycle_snapshot(attempt, step, run, claim):
         "step": {field: getattr(step, field) for field in step_fields},
         "run": {field: getattr(run, field) for field in run_fields},
         "claim": None if claim is None else {field: getattr(claim, field) for field in claim_fields},
+    }
+
+
+def _expected_lifecycle(
+    before: dict[str, dict[str, object] | None],
+    *,
+    attempt: dict[str, object] | None = None,
+    step: dict[str, object] | None = None,
+    run: dict[str, object] | None = None,
+    claim: dict[str, object] | None = None,
+) -> dict[str, dict[str, object] | None]:
+    """Copy a complete durable snapshot and state every permitted transition delta."""
+    expected = deepcopy(before)
+    for name, changes in (("attempt", attempt), ("step", step), ("run", run), ("claim", claim)):
+        if changes is None:
+            continue
+        assert expected[name] is not None
+        expected[name].update(changes)  # type: ignore[union-attr]
+    return expected
+
+
+def _retry_snapshot(retry, *, first, not_before: datetime | None) -> dict[str, object]:
+    """The appended retry has no inherited mutable execution/reconciliation state."""
+    return {
+        "id": retry.id,
+        "workflow_step_id": first.workflow_step_id,
+        "attempt_number": first.attempt_number + 1,
+        "prior_attempt_id": first.id,
+        "status": TaskAttemptStatus.WAITING if not_before else TaskAttemptStatus.PENDING,
+        "waiting_reason": WaitingReason.RETRY_TIME if not_before else None,
+        "not_before": not_before,
+        "retry_reason": "transient_failure",
+        "retry_policy_id": "synthetic.retry",
+        "retry_policy_version": 1,
+        "capability_id": None,
+        "capability_version": None,
+        "idempotency_class": None,
+        "reconciliation_reference": None,
+        "claim_fencing_token": 0,
+        "current_claim_id": None,
+        "context_package_id": None,
+        "result_ref_json": None,
+        "failure_code": None,
+        "started_at": None,
+        "finished_at": None,
+        "created_at": retry.created_at,
+        "updated_at": retry.updated_at,
     }
 
 
@@ -210,6 +269,49 @@ async def test_attempt_step_run_and_claim_lifecycle_are_atomic(workflow_runtime)
     assert step.completed_at is not None and run.completed_at is not None
 
 
+async def test_final_success_changes_only_the_declared_full_lifecycle_fields(
+    workflow_runtime,
+) -> None:
+    """A one-attempt success has no hidden ownership, retry, or aggregate side effects."""
+    kernel, factory = workflow_runtime
+    now = datetime(2030, 1, 1)
+    _, claim = await start_and_claim(kernel, now=now)
+    before_attempt, before_step, before_run, before_claim = await _records(
+        factory, claim.task_attempt_id
+    )
+    assert before_claim is not None
+    before = _lifecycle_snapshot(before_attempt, before_step, before_run, before_claim)
+    before_counts = await _scoped_counts(factory, before_step.id)
+
+    assert await kernel.finalize(claim, {"result_ref": "synthetic-success"}, now=now)
+
+    attempt, step, run, current = await _records(factory, claim.task_attempt_id)
+    released_claim = await _claim_by_id(factory, claim.id)
+    assert _lifecycle_snapshot(attempt, step, run, released_claim) == _expected_lifecycle(
+        before,
+        attempt={
+            "status": TaskAttemptStatus.SUCCEEDED,
+            "current_claim_id": None,
+            "result_ref_json": {"result_ref": "synthetic-success"},
+            "finished_at": now,
+            "updated_at": now,
+        },
+        step={
+            "status": WorkflowStepStatus.COMPLETED,
+            "completed_at": now,
+            "updated_at": now,
+        },
+        run={
+            "status": WorkflowRunStatus.COMPLETED,
+            "completed_at": now,
+            "result_ref_json": {"result_ref": "synthetic-success"},
+            "updated_at": now,
+        },
+        claim={"status": "released", "released_at": now},
+    )
+    assert current is None and await _scoped_counts(factory, step.id) == before_counts
+
+
 @pytest.mark.parametrize("bad_reason", [True, " ", "x" * 129, "prompt: synthetic", "/tmp/cv.pdf"])
 async def test_terminal_failure_code_is_bounded_and_rolls_back_owner(
     workflow_runtime, bad_reason: object
@@ -284,6 +386,12 @@ async def test_delayed_retry_promotes_only_when_due_and_completes_aggregate_life
     kernel, factory = workflow_runtime
     now = datetime(2030, 1, 1)
     _, first = await start_and_claim(kernel, now=now)
+    first_attempt, first_step, first_run, first_current = await _records(
+        factory, first.task_attempt_id
+    )
+    assert first_current is not None
+    before_retry = _lifecycle_snapshot(first_attempt, first_step, first_run, first_current)
+    before_retry_counts = await _scoped_counts(factory, first_step.id)
     due_at = now + timedelta(seconds=5)
     retry = await kernel.fail_or_retry(
         first,
@@ -295,49 +403,108 @@ async def test_delayed_retry_promotes_only_when_due_and_completes_aggregate_life
         factory, first, status="released", released_at=now
     )
     prior, step, run, claim = await _records(factory, first.task_attempt_id)
-    assert (prior.status, prior.finished_at, prior.current_claim_id) == (
-        TaskAttemptStatus.FAILED,
-        now,
-        None,
+    original = await _claim_by_id(factory, first.id)
+    assert _lifecycle_snapshot(prior, step, run, original) == _expected_lifecycle(
+        before_retry,
+        attempt={
+            "status": TaskAttemptStatus.FAILED,
+            "current_claim_id": None,
+            "failure_code": "transient_failure",
+            "finished_at": now,
+            "updated_at": now,
+        },
+        step={
+            "status": WorkflowStepStatus.WAITING,
+            "waiting_reason": WaitingReason.RETRY_TIME,
+            "updated_at": now,
+        },
+        run={"status": WorkflowRunStatus.WAITING, "updated_at": now},
+        claim={"status": "released", "released_at": now},
     )
-    assert (step.status, step.completed_at, run.status, run.completed_at, claim) == (
-        WorkflowStepStatus.WAITING,
-        None,
-        WorkflowRunStatus.WAITING,
-        None,
-        None,
-    )
+    assert claim is None
+    assert await _scoped_counts(factory, step.id) == (2, 1)
+    assert before_retry_counts == (1, 1)
     queued = await kernel.get_attempt(retry.id)
     assert queued is not None
-    assert (queued.status, queued.waiting_reason, queued.started_at, queued.finished_at) == (
-        TaskAttemptStatus.WAITING,
-        WaitingReason.RETRY_TIME,
-        None,
-        None,
+    assert _lifecycle_snapshot(queued, step, run, None)["attempt"] == _retry_snapshot(
+        queued, first=prior, not_before=due_at
     )
+    before_due = _lifecycle_snapshot(queued, step, run, None)
+    before_due_counts = await _scoped_counts(factory, step.id)
     assert await kernel.claim_next("worker-b", due_at - timedelta(microseconds=1)) is None
+    queued, step, run, current = await _records(factory, retry.id)
+    assert _lifecycle_snapshot(queued, step, run, current) == before_due
+    assert await _scoped_counts(factory, step.id) == before_due_counts
     second = await kernel.claim_next("worker-b", due_at)
     assert second is not None and second.task_attempt_id == retry.id
+    queued, step, run, current = await _records(factory, retry.id)
+    assert current is not None
+    expected_promoted = deepcopy(before_due)
+    expected_promoted["attempt"].update({  # type: ignore[union-attr]
+        "status": TaskAttemptStatus.RUNNING,
+        "waiting_reason": None,
+        "current_claim_id": second.id,
+        "claim_fencing_token": 1,
+        "started_at": due_at,
+        "updated_at": due_at,
+    })
+    expected_promoted["step"].update({  # type: ignore[union-attr]
+        "status": WorkflowStepStatus.RUNNING,
+        "waiting_reason": None,
+        "updated_at": due_at,
+    })
+    expected_promoted["run"].update({  # type: ignore[union-attr]
+        "status": WorkflowRunStatus.RUNNING,
+        "updated_at": due_at,
+    })
+    expected_promoted["claim"] = {
+        "id": second.id,
+        "status": "active",
+        "released_at": None,
+        "claimed_at": due_at,
+        "claimed_by": "worker-b",
+        "lease_expires_at": due_at + timedelta(seconds=30),
+        "fencing_token": 1,
+        "task_attempt_id": retry.id,
+        "purpose": "execution",
+        "recovery_not_before": None,
+        "recovery_failure_count": 0,
+        "last_recovery_error_code": None,
+    }
+    assert _lifecycle_snapshot(queued, step, run, current) == expected_promoted
+    assert await _scoped_counts(factory, step.id) == (2, 2)
+    before_success = _lifecycle_snapshot(queued, step, run, current)
+    before_success_counts = await _scoped_counts(factory, step.id)
     assert await kernel.finalize(second, {"result_ref": "synthetic-result"}, now=due_at)
     await _assert_original_claim_lifecycle(
         factory, second, status="released", released_at=due_at
     )
     completed, step, run, current = await _records(factory, retry.id)
-    assert (completed.status, completed.current_claim_id, current) == (
-        TaskAttemptStatus.SUCCEEDED,
-        None,
-        None,
+    final_claim = await _claim_by_id(factory, second.id)
+    assert _lifecycle_snapshot(completed, step, run, final_claim) == _expected_lifecycle(
+        before_success,
+        attempt={
+            "status": TaskAttemptStatus.SUCCEEDED,
+            "current_claim_id": None,
+            "result_ref_json": {"result_ref": "synthetic-result"},
+            "finished_at": due_at,
+            "updated_at": due_at,
+        },
+        step={
+            "status": WorkflowStepStatus.COMPLETED,
+            "completed_at": due_at,
+            "updated_at": due_at,
+        },
+        run={
+            "status": WorkflowRunStatus.COMPLETED,
+            "completed_at": due_at,
+            "result_ref_json": {"result_ref": "synthetic-result"},
+            "updated_at": due_at,
+        },
+        claim={"status": "released", "released_at": due_at},
     )
-    assert completed.result_ref_json == {"result_ref": "synthetic-result"}
-    assert completed.finished_at is not None
-    assert (step.status, step.completed_at, run.status, run.completed_at) == (
-        WorkflowStepStatus.COMPLETED,
-        completed.finished_at,
-        WorkflowRunStatus.COMPLETED,
-        completed.finished_at,
-    )
-    assert run.result_ref_json == {"result_ref": "synthetic-result"}
-    assert run.failure_code is None and step.failure_code is None
+    assert current is None
+    assert await _scoped_counts(factory, step.id) == before_success_counts
 
 
 async def test_retry_budget_and_explicit_terminal_failure_set_terminal_aggregate_fields(
@@ -347,10 +514,41 @@ async def test_retry_budget_and_explicit_terminal_failure_set_terminal_aggregate
     kernel, factory = workflow_runtime
     now = datetime(2030, 1, 1)
     _, first = await start_and_claim(kernel, now=now, max_attempts=2)
+    first_attempt, first_step, first_run, first_current = await _records(
+        factory, first.task_attempt_id
+    )
+    assert first_current is not None
+    first_before_retry = _lifecycle_snapshot(first_attempt, first_step, first_run, first_current)
+    assert await _scoped_counts(factory, first_step.id) == (1, 1)
     retry = await kernel.fail_or_retry(first, RetryFailure("transient_failure", "synthetic.retry", 1), now)
     assert retry is not None
+    failed_first, step, run, no_current = await _records(factory, first.task_attempt_id)
+    released_first = await _claim_by_id(factory, first.id)
+    assert _lifecycle_snapshot(failed_first, step, run, released_first) == _expected_lifecycle(
+        first_before_retry,
+        attempt={
+            "status": TaskAttemptStatus.FAILED,
+            "current_claim_id": None,
+            "failure_code": "transient_failure",
+            "finished_at": now,
+            "updated_at": now,
+        },
+        step={"status": WorkflowStepStatus.PENDING, "updated_at": now},
+        run={"status": WorkflowRunStatus.PENDING, "updated_at": now},
+        claim={"status": "released", "released_at": now},
+    )
+    assert no_current is None and await _scoped_counts(factory, step.id) == (2, 1)
+    queued_retry = await kernel.get_attempt(retry.id)
+    assert queued_retry is not None
+    assert _lifecycle_snapshot(queued_retry, step, run, None)["attempt"] == _retry_snapshot(
+        queued_retry, first=failed_first, not_before=None
+    )
     second = await kernel.claim_next("worker-b", now)
     assert second is not None and second.task_attempt_id == retry.id
+    second_attempt, step, run, second_current = await _records(factory, second.task_attempt_id)
+    assert second_current is not None
+    before_budget_terminal = _lifecycle_snapshot(second_attempt, step, run, second_current)
+    before_budget_counts = await _scoped_counts(factory, step.id)
     assert await kernel.fail_or_retry(
         second, RetryFailure("retry_exhausted", "synthetic.retry", 1), now
     ) is None
@@ -361,46 +559,75 @@ async def test_retry_budget_and_explicit_terminal_failure_set_terminal_aggregate
         factory, second, status="released", released_at=now
     )
     terminal, step, run, current = await _records(factory, second.task_attempt_id)
-    assert (terminal.status, terminal.failure_code, terminal.finished_at, current) == (
-        TaskAttemptStatus.FAILED,
-        "retry_exhausted",
-        now,
-        None,
+    released_second = await _claim_by_id(factory, second.id)
+    assert _lifecycle_snapshot(terminal, step, run, released_second) == _expected_lifecycle(
+        before_budget_terminal,
+        attempt={
+            "status": TaskAttemptStatus.FAILED,
+            "current_claim_id": None,
+            "failure_code": "retry_exhausted",
+            "finished_at": now,
+            "updated_at": now,
+        },
+        step={
+            "status": WorkflowStepStatus.FAILED,
+            "completed_at": now,
+            "failure_code": "retry_exhausted",
+            "updated_at": now,
+        },
+        run={
+            "status": WorkflowRunStatus.FAILED,
+            "completed_at": now,
+            "failure_code": "retry_exhausted",
+            "updated_at": now,
+        },
+        claim={"status": "released", "released_at": now},
     )
-    assert (step.status, step.failure_code, step.completed_at) == (
-        WorkflowStepStatus.FAILED,
-        "retry_exhausted",
-        now,
-    )
-    assert (run.status, run.failure_code, run.completed_at, run.result_ref_json) == (
-        WorkflowRunStatus.FAILED,
-        "retry_exhausted",
-        now,
-        None,
-    )
-    async with factory.session_factory() as session:
-        attempts = list((await session.scalars(select(TaskAttemptRecord))).all())
-    assert len(attempts) == 2
+    assert current is None and await _scoped_counts(factory, step.id) == before_budget_counts
 
     _, explicit = await start_and_claim(kernel, now=now + timedelta(seconds=1))
-    assert await kernel.fail_terminal(explicit, "explicit_failure", now + timedelta(seconds=1))
+    explicit_now = now + timedelta(seconds=1)
+    explicit_attempt, explicit_step, explicit_run, explicit_current = await _records(
+        factory, explicit.task_attempt_id
+    )
+    assert explicit_current is not None
+    explicit_before = _lifecycle_snapshot(
+        explicit_attempt, explicit_step, explicit_run, explicit_current
+    )
+    explicit_counts = await _scoped_counts(factory, explicit_step.id)
+    assert await kernel.fail_terminal(explicit, "explicit_failure", explicit_now)
     await _assert_original_claim_lifecycle(
         factory,
         explicit,
         status="released",
-        released_at=now + timedelta(seconds=1),
+        released_at=explicit_now,
     )
     failed, failed_step, failed_run, current = await _records(factory, explicit.task_attempt_id)
-    assert (failed.status, failed.failure_code, failed.finished_at, current) == (
-        TaskAttemptStatus.FAILED,
-        "explicit_failure",
-        now + timedelta(seconds=1),
-        None,
+    explicit_claim = await _claim_by_id(factory, explicit.id)
+    assert _lifecycle_snapshot(failed, failed_step, failed_run, explicit_claim) == _expected_lifecycle(
+        explicit_before,
+        attempt={
+            "status": TaskAttemptStatus.FAILED,
+            "current_claim_id": None,
+            "failure_code": "explicit_failure",
+            "finished_at": explicit_now,
+            "updated_at": explicit_now,
+        },
+        step={
+            "status": WorkflowStepStatus.FAILED,
+            "completed_at": explicit_now,
+            "failure_code": "explicit_failure",
+            "updated_at": explicit_now,
+        },
+        run={
+            "status": WorkflowRunStatus.FAILED,
+            "completed_at": explicit_now,
+            "failure_code": "explicit_failure",
+            "updated_at": explicit_now,
+        },
+        claim={"status": "released", "released_at": explicit_now},
     )
-    assert (failed_step.status, failed_run.status) == (
-        WorkflowStepStatus.FAILED,
-        WorkflowRunStatus.FAILED,
-    )
+    assert current is None and await _scoped_counts(factory, failed_step.id) == explicit_counts
 
 
 async def test_expired_execution_and_outcome_unknown_claims_recover_without_aggregate_drift(
@@ -410,27 +637,42 @@ async def test_expired_execution_and_outcome_unknown_claims_recover_without_aggr
     kernel, factory = workflow_runtime
     now = datetime(2030, 1, 1)
     _, execution_claim = await start_and_claim(kernel, now=now)
-    assert await kernel.reconcile(execution_claim.lease_expires_at) == 1
+    execution_attempt, execution_step, execution_run, execution_current = await _records(
+        factory, execution_claim.task_attempt_id
+    )
+    assert execution_current is not None
+    execution_before = _lifecycle_snapshot(
+        execution_attempt, execution_step, execution_run, execution_current
+    )
+    execution_counts = await _scoped_counts(factory, execution_step.id)
+    execution_expiry = execution_claim.lease_expires_at
+    assert await kernel.reconcile(execution_expiry) == 1
     await _assert_original_claim_lifecycle(
         factory,
         execution_claim,
         status="expired",
-        released_at=execution_claim.lease_expires_at,
+        released_at=execution_expiry,
     )
     recovered, step, run, current = await _records(factory, execution_claim.task_attempt_id)
-    assert (recovered.status, recovered.current_claim_id, step.status, run.status, current) == (
-        TaskAttemptStatus.PENDING,
-        None,
-        WorkflowStepStatus.PENDING,
-        WorkflowRunStatus.PENDING,
-        None,
+    expired_execution = await _claim_by_id(factory, execution_claim.id)
+    assert _lifecycle_snapshot(recovered, step, run, expired_execution) == _expected_lifecycle(
+        execution_before,
+        attempt={
+            "status": TaskAttemptStatus.PENDING,
+            "current_claim_id": None,
+            "updated_at": execution_expiry,
+        },
+        step={"status": WorkflowStepStatus.PENDING, "updated_at": execution_expiry},
+        run={"status": WorkflowRunStatus.PENDING, "updated_at": execution_expiry},
+        claim={"status": "expired", "released_at": execution_expiry},
     )
-    assert step.completed_at is None and run.completed_at is None
+    assert current is None and await _scoped_counts(factory, step.id) == execution_counts
 
     _, external_claim = await start_and_claim(kernel, now=now + timedelta(seconds=1))
+    external_now = now + timedelta(seconds=1)
     assert await kernel.mark_outcome_unknown(
         external_claim,
-        now + timedelta(seconds=1),
+        external_now,
         capability_id="synthetic.check",
         capability_version=1,
         idempotency_class="check_before_retry",
@@ -443,25 +685,35 @@ async def test_expired_execution_and_outcome_unknown_claims_recover_without_aggr
         released_at=now + timedelta(seconds=1),
     )
     recon_claim = await kernel.claim_outcome_unknown(
-        external_claim.task_attempt_id, "reconciler", now + timedelta(seconds=1)
+        external_claim.task_attempt_id, "reconciler", external_now
     )
     assert recon_claim is not None
-    assert await kernel.reconcile(recon_claim.lease_expires_at) == 1
+    unknown_before_attempt, unknown_before_step, unknown_before_run, unknown_before_current = await _records(
+        factory, external_claim.task_attempt_id
+    )
+    assert unknown_before_current is not None
+    unknown_before = _lifecycle_snapshot(
+        unknown_before_attempt, unknown_before_step, unknown_before_run, unknown_before_current
+    )
+    unknown_counts = await _scoped_counts(factory, unknown_before_step.id)
+    unknown_expiry = recon_claim.lease_expires_at
+    assert await kernel.reconcile(unknown_expiry) == 1
     await _assert_original_claim_lifecycle(
         factory,
         recon_claim,
         status="expired",
-        released_at=recon_claim.lease_expires_at,
+        released_at=unknown_expiry,
     )
     unknown, step, run, current = await _records(factory, external_claim.task_attempt_id)
-    assert (unknown.status, unknown.current_claim_id, step.status, run.status, current) == (
-        TaskAttemptStatus.OUTCOME_UNKNOWN,
-        None,
-        WorkflowStepStatus.WAITING,
-        WorkflowRunStatus.WAITING,
-        None,
+    expired_reconciliation = await _claim_by_id(factory, recon_claim.id)
+    assert _lifecycle_snapshot(unknown, step, run, expired_reconciliation) == _expected_lifecycle(
+        unknown_before,
+        attempt={"current_claim_id": None, "updated_at": unknown_expiry},
+        step={"updated_at": unknown_expiry},
+        run={"updated_at": unknown_expiry},
+        claim={"status": "expired", "released_at": unknown_expiry},
     )
-    assert step.completed_at is None and run.completed_at is None
+    assert current is None and await _scoped_counts(factory, step.id) == unknown_counts
 
 
 class _SyncFailureRepository(SQLiteWorkflowRepository):
@@ -519,6 +771,12 @@ async def test_deferred_outcome_unknown_reconciliation_claim_blocks_alternate_ow
     recon = await kernel.claim_outcome_unknown(execution.task_attempt_id, "reconciler-a", now)
     assert recon is not None
     expiry = recon.lease_expires_at
+    before_attempt, before_step, before_run, before_current = await _records(
+        factory, execution.task_attempt_id
+    )
+    assert before_current is not None
+    before_defer = _lifecycle_snapshot(before_attempt, before_step, before_run, before_current)
+    before_defer_counts = await _scoped_counts(factory, before_step.id)
     poison = kernel._repository._reconcile_one_expired_claim
 
     poisoned = False
@@ -533,24 +791,92 @@ async def test_deferred_outcome_unknown_reconciliation_claim_blocks_alternate_ow
     monkeypatch.setattr(kernel._repository, "_reconcile_one_expired_claim", fail_recovery)
     assert await kernel.reconcile(expiry, recovery_backoff_seconds=10) == 0
     deferred = await _claim_by_id(factory, recon.id)
-    assert deferred.recovery_not_before == expiry + timedelta(seconds=10)
     attempt, step, run, current = await _records(factory, execution.task_attempt_id)
-    assert attempt.status == TaskAttemptStatus.OUTCOME_UNKNOWN
-    assert attempt.current_claim_id == recon.id
-    assert current is not None and current.id == recon.id and current.fencing_token == recon.fencing_token
+    assert current is not None
+    assert _lifecycle_snapshot(attempt, step, run, deferred) == _expected_lifecycle(
+        before_defer,
+        claim={
+            "recovery_not_before": expiry + timedelta(seconds=10),
+            "recovery_failure_count": 1,
+            "last_recovery_error_code": "recovery_failed",
+        },
+    )
+    assert await _scoped_counts(factory, step.id) == before_defer_counts
+    assert (
+        attempt.status,
+        attempt.current_claim_id,
+        attempt.capability_id,
+        attempt.capability_version,
+        attempt.idempotency_class,
+        attempt.reconciliation_reference,
+    ) == (
+        TaskAttemptStatus.OUTCOME_UNKNOWN,
+        recon.id,
+        "synthetic.check",
+        1,
+        "check_before_retry",
+        "synthetic.ref",
+    )
+    before_stale = _lifecycle_snapshot(attempt, step, run, deferred)
+    stale_counts = await _scoped_counts(factory, step.id)
     assert await kernel.claim_outcome_unknown(execution.task_attempt_id, "reconciler-b", expiry + timedelta(seconds=1)) is None
     assert await kernel._repository.finalize(recon, {"result_ref": "stale"}, expiry + timedelta(seconds=1)) is False
     assert await kernel.fail_terminal(recon, "stale_failure", expiry + timedelta(seconds=1)) is False
+    assert await kernel.return_outcome_unknown(recon, expiry + timedelta(seconds=1)) is False
+    stale_attempt, stale_step, stale_run, stale_current = await _records(
+        factory, execution.task_attempt_id
+    )
+    assert stale_current is not None
+    stale_claim = await _claim_by_id(factory, recon.id)
+    assert _lifecycle_snapshot(stale_attempt, stale_step, stale_run, stale_claim) == before_stale
+    assert await _scoped_counts(factory, stale_step.id) == stale_counts
 
     due = expiry + timedelta(seconds=10)
     assert await kernel.reconcile(due) == 1
     recovered = await _claim_by_id(factory, recon.id)
-    assert recovered.status == "expired" and recovered.released_at == due
     attempt, step, run, current = await _records(factory, execution.task_attempt_id)
-    assert attempt.status == TaskAttemptStatus.OUTCOME_UNKNOWN and attempt.current_claim_id is None
-    assert current is None and step.status == WorkflowStepStatus.WAITING and run.status == WorkflowRunStatus.WAITING
+    assert _lifecycle_snapshot(attempt, step, run, recovered) == _expected_lifecycle(
+        before_stale,
+        attempt={"current_claim_id": None, "updated_at": due},
+        step={"updated_at": due},
+        run={"updated_at": due},
+        claim={"status": "expired", "released_at": due},
+    )
+    assert current is None and await _scoped_counts(factory, step.id) == stale_counts
     replacement = await kernel.claim_outcome_unknown(execution.task_attempt_id, "reconciler-c", due)
     assert replacement is not None and replacement.fencing_token > recon.fencing_token
+    replacement_attempt, replacement_step, replacement_run, replacement_current = await _records(
+        factory, execution.task_attempt_id
+    )
+    assert replacement_current is not None
+    expected_replacement = _expected_lifecycle(
+        _lifecycle_snapshot(attempt, step, run, None),
+        attempt={
+            "current_claim_id": replacement.id,
+            "claim_fencing_token": replacement.fencing_token,
+            "updated_at": due,
+        },
+        step={"updated_at": due},
+        run={"updated_at": due},
+    )
+    expected_replacement["claim"] = {
+        "id": replacement.id,
+        "status": "active",
+        "released_at": None,
+        "claimed_at": due,
+        "claimed_by": "reconciler-c",
+        "lease_expires_at": due + timedelta(seconds=30),
+        "fencing_token": replacement.fencing_token,
+        "task_attempt_id": execution.task_attempt_id,
+        "purpose": "reconciliation",
+        "recovery_not_before": None,
+        "recovery_failure_count": 0,
+        "last_recovery_error_code": None,
+    }
+    assert _lifecycle_snapshot(
+        replacement_attempt, replacement_step, replacement_run, replacement_current
+    ) == expected_replacement
+    assert await _scoped_counts(factory, replacement_step.id) == (1, stale_counts[1] + 1)
 
 
 @pytest.mark.parametrize("backoff_seconds", [True, 0, -1, 3601])
