@@ -275,3 +275,51 @@ installed in this environment. Runtime collection reports 169 tests. The full ru
 execution was attempted but stalled in the existing approval test before a reliable
 completion count could be produced, so no full-suite pass is claimed. Ruff and
 `git diff --check` passed. Scoped re-review remains pending.
+
+## Release fix round 5 — exhaustive lifecycle and deferred-claim proof
+
+Implementation/test head: `95ffd30` (this evidence commit deliberately does not
+self-reference). This proof-only round changes no production code. It expands
+release snapshots to every persisted task-attempt, workflow-step, workflow-run,
+and execution-claim field, then compares a deep-copied before image with only
+the explicit transition deltas. It covers final success, delayed retry creation,
+due promotion, delayed final success, budget terminal failure, explicit terminal
+failure, ordinary expired recovery, `OUTCOME_UNKNOWN` expired recovery, rollback,
+and the deferred reconciliation claim lifecycle. Scoped attempt and claim counts
+are asserted before and after each covered transition.
+
+The deferred `OUTCOME_UNKNOWN` proof records the full reconciliation-claim image
+before poison. Deferral may change only `recovery_not_before`,
+`recovery_failure_count`, and the stable recovery error code; stale alternate
+claim/finalize/fail/return operations leave the full image untouched. At due
+recovery the original claim becomes expired with `released_at=due`, while its
+lease, fence, purpose, and durable capability binding remain exact; a replacement
+reconciliation claim has a strictly higher fence and the reconciliation purpose.
+
+TDD evidence: the initial expanded due-promotion expectation failed because it
+expected `not_before` to clear. The persisted contract deliberately retains that
+timestamp as retry-schedule provenance; the corrected explicit expectation now
+asserts the exact retained value. No production defect was exposed.
+
+```text
+Authoritative local backend development container: Python 3.12.13
+python -m pytest --no-cov -q tests/runtime/test_release_contract.py tests/runtime/test_reconciliation.py
+# 61 passed in 15.86s (release-contract 44; reconciliation 17).
+
+python -m pytest --no-cov -p no:cacheprovider --collect-only -q -o log_cli=false tests/runtime
+# 170 tests collected in 0.94s.
+
+Full Python 3.12 runtime execution was invoked repeatedly with the same isolated
+synthetic SQLite suite. The execution transport returned partial/empty output
+around the release-contract midpoint despite no surviving pytest/container process,
+so it did not provide a reliable final execution count. It is not claimed passed.
+
+python -m ruff check tests/runtime/test_release_contract.py
+python scripts/check_docs.py
+git diff --check
+# all passed.
+```
+
+The focused 61-case Python 3.12 result is authoritative. All fixtures are synthetic,
+file-backed SQLite databases; no Coach API, media, transcript, deletion, export, or
+production data boundary is touched. Review remains pending.
