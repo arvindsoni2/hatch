@@ -4,14 +4,15 @@
 
 - R1 baseline: `fb4d6d2`.
 - Overall R2 implementation range: `fb4d6d2..8c53fcc`.
-- Latest release-fix implementation head: `8c53fcc`
-  (`fix(workflow): fence deferred recovery reclaims`).
+- Latest release-fix production implementation head: `8c53fcc`
+  (`fix(workflow): fence deferred recovery reclaims`); proof-only test head:
+  `95ffd30` (`test(runtime): prove exhaustive R2 lifecycle transitions`).
 - Task 5 implementation and fixes: `f637490`, `c3d5f3e`, `f7e678f`.
 - Task 6 implementation and fixes: `f614e20`, `eb9c4bb`, `68a6570`, `4834991`.
 - Prior release hardening: `394bbfb`; release recovery hardening: `e9ae56c`; final
   deferred-reclaim CAS hardening: `8c53fcc`.
-- Prior evidence-only commits: `bb59fe6`, `eeeb184`. This evidence is a docs-only
-  follow-up and does not self-reference its own commit ID.
+- Prior evidence-only commits: `bb59fe6`, `eeeb184`, `cc6a48a`. This evidence is a
+  docs-only follow-up and does not self-reference its own commit ID.
 - Architecture SHA-256: `ef426195f1234ad5c394ca4aefd63019d7ed05321df6cbd8f14f4baddf21eb36`.
 - Foundation spec SHA-256: `578d6f9d0050014bde074e1ef72588733e305f46acad017f90bfb6ac95aa65a0`.
 - Coach V6 SHA-256: `39b0a616a0edb564b221ac11cf53aba5160710c034b67786c8e639b1495c00b8`.
@@ -55,7 +56,12 @@ release-fix audit added deterministic post-handler clock and poisoned-recovery c
 to the inherited partial change. Fix Round 3 added a deterministic stale-reclaim RED
 case: after selection, a committed `recovery_not_before` still allowed reclaim to
 create a new claim. The final CAS guard turns that case GREEN; it is not a timing test.
-The authoritative Python 3.12 gates are below.
+The proof-only final round expands lifecycle snapshots to all persisted
+attempt/step/run/claim fields and compares a deep-copied before image with explicit
+transition deltas. It covers success, delayed-retry creation and due promotion,
+budget and explicit terminal failure, ordinary and `OUTCOME_UNKNOWN` expiry
+recovery, rollback, and deferred reconciliation ownership. The authoritative Python
+3.12 gates are below.
 
 ```text
 # Isolated Python 3.12.13 backend image; synthetic disposable SQLite only
@@ -67,20 +73,22 @@ python -m pytest -q --no-cov \
   tests/runtime/test_storage_contract.py
 # 66 passed in 10.54s
 
-python -m pytest -q --no-cov tests/runtime/test_release_contract.py
-# 42 passed in 7.27s
+python -m pytest -q --no-cov tests/runtime/test_release_contract.py \
+  tests/runtime/test_reconciliation.py
+# 61 passed in 15.86s (44 release-contract; 17 reconciliation)
 
 python -m pytest -q --no-cov tests/runtime
-# 168 passed; includes reconciliation, storage, schema, event-atomicity,
-# SQLite contention, restart, approvals, and release-contract coverage.
+# 170 passed in 48.77s; includes reconciliation, storage, schema,
+# event-atomicity, SQLite contention, restart, approvals, and release-contract
+# coverage.
 
 python -m pytest -q --no-cov tests/runtime/test_schema_migration.py
 # 4 passed in 14.14s
 
-# The focused release/reconciliation pair collects 59 cases; the complete runtime
-# suite collects 168 cases.
+# The focused release/reconciliation pair collects 61 cases; the complete runtime
+# suite collects 170 cases.
 
-python -m ruff check --no-cache [all changed runtime, migration, and test paths]
+python -m ruff check app/runtime tests/runtime
 # All checks passed.
 
 python scripts/check_docs.py
@@ -94,15 +102,12 @@ alembic current --check-heads
 ```
 
 The full Python 3.12 backend suite was also run in the same isolated container:
-`3448 passed, 2 failed, 6 warnings in 441.65s`. The two failures are verification
-container limitations outside this diff: the benchmark manifest cannot read the
-worktree's Git metadata through the disposable mount and records
-`working_tree_clean_before="not_recorded"`; the canonical setup server test cannot
-find `make` in the image. Both exact tests reran on the host where Git metadata and
-`/usr/bin/make` are available: `2 passed in 0.51s` (host Python 3.14.7; one existing
-requests/urllib3 compatibility warning). This is not a claim that the container full
-suite passed; the focused Python 3.12 release gate above is the authoritative R2
-product result.
+`3454 passed, 1 failed in 592.99s`. The remaining failure is the non-database
+benchmark provenance assertion: the disposable worktree mount cannot read Git
+metadata and records `working_tree_clean_before="not_recorded"`. Its exact test
+passed on the host where Git metadata is available: `1 passed` (host Python 3.14.7).
+This is not a claim that the container full suite passed; the complete 170-case
+Python 3.12 runtime suite above is the authoritative R2 product result.
 
 ## Security disposition, rollback, and review
 
@@ -117,4 +122,5 @@ Rollback is code-first. Revert `8c53fcc` together with the R2 implementation ran
 only after checking for active workflow claims that need recovery. Migration
 `u8v9w0x1y2z3` has an additive downgrade that removes only its three recovery
 disposition columns; use it only after confirming those durable fields are no longer
-needed. Review disposition: final whole-branch review pending.
+needed. Scoped release review: CLEAN. Review disposition: final whole-branch review
+pending.
