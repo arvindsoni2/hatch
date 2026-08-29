@@ -115,8 +115,12 @@ class ExecutionGateway:
             or policy.effective_constraints.approval_required
         ):
             try:
-                canonical_payload_hash(raw_payload)
-            except (TypeError, ValueError, OverflowError):
+                effective_payload = typed_payload.model_dump(
+                    mode="json",
+                    exclude_unset=True,
+                )
+                canonical_payload_hash(effective_payload)
+            except Exception:
                 return CapabilityResult(
                     code=ExecutionResultCode.VALIDATION_FAILURE,
                     reason_code="invalid_approval_payload",
@@ -124,7 +128,7 @@ class ExecutionGateway:
             approved = await self._verify_approval(
                 claim,
                 capability.capability_id,
-                raw_payload,
+                effective_payload,
                 approval,
             )
             if approved is not True:
@@ -295,6 +299,16 @@ class ExecutionGateway:
                     ),
                 )
             model_id = forced_model or requested_model
+            if model_id is None and constraints.allowed_models is not None:
+                return (
+                    payload,
+                    None,
+                    None,
+                    CapabilityResult(
+                        code=ExecutionResultCode.POLICY_DENIED,
+                        reason_code="model_selection_required",
+                    ),
+                )
             if (
                 model_id is not None
                 and constraints.allowed_models is not None
@@ -313,6 +327,16 @@ class ExecutionGateway:
                 payload = payload.model_copy(update={"model_id": forced_model})
         if capability.uses_provider_routing:
             provider = getattr(payload, "provider", None)
+            if provider is None and constraints.allowed_providers is not None:
+                return (
+                    payload,
+                    model_id,
+                    None,
+                    CapabilityResult(
+                        code=ExecutionResultCode.POLICY_DENIED,
+                        reason_code="provider_selection_required",
+                    ),
+                )
             if (
                 provider is not None
                 and constraints.allowed_providers is not None

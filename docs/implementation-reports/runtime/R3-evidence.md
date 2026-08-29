@@ -26,7 +26,7 @@ disposable SQLite databases. No production or shared external provider was calle
 | Invariant | Implementation boundary | Independent evidence |
 | --- | --- | --- |
 | `INV-EXE-001` typed registration and resolution | Immutable `CapabilityDescriptor`, duplicate-safe `CapabilityRegistry`, strict Pydantic input/output validation | `test_gateway_strictly_validates_payload_and_typed_output`, `test_gateway_rejects_adapter_output_that_violates_descriptor`, `test_only_four_initial_capabilities_are_registered` |
-| `INV-EXE-002` control and approval precede side effects | Fail-closed Control Plane allowlist check followed by exact durable, payload-bound approval verification | `test_visible_capability_is_not_automatically_authorized`, all four side-effect authorization cases, inherited policy precedence/force-model cases |
+| `INV-EXE-002` control and approval precede side effects | Fail-closed capability, egress, and concrete routing authorization followed by exact durable approval verification against the effective typed payload | `test_visible_capability_is_not_automatically_authorized`, LLM denied/omitted routing cases, forced-route approval cases, side-effect authorization cases, inherited policy precedence/force-model cases |
 | `INV-EXE-003` deadlines, cancellation, and replay advice only narrow | Minimum policy/descriptor deadline, `asyncio.timeout`, uncaught external `CancelledError`, descriptor-constrained retry advice | `test_earlier_policy_deadline_and_budgets_reach_adapter`, `test_timeout_of_commit_is_outcome_unknown_not_retryable`, `test_external_cancellation_remains_cancellation`, all idempotency cases |
 | `INV-EXE-004` external result persistence is fenced and ambiguous outcomes reconcile | Adapter call occurs before the short write UoW; claim/attempt/fence/lease are checked atomically before record insertion; `OUTCOME_UNKNOWN` stores a hashed reconciliation reference and releases the claim in the same UoW | `test_lost_external_commit_becomes_outcome_unknown`, `test_gateway_rejects_result_after_claim_loss`, affected R2 fencing/reconciliation gate |
 | Privacy-safe evidence and telemetry | Durable metadata contains stable codes, classifications, latency, and hashes only; telemetry is content-free, emitted after persistence, and non-fatal | `test_canaries_never_enter_records_errors_logs_or_telemetry`, `test_idempotency_key_reaches_adapter_but_only_hash_is_persisted`, `test_success_is_typed_persisted_then_reported_with_nonfatal_telemetry`, inherited runtime privacy cases |
@@ -187,10 +187,11 @@ The review identified four related boundary gaps. The fix makes egress and routi
 relevance explicit in `CapabilityDescriptor`; `READ_ONLY_EXTERNAL` also implies
 egress without relying on a second flag. The generic structured-generation adapter
 now accepts bounded stable model/provider routing fields. Before approval or
-invocation, the gateway enforces `data_egress`, model and provider allowlists, and
-forced-model equality. It injects the authorized forced model into the typed payload
-and passes effective egress, model/provider allowlists, and selected routing in
-`CapabilityInvocationContext`.
+invocation, the gateway enforces `data_egress`, supplied model/provider selections
+against their allowlists, and forced-model equality. It injects the authorized forced
+model into the typed payload and passes effective egress, model/provider allowlists,
+and selected routing in `CapabilityInvocationContext`. That round did not reject an
+omitted selection under a non-empty allowlist; review fix round 2 closes that gap.
 
 At ambiguous commit boundaries, adapter exceptions and malformed/unvalidated success
 responses now classify as non-retryable `OUTCOME_UNKNOWN`, receive only a
@@ -286,4 +287,102 @@ disallowed model and provider, forced-model mismatch, authorized routing handoff
 raised and malformed commit ambiguity, all eight result classes with raw
 reference/path/token canaries across result, attempt, execution metadata, logs, and
 telemetry, and canonical approval oversize rejection. Coach V6 command, media,
+deletion, and export classes remain non-applicable because no Coach path changed.
+
+## Review fix round 2: concrete routing and effective approval material
+
+Fix base: `d784a33e2a0c3869e3e082633831d79c43179049`. This evidence accompanies
+the round-2 fix commit and therefore does not self-reference its own commit SHA.
+
+The prior evidence's broad routing statement was incomplete: explicit mismatches
+were rejected, but an omitted `model_id` or `provider` under a non-empty allowlist
+remained unresolved and could be selected inside an arbitrary handler. The gateway
+now fails closed with bounded `model_selection_required` or
+`provider_selection_required` before approval or invocation. A policy-forced model
+is the only omitted model that is concretely injected by this boundary.
+
+Approval-required invocation now derives canonical approval material from the
+post-routing typed payload using `model_dump(mode="json", exclude_unset=True)`. Thus
+gateway-injected routing is included, caller input that omits the injected model no
+longer authorizes execution, and an approval for the exact effective payload does.
+The effective representation retains explicitly supplied fields and gateway updates
+without adding unrelated schema defaults. Serialization/canonicalization failure
+still returns the bounded `invalid_approval_payload` typed result.
+
+### Strict TDD record
+
+The production changes that the new tests catch are (1) removing the missing-route
+branches so an adapter can choose after authorization, and (2) passing `raw_payload`
+instead of the post-routing effective payload to canonical approval verification.
+Literal allowlists, route identifiers, and expected reason codes were derived in the
+tests independently of gateway helpers.
+
+Exact RED command:
+
+```text
+docker run --rm --entrypoint python \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  -m pytest -q --no-cov tests/runtime/test_execution_gateway.py \
+  -k 'omitted_restricted_routing or approval_for_effective_forced_route or approval_for_pre_routing_payload'
+# 4 failed, 12 deselected, 3 warnings in 0.84s.
+```
+
+Both omitted-selection cases observed `SUCCESS` instead of `POLICY_DENIED`; approval
+for the effective forced route observed `approval_invalid`; and approval for the
+pre-routing payload observed `SUCCESS`. These were the intended behavioral failures,
+not collection errors or test typos.
+
+The same command after the minimal production change reported
+`4 passed, 12 deselected, 2 warnings in 0.77s`.
+
+### Required final gates
+
+```text
+docker run --rm --entrypoint python \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  -m pytest -q --no-cov \
+  tests/runtime/test_execution_gateway.py \
+  tests/runtime/test_side_effect_authorization.py \
+  tests/runtime/test_idempotency.py tests/runtime/test_outcome_unknown.py \
+  tests/runtime/test_deadlines.py tests/runtime/test_policy_precedence.py \
+  tests/runtime/test_policy_force_model.py tests/runtime/test_fencing.py
+# 56 passed, 2 warnings in 5.15s.
+
+docker run --rm --entrypoint python \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  -m pytest -q --no-cov tests/runtime/test_fencing.py \
+  tests/runtime/test_approvals.py tests/runtime/test_reconciliation.py \
+  tests/runtime/test_storage_contract.py tests/runtime/test_runtime_privacy.py
+# 58 passed, 2 warnings in 6.64s.
+
+docker run --rm --entrypoint ruff \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  check --no-cache app/runtime/execution \
+  tests/runtime/test_execution_gateway.py tests/runtime/test_outcome_unknown.py \
+  tests/runtime/test_side_effect_authorization.py
+# All checks passed!
+
+docker run --rm --entrypoint ruff \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  format --check --no-cache app/runtime/execution \
+  tests/runtime/test_execution_gateway.py tests/runtime/test_outcome_unknown.py \
+  tests/runtime/test_side_effect_authorization.py
+# 11 files already formatted.
+```
+
+Per the round-2 assignment, the full backend suite was not rerun; the controller owns
+the expensive final whole-branch gate. The latest completed full-suite evidence
+remains the round-1 `3503 passed, 2 failed` environment-limited run above and is not
+overstated as green.
+
+Security disposition: omitted restrictive routing is now a negative authorization
+case; forced-route positive/negative approval tests prove exact effective-payload
+binding; no payload, path, token, model output, or provider-operation content is added
+to errors, persistence, logs, or telemetry. Existing privacy, ambiguity, fencing,
+cancellation, and reconciliation coverage remains green. Coach V6 command, media,
 deletion, and export classes remain non-applicable because no Coach path changed.

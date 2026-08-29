@@ -64,6 +64,7 @@ def _llm_policy(
     allowed_models: frozenset[str] | None = None,
     allowed_providers: frozenset[str] | None = None,
     forced_model: str | None = None,
+    approval_required: bool = False,
 ):
     return ControlPlane().evaluate(
         system=PolicyLayer(
@@ -72,6 +73,7 @@ def _llm_policy(
                 allowed_capabilities=frozenset({"llm.generate_structured"}),
                 allowed_models=allowed_models,
                 allowed_providers=allowed_providers,
+                approval_required=approval_required,
             )
         ),
         routing=RoutingPreferences(force_model=forced_model),
@@ -80,6 +82,38 @@ def _llm_policy(
 
 async def _structured_success(_payload, _context):
     return StructuredGenerationOutput(result_ref="synthetic-result")
+
+
+async def _approve_llm_payload(factory, gateway, claim, payload):
+    from app.runtime.workflow import (
+        TaskAttemptRecord,
+        WorkflowRunRecord,
+        WorkflowStepRecord,
+    )
+
+    async with factory.transaction() as uow:
+        attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+        assert attempt is not None
+        step = await uow.session.get(WorkflowStepRecord, attempt.workflow_step_id)
+        assert step is not None
+        run = await uow.session.get(WorkflowRunRecord, step.workflow_run_id)
+        assert run is not None
+    assert gateway.approvals is not None
+    approval = await gateway.approvals.request(
+        workflow_run_id=run.id,
+        workflow_step_id=step.id,
+        task_attempt_id=claim.task_attempt_id,
+        capability_id="llm.generate_structured",
+        payload=payload,
+    )
+    assert await gateway.approvals.decide(
+        approval.id,
+        decided_by="synthetic-user",
+        approved=True,
+        reason="user_confirmed",
+        now=NOW,
+    )
+    return approval
 
 
 async def test_visible_capability_is_not_automatically_authorized(
@@ -214,6 +248,56 @@ async def test_llm_disallowed_model_or_provider_never_reaches_adapter(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("payload", "reason_code"),
+    (
+        (
+            {
+                "request_ref": "request-1",
+                "schema_ref": "schema-1",
+                "provider": "provider-a",
+            },
+            "model_selection_required",
+        ),
+        (
+            {
+                "request_ref": "request-1",
+                "schema_ref": "schema-1",
+                "model_id": "model-a",
+            },
+            "provider_selection_required",
+        ),
+    ),
+)
+async def test_llm_omitted_restricted_routing_never_reaches_adapter(
+    workflow_runtime,
+    payload,
+    reason_code,
+) -> None:
+    """Would fail if an adapter could resolve an allowlisted route after auth."""
+    calls = []
+
+    async def handler(typed_payload, context):
+        calls.append((typed_payload, context))
+        return await _structured_success(typed_payload, context)
+
+    gateway, _, claim = await _llm_gateway_case(workflow_runtime, handler)
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=_llm_policy(
+            allowed_models=frozenset({"model-a"}),
+            allowed_providers=frozenset({"provider-a"}),
+        ),
+        payload=payload,
+    )
+
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert result.reason_code == reason_code
+    assert calls == []
+
+
 async def test_llm_forced_model_mismatch_never_reaches_adapter(
     workflow_runtime,
 ) -> None:
@@ -284,6 +368,96 @@ async def test_llm_adapter_receives_only_policy_authorized_routing(
     assert context.data_egress is True
     assert context.allowed_models == frozenset({"model-a"})
     assert context.allowed_providers == frozenset({"provider-a"})
+
+
+async def test_approval_for_effective_forced_route_reaches_llm_adapter(
+    workflow_runtime,
+) -> None:
+    """Would fail if approval were checked against pre-routing caller input."""
+    calls = []
+
+    async def handler(payload, context):
+        calls.append((payload, context))
+        return await _structured_success(payload, context)
+
+    gateway, factory, claim = await _llm_gateway_case(workflow_runtime, handler)
+    caller_payload = {
+        "request_ref": "request-1",
+        "schema_ref": "schema-1",
+        "provider": "provider-a",
+    }
+    effective_payload = {
+        "request_ref": "request-1",
+        "schema_ref": "schema-1",
+        "model_id": "model-a",
+        "provider": "provider-a",
+    }
+    approval = await _approve_llm_payload(
+        factory,
+        gateway,
+        claim,
+        effective_payload,
+    )
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=_llm_policy(
+            allowed_models=frozenset({"model-a"}),
+            allowed_providers=frozenset({"provider-a"}),
+            forced_model="model-a",
+            approval_required=True,
+        ),
+        approval=approval,
+        payload=caller_payload,
+    )
+
+    assert result.code is ExecutionResultCode.SUCCESS
+    assert len(calls) == 1
+    invoked_payload, context = calls[0]
+    assert invoked_payload.model_dump(mode="json") == effective_payload
+    assert context.model_id == "model-a"
+
+
+async def test_approval_for_pre_routing_payload_cannot_authorize_forced_route(
+    workflow_runtime,
+) -> None:
+    """Would fail if approval omitted the model injected into executed payload."""
+    calls = []
+
+    async def handler(payload, context):
+        calls.append((payload, context))
+        return await _structured_success(payload, context)
+
+    gateway, factory, claim = await _llm_gateway_case(workflow_runtime, handler)
+    caller_payload = {
+        "request_ref": "request-1",
+        "schema_ref": "schema-1",
+        "provider": "provider-a",
+    }
+    approval = await _approve_llm_payload(
+        factory,
+        gateway,
+        claim,
+        caller_payload,
+    )
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=_llm_policy(
+            allowed_models=frozenset({"model-a"}),
+            allowed_providers=frozenset({"provider-a"}),
+            forced_model="model-a",
+            approval_required=True,
+        ),
+        approval=approval,
+        payload=caller_payload,
+    )
+
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert result.reason_code == "approval_invalid"
+    assert calls == []
 
 
 async def test_gateway_strictly_validates_payload_and_typed_output(
