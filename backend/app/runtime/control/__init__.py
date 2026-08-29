@@ -2,6 +2,8 @@
 
 from .budgets import BudgetLimits
 from .models import (
+    AuditLevel,
+    CapturePolicy,
     ConstraintSet,
     EffectiveConstraints,
     PolicyDecision,
@@ -11,7 +13,9 @@ from .models import (
 from .policy import ControlPlane
 
 __all__ = [
+    "AuditLevel",
     "BudgetLimits",
+    "CapturePolicy",
     "ConstraintSet",
     "ControlPlane",
     "EffectiveConstraints",

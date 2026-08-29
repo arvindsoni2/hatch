@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from app.runtime.control import ConstraintSet, ControlPlane, PolicyLayer, RoutingPreferences
+from app.runtime.control import (
+    ConstraintSet,
+    ControlPlane,
+    PolicyLayer,
+    RoutingPreferences,
+)
 from app.runtime.contracts import (
     EvaluationPolicy,
     ExecutionStrategy,
@@ -53,10 +58,7 @@ def test_force_model_remains_subject_to_quality_and_policy(
     """Skipping forced-model capability validation must make this test fail."""
     decision = control_plane.evaluate(
         task=_requires_structured_output(),
-        routing=RoutingPreferences(
-            force_model="model-x",
-            model_capabilities=frozenset(),
-        ),
+        routing=RoutingPreferences(force_model="model-x"),
     )
 
     assert decision.decision == "DENY"
@@ -79,3 +81,58 @@ def test_force_model_cannot_bypass_an_earlier_allowlist(
 
     assert decision.decision == "DENY"
     assert "model.force_not_allowed" in decision.reason_codes
+
+
+def test_untrusted_routing_capability_claim_cannot_authorize_forced_model(
+    control_plane: ControlPlane,
+) -> None:
+    """Treating routing claims as proof of model quality must fail this test."""
+    decision = control_plane.evaluate(
+        task=_requires_structured_output(),
+        routing=RoutingPreferences(
+            force_model="model-x",
+            model_capabilities=frozenset({"structured_output"}),
+        ),
+    )
+
+    assert decision.decision == "DENY"
+    assert "model.structured_output_required" in decision.reason_codes
+
+
+def test_approval_requirement_has_its_own_deterministic_decision(
+    control_plane: ControlPlane,
+) -> None:
+    """Returning ALLOW for an approval-required policy must fail this test."""
+    decision = control_plane.evaluate(
+        system=PolicyLayer(constraints=ConstraintSet(approval_required=True)),
+        user=PolicyLayer(constraints=ConstraintSet(approval_required=False)),
+    )
+
+    assert decision.decision == "REQUIRE_APPROVAL"
+    assert "approval.required" in decision.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("constraints", "reason_code"),
+    [
+        (
+            ConstraintSet(allowed_providers=frozenset()),
+            "provider.no_allowed_providers",
+        ),
+        (ConstraintSet(allowed_models=frozenset()), "model.no_allowed_models"),
+        (
+            ConstraintSet(allowed_capabilities=frozenset()),
+            "capability.no_allowed_capabilities",
+        ),
+    ],
+)
+def test_empty_folded_allowlist_denies_deterministically(
+    control_plane: ControlPlane,
+    constraints: ConstraintSet,
+    reason_code: str,
+) -> None:
+    """Allowing an empty final allowlist must fail this test."""
+    decision = control_plane.evaluate(security_policy=PolicyLayer(constraints))
+
+    assert decision.decision == "DENY"
+    assert reason_code in decision.reason_codes

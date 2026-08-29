@@ -69,14 +69,29 @@ class ControlPlane:
 
         effective = EffectiveConstraints(
             data_egress=effective.data_egress,
+            allowed_providers=effective.allowed_providers,
             allowed_models=effective.allowed_models,
+            allowed_capabilities=effective.allowed_capabilities,
             required_model_capabilities=effective.required_model_capabilities,
             budgets=effective.budgets,
+            deadline=effective.deadline,
+            approval_required=effective.approval_required,
+            audit_level=effective.audit_level,
+            capture_policy=effective.capture_policy,
             forced_model=routing_input.force_model,
         )
-        _validate_forced_model(effective, routing_input, reasons)
+        denied = _validate_empty_allowlists(effective, reasons)
+        denied = _validate_forced_model(effective, routing_input, reasons) or denied
+        if effective.approval_required:
+            _add_reason(reasons, "approval.required")
         return PolicyDecision(
-            decision="DENY" if reasons_for_denial(reasons) else "ALLOW",
+            decision=(
+                "DENY"
+                if denied
+                else "REQUIRE_APPROVAL"
+                if effective.approval_required
+                else "ALLOW"
+            ),
             reason_codes=tuple(reasons),
             effective_constraints=effective,
         )
@@ -126,15 +141,35 @@ def _tighten(
             if lower_precedence.data_egress is None
             else effective.data_egress and lower_precedence.data_egress
         ),
+        allowed_providers=_intersect_allowlists(
+            effective.allowed_providers,
+            lower_precedence.allowed_providers,
+        ),
         allowed_models=_intersect_allowlists(
             effective.allowed_models,
             lower_precedence.allowed_models,
+        ),
+        allowed_capabilities=_intersect_allowlists(
+            effective.allowed_capabilities,
+            lower_precedence.allowed_capabilities,
         ),
         required_model_capabilities=(
             effective.required_model_capabilities
             | lower_precedence.required_model_capabilities
         ),
         budgets=effective.budgets.tighten(lower_precedence.budgets),
+        deadline=_earlier_deadline(effective.deadline, lower_precedence.deadline),
+        approval_required=(
+            effective.approval_required or lower_precedence.approval_required is True
+        ),
+        audit_level=_stricter_audit_level(
+            effective.audit_level,
+            lower_precedence.audit_level,
+        ),
+        capture_policy=_stricter_capture_policy(
+            effective.capture_policy,
+            lower_precedence.capture_policy,
+        ),
     )
 
 
@@ -153,20 +188,22 @@ def _validate_forced_model(
     effective: EffectiveConstraints,
     routing: RoutingPreferences,
     reasons: list[str],
-) -> None:
+) -> bool:
     forced_model = routing.force_model
     if forced_model is None:
-        return
+        return False
+    denied = False
     if (
         effective.allowed_models is not None
         and forced_model not in effective.allowed_models
     ):
         _add_reason(reasons, "model.force_not_allowed")
-    missing_capabilities = (
-        effective.required_model_capabilities - routing.model_capabilities
-    )
+        denied = True
+    missing_capabilities = effective.required_model_capabilities
     for capability in sorted(missing_capabilities):
         _add_reason(reasons, f"model.{capability}_required")
+        denied = True
+    return denied
 
 
 def _add_reason(reasons: list[str], reason: str) -> None:
@@ -174,6 +211,42 @@ def _add_reason(reasons: list[str], reason: str) -> None:
         reasons.append(reason)
 
 
-def reasons_for_denial(reasons: list[str]) -> bool:
-    """Only model authorization failures deny a model selection at this layer."""
-    return any(reason.startswith("model.") for reason in reasons)
+def _validate_empty_allowlists(
+    effective: EffectiveConstraints,
+    reasons: list[str],
+) -> bool:
+    denied = False
+    for allowlist, reason in (
+        (effective.allowed_providers, "provider.no_allowed_providers"),
+        (effective.allowed_models, "model.no_allowed_models"),
+        (effective.allowed_capabilities, "capability.no_allowed_capabilities"),
+    ):
+        if allowlist == frozenset():
+            _add_reason(reasons, reason)
+            denied = True
+    return denied
+
+
+def _earlier_deadline(
+    existing: object,
+    additional: object,
+):
+    if existing is None:
+        return additional
+    if additional is None:
+        return existing
+    return min(existing, additional)
+
+
+def _stricter_audit_level(existing, additional):
+    if additional is None:
+        return existing
+    order = {"minimal": 0, "standard": 1, "strict": 2}
+    return additional if order[additional.value] > order[existing.value] else existing
+
+
+def _stricter_capture_policy(existing, additional):
+    if additional is None:
+        return existing
+    order = {"none": 0, "metadata_only": 1}
+    return additional if order[additional.value] < order[existing.value] else existing
