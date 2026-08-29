@@ -5,22 +5,81 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
 from sqlalchemy import select
 
+from app.runtime.control import (
+    ConstraintSet,
+    ControlPlane,
+    PolicyLayer,
+    RoutingPreferences,
+)
 from app.runtime.contracts import ExecutionResultCode
 from app.runtime.evaluation import ExecutionRecord
-from app.runtime.execution import CapabilityResult
-from app.runtime.execution.adapters.llm import register_llm_generate_structured
+from app.runtime.execution import (
+    CapabilityRegistry,
+    CapabilityResult,
+    ExecutionGateway,
+    SideEffectClass,
+)
+from app.runtime.execution.adapters.llm import (
+    StructuredGenerationOutput,
+    register_llm_generate_structured,
+)
+from app.runtime.workflow import ApprovalManager
 from app.runtime_bindings.capabilities import register_product_capabilities
 
 from execution_test_support import (
+    NOW,
     RecordingAdapter,
     SyntheticOutput,
     WrongOutput,
     denied_policy_for,
+    descriptor,
     gateway_case,
     policy_for,
 )
+from workflow_test_support import start_and_claim
+
+
+async def _llm_gateway_case(workflow_runtime, handler):
+    kernel, factory = workflow_runtime
+    _, claim = await start_and_claim(kernel, now=NOW)
+    registry = CapabilityRegistry()
+    register_llm_generate_structured(registry, handler=handler)
+    return (
+        ExecutionGateway(
+            registry=registry,
+            kernel=kernel,
+            approvals=ApprovalManager(factory, clock=lambda: NOW),
+        ),
+        factory,
+        claim,
+    )
+
+
+def _llm_policy(
+    *,
+    data_egress: bool = True,
+    allowed_models: frozenset[str] | None = None,
+    allowed_providers: frozenset[str] | None = None,
+    forced_model: str | None = None,
+):
+    return ControlPlane().evaluate(
+        system=PolicyLayer(
+            ConstraintSet(
+                data_egress=data_egress,
+                allowed_capabilities=frozenset({"llm.generate_structured"}),
+                allowed_models=allowed_models,
+                allowed_providers=allowed_providers,
+            )
+        ),
+        routing=RoutingPreferences(force_model=forced_model),
+    )
+
+
+async def _structured_success(_payload, _context):
+    return StructuredGenerationOutput(result_ref="synthetic-result")
 
 
 async def test_visible_capability_is_not_automatically_authorized(
@@ -42,6 +101,189 @@ async def test_visible_capability_is_not_automatically_authorized(
     assert adapter.calls == []
     async with factory.session_factory() as session:
         assert list((await session.scalars(select(ExecutionRecord))).all()) == []
+
+
+async def test_llm_egress_denial_prevents_adapter_invocation(workflow_runtime) -> None:
+    """Would fail if an allowed capability ignored effective data-egress denial."""
+    calls = []
+
+    async def handler(payload, context):
+        calls.append((payload, context))
+        return await _structured_success(payload, context)
+
+    gateway, factory, claim = await _llm_gateway_case(workflow_runtime, handler)
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=_llm_policy(data_egress=False),
+        payload={"request_ref": "request-1", "schema_ref": "schema-1"},
+    )
+
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert result.reason_code == "data_egress_denied"
+    assert calls == []
+    async with factory.session_factory() as session:
+        assert list((await session.scalars(select(ExecutionRecord))).all()) == []
+
+
+async def test_external_side_effect_class_fails_closed_on_egress_denial(
+    workflow_runtime,
+) -> None:
+    """Would fail if external classification relied on a second opt-in egress flag."""
+    capability_id = "synthetic.external_read"
+    adapter = RecordingAdapter()
+    gateway, _, _, claim, _ = await gateway_case(
+        workflow_runtime,
+        adapter,
+        descriptor(
+            capability_id,
+            side_effect=SideEffectClass.READ_ONLY_EXTERNAL,
+        ),
+    )
+    policy = ControlPlane().evaluate(
+        system=PolicyLayer(
+            ConstraintSet(
+                data_egress=False,
+                allowed_capabilities=frozenset({capability_id}),
+            )
+        )
+    )
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id=capability_id,
+        policy=policy,
+        payload={"count": 7},
+    )
+
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert result.reason_code == "data_egress_denied"
+    assert adapter.calls == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason_code"),
+    (
+        (
+            {
+                "request_ref": "request-1",
+                "schema_ref": "schema-1",
+                "model_id": "model-b",
+                "provider": "provider-a",
+            },
+            "model_not_authorized",
+        ),
+        (
+            {
+                "request_ref": "request-1",
+                "schema_ref": "schema-1",
+                "model_id": "model-a",
+                "provider": "provider-b",
+            },
+            "provider_not_authorized",
+        ),
+    ),
+)
+async def test_llm_disallowed_model_or_provider_never_reaches_adapter(
+    workflow_runtime,
+    payload,
+    reason_code,
+) -> None:
+    """Would fail if caller routing fields bypassed model/provider allowlists."""
+    calls = []
+
+    async def handler(typed_payload, context):
+        calls.append((typed_payload, context))
+        return await _structured_success(typed_payload, context)
+
+    gateway, _, claim = await _llm_gateway_case(workflow_runtime, handler)
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=_llm_policy(
+            allowed_models=frozenset({"model-a"}),
+            allowed_providers=frozenset({"provider-a"}),
+        ),
+        payload=payload,
+    )
+
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert result.reason_code == reason_code
+    assert calls == []
+
+
+async def test_llm_forced_model_mismatch_never_reaches_adapter(
+    workflow_runtime,
+) -> None:
+    """Would fail if a caller-selected model overrode Control Plane force-model."""
+    calls = []
+
+    async def handler(payload, context):
+        calls.append((payload, context))
+        return await _structured_success(payload, context)
+
+    gateway, _, claim = await _llm_gateway_case(workflow_runtime, handler)
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=_llm_policy(
+            allowed_models=frozenset({"model-a"}),
+            allowed_providers=frozenset({"provider-a"}),
+            forced_model="model-a",
+        ),
+        payload={
+            "request_ref": "request-1",
+            "schema_ref": "schema-1",
+            "model_id": "model-b",
+            "provider": "provider-a",
+        },
+    )
+
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert result.reason_code == "forced_model_mismatch"
+    assert calls == []
+
+
+async def test_llm_adapter_receives_only_policy_authorized_routing(
+    workflow_runtime,
+) -> None:
+    """Would fail if effective routing were absent from the adapter handoff."""
+    calls = []
+
+    async def handler(payload, context):
+        calls.append((payload, context))
+        return await _structured_success(payload, context)
+
+    gateway, _, claim = await _llm_gateway_case(workflow_runtime, handler)
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=_llm_policy(
+            allowed_models=frozenset({"model-a"}),
+            allowed_providers=frozenset({"provider-a"}),
+            forced_model="model-a",
+        ),
+        payload={
+            "request_ref": "request-1",
+            "schema_ref": "schema-1",
+            "provider": "provider-a",
+        },
+    )
+
+    assert result.code is ExecutionResultCode.SUCCESS
+    assert len(calls) == 1
+    payload, context = calls[0]
+    assert payload.model_id == "model-a"
+    assert payload.provider == "provider-a"
+    assert context.model_id == "model-a"
+    assert context.provider == "provider-a"
+    assert context.data_egress is True
+    assert context.allowed_models == frozenset({"model-a"})
+    assert context.allowed_providers == frozenset({"provider-a"})
 
 
 async def test_gateway_strictly_validates_payload_and_typed_output(

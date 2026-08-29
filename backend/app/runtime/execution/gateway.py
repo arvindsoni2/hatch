@@ -13,7 +13,12 @@ from pydantic import BaseModel, ValidationError
 
 from ..contracts import ExecutionResultCode
 from ..control import PolicyDecision
-from ..workflow import ApprovalManager, ExecutionClaimRecord, WorkflowKernel
+from ..workflow import (
+    ApprovalManager,
+    ExecutionClaimRecord,
+    WorkflowKernel,
+    canonical_payload_hash,
+)
 from .models import (
     CapabilityDescriptor,
     CapabilityInvocationContext,
@@ -98,10 +103,24 @@ class ExecutionGateway:
                 code=ExecutionResultCode.VALIDATION_FAILURE,
                 reason_code="idempotency_key_required",
             )
+        typed_payload, model_id, provider, routing_denied = self._authorized_routing(
+            capability,
+            typed_payload,
+            policy,
+        )
+        if routing_denied is not None:
+            return routing_denied
         if policy is not None and (
             policy.decision == "REQUIRE_APPROVAL"
             or policy.effective_constraints.approval_required
         ):
+            try:
+                canonical_payload_hash(raw_payload)
+            except (TypeError, ValueError, OverflowError):
+                return CapabilityResult(
+                    code=ExecutionResultCode.VALIDATION_FAILURE,
+                    reason_code="invalid_approval_payload",
+                )
             approved = await self._verify_approval(
                 claim,
                 capability.capability_id,
@@ -124,6 +143,11 @@ class ExecutionGateway:
             idempotency_key=(
                 idempotency_key if isinstance(idempotency_key, str) else None
             ),
+            data_egress=policy.effective_constraints.data_egress,
+            allowed_models=policy.effective_constraints.allowed_models,
+            allowed_providers=policy.effective_constraints.allowed_providers,
+            model_id=model_id,
+            provider=provider,
         )
         result = await self._invoke_adapter(
             registration,
@@ -234,7 +258,76 @@ class ExecutionGateway:
                 code=ExecutionResultCode.POLICY_DENIED,
                 reason_code="permission_not_authorized",
             )
+        if (
+            capability.requires_data_egress
+            or capability.side_effect_class is SideEffectClass.READ_ONLY_EXTERNAL
+        ) and not policy.effective_constraints.data_egress:
+            return CapabilityResult(
+                code=ExecutionResultCode.POLICY_DENIED,
+                reason_code="data_egress_denied",
+            )
         return None
+
+    @staticmethod
+    def _authorized_routing(
+        capability: CapabilityDescriptor,
+        payload: BaseModel,
+        policy: PolicyDecision,
+    ) -> tuple[BaseModel, str | None, str | None, CapabilityResult | None]:
+        constraints = policy.effective_constraints
+        model_id: str | None = None
+        provider: str | None = None
+        if capability.uses_model_routing:
+            requested_model = getattr(payload, "model_id", None)
+            forced_model = constraints.forced_model
+            if (
+                forced_model is not None
+                and requested_model is not None
+                and requested_model != forced_model
+            ):
+                return (
+                    payload,
+                    None,
+                    None,
+                    CapabilityResult(
+                        code=ExecutionResultCode.POLICY_DENIED,
+                        reason_code="forced_model_mismatch",
+                    ),
+                )
+            model_id = forced_model or requested_model
+            if (
+                model_id is not None
+                and constraints.allowed_models is not None
+                and model_id not in constraints.allowed_models
+            ):
+                return (
+                    payload,
+                    None,
+                    None,
+                    CapabilityResult(
+                        code=ExecutionResultCode.POLICY_DENIED,
+                        reason_code="model_not_authorized",
+                    ),
+                )
+            if forced_model is not None:
+                payload = payload.model_copy(update={"model_id": forced_model})
+        if capability.uses_provider_routing:
+            provider = getattr(payload, "provider", None)
+            if (
+                provider is not None
+                and constraints.allowed_providers is not None
+                and provider not in constraints.allowed_providers
+            ):
+                return (
+                    payload,
+                    model_id,
+                    None,
+                    CapabilityResult(
+                        code=ExecutionResultCode.POLICY_DENIED,
+                        reason_code="provider_not_authorized",
+                    ),
+                )
+        return payload, model_id, provider, None
 
     @staticmethod
     def _idempotency_key(
@@ -266,15 +359,18 @@ class ExecutionGateway:
             or approval.task_attempt_id != claim.task_attempt_id
         ):
             return False
-        return await self._approvals.is_valid(
-            approval.id,
-            workflow_run_id=approval.workflow_run_id,
-            workflow_step_id=approval.workflow_step_id,
-            task_attempt_id=claim.task_attempt_id,
-            capability_id=capability_id,
-            payload=payload,
-            now=self._kernel.clock.now(),
-        )
+        try:
+            return await self._approvals.is_valid(
+                approval.id,
+                workflow_run_id=approval.workflow_run_id,
+                workflow_step_id=approval.workflow_step_id,
+                task_attempt_id=claim.task_attempt_id,
+                capability_id=capability_id,
+                payload=payload,
+                now=self._kernel.clock.now(),
+            )
+        except Exception:
+            return False
 
     @staticmethod
     def _deadline(
@@ -312,11 +408,21 @@ class ExecutionGateway:
         except TimeoutError:
             return self._timeout_result(registration.descriptor)
         except Exception:
+            if self._outcome_is_ambiguous(registration.descriptor):
+                return CapabilityResult(
+                    code=ExecutionResultCode.OUTCOME_UNKNOWN,
+                    reason_code="capability_exception_ambiguous",
+                )
             return CapabilityResult(
                 code=ExecutionResultCode.PERMANENT_FAILURE,
                 reason_code="capability_failed",
             )
         if not isinstance(raw_result, CapabilityResult):
+            if self._outcome_is_ambiguous(registration.descriptor):
+                return CapabilityResult(
+                    code=ExecutionResultCode.OUTCOME_UNKNOWN,
+                    reason_code="capability_result_ambiguous",
+                )
             return CapabilityResult(
                 code=ExecutionResultCode.VALIDATION_FAILURE,
                 reason_code="invalid_capability_result",
@@ -333,7 +439,12 @@ class ExecutionGateway:
                 serialized,
                 strict=True,
             )
-        except (ValidationError, TypeError, ValueError):
+        except Exception:
+            if self._outcome_is_ambiguous(registration.descriptor):
+                return CapabilityResult(
+                    code=ExecutionResultCode.OUTCOME_UNKNOWN,
+                    reason_code="capability_result_ambiguous",
+                )
             return CapabilityResult(
                 code=ExecutionResultCode.VALIDATION_FAILURE,
                 reason_code="invalid_capability_result",
@@ -342,14 +453,7 @@ class ExecutionGateway:
 
     @staticmethod
     def _timeout_result(capability: CapabilityDescriptor) -> CapabilityResult:
-        ambiguous = (
-            capability.side_effect_class is SideEffectClass.COMMIT_SIDE_EFFECT
-            or capability.idempotency_class
-            in {
-                IdempotencyClass.CHECK_BEFORE_RETRY,
-                IdempotencyClass.NON_RETRYABLE_SIDE_EFFECT,
-            }
-        )
+        ambiguous = ExecutionGateway._outcome_is_ambiguous(capability)
         return CapabilityResult(
             code=(
                 ExecutionResultCode.OUTCOME_UNKNOWN
@@ -360,6 +464,17 @@ class ExecutionGateway:
                 "capability_timeout_ambiguous" if ambiguous else "capability_timeout"
             ),
             retry_allowed=not ambiguous,
+        )
+
+    @staticmethod
+    def _outcome_is_ambiguous(capability: CapabilityDescriptor) -> bool:
+        return (
+            capability.side_effect_class is SideEffectClass.COMMIT_SIDE_EFFECT
+            or capability.idempotency_class
+            in {
+                IdempotencyClass.CHECK_BEFORE_RETRY,
+                IdempotencyClass.NON_RETRYABLE_SIDE_EFFECT,
+            }
         )
 
     @staticmethod
@@ -397,7 +512,12 @@ class ExecutionGateway:
                     "reconciliation_reference": _hash_reference(reference_material),
                 }
             )
-        return result.model_copy(update={"retry_allowed": retry_allowed})
+        return result.model_copy(
+            update={
+                "retry_allowed": retry_allowed,
+                "reconciliation_reference": None,
+            }
+        )
 
     async def _emit_telemetry(self, event: ExecutionTelemetry) -> None:
         if self._telemetry is None:

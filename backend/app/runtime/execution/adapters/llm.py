@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..models import CapabilityDescriptor, IdempotencyClass, SideEffectClass
 from ..registry import CapabilityRegistry
@@ -14,7 +14,16 @@ class StructuredGenerationInput(BaseModel):
 
     request_ref: str
     schema_ref: str
-    model_id: str | None = None
+    model_id: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+    )
+    provider: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+    )
 
 
 class StructuredGenerationOutput(BaseModel):
@@ -47,6 +56,9 @@ def register_llm_generate_structured(
             idempotency_class=IdempotencyClass.IDEMPOTENT,
             required_permissions=(),
             default_timeout_seconds=60.0,
+            requires_data_egress=True,
+            uses_model_routing=True,
+            uses_provider_routing=True,
         ),
         LLMCapabilityAdapter(handler),
     )

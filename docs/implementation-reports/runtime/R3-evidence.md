@@ -173,6 +173,117 @@ telemetry path. No Coach PDF was touched.
 Rollback is code-only: revert the Task 8 commit. No migration or schema change is
 introduced; R3 reuses the existing execution and workflow records. The semantic
 store method can be removed with the gateway after confirming no downstream caller
-has adopted it. Scoped self-review found no Critical, High, or Medium security issue.
-The only release concern is the explicitly non-green full backend container gate
-described above; focused R3 and affected R2 gates are green.
+has adopted it. The initial scoped self-review did not identify the boundary gaps
+subsequently reported and resolved in review fix round 1 below. The remaining release
+concern is the explicitly non-green full backend container gate; focused R3 and
+affected R2 gates are green.
+
+## Review fix round 1: effective-constraint and ambiguity hardening
+
+Fix base: `0ec7b133d787c4de2bfe52a6b12c16beaaa8d829`. This evidence accompanies
+the fix commit and therefore does not self-reference its own commit SHA.
+
+The review identified four related boundary gaps. The fix makes egress and routing
+relevance explicit in `CapabilityDescriptor`; `READ_ONLY_EXTERNAL` also implies
+egress without relying on a second flag. The generic structured-generation adapter
+now accepts bounded stable model/provider routing fields. Before approval or
+invocation, the gateway enforces `data_egress`, model and provider allowlists, and
+forced-model equality. It injects the authorized forced model into the typed payload
+and passes effective egress, model/provider allowlists, and selected routing in
+`CapabilityInvocationContext`.
+
+At ambiguous commit boundaries, adapter exceptions and malformed/unvalidated success
+responses now classify as non-retryable `OUTCOME_UNKNOWN`, receive only a
+gateway-owned SHA-256 reconciliation reference, and use the inherited atomic fenced
+persistence transition. For every other result class, any adapter-supplied
+reconciliation reference is discarded. Approval-required payloads are checked by
+the canonical approval algorithm before verification; hashing and verification
+failures return bounded typed failures and cannot reach the adapter. External
+`CancelledError` remains outside all `except Exception` handlers.
+
+### Strict TDD record
+
+The first review-fix RED command was:
+
+```text
+docker run --rm --entrypoint python \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  -m pytest -q --no-cov tests/runtime/test_execution_gateway.py \
+  tests/runtime/test_outcome_unknown.py \
+  tests/runtime/test_side_effect_authorization.py
+# 15 failed, 13 passed, 3 warnings in 4.35s.
+```
+
+The intended failures independently observed: allowed LLM egress returned success;
+disallowed model/provider and forced-model cases did not return policy denial;
+authorized routing was absent from the adapter handoff; raised and malformed commit
+responses returned permanent/validation failure; raw provider references survived
+seven non-unknown result classes; and oversized canonical approval material escaped
+as `ValueError`. The direct `OUTCOME_UNKNOWN` reference case already passed because
+the original gateway replaced that one class.
+
+After the first implementation pass the same command reported `28 passed, 2 warnings
+in 3.64s`. Mutation review then added a separate fail-closed descriptor test. After
+correcting a test-call typo, its intended RED was:
+
+```text
+python -m pytest -q --no-cov \
+  tests/runtime/test_execution_gateway.py::test_external_side_effect_class_fails_closed_on_egress_denial
+# 1 failed, 3 warnings in 0.53s: expected policy_denied, observed success.
+```
+
+The production mutation caught was removing/omitting the separate egress flag from a
+descriptor already classified `READ_ONLY_EXTERNAL`. The final authorization logic
+derives egress relevance from either declaration.
+
+### Final fix-round verification
+
+```text
+# Exact R3 gate (same container wrapper and mount as above)
+python -m pytest -q --no-cov \
+  tests/runtime/test_execution_gateway.py \
+  tests/runtime/test_side_effect_authorization.py \
+  tests/runtime/test_idempotency.py tests/runtime/test_outcome_unknown.py \
+  tests/runtime/test_deadlines.py tests/runtime/test_policy_precedence.py \
+  tests/runtime/test_policy_force_model.py tests/runtime/test_fencing.py
+# 52 passed, 2 warnings in 4.57s.
+
+python -m pytest -q --no-cov tests/runtime/test_fencing.py \
+  tests/runtime/test_approvals.py tests/runtime/test_reconciliation.py \
+  tests/runtime/test_storage_contract.py tests/runtime/test_runtime_privacy.py
+# 58 passed, 2 warnings in 6.82s.
+
+ruff check --no-cache app/runtime/execution \
+  tests/runtime/test_execution_gateway.py tests/runtime/test_outcome_unknown.py \
+  tests/runtime/test_side_effect_authorization.py
+# All checks passed!
+
+ruff format --check --no-cache app/runtime/execution \
+  tests/runtime/test_execution_gateway.py tests/runtime/test_outcome_unknown.py \
+  tests/runtime/test_side_effect_authorization.py
+# 11 files already formatted.
+```
+
+The complete backend gate was rerun with the whole worktree mounted:
+
+```text
+docker run --rm --entrypoint python \
+  -e COVERAGE_FILE=/tmp/task8-fix1.coverage \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel:/workspace:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest -m pytest -q
+# 3503 passed, 2 failed, 9 warnings in 536.50s; coverage 76.07%.
+```
+
+This full suite is not green. The two failures are unchanged environment limitations:
+the benchmark manifest recorded `working_tree_clean_before="not_recorded"` because
+Git metadata was not mounted, and the development setup test raised
+`FileNotFoundError` because the backend image has no `make`. The formerly intermittent
+staged-runner test passed in this complete run. No R3 path failed.
+
+Fix-round security mapping adds explicit integration coverage for denied egress,
+disallowed model and provider, forced-model mismatch, authorized routing handoff,
+raised and malformed commit ambiguity, all eight result classes with raw
+reference/path/token canaries across result, attempt, execution metadata, logs, and
+telemetry, and canonical approval oversize rejection. Coach V6 command, media,
+deletion, and export classes remain non-applicable because no Coach path changed.

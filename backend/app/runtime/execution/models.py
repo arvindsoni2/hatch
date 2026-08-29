@@ -45,6 +45,9 @@ class CapabilityDescriptor(BaseModel):
     idempotency_class: IdempotencyClass
     required_permissions: tuple[str, ...] = ()
     default_timeout_seconds: float | None = None
+    requires_data_egress: bool = False
+    uses_model_routing: bool = False
+    uses_provider_routing: bool = False
 
     @field_validator("capability_id")
     @classmethod
@@ -130,6 +133,11 @@ class CapabilityInvocationContext:
     deadline: datetime | None
     budgets: BudgetLimits
     idempotency_key: str | None
+    data_egress: bool
+    allowed_models: frozenset[str] | None
+    allowed_providers: frozenset[str] | None
+    model_id: str | None
+    provider: str | None
 
 
 @dataclass(frozen=True)
