@@ -75,6 +75,21 @@ class WorkflowStore(Protocol):
         now: datetime,
     ) -> bool: ...
 
+    async def persist_execution_result(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        execution_role: str,
+        capability_id: str,
+        capability_version: int,
+        result_class: str,
+        started_at: datetime,
+        finished_at: datetime,
+        latency_ms: int,
+        metadata: dict[str, object],
+        outcome_unknown: dict[str, object] | None,
+    ) -> bool: ...
+
     async def fail_or_retry(
         self,
         claim: ExecutionClaimRecord,

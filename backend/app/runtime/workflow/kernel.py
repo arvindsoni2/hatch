@@ -133,6 +133,34 @@ class WorkflowKernel:
             raise ValueError("clock must not finalize before the claim")
         return await self._repository.finalize(claim, result_ref, finished_at)
 
+    async def persist_execution_result(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        execution_role: str,
+        capability_id: str,
+        capability_version: int,
+        result_class: str,
+        started_at: datetime,
+        finished_at: datetime,
+        latency_ms: int,
+        metadata: dict[str, object],
+        outcome_unknown: dict[str, object] | None = None,
+    ) -> bool:
+        """Delegate Task 8 result persistence to the fenced durable repository."""
+        return await self._repository.persist_execution_result(
+            claim,
+            execution_role=execution_role,
+            capability_id=capability_id,
+            capability_version=capability_version,
+            result_class=result_class,
+            started_at=started_at,
+            finished_at=finished_at,
+            latency_ms=latency_ms,
+            metadata=metadata,
+            outcome_unknown=outcome_unknown,
+        )
+
     async def fail_or_retry(
         self,
         claim: ExecutionClaimRecord,

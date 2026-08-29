@@ -9,6 +9,8 @@ import re
 
 from sqlalchemy import exists, select, update
 
+from ..evaluation.models import ExecutionRole
+from ..events.repository import enforce_metadata_only
 from ..storage.contracts import RuntimeUnitOfWorkFactory
 from .claims import require_worker_id
 from .models import (
@@ -603,6 +605,135 @@ class SQLiteWorkflowRepository:
             if attempt is None:
                 raise RuntimeError("finalized attempt disappeared before commit")
             await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
+            await uow.commit()
+            return True
+
+    async def persist_execution_result(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        execution_role: str,
+        capability_id: str,
+        capability_version: int,
+        result_class: str,
+        started_at: datetime,
+        finished_at: datetime,
+        latency_ms: int,
+        metadata: dict[str, object],
+        outcome_unknown: dict[str, object] | None,
+    ) -> bool:
+        """Insert one execution result only while the supplied fence still owns it."""
+        try:
+            role = ExecutionRole(execution_role)
+        except ValueError as error:
+            raise ValueError("execution_role is unsupported") from error
+        if not isinstance(result_class, str) or not result_class:
+            raise ValueError("result_class is required")
+        if finished_at < started_at or started_at < claim.claimed_at:
+            raise ValueError("execution timestamps are outside the claim lifetime")
+        if (
+            isinstance(latency_ms, bool)
+            or not isinstance(latency_ms, int)
+            or latency_ms < 0
+        ):
+            raise ValueError("latency_ms must be a non-negative integer")
+        enforce_metadata_only(metadata, path="execution.metadata")
+        unknown_binding: tuple[str, int, str, str] | None = None
+        if outcome_unknown is not None:
+            unknown_binding = normalize_reconciliation_binding(
+                capability_id,
+                capability_version,
+                outcome_unknown.get("idempotency_class"),
+                outcome_unknown.get("reconciliation_reference"),
+            )
+
+        current_attempt = exists().where(
+            TaskAttemptRecord.id == claim.task_attempt_id,
+            TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+            TaskAttemptRecord.current_claim_id == claim.id,
+            TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+        )
+        active_claim = self._active_claim(claim, finished_at)
+        async with self._uow_factory.transaction() as uow:
+            # The no-op conditional update acquires the database write lock while
+            # atomically validating claim/attempt ownership. A concurrent reclaim
+            # cannot pass between this fence check and the execution insert.
+            owned = await uow.session.execute(
+                update(ExecutionClaimRecord)
+                .where(
+                    ExecutionClaimRecord.id == claim.id,
+                    ExecutionClaimRecord.task_attempt_id == claim.task_attempt_id,
+                    ExecutionClaimRecord.fencing_token == claim.fencing_token,
+                    ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    ExecutionClaimRecord.lease_expires_at > finished_at,
+                    current_attempt,
+                    active_claim,
+                )
+                .values(status=ExecutionClaimRecord.status)
+            )
+            if owned.rowcount != 1:
+                return False
+            await uow.evaluations.record_execution(
+                task_attempt_id=claim.task_attempt_id,
+                execution_role=role,
+                capability_id=capability_id,
+                capability_version=capability_version,
+                started_at=started_at,
+                finished_at=finished_at,
+                result_class=result_class,
+                latency_ms=latency_ms,
+                metadata_json=metadata,
+            )
+            if unknown_binding is not None:
+                (
+                    normalized_capability,
+                    normalized_version,
+                    idempotency_class,
+                    reconciliation_reference,
+                ) = unknown_binding
+                marked = await uow.session.execute(
+                    update(TaskAttemptRecord)
+                    .where(
+                        TaskAttemptRecord.id == claim.task_attempt_id,
+                        TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                        TaskAttemptRecord.current_claim_id == claim.id,
+                        TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    )
+                    .values(
+                        status=TaskAttemptStatus.OUTCOME_UNKNOWN,
+                        current_claim_id=None,
+                        capability_id=normalized_capability,
+                        capability_version=normalized_version,
+                        idempotency_class=idempotency_class,
+                        reconciliation_reference=reconciliation_reference,
+                        updated_at=finished_at,
+                    )
+                )
+                if marked.rowcount != 1:
+                    raise RuntimeError(
+                        "claim ownership changed during execution persistence"
+                    )
+                released = await uow.session.execute(
+                    update(ExecutionClaimRecord)
+                    .where(
+                        ExecutionClaimRecord.id == claim.id,
+                        ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
+                    )
+                    .values(
+                        status=ExecutionClaimStatus.RELEASED,
+                        released_at=finished_at,
+                    )
+                )
+                if released.rowcount != 1:
+                    raise RuntimeError(
+                        "claim ownership changed during outcome persistence"
+                    )
+                attempt = await uow.session.get(
+                    TaskAttemptRecord, claim.task_attempt_id
+                )
+                if attempt is None:
+                    raise RuntimeError("execution attempt disappeared before commit")
+                await self._sync_lifecycle(uow, attempt.workflow_step_id, finished_at)
             await uow.commit()
             return True
 
