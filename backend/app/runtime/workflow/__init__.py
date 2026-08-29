@@ -13,6 +13,10 @@ from .models import (
     WorkflowStepRecord,
     WorkflowStepStatus,
 )
+from .kernel import InjectedFailure, WorkflowKernel
+from .retry import RetryFailure
+from .approvals import ApprovalManager, canonical_payload_hash
+from .reconciliation import ReconciliationDecision, ReconciliationRegistry, WorkflowReconciler
 
 __all__ = [
     "ApprovalRecord",
@@ -26,4 +30,12 @@ __all__ = [
     "WorkflowRunStatus",
     "WorkflowStepRecord",
     "WorkflowStepStatus",
+    "WorkflowKernel",
+    "InjectedFailure",
+    "RetryFailure",
+    "ApprovalManager",
+    "canonical_payload_hash",
+    "ReconciliationDecision",
+    "ReconciliationRegistry",
+    "WorkflowReconciler",
 ]

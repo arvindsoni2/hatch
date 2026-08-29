@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..evaluation.models import (
     EvaluationRunRecord,
@@ -17,15 +17,130 @@ from ..evaluation.models import (
 )
 from ..events.models import RuntimeEventRecord, RuntimeOutboxRecord
 from ..events.outbox import OutboxClaim
-from ..workflow.models import (
-    ApprovalRecord,
-    TaskAttemptRecord,
-    WorkflowRunRecord,
-    WorkflowStepRecord,
-)
+if TYPE_CHECKING:
+    from ..workflow.models import (
+        ApprovalRecord,
+        ExecutionClaimRecord,
+        TaskAttemptRecord,
+        WaitingReason,
+        WorkflowRunRecord,
+        WorkflowStepRecord,
+    )
 
 
+@runtime_checkable
 class WorkflowStore(Protocol):
+    """Backend-neutral durable workflow semantics used by the kernel.
+
+    Implementations may use SQLite conditional updates or PostgreSQL row locks, but
+    must preserve the same fencing, waiting, and ambiguous-outcome behavior.
+    """
+
+    async def create_run(
+        self,
+        *,
+        workflow_definition_id: str,
+        workflow_definition_version: int,
+        input_ref: dict[str, object],
+        domain_ref: dict[str, object],
+        mode: str,
+        max_attempts: int,
+    ) -> WorkflowRunRecord: ...
+
+    async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None: ...
+
+    async def claim_next(
+        self, worker_id: str, now: datetime, lease_duration: timedelta
+    ) -> ExecutionClaimRecord | None: ...
+
+    async def reclaim(
+        self,
+        attempt_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionClaimRecord | None: ...
+
+    async def renew_claim(
+        self,
+        claim: ExecutionClaimRecord,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> bool: ...
+
+    async def finalize(
+        self,
+        claim: ExecutionClaimRecord,
+        result_ref: dict[str, object],
+        now: datetime,
+    ) -> bool: ...
+
+    async def fail_or_retry(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        reason: str,
+        policy_id: str,
+        policy_version: int,
+        not_before: datetime | None,
+        now: datetime,
+    ) -> TaskAttemptRecord | None: ...
+
+    async def reconcile_expired_claims(
+        self,
+        now: datetime,
+        *,
+        batch_size: int = 25,
+        recovery_backoff_seconds: int = 1,
+    ) -> int: ...
+
+    async def transition_waiting(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        reason: WaitingReason,
+        now: datetime,
+    ) -> bool: ...
+
+    async def resume_waiting(
+        self, attempt_id: str, *, now: datetime
+    ) -> TaskAttemptRecord | None: ...
+
+    async def mark_outcome_unknown(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        now: datetime,
+        capability_id: str,
+        capability_version: int,
+        idempotency_class: str,
+        reconciliation_reference: str,
+    ) -> bool: ...
+
+    async def claim_outcome_unknown(
+        self,
+        attempt_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionClaimRecord | None: ...
+
+    async def return_outcome_unknown(
+        self, claim: ExecutionClaimRecord, *, now: datetime
+    ) -> bool: ...
+
+    async def fail_terminal(
+        self, claim: ExecutionClaimRecord, *, reason: str, now: datetime
+    ) -> bool: ...
+
+
+class WorkflowRecordStore(Protocol):
+    """Transaction-bound record operations used inside a runtime unit of work.
+
+    This intentionally does not expose claim or reconciliation operations. Those
+    are kernel-facing durable semantics on :class:`WorkflowStore` above.
+    """
+
     async def create_run(self, **values: Any) -> WorkflowRunRecord: ...
 
     async def create_step(self, **values: Any) -> WorkflowStepRecord: ...
@@ -48,10 +163,24 @@ class WorkflowStore(Protocol):
 class ApprovalStore(Protocol):
     async def request(self, **values: Any) -> ApprovalRecord: ...
 
-    async def decide(self, approval_id: str, **values: Any) -> bool: ...
+    async def decide(
+        self,
+        approval_id: str,
+        *,
+        status: str,
+        decided_by: str,
+        decision_reason: str | None = None,
+        decided_at: datetime | None = None,
+    ) -> bool: ...
+
+    async def expire_if_due(self, approval_id: str, *, now: datetime) -> bool: ...
 
     async def invalidate_for_payload_change(
-        self, task_attempt_id: str, *, current_payload_hash: str
+        self,
+        task_attempt_id: str,
+        *,
+        current_payload_hash: str,
+        now: datetime,
     ) -> int: ...
 
 
@@ -97,7 +226,7 @@ class ShadowComparisonStore(Protocol):
 
 
 class RuntimeUnitOfWork(Protocol):
-    workflows: WorkflowStore
+    workflows: WorkflowRecordStore
     approvals: ApprovalStore
     events: EventStore
     outbox: OutboxStore

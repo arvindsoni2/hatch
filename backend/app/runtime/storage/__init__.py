@@ -8,6 +8,7 @@ from .contracts import (
     RuntimeUnitOfWork,
     RuntimeUnitOfWorkFactory,
     ShadowComparisonStore,
+    WorkflowRecordStore,
     WorkflowStore,
 )
 from .sqlite import SQLiteRuntimeUnitOfWorkFactory
@@ -21,5 +22,6 @@ __all__ = [
     "RuntimeUnitOfWorkFactory",
     "SQLiteRuntimeUnitOfWorkFactory",
     "ShadowComparisonStore",
+    "WorkflowRecordStore",
     "WorkflowStore",
 ]

@@ -85,10 +85,10 @@ def _tables(database: Path) -> set[str]:
 
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["r5s6t7u8v9w0"]
-    head = scripts.get_revision("r5s6t7u8v9w0")
+    assert scripts.get_heads() == ["u8v9w0x1y2z3"]
+    head = scripts.get_revision("u8v9w0x1y2z3")
     assert head is not None
-    assert head.down_revision == "q4r5s6t7u8v9"
+    assert head.down_revision == "t7u8v9w0x1y2"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
@@ -104,7 +104,20 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
         "claim_fencing_token",
         "current_claim_id",
         "context_package_id",
+        "capability_id",
+        "capability_version",
+        "idempotency_class",
+        "reconciliation_reference",
     } <= set(attempts.columns.keys())
+    runs = Base.metadata.tables["runtime_workflow_runs"]
+    assert "max_attempts" in runs.columns
+    claims = Base.metadata.tables["runtime_execution_claims"]
+    assert {
+        "purpose",
+        "recovery_not_before",
+        "recovery_failure_count",
+        "last_recovery_error_code",
+    } <= set(claims.columns.keys())
     executions = Base.metadata.tables["runtime_execution_records"]
     assert "parent_execution_id" in executions.columns
     shadow = Base.metadata.tables["runtime_shadow_comparisons"]
@@ -146,3 +159,46 @@ def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) ->
         assert connection.execute(
             "SELECT id FROM interview_sessions WHERE id = 'preserved-session'"
         ).fetchone() == ("preserved-session",)
+
+
+def test_recovery_disposition_migration_downgrades_and_reupgrades(tmp_path: Path) -> None:
+    database = tmp_path / "reconciliation-binding.db"
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    upgraded_columns = {
+        "capability_id",
+        "capability_version",
+        "idempotency_class",
+        "reconciliation_reference",
+    }
+    with sqlite3.connect(database) as connection:
+        assert upgraded_columns <= {
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_task_attempts)")
+        }
+        assert "purpose" in {
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")
+        }
+        assert {
+            "recovery_not_before",
+            "recovery_failure_count",
+            "last_recovery_error_code",
+        } <= {
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")
+        }
+
+    downgrade = _run_alembic(database, "downgrade", "t7u8v9w0x1y2")
+    assert downgrade.returncode == 0, downgrade.stderr
+    with sqlite3.connect(database) as connection:
+        assert upgraded_columns <= {
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_task_attempts)")
+        }
+        assert "purpose" in {
+            row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")
+        }
+        assert not (
+            {"recovery_not_before", "recovery_failure_count", "last_recovery_error_code"}
+            & {row[1] for row in connection.execute("PRAGMA table_info(runtime_execution_claims)")}
+        )
+
+    reupgrade = _run_alembic(database, "upgrade", "u8v9w0x1y2z3")
+    assert reupgrade.returncode == 0, reupgrade.stderr

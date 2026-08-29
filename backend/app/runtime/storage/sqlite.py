@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..evaluation.models import (
@@ -22,12 +22,20 @@ from ..events.outbox import SQLiteOutboxRepository
 from ..events.repository import SQLiteEventRepository, enforce_metadata_only
 from ..workflow.models import (
     ApprovalRecord,
+    ApprovalStatus,
     TaskAttemptRecord,
     TaskAttemptStatus,
     WaitingReason,
     WorkflowRunRecord,
     WorkflowStepRecord,
 )
+from ..workflow.approvals import (
+    normalize_approval_actor_id,
+    normalize_approval_decision_status,
+    normalize_approval_store_values,
+    normalize_decision_reason,
+)
+from ..workflow.retry import normalize_retry_metadata
 
 
 class _SessionBoundStore:
@@ -65,6 +73,9 @@ class SQLiteWorkflowStore(_SessionBoundStore):
         retry_policy_version: int,
         not_before: datetime | None = None,
     ) -> TaskAttemptRecord:
+        retry_reason, retry_policy_id, retry_policy_version = normalize_retry_metadata(
+            retry_reason, retry_policy_id, retry_policy_version
+        )
         prior = await self.get_attempt(attempt_id)
         if prior is None:
             raise LookupError(f"task attempt not found: {attempt_id}")
@@ -86,6 +97,7 @@ class SQLiteWorkflowStore(_SessionBoundStore):
 
 class SQLiteApprovalStore(_SessionBoundStore):
     async def request(self, **values: Any) -> ApprovalRecord:
+        normalize_approval_store_values(values)
         return await self._add(ApprovalRecord(**values))
 
     async def decide(
@@ -97,9 +109,19 @@ class SQLiteApprovalStore(_SessionBoundStore):
         decision_reason: str | None = None,
         decided_at: datetime | None = None,
     ) -> bool:
+        status = normalize_approval_decision_status(status)
+        decided_by = normalize_approval_actor_id(decided_by)
+        decision_reason = normalize_decision_reason(decision_reason)
         result = await self.session.execute(
             update(ApprovalRecord)
-            .where(ApprovalRecord.id == approval_id, ApprovalRecord.status == "pending")
+            .where(
+                ApprovalRecord.id == approval_id,
+                ApprovalRecord.status == ApprovalStatus.PENDING,
+                or_(
+                    ApprovalRecord.expires_at.is_(None),
+                    ApprovalRecord.expires_at > (decided_at or datetime.utcnow()),
+                ),
+            )
             .values(
                 status=status,
                 decided_by=decided_by,
@@ -109,19 +131,38 @@ class SQLiteApprovalStore(_SessionBoundStore):
         )
         return result.rowcount == 1
 
+    async def expire_if_due(self, approval_id: str, *, now: datetime) -> bool:
+        result = await self.session.execute(
+            update(ApprovalRecord)
+            .where(
+                ApprovalRecord.id == approval_id,
+                ApprovalRecord.status == ApprovalStatus.PENDING,
+                ApprovalRecord.expires_at.is_not(None),
+                ApprovalRecord.expires_at <= now,
+            )
+            .values(
+                status=ApprovalStatus.EXPIRED,
+                decided_at=now,
+                decision_reason="expired",
+            )
+        )
+        return result.rowcount == 1
+
     async def invalidate_for_payload_change(
-        self, task_attempt_id: str, *, current_payload_hash: str
+        self, task_attempt_id: str, *, current_payload_hash: str, now: datetime
     ) -> int:
         result = await self.session.execute(
             update(ApprovalRecord)
             .where(
                 ApprovalRecord.task_attempt_id == task_attempt_id,
-                ApprovalRecord.status == "pending",
+                ApprovalRecord.status.in_(
+                    (ApprovalStatus.PENDING, ApprovalStatus.APPROVED)
+                ),
                 ApprovalRecord.payload_hash != current_payload_hash,
             )
             .values(
-                status="invalidated",
-                decided_at=datetime.utcnow(),
+                status=ApprovalStatus.INVALIDATED,
+                decided_at=now,
                 decision_reason="payload_changed",
             )
         )
