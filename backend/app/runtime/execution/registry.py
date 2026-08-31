@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol, get_args, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -11,6 +11,7 @@ from .models import (
     CapabilityDescriptor,
     CapabilityInvocationContext,
     CapabilityResult,
+    IdempotencyClass,
 )
 
 
@@ -44,6 +45,17 @@ class CapabilityRegistry:
             raise TypeError("descriptor must be a CapabilityDescriptor")
         if not isinstance(adapter, CapabilityAdapter):
             raise TypeError("adapter must implement CapabilityAdapter")
+        if descriptor.idempotency_class in {
+            IdempotencyClass.IDEMPOTENT_WITH_KEY,
+            IdempotencyClass.CHECK_BEFORE_RETRY,
+        }:
+            key_field = descriptor.input_model.model_fields.get("idempotency_key")
+            if key_field is None or not _annotation_accepts_string(
+                key_field.annotation
+            ):
+                raise ValueError(
+                    "keyed capability input must declare a typed idempotency_key"
+                )
         if descriptor.capability_id in self._registrations:
             raise ValueError("capability is already registered")
         self._registrations[descriptor.capability_id] = CapabilityRegistration(
@@ -59,3 +71,7 @@ class CapabilityRegistry:
 
     def capability_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._registrations))
+
+
+def _annotation_accepts_string(annotation: object) -> bool:
+    return annotation is str or str in get_args(annotation)

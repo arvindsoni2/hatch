@@ -8,12 +8,14 @@ from ..models import CapabilityDescriptor, IdempotencyClass, SideEffectClass
 from ..registry import CapabilityRegistry
 from .native import CapabilityHandler, NativeCapabilityAdapter
 
+_REFERENCE_PATTERN = r"^[a-z0-9][a-z0-9._:-]*$"
+
 
 class StructuredGenerationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    request_ref: str
-    schema_ref: str
+    request_ref: str = Field(min_length=1, max_length=256, pattern=_REFERENCE_PATTERN)
+    schema_ref: str = Field(min_length=1, max_length=256, pattern=_REFERENCE_PATTERN)
     model_id: str | None = Field(
         default=None,
         max_length=128,
@@ -29,9 +31,9 @@ class StructuredGenerationInput(BaseModel):
 class StructuredGenerationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    result_ref: str
-    input_tokens: int | None = None
-    output_tokens: int | None = None
+    result_ref: str = Field(min_length=1, max_length=256, pattern=_REFERENCE_PATTERN)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
 
 
 class LLMCapabilityAdapter(NativeCapabilityAdapter):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta, timezone
+import threading
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +13,10 @@ from app.runtime.control import BudgetLimits, ConstraintSet, ControlPlane, Polic
 from app.runtime.contracts import ExecutionResultCode
 from app.runtime.evaluation import ExecutionRecord
 from app.runtime.execution import CapabilityResult, IdempotencyClass, SideEffectClass
+from app.runtime.execution.adapters import (
+    ArtifactCapabilityAdapter,
+    NativeCapabilityAdapter,
+)
 
 from execution_test_support import (
     NOW,
@@ -101,6 +106,40 @@ async def test_timeout_of_commit_is_outcome_unknown_not_retryable(
     assert attempt.status == "outcome_unknown"
 
 
+async def test_timeout_of_prepare_side_effect_is_conservatively_unknown(
+    workflow_runtime,
+) -> None:
+    """Would fail if timed-out preparation were assumed not to have taken effect."""
+    capability_id = "synthetic.prepare_timeout"
+
+    async def blocks(_payload, _context):
+        await asyncio.Event().wait()
+
+    gateway, kernel, _, claim, _ = await gateway_case(
+        workflow_runtime,
+        RecordingAdapter(handler=blocks),
+        descriptor(
+            capability_id,
+            side_effect=SideEffectClass.PREPARE_SIDE_EFFECT,
+            timeout=0.01,
+        ),
+    )
+    from execution_test_support import policy_for
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id=capability_id,
+        policy=policy_for(capability_id),
+        payload={"count": 7},
+    )
+
+    assert result.code is ExecutionResultCode.OUTCOME_UNKNOWN
+    assert result.reason_code == "capability_timeout_ambiguous"
+    attempt = await kernel.get_attempt(claim.task_attempt_id)
+    assert attempt is not None
+    assert attempt.status == "outcome_unknown"
+
+
 async def test_external_cancellation_remains_cancellation(workflow_runtime) -> None:
     """Would fail if caller cancellation were swallowed as a timeout or failure."""
     capability_id = "synthetic.cancel"
@@ -133,3 +172,75 @@ async def test_external_cancellation_remains_cancellation(workflow_runtime) -> N
         await task
     async with factory.session_factory() as session:
         assert list((await session.scalars(select(ExecutionRecord))).all()) == []
+
+
+async def test_slow_synchronous_native_handler_does_not_block_deadline(
+    workflow_runtime,
+) -> None:
+    """Would fail if a sync native call ran on and blocked the event-loop thread."""
+    capability_id = "synthetic.sync_native"
+    release = threading.Event()
+
+    def slow_native(_payload, _context):
+        release.wait(0.25)
+        return SyntheticOutput(result_ref="sync-native-result", count=7)
+
+    gateway, _, _, claim, _ = await gateway_case(
+        workflow_runtime,
+        NativeCapabilityAdapter(slow_native),
+        descriptor(capability_id, timeout=0.01),
+    )
+    asyncio.get_running_loop().call_later(0.05, release.set)
+    from execution_test_support import policy_for
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id=capability_id,
+        policy=policy_for(capability_id),
+        payload={"count": 7},
+    )
+
+    assert result.code is ExecutionResultCode.TIMEOUT
+    assert result.reason_code == "capability_timeout"
+
+
+async def test_slow_synchronous_artifact_is_durable_outcome_unknown(
+    workflow_runtime,
+) -> None:
+    """Would fail if executor work outlived timeout without ambiguous intent."""
+    capability_id = "synthetic.sync_artifact"
+    release = threading.Event()
+    effect_finished = threading.Event()
+
+    def slow_artifact(_payload, _context):
+        release.wait(0.25)
+        effect_finished.set()
+        return SyntheticOutput(result_ref="sync-artifact-result", count=7)
+
+    gateway, kernel, _, claim, _ = await gateway_case(
+        workflow_runtime,
+        ArtifactCapabilityAdapter(slow_artifact),
+        descriptor(
+            capability_id,
+            side_effect=SideEffectClass.ARTIFACT_GENERATION,
+            idempotency=IdempotencyClass.IDEMPOTENT_WITH_KEY,
+            timeout=0.01,
+        ),
+    )
+    asyncio.get_running_loop().call_later(0.05, release.set)
+    from execution_test_support import policy_for
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id=capability_id,
+        policy=policy_for(capability_id),
+        payload={"count": 7, "idempotency_key": "sync-artifact-key"},
+    )
+
+    assert result.code is ExecutionResultCode.OUTCOME_UNKNOWN
+    assert result.reason_code == "capability_timeout_ambiguous"
+    assert result.retry_allowed is False
+    attempt = await kernel.get_attempt(claim.task_attempt_id)
+    assert attempt is not None
+    assert attempt.status == "outcome_unknown"
+    assert await asyncio.to_thread(effect_finished.wait, 0.5) is True

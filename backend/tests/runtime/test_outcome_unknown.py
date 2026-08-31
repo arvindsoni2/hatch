@@ -192,6 +192,55 @@ async def test_malformed_post_commit_success_becomes_durable_outcome_unknown(
         assert record.result_class == "outcome_unknown"
 
 
+@pytest.mark.parametrize(
+    ("side_effect", "payload"),
+    (
+        (SideEffectClass.PREPARE_SIDE_EFFECT, {"count": 7}),
+        (
+            SideEffectClass.ARTIFACT_GENERATION,
+            {"count": 7, "idempotency_key": "artifact-malformed-key"},
+        ),
+    ),
+)
+async def test_malformed_prepare_or_artifact_result_is_ambiguous_safe_failure(
+    workflow_runtime,
+    side_effect,
+    payload,
+) -> None:
+    """Would fail if a post-effect validation error were treated as replay-safe."""
+    capability_id = "synthetic.malformed_side_effect"
+    gateway, kernel, _, claim, _ = await gateway_case(
+        workflow_runtime,
+        RecordingAdapter(
+            CapabilityResult.success(
+                WrongOutput(result_ref="malformed", count="not-an-integer")
+            )
+        ),
+        descriptor(
+            capability_id,
+            side_effect=side_effect,
+            idempotency=(
+                IdempotencyClass.IDEMPOTENT_WITH_KEY
+                if side_effect is SideEffectClass.ARTIFACT_GENERATION
+                else IdempotencyClass.IDEMPOTENT
+            ),
+        ),
+    )
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id=capability_id,
+        policy=policy_for(capability_id),
+        payload=payload,
+    )
+
+    assert result.code is ExecutionResultCode.OUTCOME_UNKNOWN
+    assert result.reason_code == "capability_result_ambiguous"
+    attempt = await kernel.get_attempt(claim.task_attempt_id)
+    assert attempt is not None
+    assert attempt.status == TaskAttemptStatus.OUTCOME_UNKNOWN
+
+
 @pytest.mark.parametrize("result_code", tuple(ExecutionResultCode))
 async def test_adapter_reconciliation_reference_never_crosses_gateway_boundary(
     workflow_runtime,

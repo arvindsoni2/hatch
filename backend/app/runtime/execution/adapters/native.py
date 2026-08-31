@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 
@@ -25,13 +26,21 @@ class NativeCapabilityAdapter:
         if not callable(handler):
             raise TypeError("capability handler must be callable")
         self._handler = handler
+        self._handler_is_async = inspect.iscoroutinefunction(handler) or (
+            hasattr(handler, "__call__")
+            and inspect.iscoroutinefunction(handler.__call__)
+        )
 
     async def invoke(
         self,
         payload: BaseModel,
         context: CapabilityInvocationContext,
     ) -> CapabilityResult:
-        value = self._handler(payload, context)
+        value = (
+            self._handler(payload, context)
+            if self._handler_is_async
+            else await asyncio.to_thread(self._handler, payload, context)
+        )
         if inspect.isawaitable(value):
             value = await value
         if isinstance(value, CapabilityResult):

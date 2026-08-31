@@ -190,18 +190,18 @@ def _validate_forced_model(
     reasons: list[str],
 ) -> bool:
     forced_model = routing.force_model
-    if forced_model is None:
-        return False
     denied = False
+    missing_capabilities = effective.required_model_capabilities
+    for capability in sorted(missing_capabilities):
+        _add_reason(reasons, f"model.{capability}_required")
+        denied = True
+    if forced_model is None:
+        return denied
     if (
         effective.allowed_models is not None
         and forced_model not in effective.allowed_models
     ):
         _add_reason(reasons, "model.force_not_allowed")
-        denied = True
-    missing_capabilities = effective.required_model_capabilities
-    for capability in sorted(missing_capabilities):
-        _add_reason(reasons, f"model.{capability}_required")
         denied = True
     return denied
 
@@ -248,5 +248,10 @@ def _stricter_audit_level(existing, additional):
 def _stricter_capture_policy(existing, additional):
     if additional is None:
         return existing
-    order = {"none": 0, "metadata_only": 1}
+    order = {
+        "disabled": 0,
+        "metadata_only": 1,
+        "redacted": 2,
+        "debug_content": 3,
+    }
     return additional if order[additional.value] < order[existing.value] else existing

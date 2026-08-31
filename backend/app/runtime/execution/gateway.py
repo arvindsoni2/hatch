@@ -87,6 +87,11 @@ class ExecutionGateway:
                 reason_code="invalid_capability_payload",
             )
         raw_payload = dict(payload)
+        if not set(raw_payload).issubset(capability.input_model.model_fields):
+            return CapabilityResult(
+                code=ExecutionResultCode.VALIDATION_FAILURE,
+                reason_code="invalid_capability_payload",
+            )
         try:
             typed_payload = capability.input_model.model_validate(
                 raw_payload,
@@ -97,12 +102,6 @@ class ExecutionGateway:
                 code=ExecutionResultCode.VALIDATION_FAILURE,
                 reason_code="invalid_capability_payload",
             )
-        idempotency_key = self._idempotency_key(capability, raw_payload)
-        if idempotency_key is False:
-            return CapabilityResult(
-                code=ExecutionResultCode.VALIDATION_FAILURE,
-                reason_code="idempotency_key_required",
-            )
         typed_payload, model_id, provider, routing_denied = self._authorized_routing(
             capability,
             typed_payload,
@@ -110,15 +109,27 @@ class ExecutionGateway:
         )
         if routing_denied is not None:
             return routing_denied
+        try:
+            effective_payload = typed_payload.model_dump(
+                mode="json",
+                exclude_unset=True,
+            )
+        except Exception:
+            return CapabilityResult(
+                code=ExecutionResultCode.VALIDATION_FAILURE,
+                reason_code="invalid_capability_payload",
+            )
+        idempotency_key = self._idempotency_key(capability, effective_payload)
+        if idempotency_key is False:
+            return CapabilityResult(
+                code=ExecutionResultCode.VALIDATION_FAILURE,
+                reason_code="idempotency_key_required",
+            )
         if policy is not None and (
             policy.decision == "REQUIRE_APPROVAL"
             or policy.effective_constraints.approval_required
         ):
             try:
-                effective_payload = typed_payload.model_dump(
-                    mode="json",
-                    exclude_unset=True,
-                )
                 canonical_payload_hash(effective_payload)
             except Exception:
                 return CapabilityResult(
@@ -141,6 +152,13 @@ class ExecutionGateway:
 
         started_at = self._kernel.clock.now()
         deadline, timeout_seconds = self._deadline(capability, policy, started_at)
+        reference = self._execution_reference(
+            capability,
+            claim,
+            idempotency_key=(
+                idempotency_key if isinstance(idempotency_key, str) else None
+            ),
+        )
         context = CapabilityInvocationContext(
             deadline=deadline,
             budgets=policy.effective_constraints.budgets,
@@ -153,6 +171,20 @@ class ExecutionGateway:
             model_id=model_id,
             provider=provider,
         )
+        intent_started = await self._kernel.begin_execution_intent(
+            claim,
+            now=started_at,
+            capability_id=capability.capability_id,
+            capability_version=capability.version,
+            side_effect_class=capability.side_effect_class.value,
+            idempotency_class=capability.idempotency_class.value,
+            reconciliation_reference=reference,
+        )
+        if not intent_started:
+            return CapabilityResult(
+                code=ExecutionResultCode.PERMANENT_FAILURE,
+                reason_code="claim_lost",
+            )
         result = await self._invoke_adapter(
             registration,
             typed_payload,
@@ -162,10 +194,7 @@ class ExecutionGateway:
         result = self._classify(
             result,
             capability,
-            claim,
-            idempotency_key=(
-                idempotency_key if isinstance(idempotency_key, str) else None
-            ),
+            reconciliation_reference=reference,
         )
         finished_at = self._kernel.clock.now()
         latency_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
@@ -186,6 +215,9 @@ class ExecutionGateway:
             ),
             capability_id=capability.capability_id,
             capability_version=capability.version,
+            side_effect_class=capability.side_effect_class.value,
+            idempotency_class=capability.idempotency_class.value,
+            reconciliation_reference=reference,
             result_class=result.code.value,
             started_at=started_at,
             finished_at=finished_at,
@@ -492,22 +524,21 @@ class ExecutionGateway:
 
     @staticmethod
     def _outcome_is_ambiguous(capability: CapabilityDescriptor) -> bool:
-        return (
-            capability.side_effect_class is SideEffectClass.COMMIT_SIDE_EFFECT
-            or capability.idempotency_class
-            in {
-                IdempotencyClass.CHECK_BEFORE_RETRY,
-                IdempotencyClass.NON_RETRYABLE_SIDE_EFFECT,
-            }
-        )
+        return capability.side_effect_class in {
+            SideEffectClass.PREPARE_SIDE_EFFECT,
+            SideEffectClass.COMMIT_SIDE_EFFECT,
+            SideEffectClass.ARTIFACT_GENERATION,
+        } or capability.idempotency_class in {
+            IdempotencyClass.CHECK_BEFORE_RETRY,
+            IdempotencyClass.NON_RETRYABLE_SIDE_EFFECT,
+        }
 
     @staticmethod
     def _classify(
         result: CapabilityResult,
         capability: CapabilityDescriptor,
-        claim: ExecutionClaimRecord,
         *,
-        idempotency_key: str | None,
+        reconciliation_reference: str,
     ) -> CapabilityResult:
         retry_allowed = bool(
             result.retry_allowed
@@ -520,20 +551,11 @@ class ExecutionGateway:
             in {ExecutionResultCode.TIMEOUT, ExecutionResultCode.TRANSIENT_FAILURE}
         )
         if result.code is ExecutionResultCode.OUTCOME_UNKNOWN:
-            reference_material = "|".join(
-                (
-                    capability.capability_id,
-                    str(capability.version),
-                    claim.id,
-                    str(claim.fencing_token),
-                    idempotency_key or "no-key",
-                )
-            )
             return result.model_copy(
                 update={
                     "output": None,
                     "retry_allowed": False,
-                    "reconciliation_reference": _hash_reference(reference_material),
+                    "reconciliation_reference": reconciliation_reference,
                 }
             )
         return result.model_copy(
@@ -542,6 +564,24 @@ class ExecutionGateway:
                 "reconciliation_reference": None,
             }
         )
+
+    @staticmethod
+    def _execution_reference(
+        capability: CapabilityDescriptor,
+        claim: ExecutionClaimRecord,
+        *,
+        idempotency_key: str | None,
+    ) -> str:
+        material = "|".join(
+            (
+                capability.capability_id,
+                str(capability.version),
+                claim.id,
+                str(claim.fencing_token),
+                idempotency_key or "no-key",
+            )
+        )
+        return _hash_reference(material)
 
     async def _emit_telemetry(self, event: ExecutionTelemetry) -> None:
         if self._telemetry is None:

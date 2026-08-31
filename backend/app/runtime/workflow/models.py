@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -163,6 +164,10 @@ class TaskAttemptRecord(Base):
     capability_version: Mapped[int | None] = mapped_column(Integer)
     idempotency_class: Mapped[str | None] = mapped_column(String(64))
     reconciliation_reference: Mapped[str | None] = mapped_column(String(128))
+    side_effect_class: Mapped[str | None] = mapped_column(String(64))
+    execution_intent_active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
     claim_fencing_token: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0", nullable=False
     )

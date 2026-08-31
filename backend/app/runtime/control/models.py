@@ -21,10 +21,12 @@ class AuditLevel(str, Enum):
 
 
 class CapturePolicy(str, Enum):
-    """Capture remains metadata-only; lower values are more restrictive."""
+    """Canonical capture levels; policy folding may only reduce capture."""
 
-    NONE = "none"
     METADATA_ONLY = "metadata_only"
+    REDACTED = "redacted"
+    DEBUG_CONTENT = "debug_content"
+    DISABLED = "disabled"
 
 
 def _validate_identifiers(values: frozenset[str], *, field_name: str) -> None:

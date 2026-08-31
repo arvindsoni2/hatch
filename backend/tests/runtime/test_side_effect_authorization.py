@@ -4,16 +4,47 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from app.runtime.contracts import ExecutionResultCode
 from app.runtime.execution import IdempotencyClass, SideEffectClass
 
 from execution_test_support import (
     NOW,
     RecordingAdapter,
+    denied_policy_for,
     descriptor,
     gateway_case,
     policy_for,
 )
+
+
+@pytest.mark.parametrize(
+    "side_effect",
+    (SideEffectClass.PREPARE_SIDE_EFFECT, SideEffectClass.ARTIFACT_GENERATION),
+)
+async def test_prepare_and_artifact_capabilities_still_require_authorization(
+    workflow_runtime,
+    side_effect,
+) -> None:
+    """Would fail if non-commit side-effect classes bypassed capability denial."""
+    capability_id = "synthetic.side_effect_matrix"
+    adapter = RecordingAdapter()
+    gateway, _, _, claim, _ = await gateway_case(
+        workflow_runtime,
+        adapter,
+        descriptor(capability_id, side_effect=side_effect),
+    )
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id=capability_id,
+        policy=denied_policy_for(),
+        payload={"count": 7},
+    )
+
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert adapter.calls == []
 
 
 async def test_commit_capability_requires_valid_approval(workflow_runtime) -> None:

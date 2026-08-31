@@ -222,10 +222,30 @@ def test_lower_precedence_can_tighten_audit_and_capture_requirements(
         user=PolicyLayer(
             constraints=ConstraintSet(
                 audit_level=AuditLevel.STRICT,
-                capture_policy=CapturePolicy.NONE,
+                capture_policy=CapturePolicy.DISABLED,
             )
         ),
     )
 
     assert decision.effective_constraints.audit_level is AuditLevel.STRICT
-    assert decision.effective_constraints.capture_policy is CapturePolicy.NONE
+    assert decision.effective_constraints.capture_policy is CapturePolicy.DISABLED
+
+
+def test_capture_policy_uses_canonical_values_and_only_tightens(
+    control_plane: ControlPlane,
+) -> None:
+    """Would fail if legacy capture values or permissive lower layers survived."""
+    assert {policy.value for policy in CapturePolicy} == {
+        "metadata_only",
+        "redacted",
+        "debug_content",
+        "disabled",
+    }
+
+    decision = control_plane.evaluate(
+        system=PolicyLayer(constraints=ConstraintSet(capture_policy="metadata_only")),
+        user=PolicyLayer(constraints=ConstraintSet(capture_policy="debug_content")),
+        routing=PolicyLayer(constraints=ConstraintSet(capture_policy="disabled")),
+    )
+
+    assert decision.effective_constraints.capture_policy.value == "disabled"

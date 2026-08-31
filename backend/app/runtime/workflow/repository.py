@@ -35,6 +35,22 @@ _IDEMPOTENCY_CLASSES = {
     "check_before_retry",
     "non_retryable_side_effect",
 }
+_SIDE_EFFECT_CLASSES = {
+    "pure",
+    "read_only_external",
+    "prepare_side_effect",
+    "commit_side_effect",
+    "artifact_generation",
+}
+_AMBIGUOUS_SIDE_EFFECT_CLASSES = {
+    "prepare_side_effect",
+    "commit_side_effect",
+    "artifact_generation",
+}
+_AMBIGUOUS_IDEMPOTENCY_CLASSES = {
+    "check_before_retry",
+    "non_retryable_side_effect",
+}
 _DEFAULT_RECOVERY_BATCH_SIZE = 25
 _MAX_RECOVERY_BATCH_SIZE = 100
 _DEFAULT_RECOVERY_BACKOFF_SECONDS = 1
@@ -106,6 +122,36 @@ def normalize_reconciliation_binding(
     )
 
 
+def normalize_execution_intent_binding(
+    capability_id: object,
+    capability_version: object,
+    side_effect_class: object,
+    idempotency_class: object,
+    reconciliation_reference: object,
+) -> tuple[str, int, str, str, str]:
+    """Accept the complete bounded descriptor binding for external work."""
+    capability_id, capability_version, idempotency_class, reference = (
+        normalize_reconciliation_binding(
+            capability_id,
+            capability_version,
+            idempotency_class,
+            reconciliation_reference,
+        )
+    )
+    if not isinstance(side_effect_class, str):
+        raise ValueError("side_effect_class must be a supported stable code")
+    normalized_side_effect = side_effect_class.strip()
+    if normalized_side_effect not in _SIDE_EFFECT_CLASSES:
+        raise ValueError("side_effect_class must be a supported stable code")
+    return (
+        capability_id,
+        capability_version,
+        normalized_side_effect,
+        idempotency_class,
+        reference,
+    )
+
+
 class SQLiteWorkflowRepository:
     """Durable workflow operations, each enclosed in a small database transaction."""
 
@@ -113,9 +159,7 @@ class SQLiteWorkflowRepository:
         self._uow_factory = uow_factory
 
     @staticmethod
-    def _active_claim(
-        claim: ExecutionClaimRecord, now: datetime
-    ) -> object:
+    def _active_claim(claim: ExecutionClaimRecord, now: datetime) -> object:
         """A durable, unexpired ownership predicate; caller objects are untrusted."""
         return exists().where(
             ExecutionClaimRecord.id == claim.id,
@@ -138,11 +182,13 @@ class SQLiteWorkflowRepository:
         if step is None:
             raise RuntimeError("workflow step disappeared during lifecycle update")
         attempts = list(
-            (await session.scalars(
-                select(TaskAttemptRecord)
-                .where(TaskAttemptRecord.workflow_step_id == workflow_step_id)
-                .order_by(TaskAttemptRecord.attempt_number)
-            )).all()
+            (
+                await session.scalars(
+                    select(TaskAttemptRecord)
+                    .where(TaskAttemptRecord.workflow_step_id == workflow_step_id)
+                    .order_by(TaskAttemptRecord.attempt_number)
+                )
+            ).all()
         )
         statuses = {attempt.status for attempt in attempts}
         latest = attempts[-1] if attempts else None
@@ -154,7 +200,10 @@ class SQLiteWorkflowRepository:
             step_status = WorkflowStepStatus.PENDING
         elif TaskAttemptStatus.SUCCEEDED in statuses:
             step_status = WorkflowStepStatus.COMPLETED
-        elif attempts and statuses <= {TaskAttemptStatus.FAILED, TaskAttemptStatus.CANCELLED}:
+        elif attempts and statuses <= {
+            TaskAttemptStatus.FAILED,
+            TaskAttemptStatus.CANCELLED,
+        }:
             step_status = WorkflowStepStatus.FAILED
         else:
             step_status = WorkflowStepStatus.PENDING
@@ -183,11 +232,13 @@ class SQLiteWorkflowRepository:
             )
         )
         steps = list(
-            (await session.scalars(
-                select(WorkflowStepRecord)
-                .where(WorkflowStepRecord.workflow_run_id == step.workflow_run_id)
-                .order_by(WorkflowStepRecord.step_order)
-            )).all()
+            (
+                await session.scalars(
+                    select(WorkflowStepRecord)
+                    .where(WorkflowStepRecord.workflow_run_id == step.workflow_run_id)
+                    .order_by(WorkflowStepRecord.step_order)
+                )
+            ).all()
         )
         step_statuses = {item.status for item in steps}
         if WorkflowStepStatus.RUNNING in step_statuses:
@@ -198,21 +249,32 @@ class SQLiteWorkflowRepository:
             run_status = WorkflowRunStatus.PENDING
         elif steps and step_statuses == {WorkflowStepStatus.COMPLETED}:
             run_status = WorkflowRunStatus.COMPLETED
-        elif steps and step_statuses <= {WorkflowStepStatus.FAILED, WorkflowStepStatus.CANCELLED}:
+        elif steps and step_statuses <= {
+            WorkflowStepStatus.FAILED,
+            WorkflowStepStatus.CANCELLED,
+        }:
             run_status = WorkflowRunStatus.FAILED
         else:
             run_status = WorkflowRunStatus.PENDING
         result_ref = None
         if run_status == WorkflowRunStatus.COMPLETED:
             succeeded = next(
-                (attempt for attempt in reversed(attempts) if attempt.status == TaskAttemptStatus.SUCCEEDED),
+                (
+                    attempt
+                    for attempt in reversed(attempts)
+                    if attempt.status == TaskAttemptStatus.SUCCEEDED
+                ),
                 None,
             )
             result_ref = succeeded.result_ref_json if succeeded is not None else None
         failure_code = None
         if run_status == WorkflowRunStatus.FAILED:
             failed_step = next(
-                (item for item in reversed(steps) if item.status == WorkflowStepStatus.FAILED),
+                (
+                    item
+                    for item in reversed(steps)
+                    if item.status == WorkflowStepStatus.FAILED
+                ),
                 None,
             )
             failure_code = failed_step.failure_code if failed_step is not None else None
@@ -223,7 +285,8 @@ class SQLiteWorkflowRepository:
                 status=run_status,
                 completed_at=(
                     now
-                    if run_status in (WorkflowRunStatus.COMPLETED, WorkflowRunStatus.FAILED)
+                    if run_status
+                    in (WorkflowRunStatus.COMPLETED, WorkflowRunStatus.FAILED)
                     else None
                 ),
                 result_ref_json=result_ref,
@@ -358,7 +421,8 @@ class SQLiteWorkflowRepository:
                     await uow.session.scalars(
                         select(TaskAttemptRecord.workflow_step_id).where(
                             TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
-                            TaskAttemptRecord.waiting_reason == WaitingReason.RETRY_TIME,
+                            TaskAttemptRecord.waiting_reason
+                            == WaitingReason.RETRY_TIME,
                             TaskAttemptRecord.not_before <= now,
                         )
                     )
@@ -400,7 +464,8 @@ class SQLiteWorkflowRepository:
                 .where(
                     TaskAttemptRecord.id == candidate.id,
                     TaskAttemptRecord.status == TaskAttemptStatus.PENDING,
-                    TaskAttemptRecord.claim_fencing_token == candidate.claim_fencing_token,
+                    TaskAttemptRecord.claim_fencing_token
+                    == candidate.claim_fencing_token,
                     (TaskAttemptRecord.not_before.is_(None))
                     | (TaskAttemptRecord.not_before <= now),
                 )
@@ -608,6 +673,58 @@ class SQLiteWorkflowRepository:
             await uow.commit()
             return True
 
+    async def begin_execution_intent(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        now: datetime,
+        capability_id: str,
+        capability_version: int,
+        side_effect_class: str,
+        idempotency_class: str,
+        reconciliation_reference: str,
+    ) -> bool:
+        """Commit a fenced, privacy-safe binding before adapter work begins."""
+        (
+            capability_id,
+            capability_version,
+            side_effect_class,
+            idempotency_class,
+            reconciliation_reference,
+        ) = normalize_execution_intent_binding(
+            capability_id,
+            capability_version,
+            side_effect_class,
+            idempotency_class,
+            reconciliation_reference,
+        )
+        active_claim = self._active_claim(claim, now)
+        async with self._uow_factory.transaction() as uow:
+            bound = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    TaskAttemptRecord.execution_intent_active.is_(False),
+                    active_claim,
+                )
+                .values(
+                    capability_id=capability_id,
+                    capability_version=capability_version,
+                    side_effect_class=side_effect_class,
+                    idempotency_class=idempotency_class,
+                    reconciliation_reference=reconciliation_reference,
+                    execution_intent_active=True,
+                    updated_at=now,
+                )
+            )
+            if bound.rowcount != 1:
+                return False
+            await uow.commit()
+            return True
+
     async def persist_execution_result(
         self,
         claim: ExecutionClaimRecord,
@@ -615,6 +732,9 @@ class SQLiteWorkflowRepository:
         execution_role: str,
         capability_id: str,
         capability_version: int,
+        side_effect_class: str,
+        idempotency_class: str,
+        reconciliation_reference: str,
         result_class: str,
         started_at: datetime,
         finished_at: datetime,
@@ -638,20 +758,30 @@ class SQLiteWorkflowRepository:
         ):
             raise ValueError("latency_ms must be a non-negative integer")
         enforce_metadata_only(metadata, path="execution.metadata")
-        unknown_binding: tuple[str, int, str, str] | None = None
-        if outcome_unknown is not None:
-            unknown_binding = normalize_reconciliation_binding(
-                capability_id,
-                capability_version,
-                outcome_unknown.get("idempotency_class"),
-                outcome_unknown.get("reconciliation_reference"),
-            )
+        attempt_binding = normalize_execution_intent_binding(
+            capability_id,
+            capability_version,
+            side_effect_class,
+            idempotency_class,
+            reconciliation_reference,
+        )
+        if outcome_unknown is not None and (
+            outcome_unknown.get("idempotency_class") != attempt_binding[3]
+            or outcome_unknown.get("reconciliation_reference") != attempt_binding[4]
+        ):
+            raise ValueError("outcome_unknown must match execution intent binding")
 
         current_attempt = exists().where(
             TaskAttemptRecord.id == claim.task_attempt_id,
             TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
             TaskAttemptRecord.current_claim_id == claim.id,
             TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+            TaskAttemptRecord.capability_id == attempt_binding[0],
+            TaskAttemptRecord.capability_version == attempt_binding[1],
+            TaskAttemptRecord.side_effect_class == attempt_binding[2],
+            TaskAttemptRecord.idempotency_class == attempt_binding[3],
+            TaskAttemptRecord.reconciliation_reference == attempt_binding[4],
+            TaskAttemptRecord.execution_intent_active.is_(True),
         )
         active_claim = self._active_claim(claim, finished_at)
         async with self._uow_factory.transaction() as uow:
@@ -684,13 +814,7 @@ class SQLiteWorkflowRepository:
                 latency_ms=latency_ms,
                 metadata_json=metadata,
             )
-            if unknown_binding is not None:
-                (
-                    normalized_capability,
-                    normalized_version,
-                    idempotency_class,
-                    reconciliation_reference,
-                ) = unknown_binding
+            if outcome_unknown is not None:
                 marked = await uow.session.execute(
                     update(TaskAttemptRecord)
                     .where(
@@ -698,14 +822,12 @@ class SQLiteWorkflowRepository:
                         TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
                         TaskAttemptRecord.current_claim_id == claim.id,
                         TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                        TaskAttemptRecord.execution_intent_active.is_(True),
                     )
                     .values(
                         status=TaskAttemptStatus.OUTCOME_UNKNOWN,
                         current_claim_id=None,
-                        capability_id=normalized_capability,
-                        capability_version=normalized_version,
-                        idempotency_class=idempotency_class,
-                        reconciliation_reference=reconciliation_reference,
+                        execution_intent_active=False,
                         updated_at=finished_at,
                     )
                 )
@@ -734,6 +856,22 @@ class SQLiteWorkflowRepository:
                 if attempt is None:
                     raise RuntimeError("execution attempt disappeared before commit")
                 await self._sync_lifecycle(uow, attempt.workflow_step_id, finished_at)
+            else:
+                closed = await uow.session.execute(
+                    update(TaskAttemptRecord)
+                    .where(
+                        TaskAttemptRecord.id == claim.task_attempt_id,
+                        TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                        TaskAttemptRecord.current_claim_id == claim.id,
+                        TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                        TaskAttemptRecord.execution_intent_active.is_(True),
+                    )
+                    .values(execution_intent_active=False, updated_at=finished_at)
+                )
+                if closed.rowcount != 1:
+                    raise RuntimeError(
+                        "claim ownership changed during execution persistence"
+                    )
             await uow.commit()
             return True
 
@@ -748,13 +886,16 @@ class SQLiteWorkflowRepository:
         reconciliation_reference: str,
     ) -> bool:
         """Durably stop execution before an ambiguous external outcome is checked."""
-        capability_id, capability_version, idempotency_class, reconciliation_reference = (
-            normalize_reconciliation_binding(
-                capability_id,
-                capability_version,
-                idempotency_class,
-                reconciliation_reference,
-            )
+        (
+            capability_id,
+            capability_version,
+            idempotency_class,
+            reconciliation_reference,
+        ) = normalize_reconciliation_binding(
+            capability_id,
+            capability_version,
+            idempotency_class,
+            reconciliation_reference,
         )
         active_claim = self._active_claim(claim, now)
         async with self._uow_factory.transaction() as uow:
@@ -774,6 +915,7 @@ class SQLiteWorkflowRepository:
                     capability_version=capability_version,
                     idempotency_class=idempotency_class,
                     reconciliation_reference=reconciliation_reference,
+                    execution_intent_active=False,
                     updated_at=now,
                 )
             )
@@ -788,7 +930,9 @@ class SQLiteWorkflowRepository:
                 .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
             )
             if released.rowcount != 1:
-                raise RuntimeError("claim ownership changed during unknown-outcome transition")
+                raise RuntimeError(
+                    "claim ownership changed during unknown-outcome transition"
+                )
             attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
             if attempt is None:
                 raise RuntimeError("unknown-outcome attempt disappeared before commit")
@@ -807,7 +951,10 @@ class SQLiteWorkflowRepository:
         worker_id = require_worker_id(worker_id)
         async with self._uow_factory.transaction() as uow:
             candidate = await uow.session.get(TaskAttemptRecord, attempt_id)
-            if candidate is None or candidate.status != TaskAttemptStatus.OUTCOME_UNKNOWN:
+            if (
+                candidate is None
+                or candidate.status != TaskAttemptStatus.OUTCOME_UNKNOWN
+            ):
                 return None
             claim_id = str(uuid.uuid4())
             token = await uow.session.scalar(
@@ -816,7 +963,8 @@ class SQLiteWorkflowRepository:
                     TaskAttemptRecord.id == attempt_id,
                     TaskAttemptRecord.status == TaskAttemptStatus.OUTCOME_UNKNOWN,
                     TaskAttemptRecord.current_claim_id.is_(None),
-                    TaskAttemptRecord.claim_fencing_token == candidate.claim_fencing_token,
+                    TaskAttemptRecord.claim_fencing_token
+                    == candidate.claim_fencing_token,
                 )
                 .values(
                     current_claim_id=claim_id,
@@ -858,7 +1006,8 @@ class SQLiteWorkflowRepository:
                     TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
                     active_claim,
                 )
-                .values(current_claim_id=None,
+                .values(
+                    current_claim_id=None,
                     updated_at=now,
                 )
             )
@@ -873,7 +1022,9 @@ class SQLiteWorkflowRepository:
                 .values(status=ExecutionClaimStatus.RELEASED, released_at=now)
             )
             if released.rowcount != 1:
-                raise RuntimeError("claim ownership changed during reconciliation rollback")
+                raise RuntimeError(
+                    "claim ownership changed during reconciliation rollback"
+                )
             attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
             if attempt is None:
                 raise RuntimeError("ambiguous attempt disappeared before commit")
@@ -1013,6 +1164,22 @@ class SQLiteWorkflowRepository:
                 or claim.lease_expires_at > now
             ):
                 return False
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if attempt is None:
+                return False
+            ambiguous_intent = bool(
+                attempt.execution_intent_active
+                and (
+                    attempt.side_effect_class in _AMBIGUOUS_SIDE_EFFECT_CLASSES
+                    or attempt.idempotency_class in _AMBIGUOUS_IDEMPOTENCY_CLASSES
+                )
+            )
+            recovered_status = (
+                TaskAttemptStatus.OUTCOME_UNKNOWN
+                if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
+                or ambiguous_intent
+                else TaskAttemptStatus.PENDING
+            )
             still_current = exists().where(
                 ExecutionClaimRecord.id == claim.id,
                 ExecutionClaimRecord.status == ExecutionClaimStatus.ACTIVE,
@@ -1035,12 +1202,9 @@ class SQLiteWorkflowRepository:
                     still_current,
                 )
                 .values(
-                    status=(
-                        TaskAttemptStatus.OUTCOME_UNKNOWN
-                        if claim.purpose == ExecutionClaimPurpose.RECONCILIATION
-                        else TaskAttemptStatus.PENDING
-                    ),
+                    status=recovered_status,
                     current_claim_id=None,
+                    execution_intent_active=False,
                     updated_at=now,
                 )
             )
@@ -1059,10 +1223,12 @@ class SQLiteWorkflowRepository:
             )
             if expired.rowcount != 1:
                 raise RuntimeError("claim ownership changed during reconciliation")
-            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
-            if attempt is None:
+            recovered_attempt = await uow.session.get(
+                TaskAttemptRecord, claim.task_attempt_id
+            )
+            if recovered_attempt is None:
                 raise RuntimeError("recovered attempt disappeared before commit")
-            await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
+            await self._sync_lifecycle(uow, recovered_attempt.workflow_step_id, now)
             await uow.commit()
             return True
 
@@ -1103,7 +1269,9 @@ class SQLiteWorkflowRepository:
                 return None
             attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
             if attempt is None:
-                raise RuntimeError("recovery attempt disappeared before deferral commit")
+                raise RuntimeError(
+                    "recovery attempt disappeared before deferral commit"
+                )
             await uow.commit()
             return claim.id, attempt.id
 

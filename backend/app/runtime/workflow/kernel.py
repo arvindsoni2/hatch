@@ -99,7 +99,10 @@ class WorkflowKernel:
                     worker_id, now, self._lease_duration
                 )
             except OperationalError as error:
-                if "locked" not in str(error).lower() or attempt + 1 == self._lock_retry_attempts:
+                if (
+                    "locked" not in str(error).lower()
+                    or attempt + 1 == self._lock_retry_attempts
+                ):
                     raise
                 await self._lock_wait(0.005 * (2**attempt))
         return None
@@ -125,7 +128,10 @@ class WorkflowKernel:
         now: datetime | None = None,
     ) -> bool:
         result_ref = dict(result)
-        if not isinstance(result_ref.get("result_ref"), str) or not result_ref["result_ref"]:
+        if (
+            not isinstance(result_ref.get("result_ref"), str)
+            or not result_ref["result_ref"]
+        ):
             raise ValueError("result must contain a non-empty result_ref")
         enforce_metadata_only(result_ref, path="result_ref")
         finished_at = now or self._clock.now()
@@ -140,6 +146,9 @@ class WorkflowKernel:
         execution_role: str,
         capability_id: str,
         capability_version: int,
+        side_effect_class: str,
+        idempotency_class: str,
+        reconciliation_reference: str,
         result_class: str,
         started_at: datetime,
         finished_at: datetime,
@@ -153,12 +162,37 @@ class WorkflowKernel:
             execution_role=execution_role,
             capability_id=capability_id,
             capability_version=capability_version,
+            side_effect_class=side_effect_class,
+            idempotency_class=idempotency_class,
+            reconciliation_reference=reconciliation_reference,
             result_class=result_class,
             started_at=started_at,
             finished_at=finished_at,
             latency_ms=latency_ms,
             metadata=metadata,
             outcome_unknown=outcome_unknown,
+        )
+
+    async def begin_execution_intent(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        now: datetime,
+        capability_id: str,
+        capability_version: int,
+        side_effect_class: str,
+        idempotency_class: str,
+        reconciliation_reference: str,
+    ) -> bool:
+        """Commit a fenced capability binding before any adapter work begins."""
+        return await self._repository.begin_execution_intent(
+            claim,
+            now=now,
+            capability_id=capability_id,
+            capability_version=capability_version,
+            side_effect_class=side_effect_class,
+            idempotency_class=idempotency_class,
+            reconciliation_reference=reconciliation_reference,
         )
 
     async def fail_or_retry(
@@ -202,7 +236,9 @@ class WorkflowKernel:
         if not isinstance(reason, WaitingReason):
             raise ValueError("waiting reason must be a supported WaitingReason")
         if reason is WaitingReason.RETRY_TIME:
-            raise ValueError("RETRY_TIME is scheduler-only and cannot be requested by a worker")
+            raise ValueError(
+                "RETRY_TIME is scheduler-only and cannot be requested by a worker"
+            )
         return await self._repository.transition_waiting(claim, reason=reason, now=now)
 
     async def resume_waiting(

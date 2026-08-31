@@ -13,10 +13,12 @@ R3 adds the provider-generic typed capability registry, adapters, and execution
 gateway under `app.runtime.execution`. Product ownership remains outside the generic
 runtime: `app.runtime_bindings.capabilities` supplies only `job.local_score`,
 `artifact.render_cv`, and `artifact.render_cover_letter`; the generic layer supplies
-only `llm.generate_structured`. No internal function is exposed through MCP. The only
-R2 extension is the semantic `WorkflowStore.persist_execution_result` seam and its
-SQLite implementation, which atomically fence-checks the live claim, inserts the
-execution record, and durably transitions an ambiguous attempt when required.
+only `llm.generate_structured`. No internal function is exposed through MCP. The R2
+extensions are the semantic `WorkflowStore.begin_execution_intent` and
+`persist_execution_result` seams, their SQLite implementations, and the additive
+execution-intent migration. The first commits a fenced metadata-only binding before
+adapter work; the second atomically fence-checks the live claim, inserts the execution
+record, and closes or transitions the intent.
 
 All verification uses bounded synthetic payloads, injected local adapters, and
 disposable SQLite databases. No production or shared external provider was called.
@@ -27,15 +29,16 @@ disposable SQLite databases. No production or shared external provider was calle
 | --- | --- | --- |
 | `INV-EXE-001` typed registration and resolution | Immutable `CapabilityDescriptor`, duplicate-safe `CapabilityRegistry`, strict Pydantic input/output validation | `test_gateway_strictly_validates_payload_and_typed_output`, `test_gateway_rejects_adapter_output_that_violates_descriptor`, `test_only_four_initial_capabilities_are_registered` |
 | `INV-EXE-002` control and approval precede side effects | Fail-closed capability, egress, and concrete routing authorization followed by exact durable approval verification against the effective typed payload | `test_visible_capability_is_not_automatically_authorized`, LLM denied/omitted routing cases, forced-route approval cases, side-effect authorization cases, inherited policy precedence/force-model cases |
-| `INV-EXE-003` deadlines, cancellation, and replay advice only narrow | Minimum policy/descriptor deadline, `asyncio.timeout`, uncaught external `CancelledError`, descriptor-constrained retry advice | `test_earlier_policy_deadline_and_budgets_reach_adapter`, `test_timeout_of_commit_is_outcome_unknown_not_retryable`, `test_external_cancellation_remains_cancellation`, all idempotency cases |
-| `INV-EXE-004` external result persistence is fenced and ambiguous outcomes reconcile | Adapter call occurs before the short write UoW; claim/attempt/fence/lease are checked atomically before record insertion; `OUTCOME_UNKNOWN` stores a hashed reconciliation reference and releases the claim in the same UoW | `test_lost_external_commit_becomes_outcome_unknown`, `test_gateway_rejects_result_after_claim_loss`, affected R2 fencing/reconciliation gate |
+| `INV-EXE-003` deadlines, cancellation, and replay advice only narrow | Minimum policy/descriptor deadline, executor-backed synchronous handlers, `asyncio.timeout`, uncaught external `CancelledError`, descriptor-constrained retry advice | `test_earlier_policy_deadline_and_budgets_reach_adapter`, timeout/cancellation cases, synchronous native/artifact cases, all idempotency cases |
+| `INV-EXE-004` external work and result persistence are fenced; ambiguous outcomes reconcile | A short pre-invocation UoW commits capability/version/side-effect/idempotency/hash binding and closes before adapter work; a second fenced UoW inserts the result and closes the intent; expired ambiguous intent becomes `OUTCOME_UNKNOWN` without replay | `test_fenced_intent_is_committed_before_adapter_invocation`, crash/persistence/cancellation restart cases, lost-claim cases, affected R2 fencing/reconciliation gate |
 | Privacy-safe evidence and telemetry | Durable metadata contains stable codes, classifications, latency, and hashes only; telemetry is content-free, emitted after persistence, and non-fatal | `test_canaries_never_enter_records_errors_logs_or_telemetry`, `test_idempotency_key_reaches_adapter_but_only_hash_is_persisted`, `test_success_is_typed_persisted_then_reported_with_nonfatal_telemetry`, inherited runtime privacy cases |
 
-The gateway order is resolve, Control Plane authorization, payload-bound approval
-verification when required, deadline/budget establishment, adapter invocation outside
-a write transaction, typed result classification, fenced durable persistence, then
-non-fatal telemetry. `OUTCOME_UNKNOWN` and non-retryable side effects always return
-`retry_allowed=False`; the gateway contains no blind retry loop.
+The gateway order is resolve, Control Plane authorization, exact effective-payload
+approval verification when required, deadline/budget establishment, fenced durable
+intent, adapter invocation outside a write transaction, typed result classification,
+fenced durable persistence, then non-fatal telemetry. `OUTCOME_UNKNOWN` and
+non-retryable side effects always return `retry_allowed=False`; the gateway contains
+no blind retry loop.
 
 ## TDD evidence
 
@@ -425,3 +428,79 @@ green run, and it imports no R3 path. Therefore the final evidence is a green R3
 a green complete backend run before a formatting-only change, and a final-head
 composite result with one reproducible-as-isolation-green out-of-scope timing flake;
 it is not represented as a second green complete run.
+
+## Final architecture/security integration fix
+
+Fix base: `536690c`. This section supersedes the earlier statement that R3 added no
+migration: final review required an additive migration so ambiguous pre-invocation
+intent survives process failure. Migration `v9w0x1y2z3a4` adds only
+`side_effect_class` and `execution_intent_active` to task attempts; downgrade and
+re-upgrade are tested against a disposable SQLite database.
+
+The gateway now commits a short fenced intent UoW after exact effective-payload
+approval and deadline setup, and before invoking any adapter. The transaction binds
+capability/version, side-effect class, idempotency class, and a gateway-owned SHA-256
+reference; it is closed before external work. Result persistence requires that exact
+active binding and clears it atomically. Recovery maps expired active preparation,
+commit, artifact, check-before-retry, or non-retryable intent to `OUTCOME_UNKNOWN`;
+ordinary safe abandoned work remains replayable. Injected crash, cancellation, and
+post-effect persistence failure tests prove restart does not blind-replay.
+
+Non-FORCE required model capabilities now deny until Task 10 provides trusted model
+evidence; routing-supplied claims do not satisfy them. Synchronous native and artifact
+handlers run through the executor so the event loop and deadline remain effective;
+artifact work that can outlive cancellation is protected by the durable intent and
+classified conservatively. Gateway extras are rejected even for an input model that
+would ignore them, keyed registrations require a typed key field, and the adapter
+context, approval hash, persistence hash, and intent all derive from the same
+post-routing typed key. Capture policy exposes exactly `METADATA_ONLY`, `REDACTED`,
+`DEBUG_CONTENT`, and `DISABLED` and folds only toward less capture.
+
+Final-fix strict RED observations, captured before production edits, were behavioral:
+
+- durable intent/restart module: `4 failed, 3 warnings in 1.17s` (no pre-intent was
+  visible and expired crash/cancel/persistence-failure work recovered `PENDING`);
+- canonical capture test: `1 failed, 3 warnings in 0.17s` (legacy enum shape);
+- non-FORCE capability end-to-end test: `1 failed, 3 warnings in 0.76s` (policy
+  incorrectly allowed routing-supplied claims);
+- exact key/extras/registration tests: `3 failed, 3 deselected, 3 warnings in 0.86s`;
+- synchronous deadline tests: `2 failed, 3 deselected, 3 warnings in 1.44s`;
+- reference/numeric boundary module: `7 failed, 3 warnings in 0.21s`;
+- prepare malformed/timeout selection: `2 failed, 18 deselected, 3 warnings in
+  0.71s`; artifact malformed selection: `1 failed, 3 warnings in 0.52s`;
+- migration head/model/column selection: `3 failed, 2 deselected, 3 warnings in
+  2.25s`.
+
+Authoritative final-fix gates in Python 3.12.13:
+
+```text
+# Focused R3: gateway, intent, side effects, keys, ambiguity, deadlines,
+# precedence/force-model, schemas, fencing, and migration.
+# 85 passed, 2 PytestCacheWarning warnings in 24.73s.
+
+# Affected R2: reconciliation, restart recovery, fencing, storage, privacy,
+# approvals, and migration.
+# 64 passed, 2 PytestCacheWarning warnings in 24.84s.
+
+docker run --rm --entrypoint python \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  -m pytest -q --no-cov tests/runtime
+# 249 passed, 2 PytestCacheWarning warnings in 44.84s.
+```
+
+The warnings are solely cache-write warnings on the bind mount. Per assignment, the
+controller owns the final complete backend rerun; this section makes no new whole-
+backend green claim. No production/shared external call was made. Synthetic raw
+payload, token, path, provider-reference, and content canaries remain absent from
+records, typed errors, logs, and telemetry. Only stable codes and gateway hashes are
+durable. Coach V6 command, media, deletion, and export classes remain non-applicable:
+this wave changes no Coach path. The inherited staged-runner timestamp flake was not
+modified.
+
+Rollback is one revert of the final-fix commit followed by Alembic downgrade to
+`u8v9w0x1y2z3`; the migration is additive and contains no content data.
+
+Final scoped static verification reported `All checks passed!`, Ruff format reported
+`25 files already formatted`, `python scripts/check_docs.py` reported
+`Documentation validation passed.`, and `git diff --check` exited 0 with no output.

@@ -15,6 +15,14 @@ from app.runtime.control import (
     RoutingPreferences,
 )
 from app.runtime.contracts import ExecutionResultCode
+from app.runtime.contracts import (
+    EvaluationPolicy,
+    ExecutionStrategy,
+    ModelCapabilityRequirements,
+    RiskClass,
+    TaskSpec,
+    WorkflowPolicy,
+)
 from app.runtime.evaluation import ExecutionRecord
 from app.runtime.execution import (
     CapabilityRegistry,
@@ -23,6 +31,7 @@ from app.runtime.execution import (
     SideEffectClass,
 )
 from app.runtime.execution.adapters.llm import (
+    StructuredGenerationInput,
     StructuredGenerationOutput,
     register_llm_generate_structured,
 )
@@ -159,6 +168,63 @@ async def test_llm_egress_denial_prevents_adapter_invocation(workflow_runtime) -
     assert calls == []
     async with factory.session_factory() as session:
         assert list((await session.scalars(select(ExecutionRecord))).all()) == []
+
+
+async def test_nonforced_required_model_capability_fails_closed_end_to_end(
+    workflow_runtime,
+) -> None:
+    """Would fail if unproven TaskSpec model requirements only gated FORCE."""
+    calls = []
+
+    async def handler(payload, context):
+        calls.append((payload, context))
+        return await _structured_success(payload, context)
+
+    gateway, _, claim = await _llm_gateway_case(workflow_runtime, handler)
+    task = TaskSpec(
+        task_id="synthetic.required-model-capability",
+        version=1,
+        input_model=StructuredGenerationInput,
+        output_model=StructuredGenerationOutput,
+        context_requirements=(),
+        model_requirements=ModelCapabilityRequirements(
+            required_capabilities=("structured_output",)
+        ),
+        risk_class=RiskClass.LOW,
+        validators=("synthetic.validator",),
+        evaluation_policy=EvaluationPolicy(),
+        execution_strategy=ExecutionStrategy.SINGLE_PASS,
+        workflow_policy=WorkflowPolicy(max_attempts=1),
+    )
+    policy = ControlPlane().evaluate(
+        task=task,
+        system=PolicyLayer(
+            ConstraintSet(
+                data_egress=True,
+                allowed_capabilities=frozenset({"llm.generate_structured"}),
+                allowed_models=frozenset({"model-a"}),
+                allowed_providers=frozenset({"provider-a"}),
+            )
+        ),
+        routing=RoutingPreferences(model_capabilities=frozenset({"structured_output"})),
+    )
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=policy,
+        payload={
+            "request_ref": "request-1",
+            "schema_ref": "schema-1",
+            "model_id": "model-a",
+            "provider": "provider-a",
+        },
+    )
+
+    assert policy.decision == "DENY"
+    assert "model.structured_output_required" in policy.reason_codes
+    assert result.code is ExecutionResultCode.POLICY_DENIED
+    assert calls == []
 
 
 async def test_external_side_effect_class_fails_closed_on_egress_denial(
