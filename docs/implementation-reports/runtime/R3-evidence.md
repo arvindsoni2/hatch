@@ -386,3 +386,42 @@ binding; no payload, path, token, model output, or provider-operation content is
 to errors, persistence, logs, or telemetry. Existing privacy, ambiguity, fencing,
 cancellation, and reconciliation coverage remains green. Coach V6 command, media,
 deletion, and export classes remain non-applicable because no Coach path changed.
+
+## Final controller verification
+
+After Task 8's clean fix-round re-review, the controller reran the complete backend
+suite in the authoritative Python 3.12.13 image. Root-cause tracing corrected the
+earlier environment diagnosis: the image lacked the `git` executable itself, rather
+than merely lacking mounted Git metadata; it also lacked `make`. The repository was
+mounted at its exact host path, the worktree was declared a Git safe directory, and
+the host read-only `git` and `make` binaries were mounted into the disposable test
+container. The two formerly failing canaries passed together before the full run.
+
+```text
+docker run --rm --entrypoint python \
+  -e COVERAGE_FILE=/tmp/r3-final.coverage \
+  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory \
+  -e GIT_CONFIG_VALUE_0=/home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2:/home/asoni/Downloads/Assignment/Job_Pilot_v2:Z \
+  -v /usr/bin/git:/usr/bin/git:ro -v /usr/bin/make:/usr/bin/make:ro \
+  -w /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend \
+  localhost/job_pilot_v2_backend:latest -m pytest -q
+# 3509 passed, 8 warnings in 609.51s; coverage 76.11%; exit 0.
+```
+
+This supersedes the earlier environment-limited full-suite results. No production or
+shared external provider was called, no migration was added by R3, and the unrelated
+Coach PDF remained untouched.
+
+After the formatter-only commit `8e05aa7`, the focused R3 gate passed `56/56` and
+Ruff reported all 24 R3 files formatted. A second complete backend run at that code
+head reported `3508 passed, 1 failed, 9 warnings in 621.19s`; the sole failure was the
+pre-existing timing-sensitive
+`test_two_fresh_restart_records_authorize_two_eighty_pair_runs`, whose synthetic
+`now + 2 seconds` restart timestamp lost its ordering race against the later stage
+boundary during the long full-suite process. The exact test passed immediately in
+isolation (`1 passed in 0.73s`). It also passed in the preceding complete `3509`
+green run, and it imports no R3 path. Therefore the final evidence is a green R3 gate,
+a green complete backend run before a formatting-only change, and a final-head
+composite result with one reproducible-as-isolation-green out-of-scope timing flake;
+it is not represented as a second green complete run.
