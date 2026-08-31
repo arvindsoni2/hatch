@@ -32,7 +32,9 @@ class BudgetLimits:
         if value is None:
             return
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-            raise ValueError(f"{name} must be an integer greater than or equal to {minimum}")
+            raise ValueError(
+                f"{name} must be an integer greater than or equal to {minimum}"
+            )
 
     @staticmethod
     def _validate_cost(value: Decimal | None) -> None:

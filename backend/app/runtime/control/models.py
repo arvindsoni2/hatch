@@ -60,7 +60,9 @@ class ConstraintSet:
         if self.deadline is not None and self.deadline.tzinfo is None:
             raise ValueError("deadline must be timezone-aware")
         allowed_providers = (
-            None if self.allowed_providers is None else frozenset(self.allowed_providers)
+            None
+            if self.allowed_providers is None
+            else frozenset(self.allowed_providers)
         )
         allowed_models = (
             None if self.allowed_models is None else frozenset(self.allowed_models)
@@ -118,7 +120,9 @@ class RoutingPreferences:
     constraints: ConstraintSet = field(default_factory=ConstraintSet)
 
     def __post_init__(self) -> None:
-        if self.force_model is not None and not _STABLE_IDENTIFIER.fullmatch(self.force_model):
+        if self.force_model is not None and not _STABLE_IDENTIFIER.fullmatch(
+            self.force_model
+        ):
             raise ValueError("force_model must be a stable lowercase identifier")
         model_capabilities = frozenset(self.model_capabilities)
         _validate_identifiers(model_capabilities, field_name="model_capabilities")

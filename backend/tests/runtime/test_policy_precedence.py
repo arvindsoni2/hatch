@@ -34,7 +34,9 @@ class _Output(BaseModel):
     value: str
 
 
-def _task_spec(*, max_attempts: int = 3, max_evaluations: int = 2) -> TaskSpec[_Input, _Output]:
+def _task_spec(
+    *, max_attempts: int = 3, max_evaluations: int = 2
+) -> TaskSpec[_Input, _Output]:
     return TaskSpec(
         task_id="control.precedence",
         version=1,
@@ -75,16 +77,24 @@ def test_lower_precedence_budgets_can_only_reduce_task_budget(
     decision = control_plane.evaluate(
         task_spec=_task_spec(max_attempts=3, max_evaluations=2),
         security_policy=PolicyLayer(
-            constraints=ConstraintSet(budgets=BudgetLimits(max_attempts=8, max_evaluations=9))
+            constraints=ConstraintSet(
+                budgets=BudgetLimits(max_attempts=8, max_evaluations=9)
+            )
         ),
         workflow_policy=PolicyLayer(
-            constraints=ConstraintSet(budgets=BudgetLimits(max_attempts=2, max_evaluations=1))
+            constraints=ConstraintSet(
+                budgets=BudgetLimits(max_attempts=2, max_evaluations=1)
+            )
         ),
         user_config=PolicyLayer(
-            constraints=ConstraintSet(budgets=BudgetLimits(max_attempts=7, max_evaluations=7))
+            constraints=ConstraintSet(
+                budgets=BudgetLimits(max_attempts=7, max_evaluations=7)
+            )
         ),
         routing_preferences=PolicyLayer(
-            constraints=ConstraintSet(budgets=BudgetLimits(max_attempts=6, max_evaluations=6))
+            constraints=ConstraintSet(
+                budgets=BudgetLimits(max_attempts=6, max_evaluations=6)
+            )
         ),
     )
 
