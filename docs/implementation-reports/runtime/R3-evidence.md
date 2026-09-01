@@ -585,3 +585,38 @@ result can no longer become ordinarily claimable before atomic task finalization
 and reconciliation has the same opaque handle the adapter used. Approval hashes,
 post-routing idempotency binding, metadata-only persistence, and all earlier security
 constraints remain unchanged. Rollback is one revert of this schema-neutral commit.
+
+## Final controller release verification
+
+The controller reran the complete backend suite at the reviewed R3 head
+`1af429e9987faa39cd36e85864571c13983e1a3b` in the authoritative Python 3.12.13
+container. The repository was mounted at its exact worktree path with host `git` and
+`make`, and the worktree was declared a Git safe directory, matching the diagnosed
+environment required by provenance and migration tests:
+
+```text
+# Complete backend suite at the reviewed head.
+# 3540 passed, 8 warnings in 545.80s (0:09:05).
+# Required coverage 58%; measured coverage 76.14%.
+# Exit code 0.
+
+# Ruff check over all 32 changed Python files.
+# All checks passed!
+
+# Ruff format --check over all 32 changed Python files.
+# 32 files already formatted.
+
+# python scripts/check_docs.py
+# Documentation validation passed.
+
+# git diff --check 826da3c8564f9ff53d71065289618410d638be4d..HEAD
+# Exit code 0; no output.
+
+# alembic heads
+# v9w0x1y2z3a4 (head)
+```
+
+The warnings do not represent test failures. The previously observed inherited
+staged-runner timestamp flake did not recur in this final run. Together with the clean
+narrow scoped review, the complete suite closes the R3 implementation and verification
+gate. No external provider or production/shared service was invoked.
