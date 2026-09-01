@@ -17,6 +17,7 @@ from ..evaluation.models import (
 )
 from ..events.models import RuntimeEventRecord, RuntimeOutboxRecord
 from ..events.outbox import OutboxClaim
+from ..context.models import ContextPackage
 
 if TYPE_CHECKING:
     from ..workflow.models import (
@@ -256,6 +257,14 @@ class ShadowComparisonStore(Protocol):
     async def purge_expired(self, *, now: datetime | None = None) -> int: ...
 
 
+class ContextPackageStore(Protocol):
+    """Atomic immutable context-package persistence and attempt binding."""
+
+    async def persist_and_bind(self, package: ContextPackage) -> None: ...
+
+    async def load(self, package_id: str) -> ContextPackage | None: ...
+
+
 class RuntimeUnitOfWork(Protocol):
     workflows: WorkflowRecordStore
     approvals: ApprovalStore
@@ -263,6 +272,7 @@ class RuntimeUnitOfWork(Protocol):
     outbox: OutboxStore
     evaluations: EvaluationStore
     shadow: ShadowComparisonStore
+    context_packages: ContextPackageStore
 
     async def commit(self) -> None: ...
 

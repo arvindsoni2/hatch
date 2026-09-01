@@ -167,7 +167,9 @@ class ContextPackageRecord(Base):
     token_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
     sensitivity_max: Mapped[str] = mapped_column(String(24), nullable=False)
     resolved_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    items_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    items_json: Mapped[dict[str, Any] | list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False
+    )
 
 
 class ShadowComparisonRecord(Base):

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import json
 from typing import Any, AsyncIterator
 
 from sqlalchemy import delete, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..evaluation.models import (
+    ContextPackageRecord,
     EvaluationRunRecord,
     EvidenceObservationRecord,
     ExecutionRecord,
@@ -18,6 +20,7 @@ from ..evaluation.models import (
     ShadowComparisonRecord,
     ValidationResultRecord,
 )
+from ..context.models import ContextItem, ContextOmission, ContextPackage
 from ..events.outbox import SQLiteOutboxRepository
 from ..events.repository import SQLiteEventRepository, enforce_metadata_only
 from ..workflow.models import (
@@ -223,6 +226,74 @@ class SQLiteShadowComparisonStore(_SessionBoundStore):
         return result.rowcount
 
 
+class SQLiteContextPackageStore(_SessionBoundStore):
+    """Persist context metadata and bind it to an attempt in the caller's UoW."""
+
+    async def persist_and_bind(self, package: ContextPackage) -> None:
+        attempt = await self.session.get(TaskAttemptRecord, package.task_attempt_id)
+        if attempt is None:
+            raise ValueError("context_task_attempt_missing")
+        if attempt.context_package_id is not None:
+            raise ValueError("context_package_already_bound")
+        sensitivity_max = max(
+            (item.sensitivity for item in package.items),
+            key={"public": 0, "internal": 1, "confidential": 2, "restricted": 3}.get,
+            default="public",
+        )
+        record = ContextPackageRecord(
+            id=package.id,
+            task_attempt_id=package.task_attempt_id,
+            package_version=1,
+            content_hash=package.content_hash,
+            token_estimate=package.total_token_estimate,
+            sensitivity_max=sensitivity_max,
+            items_json={
+                "items": [item.model_dump(mode="json") for item in package.items],
+                "omissions": [
+                    omission.model_dump(mode="json") for omission in package.omissions
+                ],
+            },
+        )
+        self.session.add(record)
+        await self.session.flush()
+        result = await self.session.execute(
+            update(TaskAttemptRecord)
+            .where(
+                TaskAttemptRecord.id == package.task_attempt_id,
+                TaskAttemptRecord.context_package_id.is_(None),
+            )
+            .values(context_package_id=package.id)
+        )
+        if result.rowcount != 1:
+            raise ValueError("context_package_already_bound")
+
+    async def load(self, package_id: str) -> ContextPackage | None:
+        record = await self.session.get(ContextPackageRecord, package_id)
+        if record is None:
+            return None
+        serialized = record.items_json
+        if isinstance(serialized, list):
+            item_rows, omission_rows = serialized, []
+        else:
+            item_rows = serialized.get("items", [])
+            omission_rows = serialized.get("omissions", [])
+        items = tuple(
+            ContextItem.model_validate_json(json.dumps(item)) for item in item_rows
+        )
+        omissions = tuple(
+            ContextOmission.model_validate_json(json.dumps(omission))
+            for omission in omission_rows
+        )
+        return ContextPackage(
+            id=record.id,
+            task_attempt_id=record.task_attempt_id,
+            items=items,
+            omissions=omissions,
+            total_token_estimate=record.token_estimate,
+            content_hash=record.content_hash,
+        )
+
+
 class SQLiteRuntimeUnitOfWork:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -232,6 +303,7 @@ class SQLiteRuntimeUnitOfWork:
         self.outbox = SQLiteOutboxRepository(session)
         self.evaluations = SQLiteEvaluationStore(session)
         self.shadow = SQLiteShadowComparisonStore(session)
+        self.context_packages = SQLiteContextPackageStore(session)
         self._committed = False
 
     async def commit(self) -> None:
