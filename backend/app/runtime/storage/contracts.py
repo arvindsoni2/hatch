@@ -17,6 +17,7 @@ from ..evaluation.models import (
 )
 from ..events.models import RuntimeEventRecord, RuntimeOutboxRecord
 from ..events.outbox import OutboxClaim
+
 if TYPE_CHECKING:
     from ..workflow.models import (
         ApprovalRecord,
@@ -73,6 +74,36 @@ class WorkflowStore(Protocol):
         claim: ExecutionClaimRecord,
         result_ref: dict[str, object],
         now: datetime,
+    ) -> bool: ...
+
+    async def begin_execution_intent(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        now: datetime,
+        capability_id: str,
+        capability_version: int,
+        side_effect_class: str,
+        idempotency_class: str,
+        reconciliation_reference: str,
+    ) -> bool: ...
+
+    async def persist_execution_result(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        execution_role: str,
+        capability_id: str,
+        capability_version: int,
+        side_effect_class: str,
+        idempotency_class: str,
+        reconciliation_reference: str,
+        result_class: str,
+        started_at: datetime,
+        finished_at: datetime,
+        latency_ms: int,
+        metadata: dict[str, object],
+        outcome_unknown: dict[str, object] | None,
     ) -> bool: ...
 
     async def fail_or_retry(
