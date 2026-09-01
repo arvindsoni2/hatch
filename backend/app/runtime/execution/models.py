@@ -128,11 +128,12 @@ class CapabilityResult(BaseModel):
 
 @dataclass(frozen=True)
 class CapabilityInvocationContext:
-    """Bounded invocation controls passed to an adapter, including replay key."""
+    """Bounded invocation controls passed to an adapter, including recovery keys."""
 
     deadline: datetime | None
     budgets: BudgetLimits
     idempotency_key: str | None
+    correlation_handle: str
     data_egress: bool
     allowed_models: frozenset[str] | None
     allowed_providers: frozenset[str] | None

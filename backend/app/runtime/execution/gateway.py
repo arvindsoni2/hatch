@@ -165,6 +165,7 @@ class ExecutionGateway:
             idempotency_key=(
                 idempotency_key if isinstance(idempotency_key, str) else None
             ),
+            correlation_handle=reference,
             data_egress=policy.effective_constraints.data_egress,
             allowed_models=policy.effective_constraints.allowed_models,
             allowed_providers=policy.effective_constraints.allowed_providers,
@@ -203,6 +204,7 @@ class ExecutionGateway:
             "retry_allowed": result.retry_allowed,
             "side_effect_class": capability.side_effect_class.value,
             "idempotency_class": capability.idempotency_class.value,
+            "correlation_handle": reference,
         }
         if isinstance(idempotency_key, str):
             metadata["idempotency_key_hash"] = _hash_reference(idempotency_key)

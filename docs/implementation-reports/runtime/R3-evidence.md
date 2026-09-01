@@ -18,7 +18,8 @@ extensions are the semantic `WorkflowStore.begin_execution_intent` and
 `persist_execution_result` seams, their SQLite implementations, and the additive
 execution-intent migration. The first commits a fenced metadata-only binding before
 adapter work; the second atomically fence-checks the live claim, inserts the execution
-record, and closes or transitions the intent.
+record, and either closes replay-safe intent, retains unsafe disposition until fenced
+task finalization, or transitions an ambiguous outcome for reconciliation.
 
 All verification uses bounded synthetic payloads, injected local adapters, and
 disposable SQLite databases. No production or shared external provider was called.
@@ -30,7 +31,7 @@ disposable SQLite databases. No production or shared external provider was calle
 | `INV-EXE-001` typed registration and resolution | Immutable `CapabilityDescriptor`, duplicate-safe `CapabilityRegistry`, strict Pydantic input/output validation | `test_gateway_strictly_validates_payload_and_typed_output`, `test_gateway_rejects_adapter_output_that_violates_descriptor`, `test_only_four_initial_capabilities_are_registered` |
 | `INV-EXE-002` control and approval precede side effects | Fail-closed capability, egress, and concrete routing authorization followed by exact durable approval verification against the effective typed payload | `test_visible_capability_is_not_automatically_authorized`, LLM denied/omitted routing cases, forced-route approval cases, side-effect authorization cases, inherited policy precedence/force-model cases |
 | `INV-EXE-003` deadlines, cancellation, and replay advice only narrow | Minimum policy/descriptor deadline, executor-backed synchronous handlers, `asyncio.timeout`, uncaught external `CancelledError`, descriptor-constrained retry advice | `test_earlier_policy_deadline_and_budgets_reach_adapter`, timeout/cancellation cases, synchronous native/artifact cases, all idempotency cases |
-| `INV-EXE-004` external work and result persistence are fenced; ambiguous outcomes reconcile | A short pre-invocation UoW commits capability/version/side-effect/idempotency/hash binding and closes before adapter work; a second fenced UoW inserts the result and closes the intent; expired ambiguous intent becomes `OUTCOME_UNKNOWN` without replay | `test_fenced_intent_is_committed_before_adapter_invocation`, crash/persistence/cancellation restart cases, lost-claim cases, affected R2 fencing/reconciliation gate |
+| `INV-EXE-004` external work and result persistence are fenced; ambiguous outcomes reconcile | A short pre-invocation UoW commits capability/version/side-effect/idempotency/hash binding and closes before adapter work; a second fenced UoW inserts the result, closing replay-safe intent but retaining unsafe disposition until atomic task finalization; expired unsafe disposition becomes `OUTCOME_UNKNOWN` without replay | `test_fenced_intent_is_committed_before_adapter_invocation`, pre- and post-persistence crash/restart cases, safe replay control, lost-claim cases, affected R2 fencing/reconciliation gate |
 | Privacy-safe evidence and telemetry | Durable metadata contains stable codes, classifications, latency, and hashes only; telemetry is content-free, emitted after persistence, and non-fatal | `test_canaries_never_enter_records_errors_logs_or_telemetry`, `test_idempotency_key_reaches_adapter_but_only_hash_is_persisted`, `test_success_is_typed_persisted_then_reported_with_nonfatal_telemetry`, inherited runtime privacy cases |
 
 The gateway order is resolve, Control Plane authorization, exact effective-payload
@@ -441,10 +442,14 @@ The gateway now commits a short fenced intent UoW after exact effective-payload
 approval and deadline setup, and before invoking any adapter. The transaction binds
 capability/version, side-effect class, idempotency class, and a gateway-owned SHA-256
 reference; it is closed before external work. Result persistence requires that exact
-active binding and clears it atomically. Recovery maps expired active preparation,
-commit, artifact, check-before-retry, or non-retryable intent to `OUTCOME_UNKNOWN`;
-ordinary safe abandoned work remains replayable. Injected crash, cancellation, and
-post-effect persistence failure tests prove restart does not blind-replay.
+active binding. At fix base `b6196d7`, result persistence then cleared the binding for
+every non-ambiguous result. Recovery maps expired active preparation, commit,
+artifact, check-before-retry, or non-retryable intent to `OUTCOME_UNKNOWN`; ordinary
+safe abandoned work remains replayable. The injected crash, cancellation, and
+post-effect persistence-failure tests in that wave covered failures before a result
+was durably inserted. They did not prove the separate crash window after a successful
+unsafe result commit and before task finalization; the round-4/5 evidence below
+supersedes that no-blind-replay overclaim.
 
 Non-FORCE required model capabilities now deny until Task 10 provides trusted model
 evidence; routing-supplied claims do not satisfy them. Synchronous native and artifact
@@ -504,3 +509,79 @@ Rollback is one revert of the final-fix commit followed by Alembic downgrade to
 Final scoped static verification reported `All checks passed!`, Ruff format reported
 `25 files already formatted`, `python scripts/check_docs.py` reported
 `Documentation validation passed.`, and `git diff --check` exited 0 with no output.
+
+## Review fix round 4/5: post-persist unsafe disposition
+
+Fix base: `b6196d709ed07288acf13d23aa6958fea522b436`. This evidence accompanies
+the fix commit and therefore does not self-reference its own SHA. No schema or
+migration change was required.
+
+The existing `execution_intent_active` field now remains true after a successfully
+persisted unsafe result when either the side-effect class is prepare, commit, or
+artifact, or the idempotency class is check-before-retry or non-retryable. The exact
+fenced `WorkflowKernel.finalize()` transition clears that disposition atomically with
+task success. If the claim expires first, both direct reclaim and ordinary lease
+recovery prevent a replacement invocation: recovery moves the attempt to
+`OUTCOME_UNKNOWN`, where the reconciliation workflow owns the next decision. The
+compare-and-swap predicates preserve stale-claim and fencing behavior. Pure,
+idempotent work closes its intent after result persistence and remains ordinarily
+replayable after a crash, so conservative recovery does not over-block safe work.
+Adapter work remains outside both short database write units of work.
+
+The gateway now creates one privacy-safe `sha256.` correlation handle and supplies
+that exact value to `CapabilityInvocationContext.correlation_handle`, the durable
+intent's existing reconciliation reference, execution-result metadata, and the
+reconciliation handler input. A synthetic committing adapter records an effect by
+that handle; after constructing a restarted kernel, its reconciliation handler finds
+and confirms the effect using the same value. The durable snapshot is independently
+checked to exclude the raw idempotency key, provider-operation canary, content, and
+path. No production or shared external provider was called.
+
+The strict behavioral RED selection injected failure immediately after the real
+`persist_execution_result()` transaction returned successfully and before caller
+task finalization. It named the mutations where unsafe result persistence cleared the
+disposition and where the adapter lacked the gateway handle:
+
+```text
+# Post-persist unsafe/safe/correlation selection before production edits.
+# 5 failed, 1 passed, 4 deselected, 3 warnings in 1.13s.
+```
+
+The three unsafe variants (commit/check-before-retry, pure/non-retryable, and
+artifact/idempotent-with-key), the atomic-finalization case, and the restarted
+correlation lookup failed for the intended behavioral reasons. The pure/idempotent
+replay control already passed. After the minimal production change:
+
+```text
+# Same focused selection.
+# 6 passed, 4 deselected, 2 warnings in 1.25s.
+
+# Full intent, reconciliation, and fencing modules.
+# 29 passed, 2 warnings in 4.49s.
+
+# Focused R3 gate: gateway, intent, side effects, idempotency, ambiguity,
+# deadlines, policy precedence/force, capability schemas, fencing, migration.
+# 91 passed, 2 warnings in 21.67s.
+
+# Affected R2 recovery, restart, fencing, storage, privacy, approvals, migration.
+# 64 passed, 2 warnings in 20.59s.
+
+docker run --rm --entrypoint python \
+  -v /home/asoni/Downloads/Assignment/Job_Pilot_v2/.worktrees/runtime-r2-workflow-kernel/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest \
+  -m pytest -q --no-cov tests/runtime
+# 255 passed, 2 warnings in 37.25s.
+```
+
+The warnings are only bind-mounted pytest-cache write warnings. Scoped Ruff format
+reported `1 file reformatted, 3 files left unchanged`; Ruff check reported
+`All checks passed!`, and the subsequent format check reported
+`4 files already formatted`. Documentation validation passed and `git diff --check`
+returned no output. The controller owns the complete backend run; it was not run in
+this fix round. The inherited staged-runner timestamp flake was not modified.
+
+This closes the remaining scoped Critical finding: a durable successful unsafe
+result can no longer become ordinarily claimable before atomic task finalization,
+and reconciliation has the same opaque handle the adapter used. Approval hashes,
+post-routing idempotency binding, metadata-only persistence, and all earlier security
+constraints remain unchanged. Rollback is one revert of this schema-neutral commit.

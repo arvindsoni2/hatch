@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import logging
 import re
 
-from sqlalchemy import exists, select, update
+from sqlalchemy import and_, exists, or_, select, update
 
 from ..evaluation.models import ExecutionRole
 from ..events.repository import enforce_metadata_only
@@ -58,6 +58,16 @@ _MAX_RECOVERY_BACKOFF_SECONDS = 3600
 _RECOVERY_ERROR_CODE = "recovery_failed"
 
 logger = logging.getLogger(__name__)
+
+
+def _requires_reconciliation(
+    side_effect_class: str | None,
+    idempotency_class: str | None,
+) -> bool:
+    return (
+        side_effect_class in _AMBIGUOUS_SIDE_EFFECT_CLASSES
+        or idempotency_class in _AMBIGUOUS_IDEMPOTENCY_CLASSES
+    )
 
 
 def validate_recovery_batch_size(batch_size: object) -> int:
@@ -534,6 +544,15 @@ class SQLiteWorkflowRepository:
             )
             if previous is None:
                 return None
+            attempt = await uow.session.get(TaskAttemptRecord, attempt_id)
+            if attempt is None or (
+                attempt.execution_intent_active
+                and _requires_reconciliation(
+                    attempt.side_effect_class,
+                    attempt.idempotency_class,
+                )
+            ):
+                return None
             still_reclaimable = exists().where(
                 ExecutionClaimRecord.id == previous.id,
                 ExecutionClaimRecord.task_attempt_id == attempt_id,
@@ -552,11 +571,24 @@ class SQLiteWorkflowRepository:
                     TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
                     TaskAttemptRecord.current_claim_id == previous.id,
                     TaskAttemptRecord.claim_fencing_token == previous.fencing_token,
+                    or_(
+                        TaskAttemptRecord.execution_intent_active.is_(False),
+                        and_(
+                            TaskAttemptRecord.execution_intent_active.is_(True),
+                            TaskAttemptRecord.side_effect_class.not_in(
+                                _AMBIGUOUS_SIDE_EFFECT_CLASSES
+                            ),
+                            TaskAttemptRecord.idempotency_class.not_in(
+                                _AMBIGUOUS_IDEMPOTENCY_CLASSES
+                            ),
+                        ),
+                    ),
                     still_reclaimable,
                 )
                 .values(
                     current_claim_id=claim_id,
                     claim_fencing_token=TaskAttemptRecord.claim_fencing_token + 1,
+                    execution_intent_active=False,
                     updated_at=now,
                 )
                 .returning(TaskAttemptRecord.claim_fencing_token)
@@ -650,6 +682,7 @@ class SQLiteWorkflowRepository:
                     status=TaskAttemptStatus.SUCCEEDED,
                     result_ref_json=result_ref,
                     current_claim_id=None,
+                    execution_intent_active=False,
                     finished_at=now,
                     updated_at=now,
                 )
@@ -770,6 +803,10 @@ class SQLiteWorkflowRepository:
             or outcome_unknown.get("reconciliation_reference") != attempt_binding[4]
         ):
             raise ValueError("outcome_unknown must match execution intent binding")
+        retain_execution_disposition = _requires_reconciliation(
+            attempt_binding[2],
+            attempt_binding[3],
+        )
 
         current_attempt = exists().where(
             TaskAttemptRecord.id == claim.task_attempt_id,
@@ -866,7 +903,10 @@ class SQLiteWorkflowRepository:
                         TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
                         TaskAttemptRecord.execution_intent_active.is_(True),
                     )
-                    .values(execution_intent_active=False, updated_at=finished_at)
+                    .values(
+                        execution_intent_active=retain_execution_disposition,
+                        updated_at=finished_at,
+                    )
                 )
                 if closed.rowcount != 1:
                     raise RuntimeError(
@@ -1169,9 +1209,9 @@ class SQLiteWorkflowRepository:
                 return False
             ambiguous_intent = bool(
                 attempt.execution_intent_active
-                and (
-                    attempt.side_effect_class in _AMBIGUOUS_SIDE_EFFECT_CLASSES
-                    or attempt.idempotency_class in _AMBIGUOUS_IDEMPOTENCY_CLASSES
+                and _requires_reconciliation(
+                    attempt.side_effect_class,
+                    attempt.idempotency_class,
                 )
             )
             recovered_status = (
