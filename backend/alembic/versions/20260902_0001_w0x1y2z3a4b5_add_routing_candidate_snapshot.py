@@ -18,12 +18,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("runtime_routing_decisions", sa.Column("task_id", sa.String(length=128)))
+    op.add_column(
+        "runtime_routing_decisions", sa.Column("task_id", sa.String(length=128))
+    )
     op.add_column("runtime_routing_decisions", sa.Column("task_version", sa.Integer()))
-    op.add_column("runtime_routing_decisions", sa.Column("model_version", sa.String(length=128)))
-    op.add_column("runtime_routing_decisions", sa.Column("candidate_snapshot_json", sa.JSON()))
-    op.add_column("runtime_routing_decisions", sa.Column("routing_policy_version", sa.Integer()))
-    op.add_column("runtime_routing_decisions", sa.Column("evidence_snapshot_id", sa.String(length=128)))
+    op.add_column(
+        "runtime_routing_decisions", sa.Column("model_version", sa.String(length=128))
+    )
+    op.add_column(
+        "runtime_routing_decisions", sa.Column("candidate_snapshot_json", sa.JSON())
+    )
+    op.add_column(
+        "runtime_routing_decisions", sa.Column("routing_policy_version", sa.Integer())
+    )
+    op.add_column(
+        "runtime_routing_decisions",
+        sa.Column("evidence_snapshot_id", sa.String(length=128)),
+    )
 
 
 def downgrade() -> None:

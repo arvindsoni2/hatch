@@ -253,3 +253,43 @@ Control and Gateway now make their captured verifier and registry references
 write/delete-protected after construction. Model evidence is final, and routing
 requirements use the same finite canonical quality and exact integer rules as
 evidence contracts.
+
+## Controller-authorized exception repair
+
+The user explicitly authorized one controller-led repair after the five-round task
+breaker. The exception remained limited to the four final review residuals.
+
+### RED
+
+Authoritative Python 3.12 focused execution after adding the missing behavioral
+regressions:
+
+```text
+tests/runtime/test_evidence_promotion.py
+tests/runtime/test_intelligence_bounds.py
+tests/runtime/test_execution_gateway.py::test_gateway_composition_verifier_fields_are_immutable
+# 3 failed, 35 passed
+```
+
+The failures proved that a valid persisted `Decimal("0.90000")` score was rejected,
+and `EvidenceObservation.task_version` accepted both `1.0` and `1_000_001`. The new
+Gateway immutability, missing/None threshold, wrong evidence type, duplicate durable
+row, final/exact ModelEvidence, routing-requirement, descriptor, and other primitive
+tests were already green against the accumulated fixes.
+
+### GREEN and verification
+
+- Narrow implementation: canonical finite five-decimal Decimal replay comparison and
+  exact bounded integer validation for observation task versions.
+- Expanded focused Python 3.12 gate: `39 passed, 2 warnings in 0.66s`.
+- Corrected-environment database-setup canary: `17 passed, 2 warnings in 44.05s`.
+- Final post-format Task 10 plus affected R3/storage/schema/migration/model-discovery
+  gate: `114 passed, 3 warnings in 83.66s`.
+- Ruff lint passed for every exact Task 10 Python path; Ruff format reported all 22
+  exact paths formatted.
+- Documentation validation passed.
+- Alembic reported sole head `y2z3a4b5c6d7`.
+- Base-to-working-tree `git diff --check 7779df4` passed.
+
+The three warnings are expected bind-mount pytest-cache permission warnings; no test
+or application failure remains in the selected gate.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 
 from .models import EvidenceObservation, ModelEvidence
 
@@ -224,23 +225,36 @@ def _evidence_id(
 
 
 def _matches_record(candidate: ModelEvidence, record: object) -> bool:
-    return (
-        all(
-            getattr(record, name, None) == expected
-            for name, expected in (
-                ("id", candidate.evidence_id),
-                ("task_id", candidate.task_id),
-                ("task_version", candidate.task_version),
-                ("model_id", candidate.model_id),
-                ("model_version", candidate.model_version),
-                ("provider", candidate.provider),
-                ("qualification_id", candidate.qualification_id),
-                ("qualification_version", candidate.qualification_version),
-                ("minimum_sample_size", candidate.minimum_sample_size),
-                ("sample_size", candidate.sample_size),
-            )
+    if not all(
+        getattr(record, name, None) == expected
+        for name, expected in (
+            ("id", candidate.evidence_id),
+            ("task_id", candidate.task_id),
+            ("task_version", candidate.task_version),
+            ("model_id", candidate.model_id),
+            ("model_version", candidate.model_version),
+            ("provider", candidate.provider),
+            ("qualification_id", candidate.qualification_id),
+            ("qualification_version", candidate.qualification_version),
+            ("minimum_sample_size", candidate.minimum_sample_size),
+            ("sample_size", candidate.sample_size),
         )
-        and getattr(record, "quality_score", None) == candidate.quality_score
+    ):
+        return False
+    try:
+        stored_quality = Decimal(str(record.quality_score))
+        canonical_stored = stored_quality.quantize(
+            Decimal("0.00001"), rounding=ROUND_HALF_EVEN
+        )
+        candidate_quality = Decimal(str(candidate.quality_score)).quantize(
+            Decimal("0.00001"), rounding=ROUND_HALF_EVEN
+        )
+    except (AttributeError, InvalidOperation, TypeError, ValueError):
+        return False
+    return (
+        stored_quality.is_finite()
+        and stored_quality == canonical_stored
+        and canonical_stored == candidate_quality
     )
 
 

@@ -331,8 +331,11 @@ class EvidenceObservation:
     def __post_init__(self) -> None:
         for name in ("observation_id", "task_id", "model_id", "provider"):
             _stable(getattr(self, name), name)
-        if isinstance(self.task_version, bool) or self.task_version < 1:
-            raise ValueError("task_version must be positive")
+        if (
+            type(self.task_version) is not int
+            or not 1 <= self.task_version <= 1_000_000
+        ):
+            raise ValueError("task_version must be a bounded integer")
         if not self.model_version or len(self.model_version) > 128:
             raise ValueError("model_version must be bounded")
         object.__setattr__(

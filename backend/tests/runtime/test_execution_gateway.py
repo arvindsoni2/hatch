@@ -95,6 +95,37 @@ async def _structured_success(_payload, _context):
     return StructuredGenerationOutput(result_ref="synthetic-result")
 
 
+async def test_gateway_composition_verifier_fields_are_immutable(
+    workflow_runtime,
+) -> None:
+    kernel, _factory = workflow_runtime
+    descriptor = ModelDescriptor(
+        model_id="model-immutable",
+        version="1",
+        provider="llamacpp",
+        model_name="native",
+    )
+    model_registry = ModelRegistry((descriptor,))
+    gateway = ExecutionGateway(
+        registry=CapabilityRegistry(),
+        kernel=kernel,
+        model_registry=model_registry,
+    )
+
+    for name in ("_verify_selection", "_model_registry"):
+        with pytest.raises((AttributeError, TypeError)):
+            setattr(gateway, name, None)
+        with pytest.raises((AttributeError, TypeError)):
+            delattr(gateway, name)
+
+    assert (
+        gateway._verified_descriptor(  # noqa: SLF001 - security boundary test
+            model_registry.issue_selection(descriptor)
+        )
+        is descriptor
+    )
+
+
 async def _approve_llm_payload(factory, gateway, claim, payload):
     from app.runtime.workflow import (
         TaskAttemptRecord,

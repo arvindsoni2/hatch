@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 from app.runtime.intelligence import (
     EvidenceObservation,
     EvidenceStore,
+    ModelEvidence,
     ModelDescriptor,
     ModelRegistry,
     ModelRouter,
@@ -15,6 +17,8 @@ from app.runtime.intelligence import (
     promote_model_evidence,
 )
 import pytest
+
+from app.runtime.storage.sqlite import SQLiteEvaluationStore
 
 
 def _router_and_store() -> tuple[ModelRouter, EvidenceStore]:
@@ -239,7 +243,7 @@ async def test_replay_requires_exact_id_aggregate_and_observation_lineage() -> N
         minimum_sample_size=evidence.minimum_sample_size,
         evidence_type="promoted",
         observation_ids_json=list(evidence.observation_ids),
-        quality_score=evidence.quality_score,
+        quality_score=Decimal("0.90000"),
         sample_size=evidence.sample_size,
     )
 
@@ -280,3 +284,42 @@ async def test_replay_requires_exact_id_aggregate_and_observation_lineage() -> N
         assert (
             await EvidenceStore.from_evaluation_store(TamperedLoader())
         ).snapshot_id() == "evidence.none"
+
+    for field, value in (
+        ("minimum_sample_size", None),
+        ("evidence_type", "observed"),
+        ("quality_score", Decimal("0.900001")),
+    ):
+        tampered = SimpleNamespace(**vars(row))
+        setattr(tampered, field, value)
+
+        class CanonicalTamperLoader(Loader):
+            async def load_promoted_model_evidence(self):
+                return [tampered]
+
+        assert (
+            await EvidenceStore.from_evaluation_store(CanonicalTamperLoader())
+        ).snapshot_id() == "evidence.none"
+
+    class DuplicateObservationLoader(Loader):
+        async def load_routing_observations(self, ids):
+            rows = await super().load_routing_observations(ids)
+            return rows + rows
+
+    assert (
+        await EvidenceStore.from_evaluation_store(DuplicateObservationLoader())
+    ).snapshot_id() == "evidence.none"
+
+
+def test_model_evidence_is_final() -> None:
+    with pytest.raises(TypeError, match="final"):
+
+        class ForgedModelEvidence(ModelEvidence):
+            pass
+
+
+async def test_sqlite_rejects_non_exact_model_evidence_before_persistence() -> None:
+    store = SQLiteEvaluationStore(None)
+
+    with pytest.raises(TypeError, match="ModelEvidence"):
+        await store.record_promoted_model_evidence(SimpleNamespace(), ())
