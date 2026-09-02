@@ -85,10 +85,10 @@ def _tables(database: Path) -> set[str]:
 
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["v9w0x1y2z3a4"]
-    head = scripts.get_revision("v9w0x1y2z3a4")
+    assert scripts.get_heads() == ["w0x1y2z3a4b5"]
+    head = scripts.get_revision("w0x1y2z3a4b5")
     assert head is not None
-    assert head.down_revision == "u8v9w0x1y2z3"
+    assert head.down_revision == "v9w0x1y2z3a4"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
@@ -122,6 +122,15 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
     } <= set(claims.columns.keys())
     executions = Base.metadata.tables["runtime_execution_records"]
     assert "parent_execution_id" in executions.columns
+    routing = Base.metadata.tables["runtime_routing_decisions"]
+    assert {
+        "task_id",
+        "task_version",
+        "model_version",
+        "candidate_snapshot_json",
+        "routing_policy_version",
+        "evidence_snapshot_id",
+    } <= set(routing.columns.keys())
     shadow = Base.metadata.tables["runtime_shadow_comparisons"]
     assert {
         "domain_id_hash",
@@ -247,5 +256,45 @@ def test_execution_intent_migration_downgrades_and_reupgrades(tmp_path: Path) ->
             }
         )
 
-    reupgrade = _run_alembic(database, "upgrade", "v9w0x1y2z3a4")
+    reupgrade = _run_alembic(database, "upgrade", "w0x1y2z3a4b5")
+    assert reupgrade.returncode == 0, reupgrade.stderr
+
+
+def test_routing_candidate_snapshot_migration_downgrades_and_reupgrades(
+    tmp_path: Path,
+) -> None:
+    """Would fail if candidate snapshots were folded into unrelated reason codes."""
+    database = tmp_path / "routing-snapshot.db"
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    snapshot_columns = {
+        "task_id",
+        "task_version",
+        "model_version",
+        "candidate_snapshot_json",
+        "routing_policy_version",
+        "evidence_snapshot_id",
+    }
+    with sqlite3.connect(database) as connection:
+        assert snapshot_columns <= {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(runtime_routing_decisions)"
+            )
+        }
+
+    downgrade = _run_alembic(database, "downgrade", "v9w0x1y2z3a4")
+    assert downgrade.returncode == 0, downgrade.stderr
+    with sqlite3.connect(database) as connection:
+        assert not (
+            snapshot_columns
+            & {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(runtime_routing_decisions)"
+                )
+            }
+        )
+
+    reupgrade = _run_alembic(database, "upgrade", "w0x1y2z3a4b5")
     assert reupgrade.returncode == 0, reupgrade.stderr

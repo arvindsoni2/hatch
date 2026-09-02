@@ -15,6 +15,7 @@ from ..evaluation.models import (
     EvaluationRunRecord,
     EvidenceObservationRecord,
     ExecutionRecord,
+    ModelEvidenceRecord,
     PolicyDecisionRecord,
     RoutingDecisionRecord,
     ShadowComparisonRecord,
@@ -185,6 +186,8 @@ class SQLiteEvaluationStore(_SessionBoundStore):
             "reason_codes_json",
             "result_json",
             "observation_json",
+            "candidate_snapshot_json",
+            "metrics_json",
         ):
             enforce_metadata_only(values.get(field) or {}, path=field)
         return await self._add(record_type(**values))
@@ -206,6 +209,10 @@ class SQLiteEvaluationStore(_SessionBoundStore):
 
     async def record_observation(self, **values: Any) -> EvidenceObservationRecord:
         return await self._record(EvidenceObservationRecord, **values)
+
+    async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord:
+        """Persist only evidence that an explicit qualification already promoted."""
+        return await self._record(ModelEvidenceRecord, **values)
 
 
 class SQLiteShadowComparisonStore(_SessionBoundStore):

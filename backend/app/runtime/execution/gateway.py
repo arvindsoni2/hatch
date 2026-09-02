@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..contracts import ExecutionResultCode
 from ..control import PolicyDecision
+from ..intelligence import ModelDescriptor
 from ..workflow import (
     ApprovalManager,
     ExecutionClaimRecord,
@@ -69,6 +70,7 @@ class ExecutionGateway:
         approval: ApprovalEvidence | None = None,
         *,
         capability_id: str | None = None,
+        model_descriptor: ModelDescriptor | None = None,
     ) -> CapabilityResult:
         """Resolve, authorize, invoke, classify, fence-persist, then emit telemetry."""
         registration = self._resolve(descriptor, capability_id)
@@ -106,6 +108,7 @@ class ExecutionGateway:
             capability,
             typed_payload,
             policy,
+            model_descriptor=model_descriptor,
         )
         if routing_denied is not None:
             return routing_denied
@@ -311,10 +314,62 @@ class ExecutionGateway:
         capability: CapabilityDescriptor,
         payload: BaseModel,
         policy: PolicyDecision,
+        *,
+        model_descriptor: ModelDescriptor | None,
     ) -> tuple[BaseModel, str | None, str | None, CapabilityResult | None]:
         constraints = policy.effective_constraints
         model_id: str | None = None
         provider: str | None = None
+        if model_descriptor is not None:
+            missing_capabilities = (
+                constraints.required_model_capabilities - model_descriptor.capabilities
+            )
+            if missing_capabilities:
+                return (
+                    payload,
+                    None,
+                    None,
+                    CapabilityResult(
+                        code=ExecutionResultCode.POLICY_DENIED,
+                        reason_code="model_capability_not_authorized",
+                    ),
+                )
+            if capability.uses_model_routing:
+                requested_model = getattr(payload, "model_id", None)
+                if (
+                    requested_model is not None
+                    and requested_model != model_descriptor.model_id
+                ):
+                    return (
+                        payload,
+                        None,
+                        None,
+                        CapabilityResult(
+                            code=ExecutionResultCode.POLICY_DENIED,
+                            reason_code="selected_model_mismatch",
+                        ),
+                    )
+                payload = payload.model_copy(
+                    update={"model_id": model_descriptor.model_id}
+                )
+            if capability.uses_provider_routing:
+                requested_provider = getattr(payload, "provider", None)
+                if (
+                    requested_provider is not None
+                    and requested_provider != model_descriptor.provider
+                ):
+                    return (
+                        payload,
+                        None,
+                        None,
+                        CapabilityResult(
+                            code=ExecutionResultCode.POLICY_DENIED,
+                            reason_code="selected_provider_mismatch",
+                        ),
+                    )
+                payload = payload.model_copy(
+                    update={"provider": model_descriptor.provider}
+                )
         if capability.uses_model_routing:
             requested_model = getattr(payload, "model_id", None)
             forced_model = constraints.forced_model

@@ -27,6 +27,7 @@ class ControlPlane:
         workflow_policy: LayerInput = None,
         user_config: LayerInput = None,
         routing_preferences: RoutingPreferences | LayerInput = None,
+        trusted_model_capabilities: frozenset[str] | None = None,
         *,
         system: LayerInput = None,
         task: TaskSpec | None = None,
@@ -81,7 +82,15 @@ class ControlPlane:
             forced_model=routing_input.force_model,
         )
         denied = _validate_empty_allowlists(effective, reasons)
-        denied = _validate_forced_model(effective, routing_input, reasons) or denied
+        denied = (
+            _validate_forced_model(
+                effective,
+                routing_input,
+                reasons,
+                trusted_model_capabilities=trusted_model_capabilities,
+            )
+            or denied
+        )
         if effective.approval_required:
             _add_reason(reasons, "approval.required")
         return PolicyDecision(
@@ -188,10 +197,17 @@ def _validate_forced_model(
     effective: EffectiveConstraints,
     routing: RoutingPreferences,
     reasons: list[str],
+    *,
+    trusted_model_capabilities: frozenset[str] | None,
 ) -> bool:
     forced_model = routing.force_model
     denied = False
-    missing_capabilities = effective.required_model_capabilities
+    proven_capabilities = (
+        frozenset()
+        if trusted_model_capabilities is None
+        else frozenset(trusted_model_capabilities)
+    )
+    missing_capabilities = effective.required_model_capabilities - proven_capabilities
     for capability in sorted(missing_capabilities):
         _add_reason(reasons, f"model.{capability}_required")
         denied = True

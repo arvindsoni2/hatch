@@ -99,6 +99,19 @@ def test_untrusted_routing_capability_claim_cannot_authorize_forced_model(
     assert "model.structured_output_required" in decision.reason_codes
 
 
+def test_trusted_descriptor_capabilities_are_the_only_capability_handoff(
+    control_plane: ControlPlane,
+) -> None:
+    """Ignoring the registry-owned capability handoff must make this test fail."""
+    decision = control_plane.evaluate(
+        task=_requires_structured_output(),
+        routing=RoutingPreferences(force_model="model-x"),
+        trusted_model_capabilities=frozenset({"structured_output"}),
+    )
+
+    assert decision.decision == "ALLOW"
+
+
 def test_approval_requirement_has_its_own_deterministic_decision(
     control_plane: ControlPlane,
 ) -> None:

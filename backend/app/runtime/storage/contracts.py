@@ -10,6 +10,7 @@ from ..evaluation.models import (
     EvaluationRunRecord,
     EvidenceObservationRecord,
     ExecutionRecord,
+    ModelEvidenceRecord,
     PolicyDecisionRecord,
     RoutingDecisionRecord,
     ShadowComparisonRecord,
@@ -249,6 +250,8 @@ class EvaluationStore(Protocol):
     async def record_evaluation(self, **values: Any) -> EvaluationRunRecord: ...
 
     async def record_observation(self, **values: Any) -> EvidenceObservationRecord: ...
+
+    async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord: ...
 
 
 class ShadowComparisonStore(Protocol):
