@@ -8,15 +8,25 @@ from .job import JobPostingContextProvider
 from .profile import ProfileYamlContextProvider
 from .resume import ResumeContextProvider
 
+from .application import ApplicationSourceReader
+from .coach import CoachSourceReader
+from .job import JobSourceReader
 
-def register_initial_context_providers(registry: ContextRegistry) -> None:
+
+def register_initial_context_providers(
+    registry: ContextRegistry,
+    *,
+    job_reader: JobSourceReader,
+    application_reader: ApplicationSourceReader,
+    coach_reader: CoachSourceReader,
+) -> None:
     """Register exactly the initial §9.2 capability vocabulary once."""
     for provider in (
         ProfileYamlContextProvider(),
         ResumeContextProvider(),
-        JobPostingContextProvider(),
-        ApplicationContextProvider(),
-        CoachContextProvider(),
+        JobPostingContextProvider(job_reader),
+        ApplicationContextProvider(application_reader),
+        CoachContextProvider(coach_reader),
     ):
         registry.register(provider)
 

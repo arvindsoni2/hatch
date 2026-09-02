@@ -5,9 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
 from app.runtime.context import ContextItem, ContextRegistry, ContextRequirement
-from app.runtime.context.resolver import ContextResolver
+from app.runtime.context.resolver import ContextResolutionError, ContextResolver
+from app.runtime.evaluation import ContextPackageRecord
+from app.runtime.workflow import TaskAttemptRecord
 from workflow_test_support import start_and_claim
 
 
@@ -82,3 +85,128 @@ async def test_resolver_records_optional_missing_context_reason(
         (omission.capability, omission.reason) for omission in package.omissions
     ] == [("job.description", "context_provider_missing")]
     assert await resolver.load(package.id) == package
+
+
+@pytest.mark.asyncio
+async def test_resolver_rejects_budget_above_package_limit(workflow_runtime) -> None:
+    """Budget validation remains within the durable package model bound."""
+    kernel, uow_factory = workflow_runtime
+    _, claim = await start_and_claim(kernel, now=datetime(2030, 1, 1))
+    registry = ContextRegistry()
+    registry.register(_RecordingProvider("job.description"))
+    resolver = ContextResolver(uow_factory, registry)
+
+    with pytest.raises(ContextResolutionError, match="context_budget_invalid"):
+        await resolver.resolve(
+            claim.task_attempt_id,
+            (ContextRequirement(capability="job.description"),),
+            budget=32769,
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolver_fails_required_missing_and_records_optional_source_missing(
+    workflow_runtime,
+) -> None:
+    """Missing required context fails while a declared unavailable source is durable."""
+    kernel, uow_factory = workflow_runtime
+    _, claim = await start_and_claim(kernel, now=datetime(2030, 1, 1))
+    resolver = ContextResolver(uow_factory, ContextRegistry())
+    with pytest.raises(ContextResolutionError, match="context_required_missing"):
+        await resolver.resolve(
+            claim.task_attempt_id,
+            (ContextRequirement(capability="job.description"),),
+            budget=32,
+        )
+
+    class MissingProvider(_RecordingProvider):
+        async def resolve(self, task_attempt_id: str, requirement: ContextRequirement):
+            return None
+
+    registry = ContextRegistry()
+    registry.register(MissingProvider("job.description"))
+    package = await ContextResolver(uow_factory, registry).resolve(
+        claim.task_attempt_id,
+        (ContextRequirement(capability="job.description", required=False),),
+        budget=32,
+    )
+    assert package.omissions[0].reason == "context_source_missing"
+
+
+@pytest.mark.asyncio
+async def test_resolver_enforces_per_requirement_and_cumulative_budgets(
+    workflow_runtime,
+) -> None:
+    """Each declared item and the package total respect the caller budget."""
+    kernel, uow_factory = workflow_runtime
+    _, claim = await start_and_claim(kernel, now=datetime(2030, 1, 1))
+    registry = ContextRegistry()
+    registry.register(_RecordingProvider("job.description"))
+    registry.register(_RecordingProvider("job.requirements"))
+    resolver = ContextResolver(uow_factory, registry)
+    with pytest.raises(ContextResolutionError, match="context_budget_exceeded"):
+        await resolver.resolve(
+            claim.task_attempt_id,
+            (ContextRequirement(capability="job.description", max_tokens=6),),
+            budget=32,
+        )
+    with pytest.raises(ContextResolutionError, match="context_budget_exceeded"):
+        await resolver.resolve(
+            claim.task_attempt_id,
+            (
+                ContextRequirement(capability="job.description"),
+                ContextRequirement(capability="job.requirements"),
+            ),
+            budget=10,
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolver_maps_invalid_provider_and_duplicate_binding_to_stable_codes(
+    workflow_runtime,
+) -> None:
+    """Provider faults and a second CAS bind never leak implementation exceptions."""
+    kernel, uow_factory = workflow_runtime
+    _, claim = await start_and_claim(kernel, now=datetime(2030, 1, 1))
+
+    class InvalidProvider(_RecordingProvider):
+        async def resolve(self, task_attempt_id: str, requirement: ContextRequirement):
+            return object()
+
+    invalid_registry = ContextRegistry()
+    invalid_registry.register(InvalidProvider("job.description"))
+    with pytest.raises(ContextResolutionError, match="context_provider_invalid"):
+        await ContextResolver(uow_factory, invalid_registry).resolve(
+            claim.task_attempt_id,
+            (ContextRequirement(capability="job.description"),),
+            budget=32,
+        )
+
+    registry = ContextRegistry()
+    registry.register(_RecordingProvider("job.description"))
+    resolver = ContextResolver(uow_factory, registry)
+    package = await resolver.resolve(
+        claim.task_attempt_id,
+        (ContextRequirement(capability="job.description"),),
+        budget=32,
+    )
+    async with uow_factory.transaction() as uow:
+        attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+    assert attempt is not None and attempt.context_package_id == package.id
+    with pytest.raises(ContextResolutionError, match="context_package_already_bound"):
+        await resolver.resolve(
+            claim.task_attempt_id,
+            (ContextRequirement(capability="job.description"),),
+            budget=32,
+        )
+    async with uow_factory.transaction() as uow:
+        records = list(
+            (
+                await uow.session.scalars(
+                    select(ContextPackageRecord).where(
+                        ContextPackageRecord.task_attempt_id == claim.task_attempt_id
+                    )
+                )
+            ).all()
+        )
+    assert [record.id for record in records] == [package.id]

@@ -20,7 +20,13 @@ from ..evaluation.models import (
     ShadowComparisonRecord,
     ValidationResultRecord,
 )
-from ..context.models import ContextItem, ContextOmission, ContextPackage
+from ..context.models import (
+    ContextItem,
+    ContextOmission,
+    ContextPackage,
+    context_package_hash,
+    validate_context_item_metadata,
+)
 from ..events.outbox import SQLiteOutboxRepository
 from ..events.repository import SQLiteEventRepository, enforce_metadata_only
 from ..workflow.models import (
@@ -230,6 +236,15 @@ class SQLiteContextPackageStore(_SessionBoundStore):
     """Persist context metadata and bind it to an attempt in the caller's UoW."""
 
     async def persist_and_bind(self, package: ContextPackage) -> None:
+        for item in package.items:
+            validate_context_item_metadata(item)
+        if (
+            context_package_hash(
+                package.task_attempt_id, package.items, package.omissions
+            )
+            != package.content_hash
+        ):
+            raise ValueError("context_package_corrupt")
         attempt = await self.session.get(TaskAttemptRecord, package.task_attempt_id)
         if attempt is None:
             raise ValueError("context_task_attempt_missing")
@@ -265,6 +280,8 @@ class SQLiteContextPackageStore(_SessionBoundStore):
             .values(context_package_id=package.id)
         )
         if result.rowcount != 1:
+            await self.session.delete(record)
+            await self.session.flush()
             raise ValueError("context_package_already_bound")
 
     async def load(self, package_id: str) -> ContextPackage | None:
@@ -284,6 +301,11 @@ class SQLiteContextPackageStore(_SessionBoundStore):
             ContextOmission.model_validate_json(json.dumps(omission))
             for omission in omission_rows
         )
+        if (
+            context_package_hash(record.task_attempt_id, items, omissions)
+            != record.content_hash
+        ):
+            raise ValueError("context_package_corrupt")
         return ContextPackage(
             id=record.id,
             task_attempt_id=record.task_attempt_id,

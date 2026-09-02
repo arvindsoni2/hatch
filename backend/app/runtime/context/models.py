@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from hashlib import sha256
+import json
 import re
 from typing import Any, Literal, Protocol
 
@@ -40,7 +42,7 @@ _HASH = re.compile(r"^[a-f0-9]{64}$")
 _MAX_METADATA_LENGTH = 256
 
 
-class FrozenDict(dict[str, Any]):
+class FrozenDict(dict[str, str]):
     """A JSON-serializable mapping that cannot be changed after validation."""
 
     def _immutable(self, *args: Any, **kwargs: Any) -> None:
@@ -110,7 +112,7 @@ class ContextItem(BaseModel):
     source_ref: str
     descriptor: str
     summary: str | None = Field(default=None, max_length=_MAX_METADATA_LENGTH)
-    provenance: Mapping[str, Any]
+    provenance: Mapping[str, str]
     freshness: AwareDatetime | None
     sensitivity: Literal["public", "internal", "confidential", "restricted"]
     token_estimate: int = Field(ge=0, le=32768)
@@ -185,6 +187,31 @@ class ContextPackage(BaseModel):
         if sum(item.token_estimate for item in self.items) != self.total_token_estimate:
             raise ValueError("total_token_estimate must match context items")
         return self
+
+
+def validate_context_item_metadata(item: ContextItem) -> None:
+    """Reject content-bearing or non-opaque item metadata at every write boundary."""
+    if item.summary is not None:
+        raise ValueError("context_package_metadata_unsafe")
+    for key, value in item.provenance.items():
+        _stable_code(key, "provenance_key")
+        _opaque_ref(value, "provenance_value")
+
+
+def context_package_hash(
+    task_attempt_id: str,
+    items: tuple[ContextItem, ...],
+    omissions: tuple[ContextOmission, ...],
+) -> str:
+    """Derive the immutable package hash from JSON-mode durable metadata."""
+    canonical = {
+        "task_attempt_id": task_attempt_id,
+        "items": [item.model_dump(mode="json") for item in items],
+        "omissions": [omission.model_dump(mode="json") for omission in omissions],
+    }
+    return sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 class ContextProvider(Protocol):

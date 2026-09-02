@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.runtime.context import ContextItem, ContextRegistry, ContextRequirement
 from app.runtime.context.resolver import ContextResolver
+from app.runtime.evaluation import ContextPackageRecord
 from workflow_test_support import start_and_claim
 
 
@@ -64,3 +65,45 @@ async def test_retry_resolves_new_package_without_mutating_prior(
         first.items[0].descriptor = "changed"
     with pytest.raises(TypeError, match="immutable"):
         first.items[0].provenance["source_version"] = "changed"
+
+
+def test_context_item_rejects_nested_mutable_provenance() -> None:
+    """A package hash cannot be invalidated by mutable nested provenance."""
+    with pytest.raises(ValidationError):
+        ContextItem(
+            capability="job.description",
+            provider_id="synthetic.job",
+            source_ref="synthetic:attempt",
+            descriptor="synthetic-job-description",
+            summary=None,
+            provenance={"source_version": {"mutable": "value"}},
+            freshness=datetime(2030, 1, 1, tzinfo=UTC),
+            sensitivity="confidential",
+            token_estimate=7,
+            confidence=1.0,
+            content_hash="d" * 64,
+        )
+
+
+@pytest.mark.asyncio
+async def test_load_rejects_corrupted_package_hash(workflow_runtime) -> None:
+    """Stored package integrity is checked instead of trusting the row hash."""
+    kernel, uow_factory = workflow_runtime
+    _, claim = await start_and_claim(kernel, now=datetime(2030, 1, 1))
+    registry = ContextRegistry()
+    registry.register(_JobProvider())
+    resolver = ContextResolver(uow_factory, registry)
+    package = await resolver.resolve(
+        claim.task_attempt_id,
+        (ContextRequirement(capability="job.description"),),
+        budget=32,
+    )
+
+    async with uow_factory.transaction() as uow:
+        record = await uow.session.get(ContextPackageRecord, package.id)
+        assert record is not None
+        record.content_hash = "0" * 64
+        await uow.commit()
+
+    with pytest.raises(ValueError, match="context_package_corrupt"):
+        await resolver.load(package.id)

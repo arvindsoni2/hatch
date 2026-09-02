@@ -6,8 +6,10 @@ from collections.abc import Awaitable, Callable
 
 from app.runtime.context import ContextItem, ContextRequirement
 
+from .models import CoachContextSource
 
-CoachSourceReader = Callable[[str, str], Awaitable[ContextItem | None]]
+
+CoachSourceReader = Callable[[str, str], Awaitable[CoachContextSource | None]]
 
 
 class CoachContextProvider:
@@ -25,12 +27,42 @@ class CoachContextProvider:
         "coach.transcript",
     )
 
-    def __init__(self, source_reader: CoachSourceReader | None = None) -> None:
+    def __init__(self, source_reader: CoachSourceReader) -> None:
         self._source_reader = source_reader
 
     async def resolve(
         self, task_attempt_id: str, requirement: ContextRequirement
     ) -> ContextItem | None:
-        if self._source_reader is None:
+        source = await self._source_reader(task_attempt_id, requirement.capability)
+        if source is None:
             return None
-        return await self._source_reader(task_attempt_id, requirement.capability)
+        if source.task_attempt_id != task_attempt_id or not source.ownership_verified:
+            raise ValueError("coach_context_ownership_invalid")
+        if source.session_id != source.attempt_session_id:
+            raise ValueError("coach_context_ownership_invalid")
+        if requirement.capability == "coach.question_context" and (
+            source.question_id is None
+            or source.question_session_id != source.session_id
+        ):
+            raise ValueError("coach_context_ownership_invalid")
+        if source.source_version != source.required_source_version or (
+            requirement.capability == "coach.transcript"
+            and (
+                source.transcript_version is None
+                or source.transcript_version != source.required_transcript_version
+            )
+        ):
+            raise ValueError("coach_context_version_invalid")
+        return ContextItem(
+            capability=requirement.capability,
+            provider_id=self.provider_id,
+            source_ref=source.source_ref,
+            descriptor=source.descriptor,
+            summary=None,
+            provenance=source.provenance,
+            freshness=source.freshness,
+            sensitivity=source.sensitivity,
+            token_estimate=source.token_estimate,
+            confidence=source.confidence,
+            content_hash=source.content_hash,
+        )

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
-import json
 from uuid import uuid4
 
 from ..storage.contracts import RuntimeUnitOfWorkFactory
@@ -13,6 +11,8 @@ from .models import (
     ContextOmission,
     ContextPackage,
     ContextRequirement,
+    context_package_hash,
+    validate_context_item_metadata,
 )
 from .registry import ContextRegistry, RegisteredContextProvider
 
@@ -40,7 +40,11 @@ class ContextResolver:
         requirements: tuple[ContextRequirement, ...],
         budget: int,
     ) -> ContextPackage:
-        if isinstance(budget, bool) or not isinstance(budget, int) or budget < 1:
+        if (
+            isinstance(budget, bool)
+            or not isinstance(budget, int)
+            or not 1 <= budget <= 32768
+        ):
             raise ContextResolutionError("context_budget_invalid")
         items: list[ContextItem] = []
         omissions: list[ContextOmission] = []
@@ -79,7 +83,12 @@ class ContextResolver:
                     )
                 )
                 continue
-            self._require_metadata_only(item)
+            try:
+                validate_context_item_metadata(item)
+            except ValueError:
+                raise ContextResolutionError(
+                    "context_package_metadata_unsafe"
+                ) from None
             if item.token_estimate > (requirement.max_tokens or budget):
                 if requirement.required:
                     raise ContextResolutionError("context_budget_exceeded")
@@ -105,14 +114,26 @@ class ContextResolver:
                 continue
             items.append(item)
         package = self._package(task_attempt_id, tuple(items), tuple(omissions))
-        async with self._uow_factory.transaction() as uow:
-            await uow.context_packages.persist_and_bind(package)
-            await uow.commit()
+        try:
+            async with self._uow_factory.transaction() as uow:
+                await uow.context_packages.persist_and_bind(package)
+                await uow.commit()
+        except ValueError as error:
+            if str(error) in {
+                "context_package_already_bound",
+                "context_package_metadata_unsafe",
+                "context_task_attempt_missing",
+            }:
+                raise ContextResolutionError(str(error)) from None
+            raise ContextResolutionError("context_package_persistence_failed") from None
         return package
 
     async def load(self, package_id: str) -> ContextPackage | None:
-        async with self._uow_factory.transaction() as uow:
-            return await uow.context_packages.load(package_id)
+        try:
+            async with self._uow_factory.transaction() as uow:
+                return await uow.context_packages.load(package_id)
+        except ValueError:
+            raise ContextResolutionError("context_package_corrupt") from None
 
     @staticmethod
     async def _resolve_item(
@@ -120,12 +141,16 @@ class ContextResolver:
         task_attempt_id: str,
         requirement: ContextRequirement,
     ) -> ContextItem | None:
-        resolve = getattr(provider, "resolve", None)
-        if resolve is None:
+        try:
+            resolve = getattr(provider, "resolve", None)
+            if resolve is None:
+                raise TypeError("provider does not expose resolve")
+            item = await resolve(task_attempt_id, requirement)
+        except Exception:
             raise ContextResolutionError("context_provider_invalid")
-        item = await resolve(task_attempt_id, requirement)
         if item is not None and (
-            item.capability != requirement.capability
+            not isinstance(item, ContextItem)
+            or item.capability != requirement.capability
             or item.provider_id != provider.provider_id
         ):
             raise ContextResolutionError("context_provider_invalid")
@@ -137,14 +162,7 @@ class ContextResolver:
         items: tuple[ContextItem, ...],
         omissions: tuple[ContextOmission, ...],
     ) -> ContextPackage:
-        canonical = {
-            "task_attempt_id": task_attempt_id,
-            "items": [item.model_dump(mode="json") for item in items],
-            "omissions": [omission.model_dump(mode="json") for omission in omissions],
-        }
-        content_hash = sha256(
-            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()
+        content_hash = context_package_hash(task_attempt_id, items, omissions)
         return ContextPackage(
             id=uuid4().hex,
             task_attempt_id=task_attempt_id,
@@ -153,19 +171,3 @@ class ContextResolver:
             total_token_estimate=sum(item.token_estimate for item in items),
             content_hash=content_hash,
         )
-
-    @staticmethod
-    def _require_metadata_only(item: ContextItem) -> None:
-        """Reject content-bearing fields before opening the package write UoW."""
-        if item.summary is not None:
-            raise ContextResolutionError("context_package_metadata_unsafe")
-        for key, value in item.provenance.items():
-            if (
-                not isinstance(key, str)
-                or not isinstance(value, str)
-                or len(key) > 256
-                or len(value) > 256
-                or not key.replace("_", "").isalnum()
-                or not value.replace("-", "").replace("_", "").isalnum()
-            ):
-                raise ContextResolutionError("context_package_metadata_unsafe")
