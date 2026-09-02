@@ -19,6 +19,7 @@ from app.runtime.contracts import (
     TaskSpec,
     WorkflowPolicy,
 )
+from app.runtime.intelligence import ModelDescriptor, ModelRegistry
 
 
 class _Input(BaseModel):
@@ -103,10 +104,25 @@ def test_trusted_descriptor_capabilities_are_the_only_capability_handoff(
     control_plane: ControlPlane,
 ) -> None:
     """Ignoring the registry-owned capability handoff must make this test fail."""
+    registry = ModelRegistry(
+        (
+            ModelDescriptor(
+                model_id="model-x",
+                version="1",
+                provider="llamacpp",
+                model_name="native",
+                capabilities=frozenset({"structured_output"}),
+                local_or_cloud="local",
+            ),
+        )
+    )
+    descriptor = registry.get("model-x")
+    assert descriptor is not None
     decision = control_plane.evaluate(
         task=_requires_structured_output(),
         routing=RoutingPreferences(force_model="model-x"),
-        trusted_model_capabilities=frozenset({"structured_output"}),
+        selection_registry=registry,
+        selection_proof=registry.issue_selection(descriptor),
     )
 
     assert decision.decision == "ALLOW"

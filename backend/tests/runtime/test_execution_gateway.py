@@ -30,7 +30,7 @@ from app.runtime.execution import (
     ExecutionGateway,
     SideEffectClass,
 )
-from app.runtime.intelligence import ModelDescriptor
+from app.runtime.intelligence import ModelDescriptor, ModelRegistry
 from app.runtime.execution.adapters.llm import (
     StructuredGenerationInput,
     StructuredGenerationOutput,
@@ -240,6 +240,16 @@ async def test_gateway_accepts_only_a_trusted_selected_descriptor(
 
     gateway, _, claim = await _llm_gateway_case(workflow_runtime, handler)
     task = _requires_structured_task()
+    descriptor = ModelDescriptor(
+        model_id="trusted-model",
+        version="1",
+        provider="llamacpp",
+        model_name="provider/native:model",
+        capabilities=frozenset({"structured_output"}),
+        local_or_cloud="local",
+    )
+    registry = ModelRegistry((descriptor,))
+    proof = registry.issue_selection(descriptor)
     policy = ControlPlane().evaluate(
         task=task,
         system=PolicyLayer(
@@ -250,15 +260,8 @@ async def test_gateway_accepts_only_a_trusted_selected_descriptor(
                 allowed_providers=frozenset({"llamacpp"}),
             )
         ),
-        trusted_model_capabilities=frozenset({"structured_output"}),
-    )
-    descriptor = ModelDescriptor(
-        model_id="trusted-model",
-        version="1",
-        provider="llamacpp",
-        model_name="provider/native:model",
-        capabilities=frozenset({"structured_output"}),
-        local_or_cloud="local",
+        selection_registry=registry,
+        selection_proof=proof,
     )
 
     result = await gateway.invoke(
@@ -266,7 +269,8 @@ async def test_gateway_accepts_only_a_trusted_selected_descriptor(
         capability_id="llm.generate_structured",
         policy=policy,
         payload={"request_ref": "request-1", "schema_ref": "schema-1"},
-        model_descriptor=descriptor,
+        selection_registry=registry,
+        selection_proof=proof,
     )
 
     assert result.code is ExecutionResultCode.SUCCESS

@@ -12,6 +12,7 @@ from app.runtime.intelligence import (
     RoutingRequirements,
     promote_model_evidence,
 )
+import pytest
 
 
 def _router_and_store() -> tuple[ModelRouter, EvidenceStore]:
@@ -100,7 +101,11 @@ def test_explicit_qualification_promotes_bounded_evidence() -> None:
     promoted = promote_model_evidence(
         store,
         ("observation-2",),
-        qualification={"minimum_sample_size": 10, "qualification_id": "benchmark-v1"},
+        qualification={
+            "minimum_sample_size": 10,
+            "qualification_id": "benchmark-v1",
+            "qualification_version": 1,
+        },
     )
 
     assert promoted.model_id == "other-model"
@@ -108,3 +113,43 @@ def test_explicit_qualification_promotes_bounded_evidence() -> None:
         router.route(requirements, None, RoutingPreference.auto()).selected_model_id
         == "other-model"
     )
+
+
+def test_promotion_rejects_duplicate_ids_negative_threshold_and_direct_activation() -> (
+    None
+):
+    """Activating unqualified or duplicated observations must make this test fail."""
+    _router, store = _router_and_store()
+    observation = EvidenceObservation(
+        observation_id="observation-3",
+        task_id="evidence.task",
+        task_version=1,
+        model_id="other-model",
+        model_version="1",
+        provider="llamacpp",
+        quality_score=0.9,
+        sample_size=20,
+    )
+    store.record(observation)
+
+    with pytest.raises(ValueError, match="duplicate"):
+        promote_model_evidence(
+            store,
+            ("observation-3", "observation-3"),
+            qualification={
+                "minimum_sample_size": 1,
+                "qualification_id": "benchmark",
+                "qualification_version": 1,
+            },
+        )
+    with pytest.raises(ValueError, match="minimum_sample_size"):
+        promote_model_evidence(
+            store,
+            ("observation-3",),
+            qualification={
+                "minimum_sample_size": -1,
+                "qualification_id": "benchmark",
+                "qualification_version": 1,
+            },
+        )
+    assert not hasattr(store, "promote")

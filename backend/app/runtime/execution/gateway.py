@@ -13,7 +13,6 @@ from pydantic import BaseModel, ValidationError
 
 from ..contracts import ExecutionResultCode
 from ..control import PolicyDecision
-from ..intelligence import ModelDescriptor
 from ..workflow import (
     ApprovalManager,
     ExecutionClaimRecord,
@@ -70,7 +69,8 @@ class ExecutionGateway:
         approval: ApprovalEvidence | None = None,
         *,
         capability_id: str | None = None,
-        model_descriptor: ModelDescriptor | None = None,
+        selection_proof: object | None = None,
+        selection_registry: object | None = None,
     ) -> CapabilityResult:
         """Resolve, authorize, invoke, classify, fence-persist, then emit telemetry."""
         registration = self._resolve(descriptor, capability_id)
@@ -108,7 +108,7 @@ class ExecutionGateway:
             capability,
             typed_payload,
             policy,
-            model_descriptor=model_descriptor,
+            model_descriptor=_verified_descriptor(selection_registry, selection_proof),
         )
         if routing_denied is not None:
             return routing_denied
@@ -315,7 +315,7 @@ class ExecutionGateway:
         payload: BaseModel,
         policy: PolicyDecision,
         *,
-        model_descriptor: ModelDescriptor | None,
+        model_descriptor: object | None,
     ) -> tuple[BaseModel, str | None, str | None, CapabilityResult | None]:
         constraints = policy.effective_constraints
         model_id: str | None = None
@@ -659,3 +659,10 @@ def _aware_utc(value: datetime) -> datetime:
 
 def _hash_reference(value: str) -> str:
     return "sha256." + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _verified_descriptor(
+    registry: object | None, proof: object | None
+) -> object | None:
+    verify = getattr(registry, "verify_selection", None)
+    return verify(proof) if callable(verify) else None

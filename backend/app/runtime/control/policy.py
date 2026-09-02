@@ -27,12 +27,13 @@ class ControlPlane:
         workflow_policy: LayerInput = None,
         user_config: LayerInput = None,
         routing_preferences: RoutingPreferences | LayerInput = None,
-        trusted_model_capabilities: frozenset[str] | None = None,
         *,
         system: LayerInput = None,
         task: TaskSpec | None = None,
         user: LayerInput = None,
         routing: RoutingPreferences | LayerInput = None,
+        selection_proof: object | None = None,
+        selection_registry: object | None = None,
     ) -> PolicyDecision:
         """Evaluate system through routing inputs in the approved precedence order.
 
@@ -87,7 +88,9 @@ class ControlPlane:
                 effective,
                 routing_input,
                 reasons,
-                trusted_model_capabilities=trusted_model_capabilities,
+                selected_descriptor=_verified_descriptor(
+                    selection_registry, selection_proof
+                ),
             )
             or denied
         )
@@ -198,15 +201,18 @@ def _validate_forced_model(
     routing: RoutingPreferences,
     reasons: list[str],
     *,
-    trusted_model_capabilities: frozenset[str] | None,
+    selected_descriptor: object | None,
 ) -> bool:
     forced_model = routing.force_model
     denied = False
-    proven_capabilities = (
-        frozenset()
-        if trusted_model_capabilities is None
-        else frozenset(trusted_model_capabilities)
-    )
+    proven_capabilities = frozenset(getattr(selected_descriptor, "capabilities", ()))
+    if (
+        forced_model is not None
+        and effective.required_model_capabilities
+        and getattr(selected_descriptor, "model_id", None) != forced_model
+    ):
+        _add_reason(reasons, "model.force_proof_mismatch")
+        denied = True
     missing_capabilities = effective.required_model_capabilities - proven_capabilities
     for capability in sorted(missing_capabilities):
         _add_reason(reasons, f"model.{capability}_required")
@@ -220,6 +226,13 @@ def _validate_forced_model(
         _add_reason(reasons, "model.force_not_allowed")
         denied = True
     return denied
+
+
+def _verified_descriptor(
+    registry: object | None, proof: object | None
+) -> object | None:
+    verify = getattr(registry, "verify_selection", None)
+    return verify(proof) if callable(verify) else None
 
 
 def _add_reason(reasons: list[str], reason: str) -> None:

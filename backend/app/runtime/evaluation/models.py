@@ -153,9 +153,16 @@ class ModelEvidenceRecord(Base):
     task_id: Mapped[str] = mapped_column(String(128), nullable=False)
     task_version: Mapped[int] = mapped_column(Integer, nullable=False)
     model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_version: Mapped[str | None] = mapped_column(String(128))
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     evidence_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    qualification_id: Mapped[str | None] = mapped_column(String(128))
+    qualification_version: Mapped[int | None] = mapped_column(Integer)
+    observation_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
+    quality_score: Mapped[float | None] = mapped_column(Numeric(6, 5))
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
     sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -85,10 +85,10 @@ def _tables(database: Path) -> set[str]:
 
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["w0x1y2z3a4b5"]
-    head = scripts.get_revision("w0x1y2z3a4b5")
+    assert scripts.get_heads() == ["x1y2z3a4b5c6"]
+    head = scripts.get_revision("x1y2z3a4b5c6")
     assert head is not None
-    assert head.down_revision == "v9w0x1y2z3a4"
+    assert head.down_revision == "w0x1y2z3a4b5"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
@@ -139,6 +139,14 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
         "metrics_json",
         "expires_at",
     } <= set(shadow.columns.keys())
+    evidence = Base.metadata.tables["runtime_model_evidence"]
+    assert {
+        "model_version",
+        "qualification_id",
+        "qualification_version",
+        "observation_ids_json",
+        "quality_score",
+    } <= set(evidence.columns.keys())
 
 
 def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) -> None:
@@ -256,7 +264,7 @@ def test_execution_intent_migration_downgrades_and_reupgrades(tmp_path: Path) ->
             }
         )
 
-    reupgrade = _run_alembic(database, "upgrade", "w0x1y2z3a4b5")
+    reupgrade = _run_alembic(database, "upgrade", "x1y2z3a4b5c6")
     assert reupgrade.returncode == 0, reupgrade.stderr
 
 
@@ -296,5 +304,5 @@ def test_routing_candidate_snapshot_migration_downgrades_and_reupgrades(
             }
         )
 
-    reupgrade = _run_alembic(database, "upgrade", "w0x1y2z3a4b5")
+    reupgrade = _run_alembic(database, "upgrade", "x1y2z3a4b5c6")
     assert reupgrade.returncode == 0, reupgrade.stderr

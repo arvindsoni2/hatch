@@ -84,4 +84,71 @@ affect results.
   Task 10's router contract.
 - The authoritative comprehensive backend suite is controller-owned and was not run
   in this task. The required focused Task 10, model-discovery, R3 Control/Execution,
-  and migration selections were run.
+and migration selections were run.
+
+## Fix round 1 — review hardening
+
+### RED evidence
+
+Before the fix, the local focused RED command was:
+
+```text
+python -m pytest -q --no-cov tests/runtime/test_model_router.py \
+  tests/runtime/test_evidence_promotion.py tests/runtime/test_intelligence_bounds.py
+# 5 failed, 6 passed.
+```
+
+The expected failures proved absent registry-issued selection proofs, missing
+context/privacy/fallback contracts, duplicate promotion acceptance, an unbounded
+registry, and acceptance of long body-like metadata under an innocuous key.
+
+### Changes
+
+- Registry-issued HMAC-sealed selection proofs now bind model ID/version/provider;
+  Control Plane and Gateway verify the proof through the issuing registry instead
+  of trusting caller-provided capabilities or descriptors.
+- Requirements enforce bounded context and privacy levels. Fallback IDs are bounded,
+  ordered, independently eligible, and disabled for FORCE.
+- Config catalog descriptors have neutral default quality/rank and a canonical
+  configuration-derived version; snapshots include provider-native model name.
+- Evidence activation is private to qualification, rejects duplicate observation
+  IDs and invalid thresholds/versions, and validates all aggregate invariants.
+- Promoted evidence now has durable lineage fields and UoW persistence/load seams;
+  the additive `x1y2z3a4b5c6` migration preserves one migration head.
+- Registry, fallback, observation/promotion, candidate metadata and body-like
+  string bounds are enforced before durable persistence.
+
+### GREEN evidence and remaining gates
+
+After implementation, the local expanded selection reported `27 passed in 12.61s`:
+
+```text
+python -m pytest -q --no-cov tests/runtime/test_model_router.py \
+  tests/runtime/test_evidence_promotion.py tests/runtime/test_intelligence_bounds.py \
+  tests/runtime/test_policy_force_model.py \
+  tests/runtime/test_execution_gateway.py::test_gateway_accepts_only_a_trusted_selected_descriptor \
+  tests/runtime/test_router_candidate_snapshot.py tests/runtime/test_schema_migration.py
+```
+
+Final authoritative Python 3.12 container commands and results are recorded in the
+fix-round handoff after their execution. The final selected Python 3.12 command
+exited `0` after all named routing, evidence, Control, Gateway, storage, schema,
+migration bootstrap, and model-discovery modules passed; the tool's output cap
+truncated the terminal display after 77% of individual pass lines.
+
+Exact final container gate:
+
+```text
+docker run --rm --entrypoint python -v <worktree>/backend:/workspace/backend:Z \
+  -w /workspace/backend localhost/job_pilot_v2_backend:latest -m pytest -q --no-cov \
+  tests/runtime/test_model_router.py tests/runtime/test_router_candidate_snapshot.py \
+  tests/runtime/test_evidence_promotion.py tests/runtime/test_intelligence_bounds.py \
+  tests/runtime/test_policy_force_model.py tests/runtime/test_execution_gateway.py \
+  tests/runtime/test_schema_migration.py tests/runtime/test_storage_contract.py \
+  tests/test_services/test_model_discovery.py tests/test_migrations/test_database_setup.py
+# exit 0; only bind-mounted pytest-cache warnings.
+```
+
+Final scoped Ruff check passed, `ruff format` reported `19 files left unchanged`,
+`python /workspace/scripts/check_docs.py` reported documentation validation passed,
+and both staged and post-commit `git diff --check` commands exited zero.

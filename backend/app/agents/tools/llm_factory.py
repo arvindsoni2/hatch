@@ -11,6 +11,7 @@ in agent code. Always go through this module.
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import logging
 import os
@@ -507,21 +508,24 @@ def configured_model_catalog() -> tuple[dict[str, object], ...]:
         "estimated_cost_class": "local" if local else "configured",
         "privacy_characteristics": "local" if local else "provider_configured",
         "enabled": True,
-        "quality_score": 0.5,
+        "quality_score": 0.0,
     }
     roles = (
-        ("configured-triage", config.triage_model, 10.0),
-        ("configured-primary", config.primary_model, 20.0),
+        ("configured-triage", config.triage_model),
+        ("configured-primary", config.primary_model),
     )
     return tuple(
         {
             **common,
             "model_id": model_id,
-            "version": "profile-configured",
+            "version": "config."
+            + hashlib.sha256(
+                f"{config.provider}|{model_name}|{local}|{config.reasoning}".encode()
+            ).hexdigest()[:24],
             "model_name": model_name,
-            "base_rank": rank,
+            "base_rank": 0.0,
         }
-        for model_id, model_name, rank in roles
+        for model_id, model_name in roles
         if model_name
     )
 

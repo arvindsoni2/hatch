@@ -71,6 +71,7 @@ async def test_router_persists_a_metadata_only_candidate_snapshot(
             "model_id": "router-model",
             "model_version": "2026.09",
             "provider": "llamacpp",
+            "model_name": "provider/native:model",
             "eligible": True,
             "excluded_reason_codes": [],
             "rank_components": {"base": 10.0, "evidence": 0.0, "preference": 0.0},

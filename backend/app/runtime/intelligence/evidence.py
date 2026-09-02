@@ -31,7 +31,7 @@ class EvidenceStore:
         except KeyError as error:
             raise LookupError("observation_not_found") from error
 
-    def promote(self, evidence: ModelEvidence) -> ModelEvidence:
+    def _activate(self, evidence: ModelEvidence) -> ModelEvidence:
         self._promoted[evidence.evidence_id] = evidence
         return evidence
 
@@ -63,6 +63,37 @@ class EvidenceStore:
         payload = "|".join(sorted(self._promoted))
         return "evidence." + hashlib.sha256(payload.encode()).hexdigest()[:24]
 
+    @classmethod
+    def from_promoted_records(cls, records: object) -> "EvidenceStore":
+        store = cls()
+        for record in records:
+            if not all(
+                (
+                    record.model_version,
+                    record.qualification_id,
+                    record.qualification_version,
+                    record.observation_ids_json,
+                    record.quality_score is not None,
+                )
+            ):
+                continue
+            store._activate(
+                ModelEvidence(
+                    evidence_id=record.id,
+                    task_id=record.task_id,
+                    task_version=record.task_version,
+                    model_id=record.model_id,
+                    model_version=record.model_version,
+                    provider=record.provider,
+                    quality_score=float(record.quality_score),
+                    sample_size=record.sample_size,
+                    qualification_id=record.qualification_id,
+                    qualification_version=record.qualification_version,
+                    observation_ids=tuple(record.observation_ids_json),
+                )
+            )
+        return store
+
 
 def promote_model_evidence(
     store: EvidenceStore,
@@ -72,14 +103,25 @@ def promote_model_evidence(
     """Create routing-active aggregate evidence only after bounded qualification."""
     if not observation_ids or len(observation_ids) > 100:
         raise ValueError("promotion requires between one and 100 observations")
+    if len(set(observation_ids)) != len(observation_ids):
+        raise ValueError("duplicate observation IDs are not allowed")
     qualification_id = qualification.get("qualification_id")
     minimum_sample_size = qualification.get("minimum_sample_size")
+    qualification_version = qualification.get("qualification_version")
     if not isinstance(qualification_id, str) or not qualification_id:
         raise ValueError("qualification_id is required")
-    if isinstance(minimum_sample_size, bool) or not isinstance(
-        minimum_sample_size, int
+    if (
+        isinstance(minimum_sample_size, bool)
+        or not isinstance(minimum_sample_size, int)
+        or not 1 <= minimum_sample_size <= 1_000_000
     ):
-        raise ValueError("minimum_sample_size must be an integer")
+        raise ValueError("minimum_sample_size must be bounded positive integer")
+    if (
+        isinstance(qualification_version, bool)
+        or not isinstance(qualification_version, int)
+        or not 1 <= qualification_version <= 10_000
+    ):
+        raise ValueError("qualification_version must be bounded positive integer")
     observations = store.observations(observation_ids)
     first = observations[0]
     identity = (
@@ -111,10 +153,16 @@ def promote_model_evidence(
     evidence_id = (
         "evidence."
         + hashlib.sha256(
-            (qualification_id + "|" + "|".join(sorted(observation_ids))).encode()
+            (
+                qualification_id
+                + "|"
+                + str(qualification_version)
+                + "|"
+                + "|".join(sorted(observation_ids))
+            ).encode()
         ).hexdigest()[:24]
     )
-    return store.promote(
+    return store._activate(
         ModelEvidence(
             evidence_id=evidence_id,
             task_id=first.task_id,
@@ -125,6 +173,32 @@ def promote_model_evidence(
             quality_score=weighted_quality,
             sample_size=total_sample_size,
             qualification_id=qualification_id,
+            qualification_version=qualification_version,
             observation_ids=tuple(sorted(observation_ids)),
         )
     )
+
+
+async def persist_promoted_model_evidence(
+    evaluation_store: object, evidence: ModelEvidence
+) -> ModelEvidence:
+    """Persist one already-qualified aggregate through the runtime UoW seam."""
+    record = getattr(evaluation_store, "record_model_evidence", None)
+    if not callable(record):
+        raise TypeError("evaluation store cannot persist model evidence")
+    await record(
+        id=evidence.evidence_id,
+        task_id=evidence.task_id,
+        task_version=evidence.task_version,
+        model_id=evidence.model_id,
+        model_version=evidence.model_version,
+        provider=evidence.provider,
+        evidence_type="promoted",
+        qualification_id=evidence.qualification_id,
+        qualification_version=evidence.qualification_version,
+        observation_ids_json=list(evidence.observation_ids),
+        quality_score=evidence.quality_score,
+        metrics_json={},
+        sample_size=evidence.sample_size,
+    )
+    return evidence

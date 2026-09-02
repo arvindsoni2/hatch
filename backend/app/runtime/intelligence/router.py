@@ -52,6 +52,16 @@ class ModelRouter:
             exclusions.extend(
                 f"capability.{capability}_missing" for capability in missing
             )
+            if resolved_requirements.minimum_context_window and (
+                descriptor.context_window is None
+                or descriptor.context_window
+                < resolved_requirements.minimum_context_window
+            ):
+                exclusions.append("capability.context_window_too_small")
+            if _privacy_level(descriptor.privacy_characteristics) < _privacy_level(
+                resolved_requirements.privacy_requirement
+            ):
+                exclusions.append("privacy.requirement_not_met")
             if descriptor.quality_score < resolved_requirements.quality_floor:
                 exclusions.append("quality.floor_not_met")
             exclusions.extend(
@@ -85,6 +95,7 @@ class ModelRouter:
                     model_id=descriptor.model_id,
                     model_version=descriptor.version,
                     provider=descriptor.provider,
+                    model_name=descriptor.model_name,
                     eligible=not exclusions,
                     excluded_reason_codes=tuple(exclusions),
                     rank_components=components,
@@ -108,6 +119,7 @@ class ModelRouter:
                     model_id=candidate.model_id,
                     model_version=candidate.model_version,
                     provider=candidate.provider,
+                    model_name=candidate.model_name,
                     eligible=False,
                     excluded_reason_codes=candidate.excluded_reason_codes
                     + ("fallback.force_other_model",),
@@ -118,12 +130,26 @@ class ModelRouter:
             ]
         elif eligible:
             selected = max(eligible, key=lambda item: (item[1], item[0].model_id))[0]
+        fallback_model_ids = (
+            ()
+            if preference.mode is RoutingMode.FORCE
+            else tuple(
+                model_id
+                for model_id in preference.fallback_model_ids
+                if any(item[0].model_id == model_id for item in eligible)
+                and model_id != (None if selected is None else selected.model_id)
+            )
+        )
         return RoutingDecision(
             requirements=resolved_requirements,
             candidates=tuple(candidates),
             selected_descriptor=selected,
             stages=_STAGES,
             evidence_snapshot_id=self._evidence_store.snapshot_id(),
+            fallback_model_ids=fallback_model_ids,
+            selection_proof=None
+            if selected is None
+            else self._registry.issue_selection(selected),
         )
 
     async def persist_decision(
@@ -191,3 +217,9 @@ def _policy_exclusions(
     if not constraints.data_egress and descriptor.local_or_cloud != "local":
         exclusions.append("privacy.data_egress_denied")
     return exclusions
+
+
+def _privacy_level(value: str) -> int:
+    return {"public": 0, "provider_configured": 1, "confidential": 2, "local": 3}.get(
+        value, 0
+    )

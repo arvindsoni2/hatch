@@ -83,6 +83,10 @@ def enforce_metadata_only(value: Any, *, path: str = "payload") -> None:
         raise MetadataOnlyViolation(
             f"local file paths are not allowed in metadata-only records: {path}"
         )
+    if isinstance(value, str) and len(value) > 512:
+        raise MetadataOnlyViolation(
+            f"body-like string values are not allowed in metadata-only records: {path}"
+        )
 
 
 def enforce_event_metadata(value: Any, *, path: str = "payload") -> None:
@@ -101,9 +105,7 @@ def enforce_event_metadata(value: Any, *, path: str = "payload") -> None:
                 item, (str, bytes, bytearray)
             ):
                 enforce_event_metadata(item, path=f"{path}.{key}")
-    elif isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray)
-    ):
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         for index, item in enumerate(value):
             enforce_event_metadata(item, path=f"{path}[{index}]")
 

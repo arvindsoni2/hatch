@@ -1,6 +1,10 @@
 """Deterministic task-aware model routing contracts."""
 
-from .evidence import EvidenceStore, promote_model_evidence
+from .evidence import (
+    EvidenceStore,
+    persist_promoted_model_evidence,
+    promote_model_evidence,
+)
 from .models import (
     EvidenceObservation,
     ModelDescriptor,
@@ -29,4 +33,5 @@ __all__ = [
     "RoutingRequirements",
     "RoutingStage",
     "promote_model_evidence",
+    "persist_promoted_model_evidence",
 ]

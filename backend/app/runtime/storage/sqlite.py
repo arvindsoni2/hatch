@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import json
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, or_, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..evaluation.models import (
@@ -212,7 +212,12 @@ class SQLiteEvaluationStore(_SessionBoundStore):
 
     async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord:
         """Persist only evidence that an explicit qualification already promoted."""
+        if values.get("metrics_json", {}) not in ({}, None):
+            raise ValueError("model evidence accepts typed metadata only")
         return await self._record(ModelEvidenceRecord, **values)
+
+    async def load_model_evidence(self) -> list[ModelEvidenceRecord]:
+        return list((await self.session.scalars(select(ModelEvidenceRecord))).all())
 
 
 class SQLiteShadowComparisonStore(_SessionBoundStore):

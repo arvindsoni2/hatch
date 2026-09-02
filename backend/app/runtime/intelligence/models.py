@@ -87,6 +87,8 @@ class RoutingRequirements:
     task_version: int
     required_capabilities: frozenset[str] = frozenset()
     quality_floor: float = 0.0
+    minimum_context_window: int = 0
+    privacy_requirement: str = "provider_configured"
 
     def __post_init__(self) -> None:
         _stable(self.task_id, "task_id")
@@ -98,6 +100,18 @@ class RoutingRequirements:
         object.__setattr__(self, "required_capabilities", capabilities)
         if not 0.0 <= self.quality_floor <= 1.0:
             raise ValueError("quality_floor must be between zero and one")
+        if (
+            isinstance(self.minimum_context_window, bool)
+            or not 0 <= self.minimum_context_window <= 2_000_000
+        ):
+            raise ValueError("minimum_context_window must be bounded")
+        if self.privacy_requirement not in {
+            "public",
+            "provider_configured",
+            "confidential",
+            "local",
+        }:
+            raise ValueError("privacy_requirement is not supported")
 
     @classmethod
     def from_value(
@@ -134,9 +148,16 @@ class RoutingPreference:
 
     mode: RoutingMode = RoutingMode.AUTO
     model_id: str | None = None
+    fallback_model_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mode", RoutingMode(self.mode))
+        fallbacks = tuple(self.fallback_model_ids)
+        if len(fallbacks) > 8 or len(set(fallbacks)) != len(fallbacks):
+            raise ValueError("fallback model IDs must be unique and bounded")
+        for fallback in fallbacks:
+            _stable(fallback, "fallback_model_ids")
+        object.__setattr__(self, "fallback_model_ids", fallbacks)
         if self.mode is RoutingMode.AUTO and self.model_id is not None:
             raise ValueError("AUTO routing does not name a model")
         if self.mode is not RoutingMode.AUTO:
@@ -145,16 +166,20 @@ class RoutingPreference:
             _stable(self.model_id, "model_id")
 
     @classmethod
-    def auto(cls) -> "RoutingPreference":
-        return cls()
+    def auto(cls, *, fallback_model_ids: tuple[str, ...] = ()) -> "RoutingPreference":
+        return cls(fallback_model_ids=fallback_model_ids)
 
     @classmethod
-    def prefer(cls, model_id: str) -> "RoutingPreference":
-        return cls(RoutingMode.PREFER, model_id)
+    def prefer(
+        cls, model_id: str, *, fallback_model_ids: tuple[str, ...] = ()
+    ) -> "RoutingPreference":
+        return cls(RoutingMode.PREFER, model_id, fallback_model_ids)
 
     @classmethod
-    def force(cls, model_id: str) -> "RoutingPreference":
-        return cls(RoutingMode.FORCE, model_id)
+    def force(
+        cls, model_id: str, *, fallback_model_ids: tuple[str, ...] = ()
+    ) -> "RoutingPreference":
+        return cls(RoutingMode.FORCE, model_id, fallback_model_ids)
 
 
 @dataclass(frozen=True)
@@ -162,6 +187,7 @@ class RoutingCandidate:
     model_id: str
     model_version: str
     provider: str
+    model_name: str
     eligible: bool
     excluded_reason_codes: tuple[str, ...]
     rank_components: Mapping[str, float]
@@ -172,6 +198,7 @@ class RoutingCandidate:
             "model_id": self.model_id,
             "model_version": self.model_version,
             "provider": self.provider,
+            "model_name": self.model_name,
             "eligible": self.eligible,
             "excluded_reason_codes": list(self.excluded_reason_codes),
             "rank_components": dict(self.rank_components),
@@ -192,6 +219,8 @@ class RoutingDecision:
     stages: tuple[RoutingStage, ...]
     routing_policy_version: int = 1
     evidence_snapshot_id: str = "evidence.none"
+    fallback_model_ids: tuple[str, ...] = ()
+    selection_proof: object | None = None
 
     @property
     def selected_model_id(self) -> str | None:
@@ -239,4 +268,34 @@ class ModelEvidence:
     quality_score: float
     sample_size: int
     qualification_id: str
+    qualification_version: int = 1
     observation_ids: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        for name in (
+            "evidence_id",
+            "task_id",
+            "model_id",
+            "provider",
+            "qualification_id",
+        ):
+            _stable(getattr(self, name), name)
+        if not self.model_version or len(self.model_version) > 128:
+            raise ValueError("model_version must be bounded")
+        if isinstance(self.task_version, bool) or self.task_version < 1:
+            raise ValueError("task_version must be positive")
+        if (
+            isinstance(self.qualification_version, bool)
+            or not 1 <= self.qualification_version <= 10_000
+        ):
+            raise ValueError("qualification_version must be bounded")
+        if not 0.0 <= self.quality_score <= 1.0:
+            raise ValueError("quality_score must be between zero and one")
+        if isinstance(self.sample_size, bool) or not 1 <= self.sample_size <= 1_000_000:
+            raise ValueError("sample_size must be bounded")
+        ids = tuple(self.observation_ids)
+        if not ids or len(ids) > 100 or len(set(ids)) != len(ids):
+            raise ValueError("observation_ids must be unique and bounded")
+        for observation_id in ids:
+            _stable(observation_id, "observation_ids")
+        object.__setattr__(self, "observation_ids", ids)
