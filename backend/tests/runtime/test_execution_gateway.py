@@ -52,7 +52,7 @@ from execution_test_support import (
 from workflow_test_support import start_and_claim
 
 
-async def _llm_gateway_case(workflow_runtime, handler):
+async def _llm_gateway_case(workflow_runtime, handler, *, model_registry=None):
     kernel, factory = workflow_runtime
     _, claim = await start_and_claim(kernel, now=NOW)
     registry = CapabilityRegistry()
@@ -62,6 +62,7 @@ async def _llm_gateway_case(workflow_runtime, handler):
             registry=registry,
             kernel=kernel,
             approvals=ApprovalManager(factory, clock=lambda: NOW),
+            model_registry=model_registry,
         ),
         factory,
         claim,
@@ -238,7 +239,6 @@ async def test_gateway_accepts_only_a_trusted_selected_descriptor(
         calls.append((payload, context))
         return await _structured_success(payload, context)
 
-    gateway, _, claim = await _llm_gateway_case(workflow_runtime, handler)
     task = _requires_structured_task()
     descriptor = ModelDescriptor(
         model_id="trusted-model",
@@ -249,8 +249,11 @@ async def test_gateway_accepts_only_a_trusted_selected_descriptor(
         local_or_cloud="local",
     )
     registry = ModelRegistry((descriptor,))
+    gateway, _, claim = await _llm_gateway_case(
+        workflow_runtime, handler, model_registry=registry
+    )
     proof = registry.issue_selection(descriptor)
-    policy = ControlPlane().evaluate(
+    policy = ControlPlane(model_registry=registry).evaluate(
         task=task,
         system=PolicyLayer(
             ConstraintSet(
@@ -260,7 +263,6 @@ async def test_gateway_accepts_only_a_trusted_selected_descriptor(
                 allowed_providers=frozenset({"llamacpp"}),
             )
         ),
-        selection_registry=registry,
         selection_proof=proof,
     )
 
@@ -269,7 +271,6 @@ async def test_gateway_accepts_only_a_trusted_selected_descriptor(
         capability_id="llm.generate_structured",
         policy=policy,
         payload={"request_ref": "request-1", "schema_ref": "schema-1"},
-        selection_registry=registry,
         selection_proof=proof,
     )
 

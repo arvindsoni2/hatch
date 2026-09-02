@@ -30,6 +30,7 @@ from ..context.models import (
 )
 from ..events.outbox import SQLiteOutboxRepository
 from ..events.repository import SQLiteEventRepository, enforce_metadata_only
+from ..intelligence.models import ModelEvidence, RoutingCandidate
 from ..workflow.models import (
     ApprovalRecord,
     ApprovalStatus,
@@ -196,6 +197,29 @@ class SQLiteEvaluationStore(_SessionBoundStore):
         return await self._record(PolicyDecisionRecord, **values)
 
     async def record_routing_decision(self, **values: Any) -> RoutingDecisionRecord:
+        candidates = values.get("candidate_snapshot_json")
+        if not isinstance(candidates, list) or len(candidates) > 32:
+            raise ValueError("routing candidates must be a bounded list")
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise ValueError("routing candidates must be typed metadata")
+            typed = RoutingCandidate(
+                model_id=candidate.get("model_id"),
+                model_version=candidate.get("model_version"),
+                provider=candidate.get("provider"),
+                model_name=candidate.get("model_name"),
+                eligible=candidate.get("eligible"),
+                excluded_reason_codes=tuple(candidate.get("excluded_reason_codes", ())),
+                rank_components=candidate.get("rank_components", {}),
+                final_rank=candidate.get("final_rank"),
+            )
+            if typed.as_snapshot() != candidate:
+                raise ValueError("routing candidate snapshot is not canonical")
+        if (
+            len(json.dumps(candidates, sort_keys=True, separators=(",", ":")).encode())
+            > 65536
+        ):
+            raise ValueError("routing candidate metadata exceeds size bound")
         return await self._record(RoutingDecisionRecord, **values)
 
     async def record_execution(self, **values: Any) -> ExecutionRecord:
@@ -211,9 +235,34 @@ class SQLiteEvaluationStore(_SessionBoundStore):
         return await self._record(EvidenceObservationRecord, **values)
 
     async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord:
-        """Persist only evidence that an explicit qualification already promoted."""
-        if values.get("metrics_json", {}) not in ({}, None):
-            raise ValueError("model evidence accepts typed metadata only")
+        raise ValueError("use record_promoted_model_evidence for routing evidence")
+
+    async def record_promoted_model_evidence(
+        self, evidence: ModelEvidence
+    ) -> ModelEvidenceRecord:
+        """Persist exact typed promotion lineage before in-memory activation."""
+        if not isinstance(evidence, ModelEvidence):
+            raise TypeError("promoted evidence must be ModelEvidence")
+        existing = await self.session.get(ModelEvidenceRecord, evidence.evidence_id)
+        values = {
+            "id": evidence.evidence_id,
+            "task_id": evidence.task_id,
+            "task_version": evidence.task_version,
+            "model_id": evidence.model_id,
+            "model_version": evidence.model_version,
+            "provider": evidence.provider,
+            "evidence_type": "promoted",
+            "qualification_id": evidence.qualification_id,
+            "qualification_version": evidence.qualification_version,
+            "observation_ids_json": list(evidence.observation_ids),
+            "quality_score": evidence.quality_score,
+            "metrics_json": {},
+            "sample_size": evidence.sample_size,
+        }
+        if existing is not None:
+            if all(getattr(existing, key) == value for key, value in values.items()):
+                return existing
+            raise ValueError("conflicting promoted evidence identity")
         return await self._record(ModelEvidenceRecord, **values)
 
     async def load_model_evidence(self) -> list[ModelEvidenceRecord]:

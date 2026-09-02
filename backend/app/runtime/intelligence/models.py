@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Mapping
@@ -193,8 +196,52 @@ class RoutingCandidate:
     rank_components: Mapping[str, float]
     final_rank: float | None
 
+    def __post_init__(self) -> None:
+        for name in ("model_id", "provider"):
+            _stable(getattr(self, name), name)
+        if (
+            not isinstance(self.model_version, str)
+            or not self.model_version
+            or len(self.model_version) > 128
+        ):
+            raise ValueError("model_version must be bounded")
+        if (
+            not isinstance(self.model_name, str)
+            or not self.model_name
+            or len(self.model_name) > 512
+        ):
+            raise ValueError("model_name must be bounded")
+        if not isinstance(self.eligible, bool):
+            raise ValueError("eligible must be a boolean")
+        reasons = tuple(self.excluded_reason_codes)
+        if len(reasons) > 16:
+            raise ValueError("excluded_reason_codes must be bounded")
+        for reason in reasons:
+            _stable(reason, "excluded_reason_codes")
+        components = dict(self.rank_components)
+        if len(components) > 16:
+            raise ValueError("rank_components must be bounded")
+        for name, value in components.items():
+            _stable(name, "rank_components")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or abs(value) > 1_000_000
+            ):
+                raise ValueError("rank components must be finite and bounded")
+        if self.final_rank is not None and (
+            isinstance(self.final_rank, bool)
+            or not isinstance(self.final_rank, (int, float))
+            or not math.isfinite(self.final_rank)
+            or abs(self.final_rank) > 1_000_000
+        ):
+            raise ValueError("final_rank must be finite and bounded")
+        object.__setattr__(self, "excluded_reason_codes", reasons)
+        object.__setattr__(self, "rank_components", components)
+
     def as_snapshot(self) -> dict[str, object]:
-        return {
+        snapshot = {
             "model_id": self.model_id,
             "model_version": self.model_version,
             "provider": self.provider,
@@ -204,6 +251,12 @@ class RoutingCandidate:
             "rank_components": dict(self.rank_components),
             "final_rank": self.final_rank,
         }
+        if (
+            len(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode())
+            > 4096
+        ):
+            raise ValueError("routing candidate snapshot exceeds metadata bound")
+        return snapshot
 
 
 @dataclass(frozen=True)
@@ -298,4 +351,19 @@ class ModelEvidence:
             raise ValueError("observation_ids must be unique and bounded")
         for observation_id in ids:
             _stable(observation_id, "observation_ids")
-        object.__setattr__(self, "observation_ids", ids)
+        canonical_ids = tuple(sorted(ids))
+        expected_id = (
+            "evidence."
+            + hashlib.sha256(
+                "|".join(
+                    (
+                        self.qualification_id,
+                        str(self.qualification_version),
+                        *canonical_ids,
+                    )
+                ).encode()
+            ).hexdigest()[:24]
+        )
+        if self.evidence_id != expected_id:
+            raise ValueError("evidence_id does not match qualification lineage")
+        object.__setattr__(self, "observation_ids", canonical_ids)

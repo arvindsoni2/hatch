@@ -20,6 +20,14 @@ LayerInput: TypeAlias = PolicyLayer | ConstraintSet | None
 class ControlPlane:
     """Folds immutable policy inputs in fixed order without widening constraints."""
 
+    def __init__(self, *, model_registry: object | None = None) -> None:
+        """Bind model-proof verification to one composition-owned registry."""
+        from ..intelligence.registry import ModelRegistry
+
+        if model_registry is not None and not isinstance(model_registry, ModelRegistry):
+            raise TypeError("model_registry must be a ModelRegistry")
+        self._model_registry: ModelRegistry | None = model_registry
+
     def evaluate(
         self,
         task_spec: TaskSpec | None = None,
@@ -33,7 +41,6 @@ class ControlPlane:
         user: LayerInput = None,
         routing: RoutingPreferences | LayerInput = None,
         selection_proof: object | None = None,
-        selection_registry: object | None = None,
     ) -> PolicyDecision:
         """Evaluate system through routing inputs in the approved precedence order.
 
@@ -88,9 +95,7 @@ class ControlPlane:
                 effective,
                 routing_input,
                 reasons,
-                selected_descriptor=_verified_descriptor(
-                    selection_registry, selection_proof
-                ),
+                selected_descriptor=self._verified_descriptor(selection_proof),
             )
             or denied
         )
@@ -107,6 +112,11 @@ class ControlPlane:
             reason_codes=tuple(reasons),
             effective_constraints=effective,
         )
+
+    def _verified_descriptor(self, proof: object | None) -> object | None:
+        if self._model_registry is None:
+            return None
+        return self._model_registry.verify_selection(proof)
 
 
 def _as_layer(value: LayerInput) -> ConstraintSet:
@@ -226,13 +236,6 @@ def _validate_forced_model(
         _add_reason(reasons, "model.force_not_allowed")
         denied = True
     return denied
-
-
-def _verified_descriptor(
-    registry: object | None, proof: object | None
-) -> object | None:
-    verify = getattr(registry, "verify_selection", None)
-    return verify(proof) if callable(verify) else None
 
 
 def _add_reason(reasons: list[str], reason: str) -> None:

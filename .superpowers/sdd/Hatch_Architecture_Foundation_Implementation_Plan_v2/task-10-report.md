@@ -152,3 +152,41 @@ docker run --rm --entrypoint python -v <worktree>/backend:/workspace/backend:Z \
 Final scoped Ruff check passed, `ruff format` reported `19 files left unchanged`,
 `python /workspace/scripts/check_docs.py` reported documentation validation passed,
 and both staged and post-commit `git diff --check` commands exited zero.
+
+## Fix round 2 — trusted composition and durability-first promotion
+
+### RED evidence
+
+The first focused constructor-migration run reported two expected failures: the
+old test setup still passed a per-call registry, and a Control Plane without its
+composition-owned registry correctly denied the selected route. This proved the
+raw verifier seam had been removed before the callers were migrated.
+
+### GREEN evidence
+
+```text
+python -m pytest -q --no-cov tests/runtime/test_evidence_promotion.py \
+  tests/runtime/test_policy_force_model.py tests/runtime/test_execution_gateway.py
+# 32 passed in 3.08s
+```
+
+This selection covers fake verifier rejection, cross-registry proof rejection,
+missing proof fail-closed behavior, and durability-first promotion (a failing
+flush leaves the routing evidence snapshot unchanged). Candidate snapshots are
+also revalidated at the SQLite boundary for type, finite numeric fields, bounded
+counts, canonical form, and total serialized size. Promotion now accepts only a
+typed `ModelEvidence`, recomputes its deterministic lineage identity, treats exact
+replay as idempotent, and rejects conflicting identity reuse. Reload requires the
+referenced immutable observations and recomputes the aggregate; incomplete rows
+remain inactive.
+
+Additional replay GREEN:
+
+```text
+python -m pytest -q --no-cov tests/runtime/test_evidence_promotion.py
+# 5 passed in 0.09s
+```
+
+It explicitly verifies persistence failure leaves no active evidence and that
+forged evidence IDs, aggregate sample tampering, missing observation lineage, and
+raw promoted rows without observations all fail closed during reconstruction.

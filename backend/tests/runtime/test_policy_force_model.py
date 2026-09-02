@@ -100,9 +100,7 @@ def test_untrusted_routing_capability_claim_cannot_authorize_forced_model(
     assert "model.structured_output_required" in decision.reason_codes
 
 
-def test_trusted_descriptor_capabilities_are_the_only_capability_handoff(
-    control_plane: ControlPlane,
-) -> None:
+def test_trusted_descriptor_capabilities_are_the_only_capability_handoff() -> None:
     """Ignoring the registry-owned capability handoff must make this test fail."""
     registry = ModelRegistry(
         (
@@ -118,14 +116,46 @@ def test_trusted_descriptor_capabilities_are_the_only_capability_handoff(
     )
     descriptor = registry.get("model-x")
     assert descriptor is not None
-    decision = control_plane.evaluate(
+    decision = ControlPlane(model_registry=registry).evaluate(
         task=_requires_structured_output(),
         routing=RoutingPreferences(force_model="model-x"),
-        selection_registry=registry,
         selection_proof=registry.issue_selection(descriptor),
     )
 
     assert decision.decision == "ALLOW"
+
+
+def test_control_rejects_a_duck_typed_selection_verifier() -> None:
+    """A caller must not be able to provide its own proof verifier."""
+
+    class ForgedVerifier:
+        def verify_selection(self, _proof: object) -> object:
+            raise AssertionError("must never be called")
+
+    with pytest.raises(TypeError, match="ModelRegistry"):
+        ControlPlane(model_registry=ForgedVerifier())
+
+
+def test_cross_registry_proof_fails_closed() -> None:
+    descriptor = ModelDescriptor(
+        model_id="model-x",
+        version="1",
+        provider="llamacpp",
+        model_name="native",
+        capabilities=frozenset({"structured_output"}),
+        local_or_cloud="local",
+    )
+    issuer = ModelRegistry((descriptor,))
+    verifier = ModelRegistry((descriptor,))
+
+    decision = ControlPlane(model_registry=verifier).evaluate(
+        task=_requires_structured_output(),
+        routing=RoutingPreferences(force_model="model-x"),
+        selection_proof=issuer.issue_selection(descriptor),
+    )
+
+    assert decision.decision == "DENY"
+    assert "model.structured_output_required" in decision.reason_codes
 
 
 def test_approval_requirement_has_its_own_deterministic_decision(

@@ -50,11 +50,17 @@ class ExecutionGateway:
         kernel: WorkflowKernel,
         approvals: ApprovalManager | None = None,
         telemetry: TelemetrySink | None = None,
+        model_registry: object | None = None,
     ) -> None:
+        from ..intelligence.registry import ModelRegistry
+
+        if model_registry is not None and not isinstance(model_registry, ModelRegistry):
+            raise TypeError("model_registry must be a ModelRegistry")
         self._registry = registry
         self._kernel = kernel
         self._approvals = approvals
         self._telemetry = telemetry
+        self._model_registry: ModelRegistry | None = model_registry
 
     @property
     def approvals(self) -> ApprovalManager | None:
@@ -70,7 +76,6 @@ class ExecutionGateway:
         *,
         capability_id: str | None = None,
         selection_proof: object | None = None,
-        selection_registry: object | None = None,
     ) -> CapabilityResult:
         """Resolve, authorize, invoke, classify, fence-persist, then emit telemetry."""
         registration = self._resolve(descriptor, capability_id)
@@ -108,7 +113,7 @@ class ExecutionGateway:
             capability,
             typed_payload,
             policy,
-            model_descriptor=_verified_descriptor(selection_registry, selection_proof),
+            model_descriptor=self._verified_descriptor(selection_proof),
         )
         if routing_denied is not None:
             return routing_denied
@@ -254,6 +259,12 @@ class ExecutionGateway:
             )
         )
         return result
+
+    def _verified_descriptor(self, proof: object | None) -> object | None:
+        """Verify only with the exact registry bound at trusted composition."""
+        if self._model_registry is None:
+            return None
+        return self._model_registry.verify_selection(proof)
 
     def _resolve(
         self,
@@ -659,10 +670,3 @@ def _aware_utc(value: datetime) -> datetime:
 
 def _hash_reference(value: str) -> str:
     return "sha256." + hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _verified_descriptor(
-    registry: object | None, proof: object | None
-) -> object | None:
-    verify = getattr(registry, "verify_selection", None)
-    return verify(proof) if callable(verify) else None
