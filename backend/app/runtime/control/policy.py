@@ -22,18 +22,32 @@ class ControlPlane:
 
     __slots__ = ("_model_registry", "_verify_selection")
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in self.__slots__ and hasattr(self, name):
+            raise AttributeError("trusted composition is immutable")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name in self.__slots__:
+            raise AttributeError("trusted composition is immutable")
+        object.__delattr__(self, name)
+
     def __init__(self, *, model_registry: object | None = None) -> None:
         """Bind model-proof verification to one composition-owned registry."""
         from ..intelligence.registry import ModelRegistry
 
         if model_registry is not None and type(model_registry) is not ModelRegistry:
             raise TypeError("model_registry must be a ModelRegistry")
-        self._model_registry: ModelRegistry | None = model_registry
+        object.__setattr__(self, "_model_registry", model_registry)
         verifier = ModelRegistry.verify_selection
-        self._verify_selection = (
-            None
-            if model_registry is None
-            else lambda proof: verifier(model_registry, proof)
+        object.__setattr__(
+            self,
+            "_verify_selection",
+            (
+                None
+                if model_registry is None
+                else lambda proof: verifier(model_registry, proof)
+            ),
         )
 
     def evaluate(

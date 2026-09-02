@@ -52,6 +52,16 @@ class ExecutionGateway:
         "_verify_selection",
     )
 
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in {"_model_registry", "_verify_selection"} and hasattr(self, name):
+            raise AttributeError("trusted composition is immutable")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name in {"_model_registry", "_verify_selection"}:
+            raise AttributeError("trusted composition is immutable")
+        object.__delattr__(self, name)
+
     def __init__(
         self,
         *,
@@ -69,12 +79,16 @@ class ExecutionGateway:
         self._kernel = kernel
         self._approvals = approvals
         self._telemetry = telemetry
-        self._model_registry: ModelRegistry | None = model_registry
+        object.__setattr__(self, "_model_registry", model_registry)
         verifier = ModelRegistry.verify_selection
-        self._verify_selection = (
-            None
-            if model_registry is None
-            else lambda proof: verifier(model_registry, proof)
+        object.__setattr__(
+            self,
+            "_verify_selection",
+            (
+                None
+                if model_registry is None
+                else lambda proof: verifier(model_registry, proof)
+            ),
         )
 
     @property

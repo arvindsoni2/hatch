@@ -234,3 +234,22 @@ composition. Reload requires an exact promoted type, persisted threshold, exact
 row count and ID set, and exact canonical quality value. Evidence and observations
 reject float/bool integer fields; quality is canonicalized once to the storage
 precision; descriptor rank, quality, and context-window inputs are finite/bounded.
+
+## Fix round 5 — composition-field immutability
+
+### RED/GREEN evidence
+
+```text
+python -m pytest -q --no-cov \
+  tests/runtime/test_policy_force_model.py::test_control_composition_verifier_fields_are_immutable
+# RED: Failed: DID NOT RAISE (before implementation)
+
+python -m pytest -q --no-cov tests/runtime/test_policy_force_model.py \
+  tests/runtime/test_evidence_promotion.py
+# 17 passed in 0.09s
+```
+
+Control and Gateway now make their captured verifier and registry references
+write/delete-protected after construction. Model evidence is final, and routing
+requirements use the same finite canonical quality and exact integer rules as
+evidence contracts.

@@ -131,10 +131,11 @@ class RoutingRequirements:
         for capability in capabilities:
             _stable(capability, "required_capabilities")
         object.__setattr__(self, "required_capabilities", capabilities)
-        if not 0.0 <= self.quality_floor <= 1.0:
-            raise ValueError("quality_floor must be between zero and one")
+        object.__setattr__(
+            self, "quality_floor", _quality(self.quality_floor, "quality_floor")
+        )
         if (
-            isinstance(self.minimum_context_window, bool)
+            type(self.minimum_context_window) is not int
             or not 0 <= self.minimum_context_window <= 2_000_000
         ):
             raise ValueError("minimum_context_window must be bounded")
@@ -355,6 +356,9 @@ class ModelEvidence:
     qualification_version: int = 1
     minimum_sample_size: int = 1
     observation_ids: tuple[str, ...] = field(default_factory=tuple)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        raise TypeError("ModelEvidence is final")
 
     def __post_init__(self) -> None:
         for name in (

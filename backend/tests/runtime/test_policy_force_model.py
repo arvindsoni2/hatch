@@ -151,6 +151,15 @@ def test_model_registry_cannot_be_subclassed_or_monkeypatched() -> None:
         del ModelRegistry.verify_selection
 
 
+def test_control_composition_verifier_fields_are_immutable() -> None:
+    control = ControlPlane(model_registry=ModelRegistry(()))
+    for name in ("_verify_selection", "_model_registry"):
+        with pytest.raises((AttributeError, TypeError)):
+            setattr(control, name, None)
+        with pytest.raises((AttributeError, TypeError)):
+            delattr(control, name)
+
+
 def test_cross_registry_proof_fails_closed() -> None:
     descriptor = ModelDescriptor(
         model_id="model-x",
