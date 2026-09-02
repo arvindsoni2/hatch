@@ -145,6 +145,10 @@ def test_model_registry_cannot_be_subclassed_or_monkeypatched() -> None:
     registry = ModelRegistry(())
     with pytest.raises(AttributeError):
         registry.verify_selection = lambda _proof: object()
+    with pytest.raises(TypeError, match="immutable"):
+        ModelRegistry.verify_selection = lambda _registry, _proof: object()
+    with pytest.raises(TypeError, match="immutable"):
+        del ModelRegistry.verify_selection
 
 
 def test_cross_registry_proof_fails_closed() -> None:

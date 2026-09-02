@@ -22,7 +22,19 @@ class RegistrySelectionProof:
     digest: bytes
 
 
-class ModelRegistry:
+class _FinalRegistryMeta(type):
+    def __setattr__(cls, name: str, value: object) -> None:
+        if name == "verify_selection" and name in cls.__dict__:
+            raise TypeError("registry verification authority is immutable")
+        super().__setattr__(name, value)
+
+    def __delattr__(cls, name: str) -> None:
+        if name == "verify_selection":
+            raise TypeError("registry verification authority is immutable")
+        super().__delattr__(name)
+
+
+class ModelRegistry(metaclass=_FinalRegistryMeta):
     """An immutable, stable-ID lookup over known configured model descriptors."""
 
     __slots__ = ("_descriptors", "_sealer")

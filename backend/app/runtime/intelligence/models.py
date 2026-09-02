@@ -6,6 +6,7 @@ import re
 import hashlib
 import json
 import math
+from decimal import Decimal, ROUND_HALF_EVEN
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Mapping
@@ -13,6 +14,19 @@ from typing import Mapping
 from ..contracts import ModelCapabilityRequirements, TaskSpec
 
 _STABLE_IDENTIFIER = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
+
+
+def _quality(value: object, field_name: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0.0 <= value <= 1.0
+    ):
+        raise ValueError(f"{field_name} must be a finite score between zero and one")
+    return float(
+        Decimal(str(value)).quantize(Decimal("0.00001"), rounding=ROUND_HALF_EVEN)
+    )
 
 
 def _stable(value: str, field_name: str) -> str:
@@ -78,8 +92,21 @@ class ModelDescriptor:
             )
         if self.local_or_cloud not in {"local", "cloud"}:
             raise ValueError("local_or_cloud must be local or cloud")
-        if not 0.0 <= self.quality_score <= 1.0:
-            raise ValueError("quality_score must be between zero and one")
+        object.__setattr__(
+            self, "quality_score", _quality(self.quality_score, "quality_score")
+        )
+        if (
+            isinstance(self.base_rank, bool)
+            or not isinstance(self.base_rank, (int, float))
+            or not math.isfinite(self.base_rank)
+            or abs(self.base_rank) > 1_000_000
+        ):
+            raise ValueError("base_rank must be finite and bounded")
+        if self.context_window is not None and (
+            type(self.context_window) is not int
+            or not 1 <= self.context_window <= 2_000_000
+        ):
+            raise ValueError("context_window must be a bounded integer")
 
 
 @dataclass(frozen=True)
@@ -96,8 +123,7 @@ class RoutingRequirements:
     def __post_init__(self) -> None:
         _stable(self.task_id, "task_id")
         if (
-            isinstance(self.task_version, bool)
-            or not isinstance(self.task_version, int)
+            type(self.task_version) is not int
             or not 1 <= self.task_version <= 1_000_000
         ):
             raise ValueError("task_version must be a bounded integer")
@@ -308,14 +334,10 @@ class EvidenceObservation:
             raise ValueError("task_version must be positive")
         if not self.model_version or len(self.model_version) > 128:
             raise ValueError("model_version must be bounded")
-        if (
-            isinstance(self.quality_score, bool)
-            or not isinstance(self.quality_score, (int, float))
-            or not math.isfinite(self.quality_score)
-            or not 0.0 <= self.quality_score <= 1.0
-        ):
-            raise ValueError("quality_score must be between zero and one")
-        if isinstance(self.sample_size, bool) or not 1 <= self.sample_size <= 10_000:
+        object.__setattr__(
+            self, "quality_score", _quality(self.quality_score, "quality_score")
+        )
+        if type(self.sample_size) is not int or not 1 <= self.sample_size <= 10_000:
             raise ValueError("sample_size must be between one and 10000")
 
 
@@ -346,28 +368,22 @@ class ModelEvidence:
         if not self.model_version or len(self.model_version) > 128:
             raise ValueError("model_version must be bounded")
         if (
-            isinstance(self.task_version, bool)
-            or not isinstance(self.task_version, int)
+            type(self.task_version) is not int
             or not 1 <= self.task_version <= 1_000_000
         ):
             raise ValueError("task_version must be a bounded integer")
         if (
-            isinstance(self.qualification_version, bool)
+            type(self.qualification_version) is not int
             or not 1 <= self.qualification_version <= 10_000
         ):
             raise ValueError("qualification_version must be bounded")
-        if (
-            isinstance(self.quality_score, bool)
-            or not isinstance(self.quality_score, (int, float))
-            or not math.isfinite(self.quality_score)
-            or not 0.0 <= self.quality_score <= 1.0
-        ):
-            raise ValueError("quality_score must be between zero and one")
-        if isinstance(self.sample_size, bool) or not 1 <= self.sample_size <= 1_000_000:
+        object.__setattr__(
+            self, "quality_score", _quality(self.quality_score, "quality_score")
+        )
+        if type(self.sample_size) is not int or not 1 <= self.sample_size <= 1_000_000:
             raise ValueError("sample_size must be bounded")
         if (
-            isinstance(self.minimum_sample_size, bool)
-            or not isinstance(self.minimum_sample_size, int)
+            type(self.minimum_sample_size) is not int
             or not 1 <= self.minimum_sample_size <= 1_000_000
         ):
             raise ValueError("minimum_sample_size must be bounded")

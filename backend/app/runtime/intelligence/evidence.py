@@ -87,6 +87,13 @@ class EvidenceStore:
                 continue
             try:
                 durable = await load_observations(tuple(ids))
+                if len(durable) != len(ids):
+                    continue
+                durable_ids = tuple(item.id for item in durable)
+                if len(set(durable_ids)) != len(durable_ids) or set(durable_ids) != set(
+                    ids
+                ):
+                    continue
                 by_id = {
                     item.observation_id: item
                     for item in (_observation_from_record(value) for value in durable)
@@ -97,7 +104,7 @@ class EvidenceStore:
                         "qualification_id": record.qualification_id,
                         "qualification_version": record.qualification_version,
                         "minimum_sample_size": getattr(
-                            record, "minimum_sample_size", 1
+                            record, "minimum_sample_size", None
                         ),
                     },
                 )
@@ -233,8 +240,7 @@ def _matches_record(candidate: ModelEvidence, record: object) -> bool:
                 ("sample_size", candidate.sample_size),
             )
         )
-        and abs(float(getattr(record, "quality_score", -1)) - candidate.quality_score)
-        < 1e-5
+        and getattr(record, "quality_score", None) == candidate.quality_score
     )
 
 

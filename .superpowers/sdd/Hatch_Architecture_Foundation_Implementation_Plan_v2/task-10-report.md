@@ -214,3 +214,23 @@ identity, exact `promoted` evidence type, and reconstruction solely through type
 durable evaluation-store loaders. The additive `y2z3a4b5c6d7` migration carries
 minimum qualification threshold and typed routing-observation identity/aggregate
 columns; generic observations remain compatible.
+
+## Fix round 4 — exact verifier and replay values
+
+### RED/GREEN evidence
+
+The round began by exercising the former mutable class-authority and replay
+tolerance seams. The final focused green command was:
+
+```text
+python -m pytest -q --no-cov tests/runtime/test_policy_force_model.py \
+  tests/runtime/test_evidence_promotion.py
+# 16 passed in 0.13s
+```
+
+`ModelRegistry` now rejects class replacement/deletion of verification authority,
+and Control/Gateway capture the verified concrete closure during trusted
+composition. Reload requires an exact promoted type, persisted threshold, exact
+row count and ID set, and exact canonical quality value. Evidence and observations
+reject float/bool integer fields; quality is canonicalized once to the storage
+precision; descriptor rank, quality, and context-window inputs are finite/bounded.

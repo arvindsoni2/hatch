@@ -43,6 +43,15 @@ TelemetrySink = Callable[[ExecutionTelemetry], Any]
 class ExecutionGateway:
     """Executes registered capabilities only after deterministic authorization."""
 
+    __slots__ = (
+        "_registry",
+        "_kernel",
+        "_approvals",
+        "_telemetry",
+        "_model_registry",
+        "_verify_selection",
+    )
+
     def __init__(
         self,
         *,
@@ -61,6 +70,12 @@ class ExecutionGateway:
         self._approvals = approvals
         self._telemetry = telemetry
         self._model_registry: ModelRegistry | None = model_registry
+        verifier = ModelRegistry.verify_selection
+        self._verify_selection = (
+            None
+            if model_registry is None
+            else lambda proof: verifier(model_registry, proof)
+        )
 
     @property
     def approvals(self) -> ApprovalManager | None:
@@ -264,9 +279,7 @@ class ExecutionGateway:
         """Verify only with the exact registry bound at trusted composition."""
         if self._model_registry is None:
             return None
-        from ..intelligence.registry import ModelRegistry
-
-        return ModelRegistry.verify_selection(self._model_registry, proof)
+        return self._verify_selection(proof)
 
     def _resolve(
         self,

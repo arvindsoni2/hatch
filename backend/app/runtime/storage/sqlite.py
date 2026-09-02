@@ -256,7 +256,7 @@ class SQLiteEvaluationStore(_SessionBoundStore):
         self, evidence: ModelEvidence, observations: tuple[EvidenceObservation, ...]
     ) -> ModelEvidenceRecord:
         """Persist exact typed promotion lineage before in-memory activation."""
-        if not isinstance(evidence, ModelEvidence):
+        if type(evidence) is not ModelEvidence:
             raise TypeError("promoted evidence must be ModelEvidence")
         if (
             tuple(sorted(item.observation_id for item in observations))

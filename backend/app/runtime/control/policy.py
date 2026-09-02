@@ -20,6 +20,8 @@ LayerInput: TypeAlias = PolicyLayer | ConstraintSet | None
 class ControlPlane:
     """Folds immutable policy inputs in fixed order without widening constraints."""
 
+    __slots__ = ("_model_registry", "_verify_selection")
+
     def __init__(self, *, model_registry: object | None = None) -> None:
         """Bind model-proof verification to one composition-owned registry."""
         from ..intelligence.registry import ModelRegistry
@@ -27,6 +29,12 @@ class ControlPlane:
         if model_registry is not None and type(model_registry) is not ModelRegistry:
             raise TypeError("model_registry must be a ModelRegistry")
         self._model_registry: ModelRegistry | None = model_registry
+        verifier = ModelRegistry.verify_selection
+        self._verify_selection = (
+            None
+            if model_registry is None
+            else lambda proof: verifier(model_registry, proof)
+        )
 
     def evaluate(
         self,
@@ -114,11 +122,9 @@ class ControlPlane:
         )
 
     def _verified_descriptor(self, proof: object | None) -> object | None:
-        from ..intelligence.registry import ModelRegistry
-
-        if self._model_registry is None:
+        if self._verify_selection is None:
             return None
-        return ModelRegistry.verify_selection(self._model_registry, proof)
+        return self._verify_selection(proof)
 
 
 def _as_layer(value: LayerInput) -> ConstraintSet:
