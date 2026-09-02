@@ -25,6 +25,11 @@ class RegistrySelectionProof:
 class ModelRegistry:
     """An immutable, stable-ID lookup over known configured model descriptors."""
 
+    __slots__ = ("_descriptors", "_sealer")
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        raise TypeError("ModelRegistry is final")
+
     def __init__(
         self, descriptors: tuple[ModelDescriptor, ...] | list[ModelDescriptor]
     ) -> None:

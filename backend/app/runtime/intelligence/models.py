@@ -95,8 +95,12 @@ class RoutingRequirements:
 
     def __post_init__(self) -> None:
         _stable(self.task_id, "task_id")
-        if isinstance(self.task_version, bool) or self.task_version < 1:
-            raise ValueError("task_version must be positive")
+        if (
+            isinstance(self.task_version, bool)
+            or not isinstance(self.task_version, int)
+            or not 1 <= self.task_version <= 1_000_000
+        ):
+            raise ValueError("task_version must be a bounded integer")
         capabilities = frozenset(self.required_capabilities)
         for capability in capabilities:
             _stable(capability, "required_capabilities")
@@ -304,7 +308,12 @@ class EvidenceObservation:
             raise ValueError("task_version must be positive")
         if not self.model_version or len(self.model_version) > 128:
             raise ValueError("model_version must be bounded")
-        if not 0.0 <= self.quality_score <= 1.0:
+        if (
+            isinstance(self.quality_score, bool)
+            or not isinstance(self.quality_score, (int, float))
+            or not math.isfinite(self.quality_score)
+            or not 0.0 <= self.quality_score <= 1.0
+        ):
             raise ValueError("quality_score must be between zero and one")
         if isinstance(self.sample_size, bool) or not 1 <= self.sample_size <= 10_000:
             raise ValueError("sample_size must be between one and 10000")
@@ -322,6 +331,7 @@ class ModelEvidence:
     sample_size: int
     qualification_id: str
     qualification_version: int = 1
+    minimum_sample_size: int = 1
     observation_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -335,17 +345,32 @@ class ModelEvidence:
             _stable(getattr(self, name), name)
         if not self.model_version or len(self.model_version) > 128:
             raise ValueError("model_version must be bounded")
-        if isinstance(self.task_version, bool) or self.task_version < 1:
-            raise ValueError("task_version must be positive")
+        if (
+            isinstance(self.task_version, bool)
+            or not isinstance(self.task_version, int)
+            or not 1 <= self.task_version <= 1_000_000
+        ):
+            raise ValueError("task_version must be a bounded integer")
         if (
             isinstance(self.qualification_version, bool)
             or not 1 <= self.qualification_version <= 10_000
         ):
             raise ValueError("qualification_version must be bounded")
-        if not 0.0 <= self.quality_score <= 1.0:
+        if (
+            isinstance(self.quality_score, bool)
+            or not isinstance(self.quality_score, (int, float))
+            or not math.isfinite(self.quality_score)
+            or not 0.0 <= self.quality_score <= 1.0
+        ):
             raise ValueError("quality_score must be between zero and one")
         if isinstance(self.sample_size, bool) or not 1 <= self.sample_size <= 1_000_000:
             raise ValueError("sample_size must be bounded")
+        if (
+            isinstance(self.minimum_sample_size, bool)
+            or not isinstance(self.minimum_sample_size, int)
+            or not 1 <= self.minimum_sample_size <= 1_000_000
+        ):
+            raise ValueError("minimum_sample_size must be bounded")
         ids = tuple(self.observation_ids)
         if not ids or len(ids) > 100 or len(set(ids)) != len(ids):
             raise ValueError("observation_ids must be unique and bounded")
@@ -359,6 +384,7 @@ class ModelEvidence:
                     (
                         self.qualification_id,
                         str(self.qualification_version),
+                        str(self.minimum_sample_size),
                         *canonical_ids,
                     )
                 ).encode()

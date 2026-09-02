@@ -136,6 +136,17 @@ def test_control_rejects_a_duck_typed_selection_verifier() -> None:
         ControlPlane(model_registry=ForgedVerifier())
 
 
+def test_model_registry_cannot_be_subclassed_or_monkeypatched() -> None:
+    with pytest.raises(TypeError, match="final"):
+
+        class ForgedRegistry(ModelRegistry):
+            pass
+
+    registry = ModelRegistry(())
+    with pytest.raises(AttributeError):
+        registry.verify_selection = lambda _proof: object()
+
+
 def test_cross_registry_proof_fails_closed() -> None:
     descriptor = ModelDescriptor(
         model_id="model-x",

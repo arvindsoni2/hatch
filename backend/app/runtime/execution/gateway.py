@@ -54,7 +54,7 @@ class ExecutionGateway:
     ) -> None:
         from ..intelligence.registry import ModelRegistry
 
-        if model_registry is not None and not isinstance(model_registry, ModelRegistry):
+        if model_registry is not None and type(model_registry) is not ModelRegistry:
             raise TypeError("model_registry must be a ModelRegistry")
         self._registry = registry
         self._kernel = kernel
@@ -264,7 +264,9 @@ class ExecutionGateway:
         """Verify only with the exact registry bound at trusted composition."""
         if self._model_registry is None:
             return None
-        return self._model_registry.verify_selection(proof)
+        from ..intelligence.registry import ModelRegistry
+
+        return ModelRegistry.verify_selection(self._model_registry, proof)
 
     def _resolve(
         self,

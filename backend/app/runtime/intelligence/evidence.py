@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 
 from .models import EvidenceObservation, ModelEvidence
 
@@ -64,24 +64,33 @@ class EvidenceStore:
         return "evidence." + hashlib.sha256(payload.encode()).hexdigest()[:24]
 
     @classmethod
-    def from_promoted_records(
-        cls,
-        records: Iterable[object],
-        observations: Iterable[EvidenceObservation] = (),
-    ) -> "EvidenceStore":
+    async def from_evaluation_store(cls, evaluation_store: object) -> "EvidenceStore":
         """Rebuild only evidence whose immutable observation lineage verifies.
 
         The durable row is deliberately insufficient authority on its own.  This
         makes old/incomplete rows inert rather than allowing a restart to turn a
         caller-constructed aggregate into routing evidence.
         """
+        load_evidence = getattr(evaluation_store, "load_promoted_model_evidence", None)
+        load_observations = getattr(evaluation_store, "load_routing_observations", None)
+        if not callable(load_evidence) or not callable(load_observations):
+            raise TypeError("evaluation store lacks typed routing evidence loaders")
         store = cls()
-        by_id = {item.observation_id: item for item in observations}
+        records = await load_evidence()
         for record in records:
             ids = getattr(record, "observation_ids_json", None)
-            if not isinstance(ids, list) or not ids:
+            if (
+                getattr(record, "evidence_type", None) != "promoted"
+                or not isinstance(ids, list)
+                or not ids
+            ):
                 continue
             try:
+                durable = await load_observations(tuple(ids))
+                by_id = {
+                    item.observation_id: item
+                    for item in (_observation_from_record(value) for value in durable)
+                }
                 candidate = _qualified_evidence(
                     tuple(by_id[item] for item in ids),
                     {
@@ -107,11 +116,12 @@ async def promote_model_evidence(
     qualification: Mapping[str, object],
 ) -> ModelEvidence:
     """Persist qualified evidence, then and only then make it routing-active."""
-    candidate = _qualified_evidence(store.observations(observation_ids), qualification)
+    observations = store.observations(observation_ids)
+    candidate = _qualified_evidence(observations, qualification)
     persist = getattr(evaluation_store, "record_promoted_model_evidence", None)
     if not callable(persist):
         raise TypeError("evaluation store cannot persist promoted model evidence")
-    await persist(candidate)
+    await persist(candidate, observations)
     return store._activate(candidate)
 
 
@@ -170,7 +180,10 @@ def _qualified_evidence(
     )
     return ModelEvidence(
         evidence_id=_evidence_id(
-            qualification_id, qualification_version, observation_ids
+            qualification_id,
+            qualification_version,
+            minimum_sample_size,
+            observation_ids,
         ),
         task_id=first.task_id,
         task_version=first.task_version,
@@ -181,15 +194,24 @@ def _qualified_evidence(
         sample_size=total_sample_size,
         qualification_id=qualification_id,
         qualification_version=qualification_version,
+        minimum_sample_size=minimum_sample_size,
         observation_ids=tuple(sorted(observation_ids)),
     )
 
 
 def _evidence_id(
-    qualification_id: str, qualification_version: int, observation_ids: tuple[str, ...]
+    qualification_id: str,
+    qualification_version: int,
+    minimum_sample_size: int,
+    observation_ids: tuple[str, ...],
 ) -> str:
     material = "|".join(
-        (qualification_id, str(qualification_version), *sorted(observation_ids))
+        (
+            qualification_id,
+            str(qualification_version),
+            str(minimum_sample_size),
+            *sorted(observation_ids),
+        )
     )
     return "evidence." + hashlib.sha256(material.encode()).hexdigest()[:24]
 
@@ -207,9 +229,25 @@ def _matches_record(candidate: ModelEvidence, record: object) -> bool:
                 ("provider", candidate.provider),
                 ("qualification_id", candidate.qualification_id),
                 ("qualification_version", candidate.qualification_version),
+                ("minimum_sample_size", candidate.minimum_sample_size),
                 ("sample_size", candidate.sample_size),
             )
         )
         and abs(float(getattr(record, "quality_score", -1)) - candidate.quality_score)
         < 1e-5
+    )
+
+
+def _observation_from_record(record: object) -> EvidenceObservation:
+    if getattr(record, "routing_observation_type", None) != "routing_observation":
+        raise ValueError("invalid routing observation type")
+    return EvidenceObservation(
+        observation_id=record.id,
+        task_id=record.task_id,
+        task_version=record.task_version,
+        model_id=record.model_id,
+        model_version=record.model_version,
+        provider=record.provider,
+        quality_score=float(record.quality_score),
+        sample_size=record.sample_size,
     )

@@ -21,7 +21,7 @@ from ..events.outbox import OutboxClaim
 from ..context.models import ContextPackage
 
 if TYPE_CHECKING:
-    from ..intelligence.models import ModelEvidence
+    from ..intelligence.models import EvidenceObservation, ModelEvidence
     from ..workflow.models import (
         ApprovalRecord,
         ExecutionClaimRecord,
@@ -255,8 +255,14 @@ class EvaluationStore(Protocol):
     async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord: ...
 
     async def record_promoted_model_evidence(
-        self, evidence: "ModelEvidence"
+        self, evidence: "ModelEvidence", observations: tuple["EvidenceObservation", ...]
     ) -> ModelEvidenceRecord: ...
+
+    async def load_promoted_model_evidence(self) -> list[ModelEvidenceRecord]: ...
+
+    async def load_routing_observations(
+        self, observation_ids: tuple[str, ...]
+    ) -> list[EvidenceObservationRecord]: ...
 
     async def load_model_evidence(self) -> list[ModelEvidenceRecord]: ...
 

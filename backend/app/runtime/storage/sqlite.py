@@ -30,7 +30,7 @@ from ..context.models import (
 )
 from ..events.outbox import SQLiteOutboxRepository
 from ..events.repository import SQLiteEventRepository, enforce_metadata_only
-from ..intelligence.models import ModelEvidence, RoutingCandidate
+from ..intelligence.models import EvidenceObservation, ModelEvidence, RoutingCandidate
 from ..workflow.models import (
     ApprovalRecord,
     ApprovalStatus,
@@ -232,17 +232,64 @@ class SQLiteEvaluationStore(_SessionBoundStore):
         return await self._record(EvaluationRunRecord, **values)
 
     async def record_observation(self, **values: Any) -> EvidenceObservationRecord:
+        if values.get("routing_observation_type") is not None:
+            if values.get("routing_observation_type") != "routing_observation":
+                raise ValueError("invalid routing observation type")
+            if values.get("observation_json") not in ({}, None):
+                raise ValueError("routing observations accept typed metadata only")
+            EvidenceObservation(
+                observation_id=values.get("id"),
+                task_id=values.get("task_id"),
+                task_version=values.get("task_version"),
+                model_id=values.get("model_id"),
+                model_version=values.get("model_version"),
+                provider=values.get("provider"),
+                quality_score=values.get("quality_score"),
+                sample_size=values.get("sample_size"),
+            )
         return await self._record(EvidenceObservationRecord, **values)
 
     async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord:
         raise ValueError("use record_promoted_model_evidence for routing evidence")
 
     async def record_promoted_model_evidence(
-        self, evidence: ModelEvidence
+        self, evidence: ModelEvidence, observations: tuple[EvidenceObservation, ...]
     ) -> ModelEvidenceRecord:
         """Persist exact typed promotion lineage before in-memory activation."""
         if not isinstance(evidence, ModelEvidence):
             raise TypeError("promoted evidence must be ModelEvidence")
+        if (
+            tuple(sorted(item.observation_id for item in observations))
+            != evidence.observation_ids
+        ):
+            raise ValueError("promotion observation lineage mismatch")
+        durable = await self.load_routing_observations(evidence.observation_ids)
+        if len(durable) != len(observations):
+            raise ValueError("promotion observations are not durable")
+        for expected, row in zip(
+            sorted(observations, key=lambda item: item.observation_id),
+            sorted(durable, key=lambda item: item.id),
+        ):
+            if row.routing_observation_type != "routing_observation" or (
+                row.id,
+                row.task_id,
+                row.task_version,
+                row.model_id,
+                row.model_version,
+                row.provider,
+                float(row.quality_score),
+                row.sample_size,
+            ) != (
+                expected.observation_id,
+                expected.task_id,
+                expected.task_version,
+                expected.model_id,
+                expected.model_version,
+                expected.provider,
+                expected.quality_score,
+                expected.sample_size,
+            ):
+                raise ValueError("promotion durable observation mismatch")
         existing = await self.session.get(ModelEvidenceRecord, evidence.evidence_id)
         values = {
             "id": evidence.evidence_id,
@@ -254,6 +301,7 @@ class SQLiteEvaluationStore(_SessionBoundStore):
             "evidence_type": "promoted",
             "qualification_id": evidence.qualification_id,
             "qualification_version": evidence.qualification_version,
+            "minimum_sample_size": evidence.minimum_sample_size,
             "observation_ids_json": list(evidence.observation_ids),
             "quality_score": evidence.quality_score,
             "metrics_json": {},
@@ -267,6 +315,36 @@ class SQLiteEvaluationStore(_SessionBoundStore):
 
     async def load_model_evidence(self) -> list[ModelEvidenceRecord]:
         return list((await self.session.scalars(select(ModelEvidenceRecord))).all())
+
+    async def load_promoted_model_evidence(self) -> list[ModelEvidenceRecord]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(ModelEvidenceRecord).where(
+                        ModelEvidenceRecord.evidence_type == "promoted"
+                    )
+                )
+            ).all()
+        )
+
+    async def load_routing_observations(
+        self, observation_ids: tuple[str, ...]
+    ) -> list[EvidenceObservationRecord]:
+        if (
+            not observation_ids
+            or len(observation_ids) > 100
+            or len(set(observation_ids)) != len(observation_ids)
+        ):
+            raise ValueError("routing observation IDs must be unique and bounded")
+        return list(
+            (
+                await self.session.scalars(
+                    select(EvidenceObservationRecord).where(
+                        EvidenceObservationRecord.id.in_(observation_ids)
+                    )
+                )
+            ).all()
+        )
 
 
 class SQLiteShadowComparisonStore(_SessionBoundStore):

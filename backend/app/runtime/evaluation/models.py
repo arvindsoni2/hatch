@@ -143,6 +143,14 @@ class EvidenceObservationRecord(Base):
     evidence_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_ref: Mapped[str] = mapped_column(String(256), nullable=False)
     observation_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    routing_observation_type: Mapped[str | None] = mapped_column(String(64))
+    task_id: Mapped[str | None] = mapped_column(String(128))
+    task_version: Mapped[int | None] = mapped_column(Integer)
+    model_id: Mapped[str | None] = mapped_column(String(128))
+    model_version: Mapped[str | None] = mapped_column(String(128))
+    provider: Mapped[str | None] = mapped_column(String(64))
+    quality_score: Mapped[float | None] = mapped_column(Numeric(6, 5))
+    sample_size: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
@@ -158,6 +166,7 @@ class ModelEvidenceRecord(Base):
     evidence_type: Mapped[str] = mapped_column(String(64), nullable=False)
     qualification_id: Mapped[str | None] = mapped_column(String(128))
     qualification_version: Mapped[int | None] = mapped_column(Integer)
+    minimum_sample_size: Mapped[int | None] = mapped_column(Integer)
     observation_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
     quality_score: Mapped[float | None] = mapped_column(Numeric(6, 5))
     metrics_json: Mapped[dict[str, Any]] = mapped_column(

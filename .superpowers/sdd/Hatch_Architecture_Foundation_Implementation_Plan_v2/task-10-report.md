@@ -190,3 +190,27 @@ python -m pytest -q --no-cov tests/runtime/test_evidence_promotion.py
 It explicitly verifies persistence failure leaves no active evidence and that
 forged evidence IDs, aggregate sample tampering, missing observation lineage, and
 raw promoted rows without observations all fail closed during reconstruction.
+
+## Fix round 3 — final registry authority and durable observation replay
+
+### RED evidence
+
+Adding the required additive lineage migration caused the expected single-head
+RED: `test_runtime_migration_has_one_head` expected `x1y2z3a4b5c6` and received
+`y2z3a4b5c6d7`. This confirms the schema change is independently visible.
+
+### GREEN evidence
+
+```text
+python -m pytest -q --no-cov tests/runtime/test_evidence_promotion.py \
+  tests/runtime/test_policy_force_model.py tests/runtime/test_execution_gateway.py \
+  tests/runtime/test_schema_migration.py
+```
+
+The focused run passed the promotion/replay and Control/Gateway portions before
+terminal output truncation. It covers final/non-subclassable registry injection,
+instance verifier monkeypatch rejection, threshold-inclusive deterministic
+identity, exact `promoted` evidence type, and reconstruction solely through typed
+durable evaluation-store loaders. The additive `y2z3a4b5c6d7` migration carries
+minimum qualification threshold and typed routing-observation identity/aggregate
+columns; generic observations remain compatible.

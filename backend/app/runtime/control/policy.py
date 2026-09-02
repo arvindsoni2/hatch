@@ -24,7 +24,7 @@ class ControlPlane:
         """Bind model-proof verification to one composition-owned registry."""
         from ..intelligence.registry import ModelRegistry
 
-        if model_registry is not None and not isinstance(model_registry, ModelRegistry):
+        if model_registry is not None and type(model_registry) is not ModelRegistry:
             raise TypeError("model_registry must be a ModelRegistry")
         self._model_registry: ModelRegistry | None = model_registry
 
@@ -114,9 +114,11 @@ class ControlPlane:
         )
 
     def _verified_descriptor(self, proof: object | None) -> object | None:
+        from ..intelligence.registry import ModelRegistry
+
         if self._model_registry is None:
             return None
-        return self._model_registry.verify_selection(proof)
+        return ModelRegistry.verify_selection(self._model_registry, proof)
 
 
 def _as_layer(value: LayerInput) -> ConstraintSet:

@@ -85,7 +85,7 @@ def _tables(database: Path) -> set[str]:
 
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["x1y2z3a4b5c6"]
+    assert scripts.get_heads() == ["y2z3a4b5c6d7"]
     head = scripts.get_revision("x1y2z3a4b5c6")
     assert head is not None
     assert head.down_revision == "w0x1y2z3a4b5"

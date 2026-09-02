@@ -101,7 +101,7 @@ async def test_explicit_qualification_promotes_bounded_evidence() -> None:
     )
 
     class DurableStore:
-        async def record_promoted_model_evidence(self, evidence):
+        async def record_promoted_model_evidence(self, evidence, _observations):
             self.evidence = evidence
 
     durable = DurableStore()
@@ -181,7 +181,7 @@ async def test_persistence_failure_never_activates_evidence() -> None:
     )
 
     class FailingStore:
-        async def record_promoted_model_evidence(self, _evidence):
+        async def record_promoted_model_evidence(self, _evidence, _observations):
             raise RuntimeError("flush failed")
 
     with pytest.raises(RuntimeError, match="flush failed"):
@@ -213,7 +213,7 @@ async def test_replay_requires_exact_id_aggregate_and_observation_lineage() -> N
     source.record(observation)
 
     class DurableStore:
-        async def record_promoted_model_evidence(self, evidence):
+        async def record_promoted_model_evidence(self, evidence, _observations):
             self.evidence = evidence
 
     durable = DurableStore()
@@ -236,14 +236,35 @@ async def test_replay_requires_exact_id_aggregate_and_observation_lineage() -> N
         provider=evidence.provider,
         qualification_id=evidence.qualification_id,
         qualification_version=evidence.qualification_version,
+        minimum_sample_size=evidence.minimum_sample_size,
+        evidence_type="promoted",
         observation_ids_json=list(evidence.observation_ids),
         quality_score=evidence.quality_score,
         sample_size=evidence.sample_size,
     )
+
+    class Loader:
+        async def load_promoted_model_evidence(self):
+            return [row]
+
+        async def load_routing_observations(self, _ids):
+            return [
+                SimpleNamespace(
+                    id=observation.observation_id,
+                    routing_observation_type="routing_observation",
+                    task_id=observation.task_id,
+                    task_version=observation.task_version,
+                    model_id=observation.model_id,
+                    model_version=observation.model_version,
+                    provider=observation.provider,
+                    quality_score=observation.quality_score,
+                    sample_size=observation.sample_size,
+                )
+            ]
+
     assert (
-        EvidenceStore.from_promoted_records([row], [observation]).snapshot_id()
-        != "evidence.none"
-    )
+        await EvidenceStore.from_evaluation_store(Loader())
+    ).snapshot_id() != "evidence.none"
     for field, value in (
         ("id", "evidence.forged"),
         ("sample_size", 1),
@@ -251,8 +272,11 @@ async def test_replay_requires_exact_id_aggregate_and_observation_lineage() -> N
     ):
         tampered = SimpleNamespace(**vars(row))
         setattr(tampered, field, value)
+
+        class TamperedLoader(Loader):
+            async def load_promoted_model_evidence(self):
+                return [tampered]
+
         assert (
-            EvidenceStore.from_promoted_records([tampered], [observation]).snapshot_id()
-            == "evidence.none"
-        )
-    assert EvidenceStore.from_promoted_records([row]).snapshot_id() == "evidence.none"
+            await EvidenceStore.from_evaluation_store(TamperedLoader())
+        ).snapshot_id() == "evidence.none"
