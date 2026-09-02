@@ -83,12 +83,21 @@ def _tables(database: Path) -> set[str]:
         }
 
 
+def _table_sql(database: Path, table: str) -> str:
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+    assert row is not None
+    return row[0]
+
+
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["y2z3a4b5c6d7"]
-    head = scripts.get_revision("x1y2z3a4b5c6")
+    assert scripts.get_heads() == ["z3a4b5c6d7e8"]
+    head = scripts.get_revision("z3a4b5c6d7e8")
     assert head is not None
-    assert head.down_revision == "w0x1y2z3a4b5"
+    assert head.down_revision == "y2z3a4b5c6d7"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
@@ -147,6 +156,23 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
         "observation_ids_json",
         "quality_score",
     } <= set(evidence.columns.keys())
+    validations = Base.metadata.tables["runtime_validation_results"]
+    assert "metrics_json" in validations.columns
+    evaluations = Base.metadata.tables["runtime_evaluation_runs"]
+    assert {
+        "evaluator_type",
+        "evaluation_spec_id",
+        "evaluation_spec_version",
+        "evaluator_model_id",
+        "evaluator_model_version",
+        "result",
+        "scores_json",
+        "reason_codes_json",
+        "validation_metrics_json",
+        "primary_execution_id",
+        "repair_execution_id",
+        "fallback_execution_id",
+    } <= set(evaluations.columns.keys())
 
 
 def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) -> None:
@@ -306,3 +332,72 @@ def test_routing_candidate_snapshot_migration_downgrades_and_reupgrades(
 
     reupgrade = _run_alembic(database, "upgrade", "x1y2z3a4b5c6")
     assert reupgrade.returncode == 0, reupgrade.stderr
+
+
+def test_evaluation_provenance_migration_downgrades_and_reupgrades(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "evaluation-provenance.db"
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    columns = {
+        "evaluator_type",
+        "evaluation_spec_id",
+        "evaluation_spec_version",
+        "evaluator_model_id",
+        "evaluator_model_version",
+        "result",
+        "scores_json",
+        "reason_codes_json",
+        "validation_metrics_json",
+        "primary_execution_id",
+        "repair_execution_id",
+        "fallback_execution_id",
+    }
+    with sqlite3.connect(database) as connection:
+        assert columns <= {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(runtime_evaluation_runs)")
+        }
+        assert "metrics_json" in {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(runtime_validation_results)"
+            )
+        }
+
+    downgrade = _run_alembic(database, "downgrade", "y2z3a4b5c6d7")
+    assert downgrade.returncode == 0, downgrade.stderr
+    with sqlite3.connect(database) as connection:
+        assert not (
+            columns
+            & {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(runtime_evaluation_runs)"
+                )
+            }
+        )
+
+    reupgrade = _run_alembic(database, "upgrade", "z3a4b5c6d7e8")
+    assert reupgrade.returncode == 0, reupgrade.stderr
+    table_sql = _table_sql(database, "runtime_evaluation_runs")
+    for name in (
+        "fk_runtime_evaluation_runs_primary_execution_id",
+        "fk_runtime_evaluation_runs_repair_execution_id",
+        "fk_runtime_evaluation_runs_fallback_execution_id",
+    ):
+        assert name in table_sql
+    foreign_keys = set()
+    with sqlite3.connect(database) as connection:
+        foreign_keys = {
+            (row[2], row[3], row[4])
+            for row in connection.execute(
+                "PRAGMA foreign_key_list(runtime_evaluation_runs)"
+            )
+        }
+    assert {
+        ("runtime_execution_records", "primary_execution_id", "id"),
+        ("runtime_execution_records", "repair_execution_id", "id"),
+        ("runtime_execution_records", "fallback_execution_id", "id"),
+    } <= foreign_keys

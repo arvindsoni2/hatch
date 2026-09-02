@@ -1,0 +1,19 @@
+"""Runtime trace correlation attributes, deliberately excluded from metrics."""
+
+from app.observability.attributes import (
+    RUNTIME_EXECUTION_ID,
+    RUNTIME_TASK_ATTEMPT_ID,
+    RUNTIME_TASK_ID,
+    RUNTIME_TASK_VERSION,
+    RUNTIME_WORKFLOW_RUN_ID,
+    RUNTIME_WORKFLOW_STEP_ID,
+)
+
+RUNTIME_CORRELATION_KEYS = (
+    RUNTIME_WORKFLOW_RUN_ID,
+    RUNTIME_WORKFLOW_STEP_ID,
+    RUNTIME_TASK_ATTEMPT_ID,
+    RUNTIME_EXECUTION_ID,
+    RUNTIME_TASK_ID,
+    RUNTIME_TASK_VERSION,
+)

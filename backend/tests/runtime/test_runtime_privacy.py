@@ -123,3 +123,70 @@ async def test_shadow_store_rejects_raw_metrics(privacy_factory) -> None:
 
     async with privacy_factory.session_factory() as session:
         assert list((await session.scalars(select(ShadowComparisonRecord))).all()) == []
+
+
+async def test_evaluation_store_rejects_opaque_model_output(privacy_factory) -> None:
+    async with privacy_factory.transaction() as uow:
+        run = await uow.workflows.create_run(
+            workflow_definition_id="synthetic.evaluate",
+            workflow_definition_version=1,
+            domain_type="synthetic",
+            runtime_mode="legacy",
+            max_attempts=1,
+        )
+        step = await uow.workflows.create_step(
+            workflow_run_id=run.id,
+            step_key="evaluate",
+            step_order=1,
+            task_id="synthetic.evaluate",
+            task_version=1,
+        )
+        attempt = await uow.workflows.create_attempt(
+            workflow_step_id=step.id,
+            attempt_number=1,
+        )
+        with pytest.raises(MetadataOnlyViolation):
+            await uow.evaluations.record_evaluation(
+                task_attempt_id=attempt.id,
+                evaluator_id="synthetic.model",
+                evaluator_version=1,
+                evaluator_type="model",
+                evaluation_spec_id="synthetic.spec",
+                evaluation_spec_version=1,
+                status="completed",
+                result="passed",
+                result_json={"answer": "MODEL-OUTPUT-CANARY"},
+            )
+
+
+@pytest.mark.parametrize("policy", ("metadata_only", "redacted", "disabled"))
+def test_llm_trace_buffer_never_retains_response_preview_in_normal_capture_modes(
+    monkeypatch, policy: str
+) -> None:
+    from app.agents.tools import llm_factory
+
+    canary = "MODEL-OUTPUT-CANARY"
+    monkeypatch.setenv("HATCH_RUNTIME_CAPTURE_POLICY", policy)
+    llm_factory.clear_llm_traces()
+    llm_factory.record_trace("synthetic-model", 1, canary)
+
+    traces = llm_factory.get_llm_traces()
+    assert canary not in json.dumps(traces)
+    assert traces[0]["response_preview"] == ""
+
+
+def test_runtime_capture_policy_defaults_and_rejects_debug_content(
+    monkeypatch,
+) -> None:
+    from pydantic import ValidationError
+
+    from app.config import Settings
+    from app.runtime.control import CapturePolicy
+
+    assert (
+        Settings(_env_file=None).HATCH_RUNTIME_CAPTURE_POLICY
+        is CapturePolicy.METADATA_ONLY
+    )
+    monkeypatch.setenv("HATCH_RUNTIME_CAPTURE_POLICY", "debug_content")
+    with pytest.raises(ValidationError, match="runtime_capture_policy_not_allowed"):
+        Settings(_env_file=None)

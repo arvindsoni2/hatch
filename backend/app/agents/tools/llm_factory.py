@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 from .context_budgets import PRIMARY_CTX
 from .profile_loader import load_profile
+from ...runtime.control import CapturePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,26 @@ class _LLMTrace:
 
 _trace_counter: int = 0
 _trace_buffer: deque[_LLMTrace] = deque(maxlen=100)
+
+
+def _normal_capture_policy() -> CapturePolicy:
+    """Read only normal deployment modes; config rejects debug-content."""
+    try:
+        policy = CapturePolicy(
+            os.getenv("HATCH_RUNTIME_CAPTURE_POLICY", "metadata_only")
+        )
+    except ValueError:
+        return CapturePolicy.METADATA_ONLY
+    return (
+        policy
+        if policy is not CapturePolicy.DEBUG_CONTENT
+        else CapturePolicy.METADATA_ONLY
+    )
+
+
+def _response_preview(content: str, policy: CapturePolicy) -> str:
+    """Keep raw output only for direct test/local developer injection."""
+    return content[:300] if policy is CapturePolicy.DEBUG_CONTENT else ""
 
 
 class CostTrackingCallback(_BaseCallbackHandler):  # type: ignore[misc]
@@ -161,7 +182,7 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
             usage.get("completion_tokens") or usage.get("generated_token_count") or 0
         )
 
-        preview = ""
+        output_text = ""
         for gen_list in response.generations:
             for gen in gen_list:
                 text = getattr(gen, "text", None) or ""
@@ -171,13 +192,13 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
                         content = getattr(msg, "content", "")
                         text = content if isinstance(content, str) else str(content)
                 if text:
-                    preview = text[:300]
+                    output_text = text
                     break
-            if preview:
+            if output_text:
                 break
 
         if not tokens_out:
-            tokens_out = estimate_tokens(preview)
+            tokens_out = estimate_tokens(output_text)
 
         _trace_counter += 1
         _trace_buffer.append(
@@ -189,7 +210,9 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_usd=estimate_cost(self._model, tokens_in, tokens_out),
-                response_preview=preview,
+                response_preview=_response_preview(
+                    output_text, _normal_capture_policy()
+                ),
             )
         )
 
@@ -200,6 +223,8 @@ def record_trace(
     content: str,
     tokens_in: int = 0,
     tokens_out: int = 0,
+    *,
+    capture_policy: CapturePolicy | None = None,
 ) -> None:
     """Record a completed LLM call to the trace buffer."""
     global _trace_counter
@@ -214,7 +239,9 @@ def record_trace(
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             cost_usd=estimate_cost(model_name, tokens_in, tokens_out),
-            response_preview=content[:300],
+            response_preview=_response_preview(
+                content, capture_policy or _normal_capture_policy()
+            ),
         )
     )
 

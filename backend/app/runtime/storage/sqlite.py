@@ -29,7 +29,11 @@ from ..context.models import (
     validate_context_item_metadata,
 )
 from ..events.outbox import SQLiteOutboxRepository
-from ..events.repository import SQLiteEventRepository, enforce_metadata_only
+from ..events.repository import (
+    MetadataOnlyViolation,
+    SQLiteEventRepository,
+    enforce_metadata_only,
+)
 from ..intelligence.models import EvidenceObservation, ModelEvidence, RoutingCandidate
 from ..workflow.models import (
     ApprovalRecord,
@@ -186,6 +190,8 @@ class SQLiteEvaluationStore(_SessionBoundStore):
             "metadata_json",
             "reason_codes_json",
             "result_json",
+            "scores_json",
+            "validation_metrics_json",
             "observation_json",
             "candidate_snapshot_json",
             "metrics_json",
@@ -229,6 +235,21 @@ class SQLiteEvaluationStore(_SessionBoundStore):
         return await self._record(ValidationResultRecord, **values)
 
     async def record_evaluation(self, **values: Any) -> EvaluationRunRecord:
+        if values.get("result_json") is not None:
+            raise MetadataOnlyViolation("opaque evaluation results are prohibited")
+        if values.get("evaluator_type") not in {
+            "deterministic",
+            "heuristic",
+            "model",
+            "human",
+        }:
+            raise ValueError("evaluator type must be declared")
+        if not isinstance(values.get("evaluation_spec_id"), str):
+            raise ValueError("evaluation spec provenance is required")
+        if not isinstance(values.get("evaluation_spec_version"), int):
+            raise ValueError("evaluation spec version is required")
+        if values.get("result") not in {"passed", "failed", "review_required"}:
+            raise ValueError("evaluation result must be declared")
         return await self._record(EvaluationRunRecord, **values)
 
     async def record_observation(self, **values: Any) -> EvidenceObservationRecord:

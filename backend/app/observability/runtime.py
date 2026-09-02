@@ -218,6 +218,10 @@ class TelemetryRuntime:
         try:
             start_options: dict[str, Any] = {
                 "attributes": sanitize_attributes(attributes),
+                # Default OTel exception events retain message and stack trace.
+                # Model/content paths therefore use stable error codes only.
+                "record_exception": False,
+                "set_status_on_exception": False,
             }
             if link_context is not None:
                 from opentelemetry.context import Context
@@ -239,7 +243,7 @@ class TelemetryRuntime:
             yield span
         except BaseException as exc:
             span.record_exception(exc)
-            span.set_error(type(exc).__name__)
+            span.set_error("runtime_unhandled_error")
             raise
         finally:
             _current_span.reset(token)

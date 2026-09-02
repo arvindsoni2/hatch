@@ -8,7 +8,15 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -112,11 +120,29 @@ class ValidationResultRecord(Base):
     validator_version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     reason_codes_json: Mapped[list[str] | None] = mapped_column(JSON)
+    metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class EvaluationRunRecord(Base):
     __tablename__ = "runtime_evaluation_runs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["primary_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_primary_execution_id",
+        ),
+        ForeignKeyConstraint(
+            ["repair_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_repair_execution_id",
+        ),
+        ForeignKeyConstraint(
+            ["fallback_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_fallback_execution_id",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     task_attempt_id: Mapped[str] = mapped_column(
@@ -127,7 +153,19 @@ class EvaluationRunRecord(Base):
     )
     evaluator_id: Mapped[str] = mapped_column(String(128), nullable=False)
     evaluator_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    evaluator_type: Mapped[str | None] = mapped_column(String(24))
+    evaluation_spec_id: Mapped[str | None] = mapped_column(String(128))
+    evaluation_spec_version: Mapped[int | None] = mapped_column(Integer)
+    evaluator_model_id: Mapped[str | None] = mapped_column(String(128))
+    evaluator_model_version: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(24), nullable=False)
+    result: Mapped[str | None] = mapped_column(String(24))
+    scores_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    reason_codes_json: Mapped[list[str] | None] = mapped_column(JSON)
+    validation_metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    primary_execution_id: Mapped[str | None] = mapped_column(String(36))
+    repair_execution_id: Mapped[str | None] = mapped_column(String(36))
+    fallback_execution_id: Mapped[str | None] = mapped_column(String(36))
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -1,0 +1,52 @@
+"""Runtime-only, trace-safe OTel lineage correlation."""
+
+from __future__ import annotations
+
+from app.observability.attributes import sanitize_metric_attributes
+from app.observability.runtime import TelemetryRuntime
+from app.runtime.observability import RuntimeCorrelation, RuntimeTelemetry
+
+
+def test_runtime_correlation_is_trace_safe_and_absent_from_metrics() -> None:
+    started: list[dict[str, object]] = []
+
+    class RawSpan:
+        def set_attribute(self, *_args: object) -> None:
+            return None
+
+        def set_status(self, *_args: object) -> None:
+            return None
+
+    class Manager:
+        def __enter__(self) -> RawSpan:
+            return RawSpan()
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    class Tracer:
+        def start_as_current_span(self, _name: str, **kwargs: object) -> Manager:
+            started.append(kwargs)
+            return Manager()
+
+    correlation = RuntimeCorrelation(
+        workflow_run_id="run-1",
+        workflow_step_id="step-1",
+        task_attempt_id="attempt-1",
+        execution_id="execution-1",
+        task_id="synthetic.evaluate",
+        task_version=1,
+    )
+    telemetry = RuntimeTelemetry(TelemetryRuntime(status="active", tracer=Tracer()))
+
+    with telemetry.span("runtime.evaluation", correlation):
+        pass
+
+    attributes = started[0]["attributes"]
+    assert all(
+        attributes[key] == value
+        for key, value in correlation.trace_attributes().items()
+    )
+    assert sanitize_metric_attributes(attributes) == {
+        "hatch.ai.workflow.name": "runtime"
+    }
