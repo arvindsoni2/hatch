@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from ..evaluation.models import (
     EvaluationRunRecord,
@@ -52,6 +52,10 @@ class WorkflowStore(Protocol):
     ) -> WorkflowRunRecord: ...
 
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None: ...
+
+    async def get_claim_correlation(
+        self, claim: ExecutionClaimRecord
+    ) -> Mapping[str, str | int]: ...
 
     async def claim_next(
         self, worker_id: str, now: datetime, lease_duration: timedelta
@@ -245,6 +249,10 @@ class EvaluationStore(Protocol):
     async def record_routing_decision(self, **values: Any) -> RoutingDecisionRecord: ...
 
     async def record_execution(self, **values: Any) -> ExecutionRecord: ...
+
+    async def record_execution_lineage(
+        self, *, task_attempt_id: str, executions: tuple[dict[str, Any], ...]
+    ) -> tuple[ExecutionRecord, ...]: ...
 
     async def record_validation(self, **values: Any) -> ValidationResultRecord: ...
 

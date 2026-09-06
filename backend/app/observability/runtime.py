@@ -676,7 +676,6 @@ def _build_enabled_runtime(settings: Any) -> TelemetryRuntime:
     from opentelemetry.sdk.trace.export import (
         BatchSpanProcessor,
         ConsoleSpanExporter,
-        SimpleSpanProcessor,
     )
 
     endpoint = str(settings.HATCH_OTLP_ENDPOINT).strip()
@@ -700,7 +699,10 @@ def _build_enabled_runtime(settings: Any) -> TelemetryRuntime:
         str(settings.LOG_LEVEL).upper() == "DEBUG"
     )
     if console_enabled:
-        tracer_provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+        # Console export must never synchronously stall a workflow thread.
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(ConsoleSpanExporter(), export_timeout_millis=5000)
+        )
         readers.append(
             PeriodicExportingMetricReader(
                 ConsoleMetricExporter(),

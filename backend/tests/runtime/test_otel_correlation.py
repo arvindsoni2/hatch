@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.observability.attributes import sanitize_metric_attributes
 from app.observability.runtime import TelemetryRuntime
 from app.runtime.observability import RuntimeCorrelation, RuntimeTelemetry
@@ -50,3 +52,51 @@ def test_runtime_correlation_is_trace_safe_and_absent_from_metrics() -> None:
     assert sanitize_metric_attributes(attributes) == {
         "hatch.ai.workflow.name": "runtime"
     }
+    assert started[0]["record_exception"] is False
+    assert started[0]["set_status_on_exception"] is False
+
+
+def test_runtime_telemetry_never_replaces_global_provider() -> None:
+    from opentelemetry import trace
+
+    provider = trace.get_tracer_provider()
+    RuntimeTelemetry(TelemetryRuntime(status="disabled"))
+
+    assert trace.get_tracer_provider() is provider
+
+
+def test_content_exception_is_reduced_to_stable_status_code() -> None:
+    started: list[dict[str, object]] = []
+    statuses: list[object] = []
+
+    class RawSpan:
+        def set_attribute(self, *_args: object) -> None:
+            return None
+
+        def set_status(self, status: object) -> None:
+            statuses.append(status)
+
+    class Manager:
+        def __enter__(self) -> RawSpan:
+            return RawSpan()
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    class Tracer:
+        def start_as_current_span(self, _name: str, **kwargs: object) -> Manager:
+            started.append(kwargs)
+            return Manager()
+
+    telemetry = RuntimeTelemetry(TelemetryRuntime(status="active", tracer=Tracer()))
+    canary = "TRANSCRIPT-CANARY at /home/user/private.txt"
+    with pytest.raises(RuntimeError, match="TRANSCRIPT-CANARY"):
+        with telemetry.span("runtime.model", RuntimeCorrelation(task_id="synthetic")):
+            raise RuntimeError(canary)
+
+    captured = repr(
+        (started, [getattr(item, "description", None) for item in statuses])
+    )
+    assert canary not in captured
+    assert "/home/user/private.txt" not in captured
+    assert "runtime_unhandled_error" in captured

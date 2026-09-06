@@ -131,6 +131,9 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
     } <= set(claims.columns.keys())
     executions = Base.metadata.tables["runtime_execution_records"]
     assert "parent_execution_id" in executions.columns
+    assert {"model_id", "model_version", "provider", "strategy_stage"} <= set(
+        executions.columns.keys()
+    )
     routing = Base.metadata.tables["runtime_routing_decisions"]
     assert {
         "task_id",
@@ -172,7 +175,22 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
         "primary_execution_id",
         "repair_execution_id",
         "fallback_execution_id",
+        "evaluation_execution_id",
     } <= set(evaluations.columns.keys())
+    fk_targets = {
+        constraint.name: next(iter(constraint.elements)).target_fullname
+        for constraint in evaluations.foreign_key_constraints
+        if constraint.name
+    }
+    assert {
+        "fk_runtime_evaluation_runs_primary_execution_id",
+        "fk_runtime_evaluation_runs_repair_execution_id",
+        "fk_runtime_evaluation_runs_fallback_execution_id",
+        "fk_runtime_evaluation_runs_evaluation_execution_id",
+    } <= set(fk_targets)
+    assert all(
+        target == "runtime_execution_records.id" for target in fk_targets.values()
+    )
 
 
 def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) -> None:
@@ -204,6 +222,50 @@ def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) ->
         assert connection.execute(
             "SELECT id FROM interview_sessions WHERE id = 'preserved-session'"
         ).fetchone() == ("preserved-session",)
+
+
+def test_evaluation_lineage_migration_has_named_execution_foreign_keys(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "evaluation-lineage.db"
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    with sqlite3.connect(database) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(runtime_evaluation_runs)")
+        }
+        assert {
+            "evaluation_execution_id",
+            "primary_execution_id",
+            "repair_execution_id",
+            "fallback_execution_id",
+        } <= columns
+        foreign_keys = {
+            row[3]: row[2]
+            for row in connection.execute(
+                "PRAGMA foreign_key_list(runtime_evaluation_runs)"
+            )
+        }
+        assert {
+            "evaluation_execution_id",
+            "primary_execution_id",
+            "repair_execution_id",
+            "fallback_execution_id",
+        } <= set(foreign_keys)
+        assert all(
+            foreign_keys[column] == "runtime_execution_records"
+            for column in {
+                "evaluation_execution_id",
+                "primary_execution_id",
+                "repair_execution_id",
+                "fallback_execution_id",
+            }
+        )
+    downgrade = _run_alembic(database, "downgrade", "y2z3a4b5c6d7")
+    assert downgrade.returncode == 0, downgrade.stderr
+    reupgrade = _run_alembic(database, "upgrade", "head")
+    assert reupgrade.returncode == 0, reupgrade.stderr
 
 
 def test_recovery_disposition_migration_downgrades_and_reupgrades(

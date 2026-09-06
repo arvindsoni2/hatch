@@ -13,7 +13,7 @@ from .models import (
     ValidationResultRecord,
 )
 from .evidence import EvaluationLineage
-from .service import EvaluationResult, EvaluationService
+from .service import EvaluationResult, EvaluationService, EvaluationUsage
 from .validators import EvaluationFinding
 
 __all__ = [
@@ -22,6 +22,7 @@ __all__ = [
     "EvaluationLineage",
     "EvaluationResult",
     "EvaluationService",
+    "EvaluationUsage",
     "EvaluationRunRecord",
     "EvidenceObservationRecord",
     "ExecutionRecord",

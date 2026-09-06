@@ -28,6 +28,7 @@ def upgrade() -> None:
         naming_convention=_NAMING_CONVENTION,
     ) as batch:
         for name, column in (
+            ("evaluation_execution_id", sa.String(length=36)),
             ("evaluator_type", sa.String(length=24)),
             ("evaluation_spec_id", sa.String(length=128)),
             ("evaluation_spec_version", sa.Integer()),
@@ -43,6 +44,7 @@ def upgrade() -> None:
         ):
             batch.add_column(sa.Column(name, column))
         for name in (
+            "evaluation_execution_id",
             "primary_execution_id",
             "repair_execution_id",
             "fallback_execution_id",
@@ -63,6 +65,7 @@ def downgrade() -> None:
         naming_convention=_NAMING_CONVENTION,
     ) as batch:
         for name in (
+            "evaluation_execution_id",
             "fallback_execution_id",
             "repair_execution_id",
             "primary_execution_id",
@@ -71,6 +74,7 @@ def downgrade() -> None:
                 f"fk_runtime_evaluation_runs_{name}", type_="foreignkey"
             )
         for name in (
+            "evaluation_execution_id",
             "fallback_execution_id",
             "repair_execution_id",
             "primary_execution_id",

@@ -12,6 +12,7 @@ from sqlalchemy.exc import OperationalError
 from ..contracts.task_spec import TaskSpec
 from ..events.repository import enforce_metadata_only
 from ..migration.modes import RuntimeMode
+from ..observability.tracing import RuntimeCorrelation, RuntimeTelemetry
 from ..storage.contracts import RuntimeUnitOfWorkFactory, WorkflowStore
 from .models import ExecutionClaimRecord, TaskAttemptRecord, WaitingReason
 from .repository import SQLiteWorkflowRepository
@@ -49,6 +50,7 @@ class WorkflowKernel:
         clock: Clock | None = None,
         repository: WorkflowStore | None = None,
         lock_wait: Callable[[float], Awaitable[None]] | None = None,
+        telemetry: RuntimeTelemetry | None = None,
     ) -> None:
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
@@ -64,6 +66,7 @@ class WorkflowKernel:
         if fail_after not in (None, "claim_commit"):
             raise ValueError("unsupported test failure point")
         self._fail_after = fail_after
+        self._telemetry = telemetry or RuntimeTelemetry()
 
     async def start_run(
         self,
@@ -76,7 +79,7 @@ class WorkflowKernel:
             runtime_mode = RuntimeMode(mode).value
         except ValueError as error:
             raise ValueError("unsupported runtime mode") from error
-        return await self._repository.create_run(
+        run = await self._repository.create_run(
             workflow_definition_id=spec.task_id,
             workflow_definition_version=spec.version,
             input_ref=dict(input_ref),
@@ -84,6 +87,18 @@ class WorkflowKernel:
             mode=runtime_mode,
             max_attempts=spec.workflow_policy.max_attempts,
         )
+        # The durable run identifier is only known after persistence. Emit the
+        # span post-operation so production telemetry carries the complete
+        # correlation set without changing the transaction boundary.
+        with self._telemetry.span(
+            "workflow.start_run",
+            RuntimeCorrelation(
+                workflow_run_id=str(run.id),
+                task_id=spec.task_id,
+                task_version=spec.version,
+            ),
+        ):
+            return run
 
     @property
     def clock(self) -> Clock:
@@ -93,11 +108,13 @@ class WorkflowKernel:
     async def claim_next(
         self, worker_id: str, now: datetime
     ) -> ExecutionClaimRecord | None:
+        claim = None
         for attempt in range(self._lock_retry_attempts):
             try:
-                return await self._repository.claim_next(
+                claim = await self._repository.claim_next(
                     worker_id, now, self._lease_duration
                 )
+                break
             except OperationalError as error:
                 if (
                     "locked" not in str(error).lower()
@@ -105,7 +122,14 @@ class WorkflowKernel:
                 ):
                     raise
                 await self._lock_wait(0.005 * (2**attempt))
-        return None
+        values = (
+            await self._repository.get_claim_correlation(claim)
+            if claim is not None
+            else {}
+        )
+        correlation = RuntimeCorrelation(**values)
+        with self._telemetry.span("workflow.claim", correlation):
+            return claim
 
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None:
         return await self._repository.get_attempt(attempt_id)

@@ -10,7 +10,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import Base
-from app.runtime.evaluation.models import ShadowComparisonRecord
+from app.runtime.evaluation.models import (
+    EvaluationRunRecord,
+    EvidenceObservationRecord,
+    ShadowComparisonRecord,
+    ValidationResultRecord,
+)
 from app.runtime.events.models import RuntimeEventRecord
 from app.runtime.events.repository import MetadataOnlyViolation
 from app.runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
@@ -157,6 +162,134 @@ async def test_evaluation_store_rejects_opaque_model_output(privacy_factory) -> 
                 result="passed",
                 result_json={"answer": "MODEL-OUTPUT-CANARY"},
             )
+
+
+async def _create_attempt(privacy_factory) -> str:
+    async with privacy_factory.transaction() as uow:
+        run = await uow.workflows.create_run(
+            workflow_definition_id="synthetic.evaluate",
+            workflow_definition_version=1,
+            domain_type="synthetic",
+            runtime_mode="new",
+            max_attempts=1,
+        )
+        step = await uow.workflows.create_step(
+            workflow_run_id=run.id,
+            step_key="evaluate",
+            step_order=1,
+            task_id="synthetic.evaluate",
+            task_version=1,
+        )
+        attempt = await uow.workflows.create_attempt(
+            workflow_step_id=step.id,
+            attempt_number=1,
+        )
+        await uow.commit()
+        return attempt.id
+
+
+@pytest.mark.parametrize(
+    ("record_type", "field", "canary"),
+    [
+        ("evaluation", "evaluator_id", "TRANSCRIPT-CANARY"),
+        ("evaluation", "evaluator_model_version", "/home/user/resume.txt"),
+        ("evaluation", "reason_codes_json", ["MODEL-OUTPUT-CANARY"]),
+        ("evaluation", "scores_json", {"quality": "CV-CANARY"}),
+        ("validation", "validator_id", "PROMPT-CANARY"),
+        ("validation", "metrics_json", {"detail": "secret-token"}),
+        ("observation", "source_ref", "/tmp/user-transcript.txt"),
+        ("observation", "observation_json", {"evidence": "MODEL-OUTPUT-CANARY"}),
+    ],
+)
+async def test_metadata_only_records_reject_sensitive_canaries(
+    privacy_factory, record_type: str, field: str, canary: object
+) -> None:
+    attempt_id = await _create_attempt(privacy_factory)
+    values: dict[str, object]
+    if record_type == "evaluation":
+        values = {
+            "task_attempt_id": attempt_id,
+            "evaluator_id": "synthetic.evaluator",
+            "evaluator_version": 1,
+            "evaluator_type": "deterministic",
+            "evaluation_spec_id": "synthetic.spec",
+            "evaluation_spec_version": 1,
+            "status": "completed",
+            "result": "passed",
+            "reason_codes_json": ["schema_valid"],
+            "scores_json": {"quality": 1.0},
+            field: canary,
+        }
+        method = "record_evaluation"
+    elif record_type == "validation":
+        values = {
+            "task_attempt_id": attempt_id,
+            "validator_id": "synthetic.validator",
+            "validator_version": 1,
+            "status": "passed",
+            "reason_codes_json": ["schema_valid"],
+            "metrics_json": {"schema_errors": 0},
+            field: canary,
+        }
+        method = "record_validation"
+    else:
+        values = {
+            "evaluation_run_id": "evaluation-id",
+            "evidence_type": "synthetic",
+            "source_ref": "sha256:abc",
+            "observation_json": {"sample_size": 1},
+            field: canary,
+        }
+        method = "record_observation"
+
+    with pytest.raises((MetadataOnlyViolation, ValueError)):
+        async with privacy_factory.transaction() as uow:
+            await getattr(uow.evaluations, method)(**values)
+
+    async with privacy_factory.session_factory() as session:
+        assert list((await session.scalars(select(EvaluationRunRecord))).all()) == []
+        assert list((await session.scalars(select(ValidationResultRecord))).all()) == []
+        assert (
+            list((await session.scalars(select(EvidenceObservationRecord))).all()) == []
+        )
+
+
+async def test_typed_evaluation_and_validation_metadata_can_commit(
+    privacy_factory,
+) -> None:
+    attempt_id = await _create_attempt(privacy_factory)
+    async with privacy_factory.transaction() as uow:
+        await uow.evaluations.record_validation(
+            task_attempt_id=attempt_id,
+            validator_id="synthetic.schema",
+            validator_version=1,
+            status="passed",
+            reason_codes_json=["schema_valid"],
+            metrics_json={"schema_errors": 0},
+        )
+        await uow.evaluations.record_evaluation(
+            task_attempt_id=attempt_id,
+            evaluator_id="synthetic.evaluator",
+            evaluator_version=1,
+            evaluator_type="deterministic",
+            evaluation_spec_id="synthetic.spec",
+            evaluation_spec_version=1,
+            status="completed",
+            result="passed",
+            reason_codes_json=["schema_valid"],
+            scores_json={"quality": 0.9},
+            validation_metrics_json={"schema_errors": 0},
+        )
+        await uow.commit()
+
+    async with privacy_factory.session_factory() as session:
+        assert (
+            len(list((await session.scalars(select(EvaluationRunRecord))).all())) == 1
+        )
+        assert (
+            len(list((await session.scalars(select(ValidationResultRecord))).all()))
+            == 1
+        )
 
 
 @pytest.mark.parametrize("policy", ("metadata_only", "redacted", "disabled"))

@@ -36,10 +36,13 @@ class EvaluationPolicy:
     """Bound evaluation work for a task attempt."""
 
     max_evaluations: int = 0
+    max_repairs: int = 0
 
     def __post_init__(self) -> None:
         if isinstance(self.max_evaluations, bool) or self.max_evaluations < 0:
             raise ValueError("max_evaluations must be a non-negative integer")
+        if isinstance(self.max_repairs, bool) or self.max_repairs < 0:
+            raise ValueError("max_repairs must be a non-negative integer")
 
 
 @dataclass(frozen=True)
@@ -70,9 +73,17 @@ class TaskSpec(Generic[InputT, OutputT]):
     workflow_policy: WorkflowPolicy
 
     def __post_init__(self) -> None:
-        if not isinstance(self.task_id, str) or not _STABLE_NAME.fullmatch(self.task_id):
-            raise TaskSpecValidationError("task_id must be a stable lowercase identifier")
-        if isinstance(self.version, bool) or not isinstance(self.version, int) or self.version < 1:
+        if not isinstance(self.task_id, str) or not _STABLE_NAME.fullmatch(
+            self.task_id
+        ):
+            raise TaskSpecValidationError(
+                "task_id must be a stable lowercase identifier"
+            )
+        if (
+            isinstance(self.version, bool)
+            or not isinstance(self.version, int)
+            or self.version < 1
+        ):
             raise TaskSpecValidationError("version must be a positive integer")
         self._validate_model("input_model", self.input_model)
         self._validate_model("output_model", self.output_model)
@@ -84,7 +95,9 @@ class TaskSpec(Generic[InputT, OutputT]):
             not isinstance(validator, str) or not _STABLE_NAME.fullmatch(validator)
             for validator in self.validators
         ):
-            raise TaskSpecValidationError("validator names must be stable lowercase identifiers")
+            raise TaskSpecValidationError(
+                "validator names must be stable lowercase identifiers"
+            )
 
     @staticmethod
     def _validate_model(field_name: str, model: object) -> None:

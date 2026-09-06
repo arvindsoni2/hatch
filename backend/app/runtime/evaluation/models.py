@@ -142,6 +142,11 @@ class EvaluationRunRecord(Base):
             ["runtime_execution_records.id"],
             name="fk_runtime_evaluation_runs_fallback_execution_id",
         ),
+        ForeignKeyConstraint(
+            ["evaluation_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_evaluation_execution_id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
@@ -149,6 +154,9 @@ class EvaluationRunRecord(Base):
         ForeignKey("runtime_task_attempts.id"), nullable=False
     )
     execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runtime_execution_records.id")
+    )
+    evaluation_execution_id: Mapped[str | None] = mapped_column(
         ForeignKey("runtime_execution_records.id")
     )
     evaluator_id: Mapped[str] = mapped_column(String(128), nullable=False)

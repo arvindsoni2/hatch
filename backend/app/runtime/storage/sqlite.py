@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import json
+import math
+import re
 from typing import Any, AsyncIterator
 
 from sqlalchemy import delete, or_, select, update
@@ -34,6 +36,7 @@ from ..events.repository import (
     SQLiteEventRepository,
     enforce_metadata_only,
 )
+
 from ..intelligence.models import EvidenceObservation, ModelEvidence, RoutingCandidate
 from ..workflow.models import (
     ApprovalRecord,
@@ -51,6 +54,162 @@ from ..workflow.approvals import (
     normalize_decision_reason,
 )
 from ..workflow.retry import normalize_retry_metadata
+
+_SAFE_REASON = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SENSITIVE_VALUE = re.compile(
+    r"(?:canary|transcript|cv[_ -]?text|resume|job[_ -]?description|"
+    r"model[_ -]?output|secret|token|bearer|password|api[_ -]?key)",
+    re.I,
+)
+
+
+def _stable_identifier(value: Any, *, field: str, max_length: int = 128) -> None:
+    if not isinstance(value, str) or not value or len(value) > max_length:
+        raise ValueError(f"{field} must be a bounded stable identifier")
+    if not _SAFE_IDENTIFIER.fullmatch(value) or _SENSITIVE_VALUE.search(value):
+        raise MetadataOnlyViolation(f"{field} contains non-metadata content")
+
+
+def _validate_metadata_scalars(value: Any, *, path: str, depth: int = 0) -> None:
+    """Allow only bounded, non-content values in evaluation JSON columns."""
+    if depth > 4:
+        raise ValueError(f"{path} is too deeply nested")
+    if isinstance(value, dict):
+        if len(value) > 32:
+            raise ValueError(f"{path} has too many fields")
+        for key, item in value.items():
+            _stable_identifier(key, field=f"{path} key")
+            _validate_metadata_scalars(item, path=f"{path}.{key}", depth=depth + 1)
+        return
+    if isinstance(value, list):
+        if len(value) > 32:
+            raise ValueError(f"{path} has too many values")
+        for index, item in enumerate(value):
+            _validate_metadata_scalars(item, path=f"{path}[{index}]", depth=depth + 1)
+        return
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{path} must be finite")
+        return
+    if isinstance(value, str):
+        _stable_identifier(value, field=path)
+        return
+    raise ValueError(f"{path} has an unsupported value type")
+
+
+def _validate_evaluation_fields(values: dict[str, Any]) -> None:
+    """Validate every structured evaluation scalar as bounded metadata."""
+    for field in ("scores_json", "validation_metrics_json"):
+        data = values.get(field)
+        if data is None:
+            continue
+        if not isinstance(data, dict) or len(data) > 32:
+            raise ValueError(f"{field} must be a bounded mapping")
+        for key, value in data.items():
+            if not isinstance(key, str) or not _SAFE_REASON.fullmatch(key):
+                raise ValueError(f"{field} keys must be stable identifiers")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or (isinstance(value, float) and not math.isfinite(value))
+            ):
+                raise ValueError(f"{field} values must be finite numbers")
+        _validate_metadata_scalars(data, path=field)
+    reasons = values.get("reason_codes_json")
+    if reasons is not None and (
+        not isinstance(reasons, list)
+        or len(reasons) > 32
+        or any(
+            not isinstance(code, str) or not _SAFE_REASON.fullmatch(code)
+            for code in reasons
+        )
+    ):
+        raise ValueError("reason codes must be bounded stable identifiers")
+
+
+def _validate_evaluation_record(values: dict[str, Any]) -> None:
+    for field in (
+        "evaluator_id",
+        "evaluation_spec_id",
+        "evaluator_model_id",
+        "evaluator_model_version",
+        "task_attempt_id",
+        "execution_id",
+        "evaluation_execution_id",
+        "primary_execution_id",
+        "repair_execution_id",
+        "fallback_execution_id",
+    ):
+        if values.get(field) is not None:
+            _stable_identifier(values[field], field=field)
+    for field in ("evaluator_version", "evaluation_spec_version"):
+        if values.get(field) is not None and (
+            isinstance(values[field], bool)
+            or not isinstance(values[field], int)
+            or values[field] <= 0
+        ):
+            raise ValueError(f"{field} must be a positive integer")
+    for field in ("evaluator_type", "status", "result"):
+        if values.get(field) is not None:
+            _stable_identifier(values[field], field=field, max_length=32)
+    for field in ("metadata_json", "reason_codes_json", "result_json"):
+        if values.get(field) is not None:
+            _validate_metadata_scalars(values[field], path=field)
+
+
+def _validate_validation_record(values: dict[str, Any]) -> None:
+    for field in ("task_attempt_id", "execution_id", "validator_id"):
+        if values.get(field) is not None:
+            _stable_identifier(values[field], field=field)
+    if (
+        isinstance(values.get("validator_version"), bool)
+        or not isinstance(values.get("validator_version"), int)
+        or values["validator_version"] <= 0
+    ):
+        raise ValueError("validator_version must be a positive integer")
+    _stable_identifier(values.get("status"), field="status", max_length=32)
+    for field in ("reason_codes_json", "metrics_json"):
+        if values.get(field) is not None:
+            _validate_metadata_scalars(values[field], path=field)
+
+
+def _validate_observation_record(values: dict[str, Any]) -> None:
+    for field in (
+        "id",
+        "evaluation_run_id",
+        "source_ref",
+        "evidence_type",
+        "routing_observation_type",
+        "task_id",
+        "model_id",
+        "model_version",
+        "provider",
+    ):
+        if values.get(field) is not None:
+            _stable_identifier(
+                values[field],
+                field=field,
+                max_length=256 if field == "source_ref" else 128,
+            )
+    for field in ("task_version", "sample_size"):
+        if values.get(field) is not None and (
+            isinstance(values[field], bool)
+            or not isinstance(values[field], int)
+            or values[field] <= 0
+        ):
+            raise ValueError(f"{field} must be a positive integer")
+    for field in ("quality_score",):
+        if values.get(field) is not None and (
+            not isinstance(values[field], (int, float))
+            or not math.isfinite(float(values[field]))
+        ):
+            raise ValueError(f"{field} must be finite")
+    _validate_metadata_scalars(
+        values.get("observation_json") or {}, path="observation_json"
+    )
 
 
 class _SessionBoundStore:
@@ -231,10 +390,42 @@ class SQLiteEvaluationStore(_SessionBoundStore):
     async def record_execution(self, **values: Any) -> ExecutionRecord:
         return await self._record(ExecutionRecord, **values)
 
+    async def record_execution_lineage(
+        self, *, task_attempt_id: str, executions: tuple[dict[str, Any], ...]
+    ) -> tuple[ExecutionRecord, ...]:
+        """Persist a bounded primary/repair/fallback/evaluator execution graph.
+
+        Records are added in order so parent IDs can be resolved without exposing
+        an un-fenced write path; the caller commits through the enclosing UoW.
+        """
+        if not executions or len(executions) > 4:
+            raise ValueError("execution lineage must contain one to four records")
+        canonical_order = ("primary", "repair", "fallback", "evaluator")
+        records: list[ExecutionRecord] = []
+        prior_id: str | None = None
+        roles = tuple(item.get("execution_role") for item in executions)
+        if roles != canonical_order[: len(roles)]:
+            raise ValueError("execution lineage roles must follow canonical order")
+        for supplied in executions:
+            values = dict(supplied)
+            if values.get("task_attempt_id", task_attempt_id) != task_attempt_id:
+                raise ValueError("execution lineage task attempt mismatch")
+            values["task_attempt_id"] = task_attempt_id
+            supplied_parent = values.pop("parent_execution_id", None)
+            if supplied_parent is not None:
+                raise ValueError("execution lineage parents are assigned by the store")
+            values["parent_execution_id"] = prior_id
+            record = await self.record_execution(**values)
+            records.append(record)
+            prior_id = record.id
+        return tuple(records)
+
     async def record_validation(self, **values: Any) -> ValidationResultRecord:
+        _validate_validation_record(values)
         return await self._record(ValidationResultRecord, **values)
 
     async def record_evaluation(self, **values: Any) -> EvaluationRunRecord:
+        _validate_evaluation_record(values)
         if values.get("result_json") is not None:
             raise MetadataOnlyViolation("opaque evaluation results are prohibited")
         if values.get("evaluator_type") not in {
@@ -250,9 +441,11 @@ class SQLiteEvaluationStore(_SessionBoundStore):
             raise ValueError("evaluation spec version is required")
         if values.get("result") not in {"passed", "failed", "review_required"}:
             raise ValueError("evaluation result must be declared")
+        _validate_evaluation_fields(values)
         return await self._record(EvaluationRunRecord, **values)
 
     async def record_observation(self, **values: Any) -> EvidenceObservationRecord:
+        _validate_observation_record(values)
         if values.get("routing_observation_type") is not None:
             if values.get("routing_observation_type") != "routing_observation":
                 raise ValueError("invalid routing observation type")
