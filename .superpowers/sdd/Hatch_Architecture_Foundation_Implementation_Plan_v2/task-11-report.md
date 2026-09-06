@@ -1,6 +1,6 @@
 # Task 11 implementation report
 
-Status: `REPAIR_VERIFIED` pending ordered re-reviews.
+Status: `COMPLETE` after ordered re-reviews.
 
 ## Scope
 
@@ -44,4 +44,11 @@ No product slice was migrated; no Coach product code or the unrelated PDF was to
 
 ## Required follow-up
 
-Run exact Ruff/docs/diff checks, then obtain the two ordered Task 11 re-reviews before integration.
+The ordered specification-compliance re-review of `1978b26..479f80a` passed with zero
+Critical or Important findings. The subsequent code-quality review of the same range also
+passed with zero Critical or Important findings. Both reviewers noted, without failing the
+contract, that synchronous evaluators are expected to be nonblocking; hard interruption is
+explicitly enforced for awaitable evaluators.
+
+Task 11 is complete. Integration remains an owner decision; Task 12 stays gated until the
+R4 pull request is merged into `main`.

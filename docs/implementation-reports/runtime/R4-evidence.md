@@ -80,6 +80,11 @@ new telemetry/evaluation records or this report.
   validation, and canary coverage.
 - Coach-specific command, ownership, media, retention, deletion, export, and frontend
   boundary tests are not applicable because no Coach product path changed.
-- No critical/high finding. The first ordered review's six Important gaps were repaired;
-  the corrected complete-suite gate passed. Final ordered re-reviews remain required before
-  integration approval.
+- No critical/high finding. The first ordered review's six Important gaps were repaired,
+  and the corrected complete-suite gate passed.
+- Ordered specification-compliance re-review of `1978b26..479f80a`: PASS, zero Critical
+  and zero Important findings.
+- Subsequent code-quality review of `1978b26..479f80a`: PASS, zero Critical and zero
+  Important findings.
+- Reviewer minor note: synchronous evaluators are assumed nonblocking; hard deadline
+  interruption is explicit for awaitable evaluators. This is not a current contract failure.
