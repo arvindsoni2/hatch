@@ -57,11 +57,17 @@ class SafeSpan:
         self._span = span
         self._parent = parent
         self._failed = False
+        self._error_code: str | None = None
         self._attributes: dict[str, Any] = {}
 
     @property
     def failed(self) -> bool:
         return self._failed
+
+    @property
+    def error_code(self) -> str | None:
+        """Return the bounded status code without requiring the optional OTel API."""
+        return self._error_code
 
     def set_attribute(self, key: str, value: Any) -> None:
         attributes = sanitize_attributes({key: value})
@@ -100,15 +106,17 @@ class SafeSpan:
         del exception
 
     def set_error(self, code: str) -> None:
+        stable_code = code[:64]
         self._failed = True
+        self._error_code = stable_code
         if self._parent is not None:
-            self._parent.set_error(code)
+            self._parent.set_error(stable_code)
         if self._span is None:
             return
         try:
             from opentelemetry.trace.status import Status, StatusCode
 
-            self._span.set_status(Status(StatusCode.ERROR, code[:64]))
+            self._span.set_status(Status(StatusCode.ERROR, stable_code))
         except Exception:
             return
 

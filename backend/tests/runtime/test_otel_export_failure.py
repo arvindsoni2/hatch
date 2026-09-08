@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta
+from importlib.util import find_spec
 
 import pytest
 
@@ -13,6 +14,12 @@ from app.runtime.evaluation import EvaluationFinding, EvaluationService
 from app.runtime.observability import RuntimeCorrelation, RuntimeTelemetry
 from app.runtime.workflow.kernel import WorkflowKernel
 from workflow_test_support import synthetic_spec
+
+
+try:
+    _HAS_OTEL_SDK = find_spec("opentelemetry.sdk.trace") is not None
+except ModuleNotFoundError:
+    _HAS_OTEL_SDK = False
 
 
 class _RawSpan:
@@ -74,6 +81,10 @@ async def test_exporter_failure_does_not_change_workflow_result(
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    not _HAS_OTEL_SDK,
+    reason="optional OpenTelemetry SDK is not installed in the core profile",
+)
 async def test_slow_exporter_does_not_block_real_workflow(workflow_runtime) -> None:
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import (

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from importlib.util import find_spec
+
 import pytest
 
 from app.observability.attributes import sanitize_metric_attributes
 from app.observability.runtime import TelemetryRuntime
 from app.runtime.observability import RuntimeCorrelation, RuntimeTelemetry
+
+
+try:
+    _HAS_OTEL_API = find_spec("opentelemetry.trace") is not None
+except ModuleNotFoundError:
+    _HAS_OTEL_API = False
 
 
 def test_runtime_correlation_is_trace_safe_and_absent_from_metrics() -> None:
@@ -56,6 +64,10 @@ def test_runtime_correlation_is_trace_safe_and_absent_from_metrics() -> None:
     assert started[0]["set_status_on_exception"] is False
 
 
+@pytest.mark.skipif(
+    not _HAS_OTEL_API,
+    reason="optional OpenTelemetry API is not installed in the core profile",
+)
 def test_runtime_telemetry_never_replaces_global_provider() -> None:
     from opentelemetry import trace
 
@@ -67,14 +79,14 @@ def test_runtime_telemetry_never_replaces_global_provider() -> None:
 
 def test_content_exception_is_reduced_to_stable_status_code() -> None:
     started: list[dict[str, object]] = []
-    statuses: list[object] = []
+    safe_spans: list[object] = []
 
     class RawSpan:
         def set_attribute(self, *_args: object) -> None:
             return None
 
-        def set_status(self, status: object) -> None:
-            statuses.append(status)
+        def set_status(self, _status: object) -> None:
+            return None
 
     class Manager:
         def __enter__(self) -> RawSpan:
@@ -91,12 +103,13 @@ def test_content_exception_is_reduced_to_stable_status_code() -> None:
     telemetry = RuntimeTelemetry(TelemetryRuntime(status="active", tracer=Tracer()))
     canary = "TRANSCRIPT-CANARY at /home/user/private.txt"
     with pytest.raises(RuntimeError, match="TRANSCRIPT-CANARY"):
-        with telemetry.span("runtime.model", RuntimeCorrelation(task_id="synthetic")):
+        with telemetry.span(
+            "runtime.model", RuntimeCorrelation(task_id="synthetic")
+        ) as span:
+            safe_spans.append(span)
             raise RuntimeError(canary)
 
-    captured = repr(
-        (started, [getattr(item, "description", None) for item in statuses])
-    )
+    captured = repr((started, safe_spans[0].error_code))
     assert canary not in captured
     assert "/home/user/private.txt" not in captured
     assert "runtime_unhandled_error" in captured
