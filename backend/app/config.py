@@ -1,12 +1,14 @@
 """Application configuration loaded from environment variables."""
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .runtime.control import CapturePolicy
 from .runtime.migration import RuntimeMode
 
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
@@ -86,6 +88,16 @@ class Settings(BaseSettings):
     HATCH_RUNTIME_CV_TAILOR_MODE: RuntimeMode = RuntimeMode.LEGACY
     HATCH_RUNTIME_COVER_LETTER_MODE: RuntimeMode = RuntimeMode.LEGACY
     HATCH_RUNTIME_COACH_MODE: RuntimeMode = RuntimeMode.LEGACY
+    HATCH_RUNTIME_CAPTURE_POLICY: CapturePolicy = CapturePolicy.METADATA_ONLY
+
+    @field_validator("HATCH_RUNTIME_CAPTURE_POLICY")
+    @classmethod
+    def _runtime_capture_policy_is_normal_deployment_safe(
+        cls, value: CapturePolicy
+    ) -> CapturePolicy:
+        if value is CapturePolicy.DEBUG_CONTENT:
+            raise ValueError("runtime_capture_policy_not_allowed")
+        return value
 
     # CORS — comma-separated list of allowed origins (set ALLOWED_ORIGINS env var in production)
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -98,17 +110,35 @@ class Settings(BaseSettings):
 
     # Coach C1 stage deadlines. A value covers one complete logical stage,
     # including any bounded JSON parse/schema retry performed by the client.
-    HATCH_COACH_TIMEOUT_COMPANY_RESEARCH_SECONDS: int = Field(default=180, ge=10, le=3600)
-    HATCH_COACH_TIMEOUT_QUESTION_GENERATION_SECONDS: int = Field(default=300, ge=10, le=3600)
-    HATCH_COACH_TIMEOUT_QUESTION_REPAIR_SECONDS: int = Field(default=180, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_COMPANY_RESEARCH_SECONDS: int = Field(
+        default=180, ge=10, le=3600
+    )
+    HATCH_COACH_TIMEOUT_QUESTION_GENERATION_SECONDS: int = Field(
+        default=300, ge=10, le=3600
+    )
+    HATCH_COACH_TIMEOUT_QUESTION_REPAIR_SECONDS: int = Field(
+        default=180, ge=10, le=3600
+    )
     HATCH_COACH_TIMEOUT_MODEL_ANSWER_SECONDS: int = Field(default=180, ge=10, le=3600)
-    HATCH_COACH_TIMEOUT_ANSWER_EVALUATION_SECONDS: int = Field(default=300, ge=10, le=3600)
-    HATCH_COACH_TIMEOUT_RUBRIC_ENRICHMENT_SECONDS: int = Field(default=120, ge=10, le=3600)
-    HATCH_COACH_TIMEOUT_TECHNICAL_DRILL_SECONDS: int = Field(default=120, ge=10, le=3600)
+    HATCH_COACH_TIMEOUT_ANSWER_EVALUATION_SECONDS: int = Field(
+        default=300, ge=10, le=3600
+    )
+    HATCH_COACH_TIMEOUT_RUBRIC_ENRICHMENT_SECONDS: int = Field(
+        default=120, ge=10, le=3600
+    )
+    HATCH_COACH_TIMEOUT_TECHNICAL_DRILL_SECONDS: int = Field(
+        default=120, ge=10, le=3600
+    )
     HATCH_COACH_TIMEOUT_SESSION_REPORT_SECONDS: int = Field(default=300, ge=10, le=3600)
-    HATCH_COACH_TIMEOUT_SESSION_CREATE_JOB_SECONDS: int = Field(default=2400, ge=60, le=7200)
-    HATCH_COACH_TIMEOUT_ANSWER_SUBMIT_JOB_SECONDS: int = Field(default=600, ge=60, le=7200)
-    HATCH_COACH_TIMEOUT_SESSION_END_JOB_SECONDS: int = Field(default=600, ge=60, le=7200)
+    HATCH_COACH_TIMEOUT_SESSION_CREATE_JOB_SECONDS: int = Field(
+        default=2400, ge=60, le=7200
+    )
+    HATCH_COACH_TIMEOUT_ANSWER_SUBMIT_JOB_SECONDS: int = Field(
+        default=600, ge=60, le=7200
+    )
+    HATCH_COACH_TIMEOUT_SESSION_END_JOB_SECONDS: int = Field(
+        default=600, ge=60, le=7200
+    )
     HATCH_COACH_TIMEOUT_FOLLOWUP_SECONDS: int = Field(default=60, ge=60, le=7200)
     HATCH_COACH_STALE_JOB_GRACE_SECONDS: int = Field(default=120, ge=30, le=900)
 
@@ -122,12 +152,8 @@ class Settings(BaseSettings):
     # Conversational Coach browser and processing policy.
     HATCH_COACH_MEDIA_ROOT: Path = Path("./data/coach-media")
     HATCH_COACH_SILENCE_WARNING_MS: int = Field(default=4000, ge=1000, le=30000)
-    HATCH_COACH_SILENCE_FINISH_PROMPT_MS: int = Field(
-        default=9000, ge=2000, le=60000
-    )
-    HATCH_COACH_MAX_ANSWER_DURATION_SECONDS: int = Field(
-        default=600, ge=60, le=1800
-    )
+    HATCH_COACH_SILENCE_FINISH_PROMPT_MS: int = Field(default=9000, ge=2000, le=60000)
+    HATCH_COACH_MAX_ANSWER_DURATION_SECONDS: int = Field(default=600, ge=60, le=1800)
     HATCH_COACH_MAX_AUDIO_BYTES: int = Field(
         default=50 * 1024 * 1024, ge=1024, le=250 * 1024 * 1024
     )
@@ -145,9 +171,7 @@ class Settings(BaseSettings):
         default=900, ge=60, le=3600
     )
     HATCH_COACH_TIMEOUT_TRANSCRIPTION_SECONDS: int = Field(default=300, ge=10, le=900)
-    HATCH_COACH_TIMEOUT_SPEECH_ANALYSIS_SECONDS: int = Field(
-        default=120, ge=10, le=900
-    )
+    HATCH_COACH_TIMEOUT_SPEECH_ANALYSIS_SECONDS: int = Field(default=120, ge=10, le=900)
     HATCH_COACH_TIMEOUT_CONVERSATIONAL_EVALUATION_SECONDS: int = Field(
         default=300, ge=10, le=900
     )
@@ -194,7 +218,9 @@ class Settings(BaseSettings):
     @property
     def priority_keywords_list(self) -> list[str]:
         """Return priority keywords as a list of stripped lowercase strings."""
-        return [kw.strip().lower() for kw in self.PRIORITY_KEYWORDS.split(",") if kw.strip()]
+        return [
+            kw.strip().lower() for kw in self.PRIORITY_KEYWORDS.split(",") if kw.strip()
+        ]
 
     model_config = SettingsConfigDict(
         env_file=".env", extra="ignore", env_parse_enums=True
@@ -202,5 +228,11 @@ class Settings(BaseSettings):
 
 
 # Singleton instance — import this everywhere
-Settings.model_rebuild(_types_namespace={"Path": Path, "RuntimeMode": RuntimeMode})
+Settings.model_rebuild(
+    _types_namespace={
+        "CapturePolicy": CapturePolicy,
+        "Path": Path,
+        "RuntimeMode": RuntimeMode,
+    }
+)
 settings = Settings()

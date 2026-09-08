@@ -7,9 +7,11 @@ Google, Ollama, Azure, or Bedrock without touching any agent code.
 Never import provider SDKs (anthropic, openai, google.generativeai) directly
 in agent code. Always go through this module.
 """
+
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import logging
 import os
@@ -31,6 +33,7 @@ from pydantic import BaseModel
 
 from .context_budgets import PRIMARY_CTX
 from .profile_loader import load_profile
+from ...runtime.control import CapturePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +48,10 @@ def _load_cost_table() -> dict[str, tuple[float, float]]:
             data = yaml.safe_load(fh)
         table: dict[str, tuple[float, float]] = {}
         for fragment, entry in (data.get("cost_table") or {}).items():
-            table[fragment] = (float(entry["input_per_1m"]), float(entry["output_per_1m"]))
+            table[fragment] = (
+                float(entry["input_per_1m"]),
+                float(entry["output_per_1m"]),
+            )
         return table
     except Exception:
         logger.warning("Could not load %s — cost estimates will be zero.", _MODELS_YAML)
@@ -59,6 +65,7 @@ except ImportError:
 
 # ── In-memory LLM trace ring buffer ──────────────────────────────────────────
 
+
 @dataclass
 class _LLMTrace:
     id: int
@@ -70,8 +77,29 @@ class _LLMTrace:
     cost_usd: float
     response_preview: str
 
+
 _trace_counter: int = 0
 _trace_buffer: deque[_LLMTrace] = deque(maxlen=100)
+
+
+def _normal_capture_policy() -> CapturePolicy:
+    """Read only normal deployment modes; config rejects debug-content."""
+    try:
+        policy = CapturePolicy(
+            os.getenv("HATCH_RUNTIME_CAPTURE_POLICY", "metadata_only")
+        )
+    except ValueError:
+        return CapturePolicy.METADATA_ONLY
+    return (
+        policy
+        if policy is not CapturePolicy.DEBUG_CONTENT
+        else CapturePolicy.METADATA_ONLY
+    )
+
+
+def _response_preview(content: str, policy: CapturePolicy) -> str:
+    """Keep raw output only for direct test/local developer injection."""
+    return content[:300] if policy is CapturePolicy.DEBUG_CONTENT else ""
 
 
 class CostTrackingCallback(_BaseCallbackHandler):  # type: ignore[misc]
@@ -93,27 +121,35 @@ class CostTrackingCallback(_BaseCallbackHandler):  # type: ignore[misc]
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         usage = (response.llm_output or {}).get("token_usage", {})
         tokens_in = usage.get("prompt_tokens") or usage.get("input_token_count") or 0
-        tokens_out = usage.get("completion_tokens") or usage.get("generated_token_count") or 0
+        tokens_out = (
+            usage.get("completion_tokens") or usage.get("generated_token_count") or 0
+        )
         if not tokens_in and not tokens_out:
             text = " ".join(
-                g.text for gen in response.generations for g in gen if hasattr(g, "text")
+                g.text
+                for gen in response.generations
+                for g in gen
+                if hasattr(g, "text")
             )
             tokens_out = estimate_tokens(text)
         cost = estimate_cost(self.model, tokens_in, tokens_out)
-        self._pending.append({
-            "agent_name": self.agent_name,
-            "model": self.model,
-            "job_id": self.job_id,
-            "tokens_in": tokens_in,
-            "tokens_out": tokens_out,
-            "cost_estimate": cost,
-        })
+        self._pending.append(
+            {
+                "agent_name": self.agent_name,
+                "model": self.model,
+                "job_id": self.job_id,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "cost_estimate": cost,
+            }
+        )
 
     async def flush(self, db: Any) -> None:
         """Write all queued CostTracking rows to the database."""
         if not self._pending:
             return
         from ...models.cost_tracking import CostTracking
+
         for row in self._pending:
             db.add(CostTracking(**row))
         await db.flush()
@@ -128,7 +164,9 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
         self._model = model_name
         self._t0: float = 0.0
 
-    def on_chat_model_start(self, _serialized: dict, messages: list, **kwargs: Any) -> None:
+    def on_chat_model_start(
+        self, _serialized: dict, messages: list, **kwargs: Any
+    ) -> None:
         self._t0 = time.monotonic()
 
     def on_llm_start(self, _serialized: dict, _prompts: list, **kwargs: Any) -> None:
@@ -140,9 +178,11 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
 
         usage = (response.llm_output or {}).get("token_usage", {})
         tokens_in = usage.get("prompt_tokens") or usage.get("input_token_count") or 0
-        tokens_out = usage.get("completion_tokens") or usage.get("generated_token_count") or 0
+        tokens_out = (
+            usage.get("completion_tokens") or usage.get("generated_token_count") or 0
+        )
 
-        preview = ""
+        output_text = ""
         for gen_list in response.generations:
             for gen in gen_list:
                 text = getattr(gen, "text", None) or ""
@@ -152,25 +192,29 @@ class _LatencyCallback(_BaseCallbackHandler):  # type: ignore[misc]
                         content = getattr(msg, "content", "")
                         text = content if isinstance(content, str) else str(content)
                 if text:
-                    preview = text[:300]
+                    output_text = text
                     break
-            if preview:
+            if output_text:
                 break
 
         if not tokens_out:
-            tokens_out = estimate_tokens(preview)
+            tokens_out = estimate_tokens(output_text)
 
         _trace_counter += 1
-        _trace_buffer.append(_LLMTrace(
-            id=_trace_counter,
-            ts=datetime.now(timezone.utc).isoformat(),
-            model=self._model,
-            duration_ms=duration_ms,
-            tokens_in=tokens_in,
-            tokens_out=tokens_out,
-            cost_usd=estimate_cost(self._model, tokens_in, tokens_out),
-            response_preview=preview,
-        ))
+        _trace_buffer.append(
+            _LLMTrace(
+                id=_trace_counter,
+                ts=datetime.now(timezone.utc).isoformat(),
+                model=self._model,
+                duration_ms=duration_ms,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_usd=estimate_cost(self._model, tokens_in, tokens_out),
+                response_preview=_response_preview(
+                    output_text, _normal_capture_policy()
+                ),
+            )
+        )
 
 
 def record_trace(
@@ -179,21 +223,27 @@ def record_trace(
     content: str,
     tokens_in: int = 0,
     tokens_out: int = 0,
+    *,
+    capture_policy: CapturePolicy | None = None,
 ) -> None:
     """Record a completed LLM call to the trace buffer."""
     global _trace_counter
     tokens_out = tokens_out or estimate_tokens(content)
     _trace_counter += 1
-    _trace_buffer.append(_LLMTrace(
-        id=_trace_counter,
-        ts=datetime.now(timezone.utc).isoformat(),
-        model=model_name,
-        duration_ms=duration_ms,
-        tokens_in=tokens_in,
-        tokens_out=tokens_out,
-        cost_usd=estimate_cost(model_name, tokens_in, tokens_out),
-        response_preview=content[:300],
-    ))
+    _trace_buffer.append(
+        _LLMTrace(
+            id=_trace_counter,
+            ts=datetime.now(timezone.utc).isoformat(),
+            model=model_name,
+            duration_ms=duration_ms,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=estimate_cost(model_name, tokens_in, tokens_out),
+            response_preview=_response_preview(
+                content, capture_policy or _normal_capture_policy()
+            ),
+        )
+    )
 
 
 def get_llm_traces() -> list[dict[str, Any]]:
@@ -247,14 +297,16 @@ _TINY_MODEL_PATTERNS = ("e2b", ":0.6b", ":1b", ":1.7b", ":3b", "mini", "lite", "
 
 # Recommended Ollama defaults for CPU-only consumer hardware (see LLM-1/LLM-2 spec)
 _OLLAMA_RECOMMENDED_ORDER = [
-    "qwen3:30b-a3b",   # MoE, ~3B active — best quality on 32 GB
+    "qwen3:30b-a3b",  # MoE, ~3B active — best quality on 32 GB
     "gemma4:26b-a4b",  # MoE, ~4B active — strong alternative on 16–32 GB
-    "qwen3:4b",        # dense 4B Q4 — default primary for 8–16 GB
-    "gemma4:e2b",      # edge-optimised triage model
+    "qwen3:4b",  # dense 4B Q4 — default primary for 8–16 GB
+    "gemma4:e2b",  # edge-optimised triage model
 ]
 
 
-def _maybe_add_think_token(system_prompt: str, provider: str, reasoning: bool, model_name: str = "") -> str:
+def _maybe_add_think_token(
+    system_prompt: str, provider: str, reasoning: bool, model_name: str = ""
+) -> str:
     """Inject thinking-mode control into the system prompt (model-family-aware).
 
     - gemma4: thinking is OFF by default; prepend <|think|> only when reasoning=True
@@ -281,7 +333,9 @@ def _detect_ollama_model(llm_cfg: Any) -> str:
     has no models pulled.
     """
     base = (llm_cfg.base_url or "http://host.docker.internal:11434").rstrip("/")
-    candidates = list({base, "http://host.docker.internal:11434", "http://localhost:11434"})
+    candidates = list(
+        {base, "http://host.docker.internal:11434", "http://localhost:11434"}
+    )
     for url in candidates:
         try:
             req = urllib.request.urlopen(f"{url}/api/tags", timeout=3)
@@ -292,7 +346,9 @@ def _detect_ollama_model(llm_cfg: Any) -> str:
                 for rec in _OLLAMA_RECOMMENDED_ORDER:
                     for a in available:
                         if a == rec or a.startswith(rec.split(":")[0] + ":"):
-                            logger.info("Auto-detected Ollama model '%s' from %s", a, url)
+                            logger.info(
+                                "Auto-detected Ollama model '%s' from %s", a, url
+                            )
                             return a
                 name = available[0]
                 logger.info("Auto-detected Ollama model '%s' from %s", name, url)
@@ -331,32 +387,42 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
                 "(e.g. 'http://llamacpp:8080/v1')"
             )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
+
         reasoning = getattr(llm_cfg, "reasoning", False)
         extra_body: dict[str, Any] = {
             "chat_template_kwargs": {"enable_thinking": bool(reasoning)},
         }
-        return _attach_tracer(ChatOpenAI(
-            model=model_name,
-            base_url=llm_cfg.base_url,
-            openai_api_key="not-required",
-            temperature=llm_cfg.temperature,
-            max_retries=llm_cfg.max_retries,
-            timeout=1800,
-            model_kwargs={"extra_body": extra_body},
-        ), model_name)
+        return _attach_tracer(
+            ChatOpenAI(
+                model=model_name,
+                base_url=llm_cfg.base_url,
+                openai_api_key="not-required",
+                temperature=llm_cfg.temperature,
+                max_retries=llm_cfg.max_retries,
+                timeout=1800,
+                model_kwargs={"extra_body": extra_body},
+            ),
+            model_name,
+        )
 
     if llm_cfg.provider == "openrouter":
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
+
         api_key = os.getenv(llm_cfg.api_key_env or "OPENROUTER_API_KEY", "")
         if not api_key:
-            raise ValueError("OPENROUTER_API_KEY is not configured. Run: hatch secrets set openrouter")
-        return _attach_tracer(ChatOpenAI(
-            model=model_name,
-            base_url=llm_cfg.base_url or "https://openrouter.ai/api/v1",
-            openai_api_key=api_key,
-            temperature=llm_cfg.temperature,
-            max_retries=llm_cfg.max_retries,
-        ), model_name)
+            raise ValueError(
+                "OPENROUTER_API_KEY is not configured. Run: hatch secrets set openrouter"
+            )
+        return _attach_tracer(
+            ChatOpenAI(
+                model=model_name,
+                base_url=llm_cfg.base_url or "https://openrouter.ai/api/v1",
+                openai_api_key=api_key,
+                temperature=llm_cfg.temperature,
+                max_retries=llm_cfg.max_retries,
+            ),
+            model_name,
+        )
 
     provider = llm_cfg.provider
 
@@ -375,7 +441,9 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     # Ollama falls back to host.docker.internal so it works from inside containers
     # even when profile.yaml was saved without an explicit base_url.
     _ollama_default = "http://host.docker.internal:11434"
-    effective_base_url = llm_cfg.base_url or (_ollama_default if llm_cfg.provider == "ollama" else None)
+    effective_base_url = llm_cfg.base_url or (
+        _ollama_default if llm_cfg.provider == "ollama" else None
+    )
     if effective_base_url:
         kwargs["base_url"] = effective_base_url
 
@@ -385,9 +453,13 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
     # - thinking-mode is model-family-aware (gemma4 vs qwen3 — see _maybe_add_think_token)
     if llm_cfg.provider == "ollama":
         reasoning = getattr(llm_cfg, "reasoning", False)
-        kwargs["request_timeout"] = 3600  # 1-hour ceiling; local LLM queue can run 20+ min
+        kwargs["request_timeout"] = (
+            3600  # 1-hour ceiling; local LLM queue can run 20+ min
+        )
         kwargs["num_ctx"] = PRIMARY_CTX
-        kwargs["format"] = "json"  # token-level JSON constraint — prevents markdown output
+        kwargs["format"] = (
+            "json"  # token-level JSON constraint — prevents markdown output
+        )
         # qwen3: thinking is ON by default; must explicitly disable unless reasoning=True
         if model_name.lower().startswith("qwen3"):
             kwargs["think"] = reasoning
@@ -407,11 +479,14 @@ def _build_model(model_name: str, llm_cfg: Any) -> BaseChatModel:
                 model_name,
             )
 
-    return _attach_tracer(init_chat_model(
-        model=model_name,
-        model_provider=provider,
-        **kwargs,
-    ), model_name)
+    return _attach_tracer(
+        init_chat_model(
+            model=model_name,
+            model_provider=provider,
+            **kwargs,
+        ),
+        model_name,
+    )
 
 
 def get_triage_model() -> BaseChatModel:
@@ -436,6 +511,50 @@ def get_primary_model() -> BaseChatModel:
     """
     profile = load_profile()
     return _build_model(profile.llm.primary_model, profile.llm)
+
+
+def configured_model_catalog() -> tuple[dict[str, object], ...]:
+    """Return metadata-only descriptors for the configured primary and triage models.
+
+    This is deliberately separate from :func:`_build_model`: it reads the existing
+    profile configuration but neither constructs a LangChain client nor contacts a
+    provider.  The Intelligence Plane assigns stable Hatch IDs while retaining the
+    provider-native model name unchanged for the factory boundary.
+    """
+    profile = load_profile()
+    config = profile.llm
+    local = config.provider in {"ollama", "llamacpp"}
+    common = {
+        "provider": config.provider,
+        "structured_output": True,
+        "tool_calling": False,
+        "context_window": PRIMARY_CTX,
+        "reasoning_class": "reasoning" if config.reasoning else "standard",
+        "local_or_cloud": "local" if local else "cloud",
+        "estimated_latency_class": "configured",
+        "estimated_cost_class": "local" if local else "configured",
+        "privacy_characteristics": "local" if local else "provider_configured",
+        "enabled": True,
+        "quality_score": 0.0,
+    }
+    roles = (
+        ("configured-triage", config.triage_model),
+        ("configured-primary", config.primary_model),
+    )
+    return tuple(
+        {
+            **common,
+            "model_id": model_id,
+            "version": "config."
+            + hashlib.sha256(
+                f"{config.provider}|{model_name}|{local}|{config.reasoning}".encode()
+            ).hexdigest()[:24],
+            "model_name": model_name,
+            "base_rank": 0.0,
+        }
+        for model_id, model_name in roles
+        if model_name
+    )
 
 
 def with_schema(llm: BaseChatModel, schema: type[BaseModel]) -> Runnable:
@@ -490,11 +609,14 @@ def get_json_model(schema: type[BaseModel] | None = None) -> BaseChatModel:
             kwargs["top_p"] = top_p
         if top_k is not None:
             kwargs["top_k"] = top_k
-        return _attach_tracer(init_chat_model(
-            model=model_name,
-            model_provider="ollama",
-            **kwargs,
-        ), model_name)
+        return _attach_tracer(
+            init_chat_model(
+                model=model_name,
+                model_provider="ollama",
+                **kwargs,
+            ),
+            model_name,
+        )
     if llm_cfg.provider == "llamacpp":
         if not llm_cfg.base_url:
             raise ValueError(
@@ -502,6 +624,7 @@ def get_json_model(schema: type[BaseModel] | None = None) -> BaseChatModel:
                 "(e.g. 'http://llamacpp:8080/v1')"
             )
         from langchain_openai import ChatOpenAI  # noqa: PLC0415
+
         if schema is not None:
             response_format: dict = {
                 "type": "json_schema",
@@ -513,13 +636,16 @@ def get_json_model(schema: type[BaseModel] | None = None) -> BaseChatModel:
             }
         else:
             response_format = {"type": "json_object"}
-        return _attach_tracer(ChatOpenAI(
-            model=llm_cfg.primary_model,
-            base_url=llm_cfg.base_url,
-            openai_api_key="not-required",
-            temperature=llm_cfg.temperature,
-            max_retries=llm_cfg.max_retries,
-            timeout=1800,
-            model_kwargs={"response_format": response_format},
-        ), llm_cfg.primary_model)
+        return _attach_tracer(
+            ChatOpenAI(
+                model=llm_cfg.primary_model,
+                base_url=llm_cfg.base_url,
+                openai_api_key="not-required",
+                temperature=llm_cfg.temperature,
+                max_retries=llm_cfg.max_retries,
+                timeout=1800,
+                model_kwargs={"response_format": response_format},
+            ),
+            llm_cfg.primary_model,
+        )
     return _build_model(llm_cfg.primary_model, llm_cfg)

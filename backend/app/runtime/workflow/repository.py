@@ -347,6 +347,41 @@ class SQLiteWorkflowRepository:
         async with self._uow_factory.transaction() as uow:
             return await uow.workflows.get_attempt(attempt_id)
 
+    async def get_claim_correlation(
+        self, claim: ExecutionClaimRecord
+    ) -> dict[str, str | int]:
+        """Load trace-safe durable identifiers for a claimed attempt."""
+        async with self._uow_factory.transaction() as uow:
+            row = (
+                await uow.session.execute(
+                    select(
+                        WorkflowRunRecord.id,
+                        WorkflowStepRecord.id,
+                        TaskAttemptRecord.id,
+                        WorkflowStepRecord.task_id,
+                        WorkflowStepRecord.task_version,
+                    )
+                    .join(
+                        WorkflowStepRecord,
+                        WorkflowStepRecord.workflow_run_id == WorkflowRunRecord.id,
+                    )
+                    .join(
+                        TaskAttemptRecord,
+                        TaskAttemptRecord.workflow_step_id == WorkflowStepRecord.id,
+                    )
+                    .where(TaskAttemptRecord.id == claim.task_attempt_id)
+                )
+            ).one_or_none()
+        if row is None:
+            return {}
+        return {
+            "workflow_run_id": row[0],
+            "workflow_step_id": row[1],
+            "task_attempt_id": row[2],
+            "task_id": row[3],
+            "task_version": row[4],
+        }
+
     async def transition_waiting(
         self,
         claim: ExecutionClaimRecord,

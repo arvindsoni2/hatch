@@ -8,7 +8,15 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...database import Base
@@ -57,8 +65,14 @@ class RoutingDecisionRecord(Base):
     router_id: Mapped[str] = mapped_column(String(128), nullable=False)
     router_version: Mapped[int] = mapped_column(Integer, nullable=False)
     capability_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    task_id: Mapped[str | None] = mapped_column(String(128))
+    task_version: Mapped[int | None] = mapped_column(Integer)
     model_id: Mapped[str | None] = mapped_column(String(128))
+    model_version: Mapped[str | None] = mapped_column(String(128))
     provider: Mapped[str | None] = mapped_column(String(64))
+    candidate_snapshot_json: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON)
+    routing_policy_version: Mapped[int | None] = mapped_column(Integer)
+    evidence_snapshot_id: Mapped[str | None] = mapped_column(String(128))
     reason_codes_json: Mapped[list[str] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
@@ -106,11 +120,34 @@ class ValidationResultRecord(Base):
     validator_version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     reason_codes_json: Mapped[list[str] | None] = mapped_column(JSON)
+    metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
 class EvaluationRunRecord(Base):
     __tablename__ = "runtime_evaluation_runs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["primary_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_primary_execution_id",
+        ),
+        ForeignKeyConstraint(
+            ["repair_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_repair_execution_id",
+        ),
+        ForeignKeyConstraint(
+            ["fallback_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_fallback_execution_id",
+        ),
+        ForeignKeyConstraint(
+            ["evaluation_execution_id"],
+            ["runtime_execution_records.id"],
+            name="fk_runtime_evaluation_runs_evaluation_execution_id",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
     task_attempt_id: Mapped[str] = mapped_column(
@@ -119,9 +156,24 @@ class EvaluationRunRecord(Base):
     execution_id: Mapped[str | None] = mapped_column(
         ForeignKey("runtime_execution_records.id")
     )
+    evaluation_execution_id: Mapped[str | None] = mapped_column(
+        ForeignKey("runtime_execution_records.id")
+    )
     evaluator_id: Mapped[str] = mapped_column(String(128), nullable=False)
     evaluator_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    evaluator_type: Mapped[str | None] = mapped_column(String(24))
+    evaluation_spec_id: Mapped[str | None] = mapped_column(String(128))
+    evaluation_spec_version: Mapped[int | None] = mapped_column(Integer)
+    evaluator_model_id: Mapped[str | None] = mapped_column(String(128))
+    evaluator_model_version: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[str] = mapped_column(String(24), nullable=False)
+    result: Mapped[str | None] = mapped_column(String(24))
+    scores_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    reason_codes_json: Mapped[list[str] | None] = mapped_column(JSON)
+    validation_metrics_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    primary_execution_id: Mapped[str | None] = mapped_column(String(36))
+    repair_execution_id: Mapped[str | None] = mapped_column(String(36))
+    fallback_execution_id: Mapped[str | None] = mapped_column(String(36))
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -137,6 +189,14 @@ class EvidenceObservationRecord(Base):
     evidence_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_ref: Mapped[str] = mapped_column(String(256), nullable=False)
     observation_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    routing_observation_type: Mapped[str | None] = mapped_column(String(64))
+    task_id: Mapped[str | None] = mapped_column(String(128))
+    task_version: Mapped[int | None] = mapped_column(Integer)
+    model_id: Mapped[str | None] = mapped_column(String(128))
+    model_version: Mapped[str | None] = mapped_column(String(128))
+    provider: Mapped[str | None] = mapped_column(String(64))
+    quality_score: Mapped[float | None] = mapped_column(Numeric(6, 5))
+    sample_size: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
@@ -147,9 +207,17 @@ class ModelEvidenceRecord(Base):
     task_id: Mapped[str] = mapped_column(String(128), nullable=False)
     task_version: Mapped[int] = mapped_column(Integer, nullable=False)
     model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_version: Mapped[str | None] = mapped_column(String(128))
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     evidence_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    qualification_id: Mapped[str | None] = mapped_column(String(128))
+    qualification_version: Mapped[int | None] = mapped_column(Integer)
+    minimum_sample_size: Mapped[int | None] = mapped_column(Integer)
+    observation_ids_json: Mapped[list[str] | None] = mapped_column(JSON)
+    quality_score: Mapped[float | None] = mapped_column(Numeric(6, 5))
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
     sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -167,7 +235,9 @@ class ContextPackageRecord(Base):
     token_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
     sensitivity_max: Mapped[str] = mapped_column(String(24), nullable=False)
     resolved_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
-    items_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    items_json: Mapped[dict[str, Any] | list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False
+    )
 
 
 class ShadowComparisonRecord(Base):

@@ -19,6 +19,7 @@ from app.runtime.contracts import (
     TaskSpec,
     WorkflowPolicy,
 )
+from app.runtime.intelligence import ModelDescriptor, ModelRegistry
 
 
 class _Input(BaseModel):
@@ -93,6 +94,88 @@ def test_untrusted_routing_capability_claim_cannot_authorize_forced_model(
             force_model="model-x",
             model_capabilities=frozenset({"structured_output"}),
         ),
+    )
+
+    assert decision.decision == "DENY"
+    assert "model.structured_output_required" in decision.reason_codes
+
+
+def test_trusted_descriptor_capabilities_are_the_only_capability_handoff() -> None:
+    """Ignoring the registry-owned capability handoff must make this test fail."""
+    registry = ModelRegistry(
+        (
+            ModelDescriptor(
+                model_id="model-x",
+                version="1",
+                provider="llamacpp",
+                model_name="native",
+                capabilities=frozenset({"structured_output"}),
+                local_or_cloud="local",
+            ),
+        )
+    )
+    descriptor = registry.get("model-x")
+    assert descriptor is not None
+    decision = ControlPlane(model_registry=registry).evaluate(
+        task=_requires_structured_output(),
+        routing=RoutingPreferences(force_model="model-x"),
+        selection_proof=registry.issue_selection(descriptor),
+    )
+
+    assert decision.decision == "ALLOW"
+
+
+def test_control_rejects_a_duck_typed_selection_verifier() -> None:
+    """A caller must not be able to provide its own proof verifier."""
+
+    class ForgedVerifier:
+        def verify_selection(self, _proof: object) -> object:
+            raise AssertionError("must never be called")
+
+    with pytest.raises(TypeError, match="ModelRegistry"):
+        ControlPlane(model_registry=ForgedVerifier())
+
+
+def test_model_registry_cannot_be_subclassed_or_monkeypatched() -> None:
+    with pytest.raises(TypeError, match="final"):
+
+        class ForgedRegistry(ModelRegistry):
+            pass
+
+    registry = ModelRegistry(())
+    with pytest.raises(AttributeError):
+        registry.verify_selection = lambda _proof: object()
+    with pytest.raises(TypeError, match="immutable"):
+        ModelRegistry.verify_selection = lambda _registry, _proof: object()
+    with pytest.raises(TypeError, match="immutable"):
+        del ModelRegistry.verify_selection
+
+
+def test_control_composition_verifier_fields_are_immutable() -> None:
+    control = ControlPlane(model_registry=ModelRegistry(()))
+    for name in ("_verify_selection", "_model_registry"):
+        with pytest.raises((AttributeError, TypeError)):
+            setattr(control, name, None)
+        with pytest.raises((AttributeError, TypeError)):
+            delattr(control, name)
+
+
+def test_cross_registry_proof_fails_closed() -> None:
+    descriptor = ModelDescriptor(
+        model_id="model-x",
+        version="1",
+        provider="llamacpp",
+        model_name="native",
+        capabilities=frozenset({"structured_output"}),
+        local_or_cloud="local",
+    )
+    issuer = ModelRegistry((descriptor,))
+    verifier = ModelRegistry((descriptor,))
+
+    decision = ControlPlane(model_registry=verifier).evaluate(
+        task=_requires_structured_output(),
+        routing=RoutingPreferences(force_model="model-x"),
+        selection_proof=issuer.issue_selection(descriptor),
     )
 
     assert decision.decision == "DENY"

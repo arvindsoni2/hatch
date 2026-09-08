@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from ..evaluation.models import (
     EvaluationRunRecord,
     EvidenceObservationRecord,
     ExecutionRecord,
+    ModelEvidenceRecord,
     PolicyDecisionRecord,
     RoutingDecisionRecord,
     ShadowComparisonRecord,
@@ -17,8 +18,10 @@ from ..evaluation.models import (
 )
 from ..events.models import RuntimeEventRecord, RuntimeOutboxRecord
 from ..events.outbox import OutboxClaim
+from ..context.models import ContextPackage
 
 if TYPE_CHECKING:
+    from ..intelligence.models import EvidenceObservation, ModelEvidence
     from ..workflow.models import (
         ApprovalRecord,
         ExecutionClaimRecord,
@@ -49,6 +52,10 @@ class WorkflowStore(Protocol):
     ) -> WorkflowRunRecord: ...
 
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None: ...
+
+    async def get_claim_correlation(
+        self, claim: ExecutionClaimRecord
+    ) -> Mapping[str, str | int]: ...
 
     async def claim_next(
         self, worker_id: str, now: datetime, lease_duration: timedelta
@@ -243,17 +250,43 @@ class EvaluationStore(Protocol):
 
     async def record_execution(self, **values: Any) -> ExecutionRecord: ...
 
+    async def record_execution_lineage(
+        self, *, task_attempt_id: str, executions: tuple[dict[str, Any], ...]
+    ) -> tuple[ExecutionRecord, ...]: ...
+
     async def record_validation(self, **values: Any) -> ValidationResultRecord: ...
 
     async def record_evaluation(self, **values: Any) -> EvaluationRunRecord: ...
 
     async def record_observation(self, **values: Any) -> EvidenceObservationRecord: ...
 
+    async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord: ...
+
+    async def record_promoted_model_evidence(
+        self, evidence: "ModelEvidence", observations: tuple["EvidenceObservation", ...]
+    ) -> ModelEvidenceRecord: ...
+
+    async def load_promoted_model_evidence(self) -> list[ModelEvidenceRecord]: ...
+
+    async def load_routing_observations(
+        self, observation_ids: tuple[str, ...]
+    ) -> list[EvidenceObservationRecord]: ...
+
+    async def load_model_evidence(self) -> list[ModelEvidenceRecord]: ...
+
 
 class ShadowComparisonStore(Protocol):
     async def record(self, **values: Any) -> ShadowComparisonRecord: ...
 
     async def purge_expired(self, *, now: datetime | None = None) -> int: ...
+
+
+class ContextPackageStore(Protocol):
+    """Atomic immutable context-package persistence and attempt binding."""
+
+    async def persist_and_bind(self, package: ContextPackage) -> None: ...
+
+    async def load(self, package_id: str) -> ContextPackage | None: ...
 
 
 class RuntimeUnitOfWork(Protocol):
@@ -263,6 +296,7 @@ class RuntimeUnitOfWork(Protocol):
     outbox: OutboxStore
     evaluations: EvaluationStore
     shadow: ShadowComparisonStore
+    context_packages: ContextPackageStore
 
     async def commit(self) -> None: ...
 

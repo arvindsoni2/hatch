@@ -30,6 +30,7 @@ from app.runtime.execution import (
     ExecutionGateway,
     SideEffectClass,
 )
+from app.runtime.intelligence import ModelDescriptor, ModelRegistry
 from app.runtime.execution.adapters.llm import (
     StructuredGenerationInput,
     StructuredGenerationOutput,
@@ -51,7 +52,7 @@ from execution_test_support import (
 from workflow_test_support import start_and_claim
 
 
-async def _llm_gateway_case(workflow_runtime, handler):
+async def _llm_gateway_case(workflow_runtime, handler, *, model_registry=None):
     kernel, factory = workflow_runtime
     _, claim = await start_and_claim(kernel, now=NOW)
     registry = CapabilityRegistry()
@@ -61,6 +62,7 @@ async def _llm_gateway_case(workflow_runtime, handler):
             registry=registry,
             kernel=kernel,
             approvals=ApprovalManager(factory, clock=lambda: NOW),
+            model_registry=model_registry,
         ),
         factory,
         claim,
@@ -91,6 +93,37 @@ def _llm_policy(
 
 async def _structured_success(_payload, _context):
     return StructuredGenerationOutput(result_ref="synthetic-result")
+
+
+async def test_gateway_composition_verifier_fields_are_immutable(
+    workflow_runtime,
+) -> None:
+    kernel, _factory = workflow_runtime
+    descriptor = ModelDescriptor(
+        model_id="model-immutable",
+        version="1",
+        provider="llamacpp",
+        model_name="native",
+    )
+    model_registry = ModelRegistry((descriptor,))
+    gateway = ExecutionGateway(
+        registry=CapabilityRegistry(),
+        kernel=kernel,
+        model_registry=model_registry,
+    )
+
+    for name in ("_verify_selection", "_model_registry"):
+        with pytest.raises((AttributeError, TypeError)):
+            setattr(gateway, name, None)
+        with pytest.raises((AttributeError, TypeError)):
+            delattr(gateway, name)
+
+    assert (
+        gateway._verified_descriptor(  # noqa: SLF001 - security boundary test
+            model_registry.issue_selection(descriptor)
+        )
+        is descriptor
+    )
 
 
 async def _approve_llm_payload(factory, gateway, claim, payload):
@@ -225,6 +258,74 @@ async def test_nonforced_required_model_capability_fails_closed_end_to_end(
     assert "model.structured_output_required" in policy.reason_codes
     assert result.code is ExecutionResultCode.POLICY_DENIED
     assert calls == []
+
+
+async def test_gateway_accepts_only_a_trusted_selected_descriptor(
+    workflow_runtime,
+) -> None:
+    """Using untrusted payload model/provider values instead must make this test fail."""
+    calls = []
+
+    async def handler(payload, context):
+        calls.append((payload, context))
+        return await _structured_success(payload, context)
+
+    task = _requires_structured_task()
+    descriptor = ModelDescriptor(
+        model_id="trusted-model",
+        version="1",
+        provider="llamacpp",
+        model_name="provider/native:model",
+        capabilities=frozenset({"structured_output"}),
+        local_or_cloud="local",
+    )
+    registry = ModelRegistry((descriptor,))
+    gateway, _, claim = await _llm_gateway_case(
+        workflow_runtime, handler, model_registry=registry
+    )
+    proof = registry.issue_selection(descriptor)
+    policy = ControlPlane(model_registry=registry).evaluate(
+        task=task,
+        system=PolicyLayer(
+            ConstraintSet(
+                data_egress=True,
+                allowed_capabilities=frozenset({"llm.generate_structured"}),
+                allowed_models=frozenset({"trusted-model"}),
+                allowed_providers=frozenset({"llamacpp"}),
+            )
+        ),
+        selection_proof=proof,
+    )
+
+    result = await gateway.invoke(
+        claim=claim,
+        capability_id="llm.generate_structured",
+        policy=policy,
+        payload={"request_ref": "request-1", "schema_ref": "schema-1"},
+        selection_proof=proof,
+    )
+
+    assert result.code is ExecutionResultCode.SUCCESS
+    assert calls[0][1].model_id == "trusted-model"
+    assert calls[0][1].provider == "llamacpp"
+
+
+def _requires_structured_task() -> TaskSpec:
+    return TaskSpec(
+        task_id="synthetic.gateway-structured",
+        version=1,
+        input_model=StructuredGenerationInput,
+        output_model=StructuredGenerationOutput,
+        context_requirements=(),
+        model_requirements=ModelCapabilityRequirements(
+            required_capabilities=("structured_output",)
+        ),
+        risk_class=RiskClass.LOW,
+        validators=("synthetic.validator",),
+        evaluation_policy=EvaluationPolicy(),
+        execution_strategy=ExecutionStrategy.SINGLE_PASS,
+        workflow_policy=WorkflowPolicy(max_attempts=1),
+    )
 
 
 async def test_external_side_effect_class_fails_closed_on_egress_denial(

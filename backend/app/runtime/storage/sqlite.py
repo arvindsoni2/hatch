@@ -4,22 +4,40 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import json
+import math
+import re
 from typing import Any, AsyncIterator
 
-from sqlalchemy import delete, or_, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..evaluation.models import (
+    ContextPackageRecord,
     EvaluationRunRecord,
     EvidenceObservationRecord,
     ExecutionRecord,
+    ModelEvidenceRecord,
     PolicyDecisionRecord,
     RoutingDecisionRecord,
     ShadowComparisonRecord,
     ValidationResultRecord,
 )
+from ..context.models import (
+    ContextItem,
+    ContextOmission,
+    ContextPackage,
+    context_package_hash,
+    validate_context_item_metadata,
+)
 from ..events.outbox import SQLiteOutboxRepository
-from ..events.repository import SQLiteEventRepository, enforce_metadata_only
+from ..events.repository import (
+    MetadataOnlyViolation,
+    SQLiteEventRepository,
+    enforce_metadata_only,
+)
+
+from ..intelligence.models import EvidenceObservation, ModelEvidence, RoutingCandidate
 from ..workflow.models import (
     ApprovalRecord,
     ApprovalStatus,
@@ -36,6 +54,162 @@ from ..workflow.approvals import (
     normalize_decision_reason,
 )
 from ..workflow.retry import normalize_retry_metadata
+
+_SAFE_REASON = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SENSITIVE_VALUE = re.compile(
+    r"(?:canary|transcript|cv[_ -]?text|resume|job[_ -]?description|"
+    r"model[_ -]?output|secret|token|bearer|password|api[_ -]?key)",
+    re.I,
+)
+
+
+def _stable_identifier(value: Any, *, field: str, max_length: int = 128) -> None:
+    if not isinstance(value, str) or not value or len(value) > max_length:
+        raise ValueError(f"{field} must be a bounded stable identifier")
+    if not _SAFE_IDENTIFIER.fullmatch(value) or _SENSITIVE_VALUE.search(value):
+        raise MetadataOnlyViolation(f"{field} contains non-metadata content")
+
+
+def _validate_metadata_scalars(value: Any, *, path: str, depth: int = 0) -> None:
+    """Allow only bounded, non-content values in evaluation JSON columns."""
+    if depth > 4:
+        raise ValueError(f"{path} is too deeply nested")
+    if isinstance(value, dict):
+        if len(value) > 32:
+            raise ValueError(f"{path} has too many fields")
+        for key, item in value.items():
+            _stable_identifier(key, field=f"{path} key")
+            _validate_metadata_scalars(item, path=f"{path}.{key}", depth=depth + 1)
+        return
+    if isinstance(value, list):
+        if len(value) > 32:
+            raise ValueError(f"{path} has too many values")
+        for index, item in enumerate(value):
+            _validate_metadata_scalars(item, path=f"{path}[{index}]", depth=depth + 1)
+        return
+    if isinstance(value, bool) or value is None:
+        return
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{path} must be finite")
+        return
+    if isinstance(value, str):
+        _stable_identifier(value, field=path)
+        return
+    raise ValueError(f"{path} has an unsupported value type")
+
+
+def _validate_evaluation_fields(values: dict[str, Any]) -> None:
+    """Validate every structured evaluation scalar as bounded metadata."""
+    for field in ("scores_json", "validation_metrics_json"):
+        data = values.get(field)
+        if data is None:
+            continue
+        if not isinstance(data, dict) or len(data) > 32:
+            raise ValueError(f"{field} must be a bounded mapping")
+        for key, value in data.items():
+            if not isinstance(key, str) or not _SAFE_REASON.fullmatch(key):
+                raise ValueError(f"{field} keys must be stable identifiers")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or (isinstance(value, float) and not math.isfinite(value))
+            ):
+                raise ValueError(f"{field} values must be finite numbers")
+        _validate_metadata_scalars(data, path=field)
+    reasons = values.get("reason_codes_json")
+    if reasons is not None and (
+        not isinstance(reasons, list)
+        or len(reasons) > 32
+        or any(
+            not isinstance(code, str) or not _SAFE_REASON.fullmatch(code)
+            for code in reasons
+        )
+    ):
+        raise ValueError("reason codes must be bounded stable identifiers")
+
+
+def _validate_evaluation_record(values: dict[str, Any]) -> None:
+    for field in (
+        "evaluator_id",
+        "evaluation_spec_id",
+        "evaluator_model_id",
+        "evaluator_model_version",
+        "task_attempt_id",
+        "execution_id",
+        "evaluation_execution_id",
+        "primary_execution_id",
+        "repair_execution_id",
+        "fallback_execution_id",
+    ):
+        if values.get(field) is not None:
+            _stable_identifier(values[field], field=field)
+    for field in ("evaluator_version", "evaluation_spec_version"):
+        if values.get(field) is not None and (
+            isinstance(values[field], bool)
+            or not isinstance(values[field], int)
+            or values[field] <= 0
+        ):
+            raise ValueError(f"{field} must be a positive integer")
+    for field in ("evaluator_type", "status", "result"):
+        if values.get(field) is not None:
+            _stable_identifier(values[field], field=field, max_length=32)
+    for field in ("metadata_json", "reason_codes_json", "result_json"):
+        if values.get(field) is not None:
+            _validate_metadata_scalars(values[field], path=field)
+
+
+def _validate_validation_record(values: dict[str, Any]) -> None:
+    for field in ("task_attempt_id", "execution_id", "validator_id"):
+        if values.get(field) is not None:
+            _stable_identifier(values[field], field=field)
+    if (
+        isinstance(values.get("validator_version"), bool)
+        or not isinstance(values.get("validator_version"), int)
+        or values["validator_version"] <= 0
+    ):
+        raise ValueError("validator_version must be a positive integer")
+    _stable_identifier(values.get("status"), field="status", max_length=32)
+    for field in ("reason_codes_json", "metrics_json"):
+        if values.get(field) is not None:
+            _validate_metadata_scalars(values[field], path=field)
+
+
+def _validate_observation_record(values: dict[str, Any]) -> None:
+    for field in (
+        "id",
+        "evaluation_run_id",
+        "source_ref",
+        "evidence_type",
+        "routing_observation_type",
+        "task_id",
+        "model_id",
+        "model_version",
+        "provider",
+    ):
+        if values.get(field) is not None:
+            _stable_identifier(
+                values[field],
+                field=field,
+                max_length=256 if field == "source_ref" else 128,
+            )
+    for field in ("task_version", "sample_size"):
+        if values.get(field) is not None and (
+            isinstance(values[field], bool)
+            or not isinstance(values[field], int)
+            or values[field] <= 0
+        ):
+            raise ValueError(f"{field} must be a positive integer")
+    for field in ("quality_score",):
+        if values.get(field) is not None and (
+            not isinstance(values[field], (int, float))
+            or not math.isfinite(float(values[field]))
+        ):
+            raise ValueError(f"{field} must be finite")
+    _validate_metadata_scalars(
+        values.get("observation_json") or {}, path="observation_json"
+    )
 
 
 class _SessionBoundStore:
@@ -175,7 +349,11 @@ class SQLiteEvaluationStore(_SessionBoundStore):
             "metadata_json",
             "reason_codes_json",
             "result_json",
+            "scores_json",
+            "validation_metrics_json",
             "observation_json",
+            "candidate_snapshot_json",
+            "metrics_json",
         ):
             enforce_metadata_only(values.get(field) or {}, path=field)
         return await self._add(record_type(**values))
@@ -184,19 +362,203 @@ class SQLiteEvaluationStore(_SessionBoundStore):
         return await self._record(PolicyDecisionRecord, **values)
 
     async def record_routing_decision(self, **values: Any) -> RoutingDecisionRecord:
+        candidates = values.get("candidate_snapshot_json")
+        if not isinstance(candidates, list) or len(candidates) > 32:
+            raise ValueError("routing candidates must be a bounded list")
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                raise ValueError("routing candidates must be typed metadata")
+            typed = RoutingCandidate(
+                model_id=candidate.get("model_id"),
+                model_version=candidate.get("model_version"),
+                provider=candidate.get("provider"),
+                model_name=candidate.get("model_name"),
+                eligible=candidate.get("eligible"),
+                excluded_reason_codes=tuple(candidate.get("excluded_reason_codes", ())),
+                rank_components=candidate.get("rank_components", {}),
+                final_rank=candidate.get("final_rank"),
+            )
+            if typed.as_snapshot() != candidate:
+                raise ValueError("routing candidate snapshot is not canonical")
+        if (
+            len(json.dumps(candidates, sort_keys=True, separators=(",", ":")).encode())
+            > 65536
+        ):
+            raise ValueError("routing candidate metadata exceeds size bound")
         return await self._record(RoutingDecisionRecord, **values)
 
     async def record_execution(self, **values: Any) -> ExecutionRecord:
         return await self._record(ExecutionRecord, **values)
 
+    async def record_execution_lineage(
+        self, *, task_attempt_id: str, executions: tuple[dict[str, Any], ...]
+    ) -> tuple[ExecutionRecord, ...]:
+        """Persist a bounded primary/repair/fallback/evaluator execution graph.
+
+        Records are added in order so parent IDs can be resolved without exposing
+        an un-fenced write path; the caller commits through the enclosing UoW.
+        """
+        if not executions or len(executions) > 4:
+            raise ValueError("execution lineage must contain one to four records")
+        canonical_order = ("primary", "repair", "fallback", "evaluator")
+        records: list[ExecutionRecord] = []
+        prior_id: str | None = None
+        roles = tuple(item.get("execution_role") for item in executions)
+        if roles != canonical_order[: len(roles)]:
+            raise ValueError("execution lineage roles must follow canonical order")
+        for supplied in executions:
+            values = dict(supplied)
+            if values.get("task_attempt_id", task_attempt_id) != task_attempt_id:
+                raise ValueError("execution lineage task attempt mismatch")
+            values["task_attempt_id"] = task_attempt_id
+            supplied_parent = values.pop("parent_execution_id", None)
+            if supplied_parent is not None:
+                raise ValueError("execution lineage parents are assigned by the store")
+            values["parent_execution_id"] = prior_id
+            record = await self.record_execution(**values)
+            records.append(record)
+            prior_id = record.id
+        return tuple(records)
+
     async def record_validation(self, **values: Any) -> ValidationResultRecord:
+        _validate_validation_record(values)
         return await self._record(ValidationResultRecord, **values)
 
     async def record_evaluation(self, **values: Any) -> EvaluationRunRecord:
+        _validate_evaluation_record(values)
+        if values.get("result_json") is not None:
+            raise MetadataOnlyViolation("opaque evaluation results are prohibited")
+        if values.get("evaluator_type") not in {
+            "deterministic",
+            "heuristic",
+            "model",
+            "human",
+        }:
+            raise ValueError("evaluator type must be declared")
+        if not isinstance(values.get("evaluation_spec_id"), str):
+            raise ValueError("evaluation spec provenance is required")
+        if not isinstance(values.get("evaluation_spec_version"), int):
+            raise ValueError("evaluation spec version is required")
+        if values.get("result") not in {"passed", "failed", "review_required"}:
+            raise ValueError("evaluation result must be declared")
+        _validate_evaluation_fields(values)
         return await self._record(EvaluationRunRecord, **values)
 
     async def record_observation(self, **values: Any) -> EvidenceObservationRecord:
+        _validate_observation_record(values)
+        if values.get("routing_observation_type") is not None:
+            if values.get("routing_observation_type") != "routing_observation":
+                raise ValueError("invalid routing observation type")
+            if values.get("observation_json") not in ({}, None):
+                raise ValueError("routing observations accept typed metadata only")
+            EvidenceObservation(
+                observation_id=values.get("id"),
+                task_id=values.get("task_id"),
+                task_version=values.get("task_version"),
+                model_id=values.get("model_id"),
+                model_version=values.get("model_version"),
+                provider=values.get("provider"),
+                quality_score=values.get("quality_score"),
+                sample_size=values.get("sample_size"),
+            )
         return await self._record(EvidenceObservationRecord, **values)
+
+    async def record_model_evidence(self, **values: Any) -> ModelEvidenceRecord:
+        raise ValueError("use record_promoted_model_evidence for routing evidence")
+
+    async def record_promoted_model_evidence(
+        self, evidence: ModelEvidence, observations: tuple[EvidenceObservation, ...]
+    ) -> ModelEvidenceRecord:
+        """Persist exact typed promotion lineage before in-memory activation."""
+        if type(evidence) is not ModelEvidence:
+            raise TypeError("promoted evidence must be ModelEvidence")
+        if (
+            tuple(sorted(item.observation_id for item in observations))
+            != evidence.observation_ids
+        ):
+            raise ValueError("promotion observation lineage mismatch")
+        durable = await self.load_routing_observations(evidence.observation_ids)
+        if len(durable) != len(observations):
+            raise ValueError("promotion observations are not durable")
+        for expected, row in zip(
+            sorted(observations, key=lambda item: item.observation_id),
+            sorted(durable, key=lambda item: item.id),
+        ):
+            if row.routing_observation_type != "routing_observation" or (
+                row.id,
+                row.task_id,
+                row.task_version,
+                row.model_id,
+                row.model_version,
+                row.provider,
+                float(row.quality_score),
+                row.sample_size,
+            ) != (
+                expected.observation_id,
+                expected.task_id,
+                expected.task_version,
+                expected.model_id,
+                expected.model_version,
+                expected.provider,
+                expected.quality_score,
+                expected.sample_size,
+            ):
+                raise ValueError("promotion durable observation mismatch")
+        existing = await self.session.get(ModelEvidenceRecord, evidence.evidence_id)
+        values = {
+            "id": evidence.evidence_id,
+            "task_id": evidence.task_id,
+            "task_version": evidence.task_version,
+            "model_id": evidence.model_id,
+            "model_version": evidence.model_version,
+            "provider": evidence.provider,
+            "evidence_type": "promoted",
+            "qualification_id": evidence.qualification_id,
+            "qualification_version": evidence.qualification_version,
+            "minimum_sample_size": evidence.minimum_sample_size,
+            "observation_ids_json": list(evidence.observation_ids),
+            "quality_score": evidence.quality_score,
+            "metrics_json": {},
+            "sample_size": evidence.sample_size,
+        }
+        if existing is not None:
+            if all(getattr(existing, key) == value for key, value in values.items()):
+                return existing
+            raise ValueError("conflicting promoted evidence identity")
+        return await self._record(ModelEvidenceRecord, **values)
+
+    async def load_model_evidence(self) -> list[ModelEvidenceRecord]:
+        return list((await self.session.scalars(select(ModelEvidenceRecord))).all())
+
+    async def load_promoted_model_evidence(self) -> list[ModelEvidenceRecord]:
+        return list(
+            (
+                await self.session.scalars(
+                    select(ModelEvidenceRecord).where(
+                        ModelEvidenceRecord.evidence_type == "promoted"
+                    )
+                )
+            ).all()
+        )
+
+    async def load_routing_observations(
+        self, observation_ids: tuple[str, ...]
+    ) -> list[EvidenceObservationRecord]:
+        if (
+            not observation_ids
+            or len(observation_ids) > 100
+            or len(set(observation_ids)) != len(observation_ids)
+        ):
+            raise ValueError("routing observation IDs must be unique and bounded")
+        return list(
+            (
+                await self.session.scalars(
+                    select(EvidenceObservationRecord).where(
+                        EvidenceObservationRecord.id.in_(observation_ids)
+                    )
+                )
+            ).all()
+        )
 
 
 class SQLiteShadowComparisonStore(_SessionBoundStore):
@@ -223,6 +585,90 @@ class SQLiteShadowComparisonStore(_SessionBoundStore):
         return result.rowcount
 
 
+class SQLiteContextPackageStore(_SessionBoundStore):
+    """Persist context metadata and bind it to an attempt in the caller's UoW."""
+
+    async def persist_and_bind(self, package: ContextPackage) -> None:
+        for item in package.items:
+            validate_context_item_metadata(item)
+        if (
+            context_package_hash(
+                package.task_attempt_id, package.items, package.omissions
+            )
+            != package.content_hash
+        ):
+            raise ValueError("context_package_corrupt")
+        attempt = await self.session.get(TaskAttemptRecord, package.task_attempt_id)
+        if attempt is None:
+            raise ValueError("context_task_attempt_missing")
+        if attempt.context_package_id is not None:
+            raise ValueError("context_package_already_bound")
+        sensitivity_max = max(
+            (item.sensitivity for item in package.items),
+            key={"public": 0, "internal": 1, "confidential": 2, "restricted": 3}.get,
+            default="public",
+        )
+        record = ContextPackageRecord(
+            id=package.id,
+            task_attempt_id=package.task_attempt_id,
+            package_version=1,
+            content_hash=package.content_hash,
+            token_estimate=package.total_token_estimate,
+            sensitivity_max=sensitivity_max,
+            items_json={
+                "items": [item.model_dump(mode="json") for item in package.items],
+                "omissions": [
+                    omission.model_dump(mode="json") for omission in package.omissions
+                ],
+            },
+        )
+        self.session.add(record)
+        await self.session.flush()
+        result = await self.session.execute(
+            update(TaskAttemptRecord)
+            .where(
+                TaskAttemptRecord.id == package.task_attempt_id,
+                TaskAttemptRecord.context_package_id.is_(None),
+            )
+            .values(context_package_id=package.id)
+        )
+        if result.rowcount != 1:
+            await self.session.delete(record)
+            await self.session.flush()
+            raise ValueError("context_package_already_bound")
+
+    async def load(self, package_id: str) -> ContextPackage | None:
+        record = await self.session.get(ContextPackageRecord, package_id)
+        if record is None:
+            return None
+        serialized = record.items_json
+        if isinstance(serialized, list):
+            item_rows, omission_rows = serialized, []
+        else:
+            item_rows = serialized.get("items", [])
+            omission_rows = serialized.get("omissions", [])
+        items = tuple(
+            ContextItem.model_validate_json(json.dumps(item)) for item in item_rows
+        )
+        omissions = tuple(
+            ContextOmission.model_validate_json(json.dumps(omission))
+            for omission in omission_rows
+        )
+        if (
+            context_package_hash(record.task_attempt_id, items, omissions)
+            != record.content_hash
+        ):
+            raise ValueError("context_package_corrupt")
+        return ContextPackage(
+            id=record.id,
+            task_attempt_id=record.task_attempt_id,
+            items=items,
+            omissions=omissions,
+            total_token_estimate=record.token_estimate,
+            content_hash=record.content_hash,
+        )
+
+
 class SQLiteRuntimeUnitOfWork:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -232,6 +678,7 @@ class SQLiteRuntimeUnitOfWork:
         self.outbox = SQLiteOutboxRepository(session)
         self.evaluations = SQLiteEvaluationStore(session)
         self.shadow = SQLiteShadowComparisonStore(session)
+        self.context_packages = SQLiteContextPackageStore(session)
         self._committed = False
 
     async def commit(self) -> None:

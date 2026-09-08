@@ -20,6 +20,36 @@ LayerInput: TypeAlias = PolicyLayer | ConstraintSet | None
 class ControlPlane:
     """Folds immutable policy inputs in fixed order without widening constraints."""
 
+    __slots__ = ("_model_registry", "_verify_selection")
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in self.__slots__ and hasattr(self, name):
+            raise AttributeError("trusted composition is immutable")
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name in self.__slots__:
+            raise AttributeError("trusted composition is immutable")
+        object.__delattr__(self, name)
+
+    def __init__(self, *, model_registry: object | None = None) -> None:
+        """Bind model-proof verification to one composition-owned registry."""
+        from ..intelligence.registry import ModelRegistry
+
+        if model_registry is not None and type(model_registry) is not ModelRegistry:
+            raise TypeError("model_registry must be a ModelRegistry")
+        object.__setattr__(self, "_model_registry", model_registry)
+        verifier = ModelRegistry.verify_selection
+        object.__setattr__(
+            self,
+            "_verify_selection",
+            (
+                None
+                if model_registry is None
+                else lambda proof: verifier(model_registry, proof)
+            ),
+        )
+
     def evaluate(
         self,
         task_spec: TaskSpec | None = None,
@@ -32,6 +62,7 @@ class ControlPlane:
         task: TaskSpec | None = None,
         user: LayerInput = None,
         routing: RoutingPreferences | LayerInput = None,
+        selection_proof: object | None = None,
     ) -> PolicyDecision:
         """Evaluate system through routing inputs in the approved precedence order.
 
@@ -81,7 +112,15 @@ class ControlPlane:
             forced_model=routing_input.force_model,
         )
         denied = _validate_empty_allowlists(effective, reasons)
-        denied = _validate_forced_model(effective, routing_input, reasons) or denied
+        denied = (
+            _validate_forced_model(
+                effective,
+                routing_input,
+                reasons,
+                selected_descriptor=self._verified_descriptor(selection_proof),
+            )
+            or denied
+        )
         if effective.approval_required:
             _add_reason(reasons, "approval.required")
         return PolicyDecision(
@@ -95,6 +134,11 @@ class ControlPlane:
             reason_codes=tuple(reasons),
             effective_constraints=effective,
         )
+
+    def _verified_descriptor(self, proof: object | None) -> object | None:
+        if self._verify_selection is None:
+            return None
+        return self._verify_selection(proof)
 
 
 def _as_layer(value: LayerInput) -> ConstraintSet:
@@ -188,10 +232,20 @@ def _validate_forced_model(
     effective: EffectiveConstraints,
     routing: RoutingPreferences,
     reasons: list[str],
+    *,
+    selected_descriptor: object | None,
 ) -> bool:
     forced_model = routing.force_model
     denied = False
-    missing_capabilities = effective.required_model_capabilities
+    proven_capabilities = frozenset(getattr(selected_descriptor, "capabilities", ()))
+    if (
+        forced_model is not None
+        and effective.required_model_capabilities
+        and getattr(selected_descriptor, "model_id", None) != forced_model
+    ):
+        _add_reason(reasons, "model.force_proof_mismatch")
+        denied = True
+    missing_capabilities = effective.required_model_capabilities - proven_capabilities
     for capability in sorted(missing_capabilities):
         _add_reason(reasons, f"model.{capability}_required")
         denied = True

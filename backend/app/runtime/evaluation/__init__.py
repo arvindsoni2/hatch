@@ -1,4 +1,4 @@
-"""Durable decision and evaluation evidence records."""
+"""Durable, bounded decision and evaluation evidence records."""
 
 from .models import (
     ContextPackageRecord,
@@ -12,9 +12,17 @@ from .models import (
     ShadowComparisonRecord,
     ValidationResultRecord,
 )
+from .evidence import EvaluationLineage
+from .service import EvaluationResult, EvaluationService, EvaluationUsage
+from .validators import EvaluationFinding
 
 __all__ = [
     "ContextPackageRecord",
+    "EvaluationFinding",
+    "EvaluationLineage",
+    "EvaluationResult",
+    "EvaluationService",
+    "EvaluationUsage",
     "EvaluationRunRecord",
     "EvidenceObservationRecord",
     "ExecutionRecord",

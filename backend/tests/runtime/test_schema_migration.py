@@ -83,12 +83,21 @@ def _tables(database: Path) -> set[str]:
         }
 
 
+def _table_sql(database: Path, table: str) -> str:
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+    assert row is not None
+    return row[0]
+
+
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["v9w0x1y2z3a4"]
-    head = scripts.get_revision("v9w0x1y2z3a4")
+    assert scripts.get_heads() == ["z3a4b5c6d7e8"]
+    head = scripts.get_revision("z3a4b5c6d7e8")
     assert head is not None
-    assert head.down_revision == "u8v9w0x1y2z3"
+    assert head.down_revision == "y2z3a4b5c6d7"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
@@ -122,6 +131,18 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
     } <= set(claims.columns.keys())
     executions = Base.metadata.tables["runtime_execution_records"]
     assert "parent_execution_id" in executions.columns
+    assert {"model_id", "model_version", "provider", "strategy_stage"} <= set(
+        executions.columns.keys()
+    )
+    routing = Base.metadata.tables["runtime_routing_decisions"]
+    assert {
+        "task_id",
+        "task_version",
+        "model_version",
+        "candidate_snapshot_json",
+        "routing_policy_version",
+        "evidence_snapshot_id",
+    } <= set(routing.columns.keys())
     shadow = Base.metadata.tables["runtime_shadow_comparisons"]
     assert {
         "domain_id_hash",
@@ -130,6 +151,46 @@ def test_registered_metadata_contains_complete_runtime_schema() -> None:
         "metrics_json",
         "expires_at",
     } <= set(shadow.columns.keys())
+    evidence = Base.metadata.tables["runtime_model_evidence"]
+    assert {
+        "model_version",
+        "qualification_id",
+        "qualification_version",
+        "observation_ids_json",
+        "quality_score",
+    } <= set(evidence.columns.keys())
+    validations = Base.metadata.tables["runtime_validation_results"]
+    assert "metrics_json" in validations.columns
+    evaluations = Base.metadata.tables["runtime_evaluation_runs"]
+    assert {
+        "evaluator_type",
+        "evaluation_spec_id",
+        "evaluation_spec_version",
+        "evaluator_model_id",
+        "evaluator_model_version",
+        "result",
+        "scores_json",
+        "reason_codes_json",
+        "validation_metrics_json",
+        "primary_execution_id",
+        "repair_execution_id",
+        "fallback_execution_id",
+        "evaluation_execution_id",
+    } <= set(evaluations.columns.keys())
+    fk_targets = {
+        constraint.name: next(iter(constraint.elements)).target_fullname
+        for constraint in evaluations.foreign_key_constraints
+        if constraint.name
+    }
+    assert {
+        "fk_runtime_evaluation_runs_primary_execution_id",
+        "fk_runtime_evaluation_runs_repair_execution_id",
+        "fk_runtime_evaluation_runs_fallback_execution_id",
+        "fk_runtime_evaluation_runs_evaluation_execution_id",
+    } <= set(fk_targets)
+    assert all(
+        target == "runtime_execution_records.id" for target in fk_targets.values()
+    )
 
 
 def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) -> None:
@@ -161,6 +222,50 @@ def test_runtime_migration_upgrades_and_downgrades_additively(tmp_path: Path) ->
         assert connection.execute(
             "SELECT id FROM interview_sessions WHERE id = 'preserved-session'"
         ).fetchone() == ("preserved-session",)
+
+
+def test_evaluation_lineage_migration_has_named_execution_foreign_keys(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "evaluation-lineage.db"
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    with sqlite3.connect(database) as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(runtime_evaluation_runs)")
+        }
+        assert {
+            "evaluation_execution_id",
+            "primary_execution_id",
+            "repair_execution_id",
+            "fallback_execution_id",
+        } <= columns
+        foreign_keys = {
+            row[3]: row[2]
+            for row in connection.execute(
+                "PRAGMA foreign_key_list(runtime_evaluation_runs)"
+            )
+        }
+        assert {
+            "evaluation_execution_id",
+            "primary_execution_id",
+            "repair_execution_id",
+            "fallback_execution_id",
+        } <= set(foreign_keys)
+        assert all(
+            foreign_keys[column] == "runtime_execution_records"
+            for column in {
+                "evaluation_execution_id",
+                "primary_execution_id",
+                "repair_execution_id",
+                "fallback_execution_id",
+            }
+        )
+    downgrade = _run_alembic(database, "downgrade", "y2z3a4b5c6d7")
+    assert downgrade.returncode == 0, downgrade.stderr
+    reupgrade = _run_alembic(database, "upgrade", "head")
+    assert reupgrade.returncode == 0, reupgrade.stderr
 
 
 def test_recovery_disposition_migration_downgrades_and_reupgrades(
@@ -247,5 +352,114 @@ def test_execution_intent_migration_downgrades_and_reupgrades(tmp_path: Path) ->
             }
         )
 
-    reupgrade = _run_alembic(database, "upgrade", "v9w0x1y2z3a4")
+    reupgrade = _run_alembic(database, "upgrade", "x1y2z3a4b5c6")
     assert reupgrade.returncode == 0, reupgrade.stderr
+
+
+def test_routing_candidate_snapshot_migration_downgrades_and_reupgrades(
+    tmp_path: Path,
+) -> None:
+    """Would fail if candidate snapshots were folded into unrelated reason codes."""
+    database = tmp_path / "routing-snapshot.db"
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    snapshot_columns = {
+        "task_id",
+        "task_version",
+        "model_version",
+        "candidate_snapshot_json",
+        "routing_policy_version",
+        "evidence_snapshot_id",
+    }
+    with sqlite3.connect(database) as connection:
+        assert snapshot_columns <= {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(runtime_routing_decisions)"
+            )
+        }
+
+    downgrade = _run_alembic(database, "downgrade", "v9w0x1y2z3a4")
+    assert downgrade.returncode == 0, downgrade.stderr
+    with sqlite3.connect(database) as connection:
+        assert not (
+            snapshot_columns
+            & {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(runtime_routing_decisions)"
+                )
+            }
+        )
+
+    reupgrade = _run_alembic(database, "upgrade", "x1y2z3a4b5c6")
+    assert reupgrade.returncode == 0, reupgrade.stderr
+
+
+def test_evaluation_provenance_migration_downgrades_and_reupgrades(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "evaluation-provenance.db"
+    setup = _run_setup(database)
+    assert setup.returncode == 0, setup.stderr
+    columns = {
+        "evaluator_type",
+        "evaluation_spec_id",
+        "evaluation_spec_version",
+        "evaluator_model_id",
+        "evaluator_model_version",
+        "result",
+        "scores_json",
+        "reason_codes_json",
+        "validation_metrics_json",
+        "primary_execution_id",
+        "repair_execution_id",
+        "fallback_execution_id",
+    }
+    with sqlite3.connect(database) as connection:
+        assert columns <= {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(runtime_evaluation_runs)")
+        }
+        assert "metrics_json" in {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(runtime_validation_results)"
+            )
+        }
+
+    downgrade = _run_alembic(database, "downgrade", "y2z3a4b5c6d7")
+    assert downgrade.returncode == 0, downgrade.stderr
+    with sqlite3.connect(database) as connection:
+        assert not (
+            columns
+            & {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(runtime_evaluation_runs)"
+                )
+            }
+        )
+
+    reupgrade = _run_alembic(database, "upgrade", "z3a4b5c6d7e8")
+    assert reupgrade.returncode == 0, reupgrade.stderr
+    table_sql = _table_sql(database, "runtime_evaluation_runs")
+    for name in (
+        "fk_runtime_evaluation_runs_primary_execution_id",
+        "fk_runtime_evaluation_runs_repair_execution_id",
+        "fk_runtime_evaluation_runs_fallback_execution_id",
+    ):
+        assert name in table_sql
+    foreign_keys = set()
+    with sqlite3.connect(database) as connection:
+        foreign_keys = {
+            (row[2], row[3], row[4])
+            for row in connection.execute(
+                "PRAGMA foreign_key_list(runtime_evaluation_runs)"
+            )
+        }
+    assert {
+        ("runtime_execution_records", "primary_execution_id", "id"),
+        ("runtime_execution_records", "repair_execution_id", "id"),
+        ("runtime_execution_records", "fallback_execution_id", "id"),
+    } <= foreign_keys
