@@ -16,6 +16,7 @@ import asyncio
 import logging
 import time
 import uuid
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
@@ -27,6 +28,16 @@ from ..models.job_score import JobScore
 from ..models.job import JobPosting
 from ..models.cost_tracking import CostTracking
 from ..observability import get_telemetry, trace_workflow
+from ..runtime import RuntimeMode, resolve_runtime_mode
+from ..runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from ..runtime.workflow import WorkflowKernel
+from ..runtime_bindings.migration import (
+    DurableJobScoreRuntime,
+    JobScoreMigrationDispatcher,
+    record_job_score_shadow_comparison,
+)
+from ..runtime_bindings.tasks import JobScoreInput, JobScoreOutput
+from ..database import AsyncSessionLocal
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
 from langchain_core.exceptions import OutputParserException
@@ -50,6 +61,9 @@ logger = logging.getLogger("jobpilot.agent.scorer")
 
 _BATCH_SIZE = 5
 _FREE_TIER_PROVIDERS = {"google_genai", "ollama"}
+_JOB_SCORE_MODE: ContextVar[RuntimeMode] = ContextVar(
+    "job_score_mode", default=RuntimeMode.LEGACY
+)
 
 
 class _TriageResult(BaseModel):
@@ -130,6 +144,18 @@ class ScorerAgent(BaseAgent):
 
     async def run(self, db: AsyncSession, **kwargs: Any) -> dict[str, Any]:
         """Score pending job_discovered events (up to BATCH_SIZE per run)."""
+        # Bind the slice mode before any polling or scoring work so a running
+        # batch cannot switch engines if configuration changes mid-execution.
+        runtime_mode = resolve_runtime_mode("job_score")
+        self._log.info("Job Scoring runtime mode bound to %s.", runtime_mode.value)
+        mode_token = _JOB_SCORE_MODE.set(runtime_mode)
+        try:
+            return await self._run_bound(db, **kwargs)
+        finally:
+            _JOB_SCORE_MODE.reset(mode_token)
+
+    async def _run_bound(self, db: AsyncSession, **kwargs: Any) -> dict[str, Any]:
+        """Execute a batch under the mode already bound at its entry boundary."""
         await self.update_state(db, "running", {"task": "scoring pending jobs"})
 
         pending = await self._bus.poll(
@@ -685,7 +711,90 @@ class ScorerAgent(BaseAgent):
         return "scored"
 
     async def _persist_score(self, job_id: str, score: Any, db: AsyncSession) -> None:
-        """Upsert a JobScore row and mark the posting as scored."""
+        """Dispatch one score through the entry-bound migration mode."""
+        mode = _JOB_SCORE_MODE.get()
+        request = JobScoreInput(
+            job_ref=f"job:{job_id}",
+            profile_ref="profile:current",
+            event_ref=f"event:{job_id}",
+        )
+        output = self._job_score_output(score)
+
+        async def legacy_score(_: JobScoreInput) -> JobScoreOutput:
+            await self._write_visible_score(job_id, score, db)
+            return output
+
+        async def runtime_score(runtime_request: JobScoreInput) -> JobScoreOutput:
+            runtime_output = await self._execute_runtime_score(
+                runtime_request, output
+            )
+            if mode is RuntimeMode.SHADOW:
+                await self._record_shadow_comparison(runtime_request, output, runtime_output)
+            return runtime_output
+
+        dispatch = await JobScoreMigrationDispatcher(
+            mode=mode,
+            legacy_score=legacy_score,
+            runtime_score=runtime_score,
+        ).score_job(request)
+        if dispatch.authoritative_engine == "runtime":
+            await self._write_visible_score(job_id, score, db)
+
+    @staticmethod
+    def _job_score_output(score: Any) -> JobScoreOutput:
+        """Translate the existing in-memory score shape at the migration seam."""
+        return JobScoreOutput(
+            skill_match=float(score.skill_match),
+            experience_match=float(score.experience_match),
+            rate_match=float(score.rate_match),
+            location_match=float(score.location_match),
+            overall_score=float(score.overall_score),
+            reasoning=str(getattr(score, "reasoning", "")),
+            keyword_matches=tuple(getattr(score, "keyword_matches", ()) or ()),
+            keyword_misses=tuple(getattr(score, "keyword_misses", ()) or ()),
+            fit_reasoning=getattr(score, "fit_reasoning", None),
+            strengths=tuple(getattr(score, "strengths", ()) or ()),
+            score_gaps=tuple(getattr(score, "score_gaps", ()) or ()),
+            scoring_method=(
+                method
+                if isinstance(method := getattr(score, "scoring_method", None), str)
+                else "llm"
+            ),
+        )
+
+    async def _execute_runtime_score(
+        self, request: JobScoreInput, output: JobScoreOutput
+    ) -> JobScoreOutput:
+        """Persist runtime lifecycle with the shared kernel; never write JobScore."""
+        factory = SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)
+        runtime = DurableJobScoreRuntime(
+            WorkflowKernel(factory), worker_id=f"scorer-{uuid.uuid4()}"
+        )
+        _, claim = await runtime.start(request)
+        if not await runtime.complete(claim, output):
+            raise RuntimeError("job_score_runtime_claim_lost")
+        return output
+
+    async def _record_shadow_comparison(
+        self,
+        request: JobScoreInput,
+        legacy_output: JobScoreOutput,
+        runtime_output: JobScoreOutput,
+    ) -> None:
+        factory = SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)
+        async with factory.transaction() as uow:
+            await record_job_score_shadow_comparison(
+                uow.shadow,
+                request=request,
+                legacy_result=legacy_output,
+                runtime_result=runtime_output,
+            )
+            await uow.commit()
+
+    async def _write_visible_score(
+        self, job_id: str, score: Any, db: AsyncSession
+    ) -> None:
+        """The sole JobScore projection writer selected by the dispatcher."""
         existing = await db.execute(select(JobScore).where(JobScore.job_id == job_id))
         row = existing.scalar_one_or_none()
         score_data = {

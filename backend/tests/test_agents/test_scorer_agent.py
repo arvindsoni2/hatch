@@ -5,8 +5,11 @@ import uuid
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.models.job import JobPosting
 from app.agents.scorer_agent import _ScoreResult, _normalise_score_result
+from app.runtime import RuntimeMode
 
 
 def _insert_job(db_session, job_id: str, description: str = "Senior cloud architect role required for large-scale remote infrastructure project with AWS experience and Agile delivery background.") -> JobPosting:
@@ -126,6 +129,68 @@ def test_llm_score_is_clamped_and_total_is_recomputed_from_weights():
 
 
 class TestScorerAgent:
+
+    @pytest.mark.parametrize(
+        ("mode", "runtime_calls"),
+        [
+            (RuntimeMode.LEGACY, 0),
+            (RuntimeMode.SHADOW, 1),
+            (RuntimeMode.NEW, 1),
+        ],
+    )
+    async def test_mode_bound_scorer_uses_one_visible_writer_per_event(
+        self, db_session, mode, runtime_calls
+    ):
+        """The live local scorer dispatches once; SHADOW never adds a visible row."""
+        job_id = str(uuid.uuid4())
+        db_session.add(_insert_job(db_session, job_id))
+        await db_session.commit()
+        mock_bus = AsyncMock()
+        mock_bus.poll = AsyncMock(return_value=[_make_discovery_event(job_id)])
+        mock_bus.emit = AsyncMock(return_value="event-id")
+        mock_bus.mark_processing = AsyncMock()
+        mock_bus.mark_completed = AsyncMock()
+        mock_bus.mark_failed = AsyncMock()
+        profile = _make_mock_profile(method="local")
+
+        with patch("app.agents.scorer_agent.resolve_runtime_mode", return_value=mode), \
+             patch("app.agents.scorer_agent.load_profile", return_value=profile), \
+             patch("app.agents.scorer_agent.get_limiter", return_value=MagicMock(acquire=AsyncMock())):
+            from app.agents.scorer_agent import ScorerAgent
+            scorer = ScorerAgent()
+            scorer._bus = mock_bus
+            scorer._write_visible_score = AsyncMock()
+            scorer._execute_runtime_score = AsyncMock()
+            result = await scorer.run(db_session)
+
+        assert result == {"scored": 1, "skipped": 0, "errors": 0}
+        assert scorer._write_visible_score.await_count == 1
+        assert scorer._execute_runtime_score.await_count == runtime_calls
+
+    async def test_run_resolves_job_score_mode_once_at_entry(self, db_session):
+        """A batch binds one engine before polling its first discovered job."""
+        job_id = str(uuid.uuid4())
+        db_session.add(_insert_job(db_session, job_id))
+        await db_session.commit()
+        mock_bus = AsyncMock()
+        mock_bus.poll = AsyncMock(return_value=[_make_discovery_event(job_id)])
+        mock_bus.emit = AsyncMock(return_value="event-id")
+        mock_bus.mark_processing = AsyncMock()
+        mock_bus.mark_completed = AsyncMock()
+        mock_bus.mark_failed = AsyncMock()
+        profile = _make_mock_profile(method="local")
+        resolver = MagicMock(return_value=RuntimeMode.LEGACY)
+
+        with patch("app.agents.scorer_agent.resolve_runtime_mode", resolver), \
+             patch("app.agents.scorer_agent.load_profile", return_value=profile), \
+             patch("app.agents.scorer_agent.get_limiter", return_value=MagicMock(acquire=AsyncMock())):
+            from app.agents.scorer_agent import ScorerAgent
+            scorer = ScorerAgent()
+            scorer._bus = mock_bus
+            await scorer.run(db_session)
+
+        resolver.assert_called_once_with("job_score")
+
 
     async def test_hybrid_scores_all_locally_then_llm_top_pct(self, db_session):
         """Hybrid mode: local-scores 5 jobs, LLM called only for top 20% (1 job).
