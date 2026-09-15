@@ -368,3 +368,120 @@ No production/default mode change, push, PR, or parent-owned `progress.md`
 edit. R2 live-provider latency/token/cost measurements and owner approval remain
 outstanding. No live inference benchmark was repeated in this repair; prior
 endpoint reachability observations were limited to the sandbox.
+
+## Repair round 3 — 2026-09-15
+
+Base: `b60b1b36e3239e7d788f68518781f111d6bbeae7`. Two further P1 findings
+were independently reproduced. This section supersedes round 2's claim that
+all unexpected NEW exceptions should produce an agent failure: durable
+completion must instead remain a successful product outcome.
+
+### Exact design rationale
+
+- NEW acknowledges the source `job_discovered` event in the same fenced
+  transaction as runtime completion and visible score/cost/event projection.
+  The runtime's irrelevant/skip path also invokes the acknowledgement
+  projection, without creating a visible score or scored event.
+- The agent reconciles a pending source before dispatch and again after an
+  exception. Reconciliation matches the exact task/version, NEW mode, source
+  event reference, job input reference and job domain. A completed runtime
+  run yields a completed, error-free source and the correct scored/skipped
+  count; an exception after commit or acknowledgement cannot downgrade it.
+- The real public retry endpoint consults the same durable binding regardless
+  of the source's stale delivery status. Completed work returns HTTP 200 with
+  `status=completed`; an existing non-completed runtime lifecycle returns
+  HTTP 409. It cannot reset an owned event to pending and create a fresh run.
+  Recovery of pending/claimed work and policy decisions remain runtime-owned.
+  Unbound legacy failures retain their existing public retry behavior.
+- Event list and detail APIs resolve canonical score references into fresh
+  response objects while preserving the JSON-string wire shape. The response
+  includes reasoning, fit reasoning, strengths, gaps and keyword lists from
+  JobScore; the stored AgentEvent remains reference/metadata-only. Cross-job
+  references resolve no content, and legacy inline payload strings remain
+  byte-for-byte unchanged. The schema comment now describes this read shape.
+
+### RED / GREEN evidence
+
+Initial regression command:
+
+```text
+timeout 90s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_source_reconciliation.py \
+  tests/runtime/test_job_score_event_readers.py --tb=short
+7 failed, 10 passed in 3.35s
+```
+
+Five failures found two durable runs after public retry/reprocessing: errors
+after runtime commit, before source acknowledgement, after acknowledgement,
+and stale failed/pending source statuses. Two failures found missing reasoning
+in valid-reference list/detail responses. Existing view and cross-job cases
+continued to pass. These are real dispatcher/runtime/database executions with
+only profile/resume inputs and external provider transport substituted.
+
+The first lifecycle repair run passed `23 tests in 6.83s`; the first event API
+repair run passed `15 tests in 2.55s`. Expanded focused coverage completed:
+
+```text
+timeout 120s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_source_reconciliation.py \
+  tests/runtime/test_job_score_agent_integration.py \
+  tests/runtime/test_job_score_event_readers.py \
+  tests/test_routers/test_events_router.py --tb=short
+46 passed in 10.35s
+```
+
+Coverage includes scored and irrelevant outcomes at all three post-commit/ACK
+failure boundaries, stale source reconciliation, repeated public retry after
+start/claim/terminal failure, and real durable run/execution/cost/score/event
+counts. An additional independent observation checks source completion at the
+runtime return boundary. Its assertion is outside the injected exception
+handler so an assertion failure cannot be swallowed by production handling.
+
+### Final verification
+
+After strengthening the independent source-acknowledgement assertion, the
+complete backend suite passed with exit 0:
+
+```text
+timeout 600s python -m pytest -q --no-cov tests --tb=short
+3706 passed, 2 skipped, 16 warnings in 417.85s (0:06:57)
+```
+
+This includes all eleven source reconciliation cases, all event API privacy/
+compatibility cases, all seven prompt-catalog checks, and migration upgrade/
+downgrade tests. The round-2 full-backend failure remains historical evidence;
+this is the subsequent clean full-backend run, not a relabelled focused run.
+Log: `/tmp/task12-round3-backend-tests.log`. Provider-connection warnings in
+Coach fallback tests did not become test failures. The 16 pytest warnings
+include existing coroutine/resource and provider-parameter warnings; this is
+not a claim of warning-free execution. Database verification used narrowly
+approved execution outside the independently reproduced SQLite-blocking
+sandbox; no application/dependency workaround was added.
+
+`ruff check` passes on all ten changed/new Python files; `ruff format --check`
+passes on eight. The narrowly edited event router and schema fail whole-file
+formatting both at base `b60b1b3` and in this repair; unrelated reformatting was
+excluded. `python scripts/check_docs.py` and `git diff --check` pass. The
+migration head remains `z3a4b5c6d7e8`; no migration was introduced.
+
+### Exact round-3 scoped paths
+
+```text
+.superpowers/sdd/Hatch_Architecture_Foundation_Implementation_Plan_v2/task-12-report.md
+backend/app/agents/scorer_agent.py
+backend/app/routers/events.py
+backend/app/runtime_bindings/migration/job_score.py
+backend/app/runtime_bindings/migration/source_event.py
+backend/app/schemas/agent_events.py
+backend/app/services/job_score_event_reader.py
+backend/tests/runtime/job_score_test_support.py
+backend/tests/runtime/test_job_score_agent_integration.py
+backend/tests/runtime/test_job_score_event_readers.py
+backend/tests/runtime/test_job_score_source_reconciliation.py
+docs/implementation-reports/runtime/R5-job-score-migration.md
+```
+
+The parent-owned `progress.md` remains untouched and uncommitted. No push, PR,
+schema migration, or default/production mode change is included. Gate R2 live
+same-provider/model measurements and owner approval remain outstanding;
+offline deterministic conformance is not a substitute for that gate.

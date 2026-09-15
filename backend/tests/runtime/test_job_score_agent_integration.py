@@ -403,7 +403,11 @@ async def test_new_exception_never_bypasses_runtime_fence_and_restart_projects_o
         )
         assert len(scores) == (1 if timing == "after_commit" else 0)
         assert len(scored_events) == (1 if timing == "after_commit" else 0)
-        assert outcome == {"scored": 0, "skipped": 0, "errors": 1}
+        assert outcome == {
+            "scored": int(timing == "after_commit"),
+            "skipped": 0,
+            "errors": int(timing != "after_commit"),
+        }
         run = await session.scalar(select(WorkflowRunRecord))
         attempt = await session.scalar(select(TaskAttemptRecord))
         assert (

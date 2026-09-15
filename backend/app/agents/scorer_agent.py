@@ -40,6 +40,7 @@ from ..runtime_bindings.migration import (
     record_job_score_shadow_comparison,
 )
 from ..runtime_bindings.tasks import JobScoreInput
+from ..runtime_bindings.migration.source_event import reconcile_job_score_source_event
 from ..runtime_bindings.migration.scoring import score_output, prepare_job_score_batch
 from ..database import AsyncSessionLocal
 from .base_agent import BaseAgent
@@ -197,6 +198,12 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
             plan = _JOB_SCORE_PLANS.get().get(f"event:{event['id']}")
             if plan is not None and plan.deferred:
                 continue
+            prior = await reconcile_job_score_source_event(event["id"], db)
+            if prior is not None:
+                await db.commit()
+                scored += prior == "scored"
+                skipped += prior == "skipped"
+                continue
             await self._bus.mark_processing(event["id"], db)
             try:
                 tag = await self._dispatch_event(event, db, None, profile)
@@ -205,12 +212,33 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
                 scored += tag != "skipped"
             except Exception:
                 await db.rollback()
-                await self._bus.mark_failed(event["id"], "job_score_runtime_failed", db)
-                errors += 1
+                durable = await reconcile_job_score_source_event(event["id"], db)
+                if durable is not None:
+                    await db.commit()
+                    scored += durable == "scored"
+                    skipped += durable == "skipped"
+                    errors += durable == "runtime_owned"
+                else:
+                    await self._bus.mark_failed(
+                        event["id"], "job_score_runtime_failed", db
+                    )
+                    errors += 1
         return scored, skipped, errors
 
     async def _project_runtime_score(self, uow, request, output, usage):
         """Project only inside the runtime's fenced finalization transaction."""
+        await uow.session.execute(
+            update(AgentEvent)
+            .where(
+                AgentEvent.id == request.event_ref.removeprefix("event:"),
+                AgentEvent.event_type == "job_discovered",
+            )
+            .values(
+                status="completed", processed_at=datetime.utcnow(), error_message=None
+            )
+        )
+        if output is None:
+            return
         job_id = request.job_ref.removeprefix("job:")
         await self._write_visible_score(job_id, output, uow.session, commit=False)
         score_id = (

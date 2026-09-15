@@ -1,6 +1,7 @@
 """FastAPI router for agent event management and activity timeline."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -13,6 +14,7 @@ from ..database import get_db
 from ..models.agent_event import AgentEvent
 from ..models.cost_tracking import CostTracking
 from ..schemas.agent_events import AgentEventList, AgentEventRead
+from ..runtime_bindings.migration.source_event import reconcile_job_score_source_event
 from ..services.job_score_event_reader import read_job_score_event_payloads
 
 router = APIRouter(prefix="/api/events", tags=["events"])
@@ -177,8 +179,14 @@ async def list_events(
     result = await db.execute(stmt.limit(limit).offset(offset))
     rows = result.scalars().all()
 
+    payloads = await read_job_score_event_payloads([row.payload for row in rows], db)
     return AgentEventList(
-        items=[AgentEventRead.model_validate(r) for r in rows],
+        items=[
+            AgentEventRead.model_validate(row).model_copy(
+                update={"payload": json.dumps(payload)} if "score_ref" in payload else {}
+            )
+            for row, payload in zip(rows, payloads)
+        ],
         total=total,
     )
 
@@ -193,7 +201,10 @@ async def get_event(
     row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Event not found")
-    return AgentEventRead.model_validate(row)
+    payload = (await read_job_score_event_payloads([row.payload], db))[0]
+    return AgentEventRead.model_validate(row).model_copy(
+        update={"payload": json.dumps(payload)} if "score_ref" in payload else {}
+    )
 
 
 @router.post("/{event_id}/retry")
@@ -206,6 +217,12 @@ async def retry_event(
     row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Event not found")
+    durable = await reconcile_job_score_source_event(event_id, db)
+    if durable is not None:
+        await db.commit()
+        if durable in {"scored", "skipped"}:
+            return {"event_id": event_id, "status": "completed"}
+        raise HTTPException(status_code=409, detail="Event retry is owned by runtime")
     if row.status != "failed":
         raise HTTPException(status_code=409, detail=f"Event status is '{row.status}', not 'failed'")
 

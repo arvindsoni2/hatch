@@ -16,7 +16,7 @@ from job_score_test_support import install_profile, install_provider, job, profi
 
 
 @pytest.mark.parametrize(
-    "view", ["decisions", "activity", "skill-gaps", "skill-frequency"]
+    "view", ["decisions", "activity", "skill-gaps", "skill-frequency", "list", "detail"]
 )
 @pytest.mark.parametrize("valid_reference", [True, False])
 async def test_product_reads_score_reference_without_rewriting_event_payload(
@@ -34,6 +34,9 @@ async def test_product_reads_score_reference_without_rewriting_event_payload(
                 "location_match": 0.8,
                 "overall_score": 0.8,
                 "reasoning": rationale,
+                "fit_reasoning": "Synthetic fit explanation",
+                "strengths": ["Synthetic strength"],
+                "score_gaps": ["Synthetic gap"],
                 "keyword_matches": ["AWS"],
                 "keyword_misses": ["Kubernetes"],
             }
@@ -74,6 +77,8 @@ async def test_product_reads_score_reference_without_rewriting_event_payload(
         "activity": "/api/events/activity",
         "skill-gaps": "/api/analytics/skill-gaps",
         "skill-frequency": "/api/analytics/skill-frequency",
+        "list": "/api/events?event_type=job_scored",
+        "detail": f"/api/events/{scored.id}",
     }
     response = await client.get(paths[view])
     assert response.status_code == 200
@@ -86,6 +91,25 @@ async def test_product_reads_score_reference_without_rewriting_event_payload(
             row for row in data["items"] if row["event_type"] == "job_scored"
         )
         assert activity["detail"] == (rationale if valid_reference else None)
+    elif view in {"list", "detail"}:
+        result = data["items"][0] if view == "list" else data
+        payload = json.loads(result["payload"])
+        assert payload["score"] == 0.8
+        assert payload["scoring_method"] == "llm"
+        assert payload["score_ref"] == json.loads(before)["score_ref"]
+        content = {
+            "reasoning": rationale,
+            "fit_reasoning": "Synthetic fit explanation",
+            "strengths": ["Synthetic strength"],
+            "score_gaps": ["Synthetic gap"],
+            "keyword_matches": ["AWS"],
+            "keyword_misses": ["Kubernetes"],
+        }
+        if valid_reference:
+            for field, expected in content.items():
+                assert payload[field] == expected
+        else:
+            assert not payload.keys() & content.keys()
     else:
         expected = {("kubernetes", 1)} if valid_reference else set()
         if view == "skill-frequency" and valid_reference:
@@ -96,3 +120,26 @@ async def test_product_reads_score_reference_without_rewriting_event_payload(
     assert scored.payload == before
     assert rationale not in scored.payload
     assert "Kubernetes" not in scored.payload
+
+
+@pytest.mark.parametrize("view", ["list", "detail"])
+async def test_event_api_keeps_legacy_inline_payload_byte_for_byte(
+    db_session, client, view
+):
+    payload = '{ "job_id": "legacy-job", "score": 0.8, "reasoning": "Synthetic legacy narrative" }'
+    event = AgentEvent(
+        event_type="job_scored",
+        source_agent="scorer",
+        payload=payload,
+        status="pending",
+    )
+    db_session.add(event)
+    await db_session.commit()
+    path = "/api/events" if view == "list" else f"/api/events/{event.id}"
+    response = await client.get(path)
+    assert response.status_code == 200
+    result = response.json()["items"][0] if view == "list" else response.json()
+    assert result["payload"] == payload
+    await db_session.commit()
+    await db_session.refresh(event)
+    assert event.payload == payload

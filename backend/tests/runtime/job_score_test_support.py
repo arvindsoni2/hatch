@@ -60,7 +60,7 @@ def install_profile(monkeypatch, candidate):
     )
 
 
-def install_provider(monkeypatch, outcomes, *, on_primary=None):
+def install_provider(monkeypatch, outcomes, *, on_primary=None, triage_relevant=True):
     """Replace only provider transport; routing, schemas and scoring stay real."""
     remaining = iter(outcomes)
 
@@ -69,7 +69,9 @@ def install_provider(monkeypatch, outcomes, *, on_primary=None):
             class Endpoint:
                 async def ainvoke(self, prompt):
                     if "relevant" in schema.model_fields:
-                        return schema(relevant=True, reason="synthetic_relevant")
+                        return schema(
+                            relevant=triage_relevant, reason="synthetic_relevance"
+                        )
                     value = next(remaining)
                     if on_primary is not None:
                         await on_primary()

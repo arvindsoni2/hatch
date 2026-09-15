@@ -296,12 +296,18 @@ class DurableJobScoreRuntime:
                         "local_fallback" if stage else "success",
                     )
                 if result.reason_code == "job_score_irrelevant":
+
+                    async def acknowledge_skip(uow):
+                        if mode is RuntimeMode.NEW and projection is not None:
+                            await projection(uow, None, total)
+
                     if not await self._kernel.finalize(
                         claim,
                         {
                             "result_ref": _hash_ref("skipped"),
                             "reason_code": "job_score_irrelevant",
                         },
+                        projection=acknowledge_skip,
                     ):
                         raise JobScoreClaimLost("job_score_runtime_claim_lost")
                     total.latency_ms = max(

@@ -1,6 +1,56 @@
-# R5 Job Scoring migration evidence — repair round 2
+# R5 Job Scoring migration evidence — repair round 3
 
-## Latest repair: lifecycle-safe failures and reference-only events
+## Latest repair: durable source acknowledgement and complete event API reads
+
+Round 3 starts from `b60b1b3`. Source event status is now an acknowledgement of
+the authoritative runtime outcome, not permission to execute another run.
+NEW completes its source event inside fenced runtime finalization, including
+irrelevant/skip results. Post-commit or acknowledgement exceptions reconcile
+to the durable scored/skipped success rather than marking the source failed.
+
+The public retry route matches the exact NEW task/version, source reference
+and job/domain references. Already-completed work returns `status=completed`
+without scoring again. Existing pending/claimed/failed runtime lifecycles
+cannot escape through a product retry: HTTP 409 preserves runtime ownership.
+Legacy events without a NEW runtime binding keep their existing retry behavior.
+
+`GET /api/events` and `GET /api/events/{id}` now return canonical narrative,
+fit reasoning, strengths, gaps and keywords in response-only JSON strings.
+Stored events remain metadata/reference-only. Cross-job references resolve no
+content and legacy inline JSON strings remain byte-for-byte unchanged.
+
+TDD reproduced `7 failed, 10 passed in 3.35s`: five duplicate-run cases after
+real public retry/reprocessing and two missing-content event API cases.
+The expanded focused lifecycle/API suite passed `46 tests in 10.35s`, covering
+scored/irrelevant results, three post-commit/acknowledgement failure timings,
+stale source state, repeated retry of runtime-owned failures, endpoint reads,
+cross-job privacy and legacy compatibility. Tests count real durable runs,
+executions, costs, scores and events, rather than only mocked call counts.
+
+Final full-backend verification, including the strengthened independent
+source-acknowledgement assertion, completed with exit 0:
+
+```text
+timeout 600s python -m pytest -q --no-cov tests --tb=short
+3706 passed, 2 skipped, 16 warnings in 417.85s (0:06:57)
+```
+
+All source reconciliation and event API tests, all seven prompt-catalog tests,
+and migration upgrade/downgrade tests passed. This supersedes the incomplete
+full-suite evidence below without rewriting the historical results. The run
+used narrow approved execution outside the SQLite-blocking sandbox. Coach
+fallback tests emitted connection warnings; pytest also reported 16 existing
+coroutine/resource/provider-parameter warnings. No warning-free result is
+claimed. Lint passes on ten changed Python files; formatting passes on eight,
+with confirmed baseline whole-file failures retained in the event router and
+schema. Docs/diff checks pass; migration head remains `z3a4b5c6d7e8`.
+
+Round 2 and round 1 results below remain historical; their narrower completion
+claims do not replace the round-3 evidence. Production/default mode is still
+LEGACY, and live same-provider/model R2 measurements and owner approval remain
+outstanding.
+
+## Round 2: lifecycle-safe failures and reference-only events
 
 Round 2 starts from `f8a011f` and repairs two subsequently verified P1 findings.
 The descriptions below supersede round 1's claims about general exception
@@ -251,6 +301,7 @@ both configured local model endpoints were unreachable in the environment.
 Live latency, token and cost thresholds therefore remain **unmeasured**.
 Zero-token local scoring is not a substitute for those measurements.
 
-Complete-backend no-new-failure evidence remains outstanding. Only repository
-owner `@arvindsoni2` can approve promotion after the actual R2 thresholds pass.
+Round 3 provides complete-backend no-failure evidence, but the live-provider
+measurements above remain outstanding. Only repository owner `@arvindsoni2`
+can approve promotion after the actual R2 thresholds pass.
 No approval, default-mode change, push or PR is part of this repair.

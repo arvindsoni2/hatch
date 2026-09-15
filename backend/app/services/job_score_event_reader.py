@@ -65,6 +65,9 @@ async def read_job_score_event_payloads(
         if score is not None and payload.get("job_id") == score.job_id:
             payload.update(
                 reasoning=score.reasoning,
+                fit_reasoning=score.fit_reasoning,
+                strengths=score.strengths or [],
+                score_gaps=score.score_gaps or [],
                 keyword_matches=score.keyword_matches or [],
                 keyword_misses=score.keyword_misses or [],
             )
