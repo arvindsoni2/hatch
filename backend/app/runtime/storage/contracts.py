@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
@@ -61,6 +62,14 @@ class WorkflowStore(Protocol):
         self, worker_id: str, now: datetime, lease_duration: timedelta
     ) -> ExecutionClaimRecord | None: ...
 
+    async def claim_run(
+        self,
+        workflow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionClaimRecord | None: ...
+
     async def reclaim(
         self,
         attempt_id: str,
@@ -81,6 +90,8 @@ class WorkflowStore(Protocol):
         claim: ExecutionClaimRecord,
         result_ref: dict[str, object],
         now: datetime,
+        *,
+        projection: Callable[[Any], Awaitable[None]] | None = None,
     ) -> bool: ...
 
     async def begin_execution_intent(

@@ -10,23 +10,26 @@ All scoring weights, target roles, compensation range, skills, and location
 preferences are read from the user's profile.yaml at runtime via profile_loader.
 The LLM used is determined by profile.yaml llm config via llm_factory.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import time
 import uuid
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
 from sqlalchemy import select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.job_score import JobScore
 from ..models.job import JobPosting
 from ..models.cost_tracking import CostTracking
+from ..models.agent_event import AgentEvent
 from ..observability import get_telemetry, trace_workflow
 from ..runtime import RuntimeMode, resolve_runtime_mode
 from ..runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
@@ -36,19 +39,28 @@ from ..runtime_bindings.migration import (
     JobScoreMigrationDispatcher,
     record_job_score_shadow_comparison,
 )
-from ..runtime_bindings.tasks import JobScoreInput, JobScoreOutput
+from ..runtime_bindings.tasks import JobScoreInput
+from ..runtime_bindings.migration.scoring import score_output, prepare_job_score_batch
 from ..database import AsyncSessionLocal
 from .base_agent import BaseAgent
 from .tools.event_bus import EventBus
 from langchain_core.exceptions import OutputParserException
-from .tools.llm_factory import get_triage_model, get_primary_model, with_schema, estimate_tokens, estimate_cost
+from .tools.llm_factory import (
+    get_triage_model,
+    get_primary_model,
+    with_schema,
+    estimate_tokens,
+    estimate_cost,
+)
 from .tools.local_scorer import score_locally, LocalScoreResult
 from .tools.profile_loader import load_profile
 from .tools.rate_limiter import get_limiter
 from ..services import resume_store as _resume_store_module
-from ..services.prompt_catalog import (
-    prompt_contract_block,
-    source_contains,
+from .tools.scoring_contract import (
+    ScoringPrompts,
+    _ScoreResult,
+    _TriageResult,
+    _normalise_score_result,
 )
 
 _semantic_module = None
@@ -60,71 +72,13 @@ except ImportError:
 logger = logging.getLogger("jobpilot.agent.scorer")
 
 _BATCH_SIZE = 5
-_FREE_TIER_PROVIDERS = {"google_genai", "ollama"}
 _JOB_SCORE_MODE: ContextVar[RuntimeMode] = ContextVar(
     "job_score_mode", default=RuntimeMode.LEGACY
 )
+_JOB_SCORE_PLANS: ContextVar[dict] = ContextVar("job_score_plans", default={})
 
 
-class _TriageResult(BaseModel):
-    relevant: bool
-    reason: str = ""
-
-
-class _ScoreResult(BaseModel):
-    skill_match: float
-    experience_match: float
-    rate_match: float
-    location_match: float
-    overall_score: float
-    reasoning: str
-    keyword_matches: list[str] = []
-    keyword_misses: list[str] = []
-    fit_reasoning: str | None = None
-    strengths: list[str] = []
-    score_gaps: list[str] = []
-
-
-def _normalise_score_result(
-    result: _ScoreResult,
-    weights: Any,
-    *,
-    candidate_text: str,
-    job_text: str,
-) -> _ScoreResult:
-    """Clamp model components and derive the total deterministically."""
-    values = {
-        field: max(0.0, min(1.0, float(getattr(result, field))))
-        for field in (
-            "skill_match",
-            "experience_match",
-            "rate_match",
-            "location_match",
-        )
-    }
-    overall = sum(
-        values[field] * float(getattr(weights, field))
-        for field in values
-    )
-    keyword_matches = [
-        keyword
-        for keyword in list(getattr(result, "keyword_matches", []))
-        if source_contains(str(keyword), candidate_text)
-        and source_contains(str(keyword), job_text)
-    ]
-    return _ScoreResult(
-        **values,
-        overall_score=round(overall, 4),
-        reasoning=str(getattr(result, "reasoning", "")),
-        keyword_matches=keyword_matches,
-        keyword_misses=list(getattr(result, "keyword_misses", [])),
-        fit_reasoning=getattr(result, "fit_reasoning", None),
-        strengths=list(getattr(result, "strengths", [])),
-        score_gaps=list(getattr(result, "score_gaps", [])),
-    )
-
-
-class ScorerAgent(BaseAgent):
+class ScorerAgent(ScoringPrompts, BaseAgent):
     """Scores pending job_discovered events against the user's profile.
 
     Two-tier LLM usage (both models configured in profile.yaml):
@@ -136,9 +90,12 @@ class ScorerAgent(BaseAgent):
 
     name = "scorer"
 
-    def __init__(self) -> None:
+    def __init__(self, *, runtime_factory=None) -> None:
         super().__init__()
         self._bus = EventBus.instance()
+        self._runtime_factory = runtime_factory or SQLiteRuntimeUnitOfWorkFactory(
+            AsyncSessionLocal
+        )
 
     # ── Main entry point ──────────────────────────────────────────────
 
@@ -149,10 +106,12 @@ class ScorerAgent(BaseAgent):
         runtime_mode = resolve_runtime_mode("job_score")
         self._log.info("Job Scoring runtime mode bound to %s.", runtime_mode.value)
         mode_token = _JOB_SCORE_MODE.set(runtime_mode)
+        plans_token = _JOB_SCORE_PLANS.set({})
         try:
             return await self._run_bound(db, **kwargs)
         finally:
             _JOB_SCORE_MODE.reset(mode_token)
+            _JOB_SCORE_PLANS.reset(plans_token)
 
     async def _run_bound(self, db: AsyncSession, **kwargs: Any) -> dict[str, Any]:
         """Execute a batch under the mode already bound at its entry boundary."""
@@ -174,11 +133,40 @@ class ScorerAgent(BaseAgent):
         )
 
         profile = load_profile()
+        if (
+            _JOB_SCORE_MODE.get() is not RuntimeMode.LEGACY
+            and self._resolve_method(profile) == "hybrid"
+        ):
+            _JOB_SCORE_PLANS.set(
+                await prepare_job_score_batch(
+                    self._runtime_factory,
+                    [
+                        JobScoreInput(
+                            job_ref=f"job:{event['payload']['job_id']}",
+                            profile_ref="profile:current",
+                            event_ref=f"event:{event['id']}",
+                        )
+                        for event in pending
+                    ],
+                )
+            )
+        if _JOB_SCORE_MODE.get() is RuntimeMode.NEW:
+            scored, skipped, errors = await self._run_runtime_only(pending, db, profile)
+            await self.update_state(db, "idle")
+            return {"scored": scored, "skipped": skipped, "errors": errors}
         method = self._resolve_method(profile)
         limiter = get_limiter()
 
-        triage_llm = with_schema(get_triage_model(), _TriageResult)
-        primary_llm = with_schema(get_primary_model(), _ScoreResult)
+        triage_llm = (
+            with_schema(get_triage_model(), _TriageResult)
+            if method != "local"
+            else None
+        )
+        primary_llm = (
+            with_schema(get_primary_model(), _ScoreResult)
+            if method != "local"
+            else None
+        )
 
         self._log.info("Scoring %d jobs using method=%s.", len(pending), method)
 
@@ -187,7 +175,9 @@ class ScorerAgent(BaseAgent):
                 pending, db, profile, triage_llm, primary_llm, limiter
             )
         elif method == "local":
-            scored, skipped, errors = await self._run_local_only(pending, db, profile, limiter)
+            scored, skipped, errors = await self._run_local_only(
+                pending, db, profile, limiter
+            )
         else:  # llm
             scored, skipped, errors = await self._run_llm_only(
                 pending, db, profile, triage_llm, primary_llm, limiter
@@ -200,6 +190,140 @@ class ScorerAgent(BaseAgent):
         return {"scored": scored, "skipped": skipped, "errors": errors}
 
     # ── Strategy implementations ──────────────────────────────────────
+
+    async def _run_runtime_only(self, pending, db, profile):
+        scored = skipped = errors = 0
+        for event in pending:
+            plan = _JOB_SCORE_PLANS.get().get(f"event:{event['id']}")
+            if plan is not None and plan.deferred:
+                continue
+            await self._bus.mark_processing(event["id"], db)
+            try:
+
+                async def fallback():
+                    job = await db.get(JobPosting, event["payload"]["job_id"])
+                    return await self._persist_local_score(
+                        event, job, score_locally(job, profile), db, profile
+                    )
+
+                tag = await self._dispatch_event(event, db, fallback, profile)
+                await self._bus.mark_completed(event["id"], db)
+                skipped += tag == "skipped"
+                scored += tag != "skipped"
+            except Exception:
+                await db.rollback()
+                await self._bus.mark_failed(event["id"], "job_score_runtime_failed", db)
+                errors += 1
+        return scored, skipped, errors
+
+    async def _dispatch_event(self, event, db, legacy_operation, profile):
+        mode = _JOB_SCORE_MODE.get()
+        job_id = event["payload"]["job_id"]
+        request = JobScoreInput(
+            job_ref=f"job:{job_id}",
+            profile_ref="profile:current",
+            event_ref=f"event:{event['id']}",
+        )
+        legacy_output = None
+
+        async def legacy_score(_):
+            nonlocal legacy_output
+            tag = await legacy_operation()
+            if tag == "skipped":
+                return None
+            row = await db.scalar(select(JobScore).where(JobScore.job_id == job_id))
+            legacy_output = score_output(row)
+            return legacy_output
+
+        async def runtime_score(_):
+            runtime = DurableJobScoreRuntime(
+                WorkflowKernel(self._runtime_factory),
+                worker_id=f"scorer-{uuid.uuid4()}",
+                factory=self._runtime_factory,
+                plan=_JOB_SCORE_PLANS.get().get(request.event_ref),
+            )
+
+            async def project(uow, output, usage):
+                await self._write_visible_score(
+                    job_id, output, uow.session, commit=False
+                )
+                for call in usage.model_calls:
+                    uow.session.add(
+                        CostTracking(
+                            agent_name="scorer",
+                            job_id=job_id,
+                            model=call["model_name"],
+                            tokens_in=call["input_tokens"],
+                            tokens_out=call["output_tokens"],
+                            cost_estimate=call["cost_microusd"] / 1_000_000,
+                        )
+                    )
+                payload = {
+                    "job_id": job_id,
+                    "score": output.overall_score,
+                    **output.model_dump(mode="json", exclude={"overall_score"}),
+                    "model_used": usage.model_name,
+                    "tokens_in": usage.input_tokens,
+                    "tokens_out": usage.output_tokens,
+                    "cost_estimate": usage.cost_microusd / 1_000_000,
+                    "duration_ms": usage.latency_ms,
+                }
+                await uow.session.execute(
+                    sqlite_insert(AgentEvent)
+                    .values(
+                        id=str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL, request.event_ref + ":job_scored"
+                            )
+                        ),
+                        event_type="job_scored",
+                        source_agent="scorer",
+                        payload=json.dumps(payload),
+                        status="pending",
+                    )
+                    .on_conflict_do_nothing(index_elements=["id"])
+                )
+
+            observed = await runtime.score_job(request, mode=mode, projection=project)
+            if mode is RuntimeMode.SHADOW and legacy_output is not None:
+                try:
+                    async with self._runtime_factory.transaction() as uow:
+                        await record_job_score_shadow_comparison(
+                            uow.shadow,
+                            request=request,
+                            legacy_result=legacy_output,
+                            runtime_result=observed.output,
+                            runtime_execution_id=observed.execution_id,
+                            legacy_execution_ref=request.event_ref,
+                            latency_ms=observed.usage.latency_ms,
+                            input_tokens=observed.usage.input_tokens,
+                            output_tokens=observed.usage.output_tokens,
+                            cost_microusd=observed.usage.cost_microusd,
+                            model_id=observed.usage.model_id,
+                            model_version=observed.usage.model_version,
+                            provider=observed.usage.provider,
+                            runtime_run_id=observed.run_id,
+                            reason_code=observed.reason_code,
+                            reason_codes=observed.usage.reason_codes,
+                            threshold=profile.scoring.shortlist_threshold,
+                            model_calls=observed.usage.model_calls,
+                        )
+                        await uow.commit()
+                except Exception:
+                    self._log.warning(
+                        "Job scoring shadow persistence failed: shadow_store_unavailable"
+                    )
+            if (
+                observed.output is None
+                and observed.reason_code != "job_score_irrelevant"
+            ):
+                raise RuntimeError("job_score_runtime_failed")
+            return observed.output
+
+        result = await JobScoreMigrationDispatcher(
+            mode=mode, legacy_score=legacy_score, runtime_score=runtime_score
+        ).score_job(request)
+        return "skipped" if result.visible_result is None else "scored"
 
     async def _run_hybrid(
         self,
@@ -233,7 +357,9 @@ class ScorerAgent(BaseAgent):
 
             # Skip jobs that need enrichment (no useful JD yet)
             if getattr(job, "needs_enrichment", False):
-                self._log.info("Skipping needs_enrichment job %s in hybrid scoring", job_id)
+                self._log.info(
+                    "Skipping needs_enrichment job %s in hybrid scoring", job_id
+                )
                 continue
 
             if _semantic_module is not None and resume_text:
@@ -284,48 +410,73 @@ class ScorerAgent(BaseAgent):
         for event, job, local_score in local_results:
             await self._bus.mark_processing(event["id"], db)
             self._log.info(
-                "Scorer processing event=%s job_id=%s '%s' (local=%.2f, method=%s)",
-                event["id"], job.id, job.title,
+                "Scorer processing event=%s job_id=%s (local=%.2f, method=%s)",
+                event["id"],
+                job.id,
                 local_score.overall_score,
                 "llm" if id(event) in for_llm else "local",
             )
             try:
-                if id(event) in for_llm:
-                    result_tag = await self._score_with_llm_judge(
-                        event, job, db, profile, triage_llm, primary_llm, limiter,
-                        resume_text=resume_text,
+
+                async def legacy_operation():
+                    if id(event) in for_llm:
+                        try:
+                            return await self._score_with_llm_judge(
+                                event,
+                                job,
+                                db,
+                                profile,
+                                triage_llm,
+                                primary_llm,
+                                limiter,
+                                resume_text=resume_text,
+                            )
+                        except (OutputParserException, TimeoutError):
+                            pass
+                    return await self._persist_local_score(
+                        event, job, local_score, db, profile
                     )
-                else:
-                    result_tag = await self._persist_local_score(event, job, local_score, db, profile)
+
+                result_tag = await self._dispatch_event(
+                    event, db, legacy_operation, profile
+                )
 
                 await self._bus.mark_completed(event["id"], db)
                 self._log.info(
                     "Scored job_id=%s: result=%s (event=%s)",
-                    job.id, result_tag, event["id"],
+                    job.id,
+                    result_tag,
+                    event["id"],
                 )
                 if result_tag == "skipped":
                     skipped += 1
                 else:
                     scored += 1
-            except OutputParserException as exc:
+            except OutputParserException:
                 self._log.warning(
-                    "LLM returned non-JSON for event %s — falling back to local score. "
-                    "Raw output: %.120s",
-                    event["id"], str(exc),
+                    "LLM structured output failed for event %s; using local fallback.",
+                    event["id"],
                 )
-                result_tag = await self._persist_local_score(event, job, local_score, db, profile)
+                result_tag = await self._persist_local_score(
+                    event, job, local_score, db, profile
+                )
                 await self._bus.mark_completed(event["id"], db)
                 scored += 1
             except TimeoutError:
                 self._log.warning(
-                    "LLM call timed out for event %s — falling back to local score.", event["id"]
+                    "LLM call timed out for event %s — falling back to local score.",
+                    event["id"],
                 )
-                result_tag = await self._persist_local_score(event, job, local_score, db, profile)
+                result_tag = await self._persist_local_score(
+                    event, job, local_score, db, profile
+                )
                 await self._bus.mark_completed(event["id"], db)
                 scored += 1
-            except Exception as exc:
-                self._log.exception("Scoring error for event %s: %s", event["id"], exc)
-                await self._bus.mark_failed(event["id"], str(exc), db)
+            except Exception:
+                self._log.warning(
+                    "Scoring error for event %s: job_score_failed", event["id"]
+                )
+                await self._bus.mark_failed(event["id"], "job_score_failed", db)
                 errors += 1
 
         return scored, skipped, errors
@@ -344,18 +495,28 @@ class ScorerAgent(BaseAgent):
             try:
                 payload = event["payload"]
                 job_id = payload["job_id"]
-                result = await db.execute(select(JobPosting).where(JobPosting.id == job_id))
+                result = await db.execute(
+                    select(JobPosting).where(JobPosting.id == job_id)
+                )
                 job = result.scalar_one_or_none()
                 if job is None:
                     raise ValueError(f"Job {job_id} not found in DB")
-                local_score = score_locally(job, profile)
-                tag = await self._persist_local_score(event, job, local_score, db, profile)
+
+                async def legacy_operation():
+                    local_score = score_locally(job, profile)
+                    return await self._persist_local_score(
+                        event, job, local_score, db, profile
+                    )
+
+                tag = await self._dispatch_event(event, db, legacy_operation, profile)
                 await self._bus.mark_completed(event["id"], db)
                 skipped += 1 if tag == "skipped" else 0
                 scored += 1 if tag != "skipped" else 0
-            except Exception as exc:
-                self._log.exception("Scoring error for event %s: %s", event["id"], exc)
-                await self._bus.mark_failed(event["id"], str(exc), db)
+            except Exception:
+                self._log.warning(
+                    "Scoring error for event %s: job_score_failed", event["id"]
+                )
+                await self._bus.mark_failed(event["id"], "job_score_failed", db)
                 errors += 1
         return scored, skipped, errors
 
@@ -375,37 +536,54 @@ class ScorerAgent(BaseAgent):
             try:
                 payload = event["payload"]
                 job_id = payload["job_id"]
-                result = await db.execute(select(JobPosting).where(JobPosting.id == job_id))
+                result = await db.execute(
+                    select(JobPosting).where(JobPosting.id == job_id)
+                )
                 job = result.scalar_one_or_none()
                 if job is None:
                     raise ValueError(f"Job {job_id} not found in DB")
-                tag = await self._score_with_llm(
-                    event, job, db, profile, triage_llm, primary_llm, limiter
-                )
+
+                async def legacy_operation():
+                    try:
+                        return await self._score_with_llm(
+                            event, job, db, profile, triage_llm, primary_llm, limiter
+                        )
+                    except (OutputParserException, TimeoutError):
+                        return await self._persist_local_score(
+                            event, job, score_locally(job, profile), db, profile
+                        )
+
+                tag = await self._dispatch_event(event, db, legacy_operation, profile)
                 await self._bus.mark_completed(event["id"], db)
                 skipped += 1 if tag == "skipped" else 0
                 scored += 1 if tag != "skipped" else 0
-            except OutputParserException as exc:
+            except OutputParserException:
                 self._log.warning(
-                    "LLM returned non-JSON for event %s — falling back to local score. "
-                    "Raw output: %.120s",
-                    event["id"], str(exc),
+                    "LLM structured output failed for event %s; using local fallback.",
+                    event["id"],
                 )
                 local_score = score_locally(job, profile)
-                tag = await self._persist_local_score(event, job, local_score, db, profile)
+                tag = await self._persist_local_score(
+                    event, job, local_score, db, profile
+                )
                 await self._bus.mark_completed(event["id"], db)
                 scored += 1
             except TimeoutError:
                 self._log.warning(
-                    "LLM call timed out for event %s — falling back to local score.", event["id"]
+                    "LLM call timed out for event %s — falling back to local score.",
+                    event["id"],
                 )
                 local_score = score_locally(job, profile)
-                tag = await self._persist_local_score(event, job, local_score, db, profile)
+                tag = await self._persist_local_score(
+                    event, job, local_score, db, profile
+                )
                 await self._bus.mark_completed(event["id"], db)
                 scored += 1
-            except Exception as exc:
-                self._log.exception("Scoring error for event %s: %s", event["id"], exc)
-                await self._bus.mark_failed(event["id"], str(exc), db)
+            except Exception:
+                self._log.warning(
+                    "Scoring error for event %s: job_score_failed", event["id"]
+                )
+                await self._bus.mark_failed(event["id"], "job_score_failed", db)
                 errors += 1
         return scored, skipped, errors
 
@@ -459,16 +637,20 @@ class ScorerAgent(BaseAgent):
             input_tokens=triage_tok_in,
             output_tokens=triage_tok_out,
         )
-        db.add(CostTracking(
-            agent_name="scorer",
-            job_id=job_id,
-            model=triage_model_name,
-            tokens_in=triage_tok_in,
-            tokens_out=triage_tok_out,
-            cost_estimate=estimate_cost(triage_model_name, triage_tok_in, triage_tok_out),
-        ))
+        db.add(
+            CostTracking(
+                agent_name="scorer",
+                job_id=job_id,
+                model=triage_model_name,
+                tokens_in=triage_tok_in,
+                tokens_out=triage_tok_out,
+                cost_estimate=estimate_cost(
+                    triage_model_name, triage_tok_in, triage_tok_out
+                ),
+            )
+        )
         if not triage.relevant:
-            self._log.info("Job %s pre-filtered: %s", job_id, triage.reason)
+            self._log.info("Job %s pre-filtered.", job_id)
             await db.commit()
             return "skipped"
 
@@ -510,14 +692,16 @@ class ScorerAgent(BaseAgent):
             output_tokens=score_tok_out,
         )
         cost = estimate_cost(primary_model_name, score_tok_in, score_tok_out)
-        db.add(CostTracking(
-            agent_name="scorer",
-            job_id=job_id,
-            model=primary_model_name,
-            tokens_in=score_tok_in,
-            tokens_out=score_tok_out,
-            cost_estimate=cost,
-        ))
+        db.add(
+            CostTracking(
+                agent_name="scorer",
+                job_id=job_id,
+                model=primary_model_name,
+                tokens_in=score_tok_in,
+                tokens_out=score_tok_out,
+                cost_estimate=cost,
+            )
+        )
 
         await self._persist_score(job_id, score, db)
         await self.emit_event(
@@ -541,7 +725,7 @@ class ScorerAgent(BaseAgent):
             },
             db,
         )
-        self._log.info("Job %s scored %.2f (LLM-judge) — %s", job_id, score.overall_score, score.reasoning[:80])
+        self._log.info("Job %s scored %.2f (LLM-judge).", job_id, score.overall_score)
         return "scored"
 
     @trace_workflow("job_scoring")
@@ -591,16 +775,20 @@ class ScorerAgent(BaseAgent):
             input_tokens=triage_tok_in,
             output_tokens=triage_tok_out,
         )
-        db.add(CostTracking(
-            agent_name="scorer",
-            job_id=job_id,
-            model=triage_model_name,
-            tokens_in=triage_tok_in,
-            tokens_out=triage_tok_out,
-            cost_estimate=estimate_cost(triage_model_name, triage_tok_in, triage_tok_out),
-        ))
+        db.add(
+            CostTracking(
+                agent_name="scorer",
+                job_id=job_id,
+                model=triage_model_name,
+                tokens_in=triage_tok_in,
+                tokens_out=triage_tok_out,
+                cost_estimate=estimate_cost(
+                    triage_model_name, triage_tok_in, triage_tok_out
+                ),
+            )
+        )
         if not triage.relevant:
-            self._log.info("Job %s pre-filtered: %s", job_id, triage.reason)
+            self._log.info("Job %s pre-filtered.", job_id)
             await db.commit()
             return "skipped"
 
@@ -642,14 +830,16 @@ class ScorerAgent(BaseAgent):
             output_tokens=score_tok_out,
         )
         cost = estimate_cost(primary_model_name, score_tok_in, score_tok_out)
-        db.add(CostTracking(
-            agent_name="scorer",
-            job_id=job_id,
-            model=primary_model_name,
-            tokens_in=score_tok_in,
-            tokens_out=score_tok_out,
-            cost_estimate=cost,
-        ))
+        db.add(
+            CostTracking(
+                agent_name="scorer",
+                job_id=job_id,
+                model=primary_model_name,
+                tokens_in=score_tok_in,
+                tokens_out=score_tok_out,
+                cost_estimate=cost,
+            )
+        )
 
         await self._persist_score(job_id, score, db)
         await self.emit_event(
@@ -673,7 +863,7 @@ class ScorerAgent(BaseAgent):
             },
             db,
         )
-        self._log.info("Job %s scored %.2f (LLM) — %s", job_id, score.overall_score, score.reasoning[:80])
+        self._log.info("Job %s scored %.2f (LLM).", job_id, score.overall_score)
         return "scored"
 
     async def _persist_local_score(
@@ -711,92 +901,13 @@ class ScorerAgent(BaseAgent):
         return "scored"
 
     async def _persist_score(self, job_id: str, score: Any, db: AsyncSession) -> None:
-        """Dispatch one score through the entry-bound migration mode."""
-        mode = _JOB_SCORE_MODE.get()
-        request = JobScoreInput(
-            job_ref=f"job:{job_id}",
-            profile_ref="profile:current",
-            event_ref=f"event:{job_id}",
-        )
-        output = self._job_score_output(score)
-
-        async def legacy_score(_: JobScoreInput) -> JobScoreOutput:
-            await self._write_visible_score(job_id, score, db)
-            return output
-
-        async def runtime_score(runtime_request: JobScoreInput) -> JobScoreOutput:
-            runtime_output = await self._execute_runtime_score(
-                runtime_request, output
-            )
-            if mode is RuntimeMode.SHADOW:
-                await self._record_shadow_comparison(runtime_request, output, runtime_output)
-            return runtime_output
-
-        dispatch = await JobScoreMigrationDispatcher(
-            mode=mode,
-            legacy_score=legacy_score,
-            runtime_score=runtime_score,
-        ).score_job(request)
-        if dispatch.authoritative_engine == "runtime":
-            await self._write_visible_score(job_id, score, db)
-
-    @staticmethod
-    def _job_score_output(score: Any) -> JobScoreOutput:
-        """Translate the existing in-memory score shape at the migration seam."""
-        return JobScoreOutput(
-            skill_match=float(score.skill_match),
-            experience_match=float(score.experience_match),
-            rate_match=float(score.rate_match),
-            location_match=float(score.location_match),
-            overall_score=float(score.overall_score),
-            reasoning=str(getattr(score, "reasoning", "")),
-            keyword_matches=tuple(getattr(score, "keyword_matches", ()) or ()),
-            keyword_misses=tuple(getattr(score, "keyword_misses", ()) or ()),
-            fit_reasoning=getattr(score, "fit_reasoning", None),
-            strengths=tuple(getattr(score, "strengths", ()) or ()),
-            score_gaps=tuple(getattr(score, "score_gaps", ()) or ()),
-            scoring_method=(
-                method
-                if isinstance(method := getattr(score, "scoring_method", None), str)
-                else "llm"
-            ),
-        )
-
-    async def _execute_runtime_score(
-        self, request: JobScoreInput, output: JobScoreOutput
-    ) -> JobScoreOutput:
-        """Persist runtime lifecycle with the shared kernel; never write JobScore."""
-        factory = SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)
-        runtime = DurableJobScoreRuntime(
-            WorkflowKernel(factory), worker_id=f"scorer-{uuid.uuid4()}"
-        )
-        _, claim = await runtime.start(request)
-        if not await runtime.complete(claim, output):
-            raise RuntimeError("job_score_runtime_claim_lost")
-        return output
-
-    async def _record_shadow_comparison(
-        self,
-        request: JobScoreInput,
-        legacy_output: JobScoreOutput,
-        runtime_output: JobScoreOutput,
-    ) -> None:
-        factory = SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)
-        async with factory.transaction() as uow:
-            await record_job_score_shadow_comparison(
-                uow.shadow,
-                request=request,
-                legacy_result=legacy_output,
-                runtime_result=runtime_output,
-            )
-            await uow.commit()
+        """Legacy projection; execution dispatch happens before this helper."""
+        await self._write_visible_score(job_id, score, db)
 
     async def _write_visible_score(
-        self, job_id: str, score: Any, db: AsyncSession
+        self, job_id: str, score: Any, db: AsyncSession, *, commit: bool = True
     ) -> None:
         """The sole JobScore projection writer selected by the dispatcher."""
-        existing = await db.execute(select(JobScore).where(JobScore.job_id == job_id))
-        row = existing.scalar_one_or_none()
         score_data = {
             "skill_match": score.skill_match,
             "experience_match": score.experience_match,
@@ -804,179 +915,51 @@ class ScorerAgent(BaseAgent):
             "location_match": score.location_match,
             "overall_score": score.overall_score,
             "reasoning": score.reasoning,
-            "scoring_method": (m if isinstance(m := getattr(score, "scoring_method", None), str) else "llm"),
-            "keyword_matches": list(v if isinstance(v := getattr(score, "keyword_matches", None), (list, tuple)) else []),
-            "keyword_misses": list(v if isinstance(v := getattr(score, "keyword_misses", None), (list, tuple)) else []),
+            "scoring_method": (
+                m
+                if isinstance(m := getattr(score, "scoring_method", None), str)
+                else "llm"
+            ),
+            "keyword_matches": list(
+                v
+                if isinstance(
+                    v := getattr(score, "keyword_matches", None), (list, tuple)
+                )
+                else []
+            ),
+            "keyword_misses": list(
+                v
+                if isinstance(
+                    v := getattr(score, "keyword_misses", None), (list, tuple)
+                )
+                else []
+            ),
             "fit_reasoning": getattr(score, "fit_reasoning", None),
-            "strengths": list(v2) if (v2 := getattr(score, "strengths", None)) and isinstance(v2, (list, tuple)) else [],
-            "score_gaps": list(v3) if (v3 := getattr(score, "score_gaps", None)) and isinstance(v3, (list, tuple)) else [],
+            "strengths": list(v2)
+            if (v2 := getattr(score, "strengths", None))
+            and isinstance(v2, (list, tuple))
+            else [],
+            "score_gaps": list(v3)
+            if (v3 := getattr(score, "score_gaps", None))
+            and isinstance(v3, (list, tuple))
+            else [],
         }
-        if row is None:
-            db.add(JobScore(id=str(uuid.uuid4()), job_id=job_id, **score_data))
-        else:
-            for k, v in score_data.items():
-                setattr(row, k, v)
-            row.scored_at = datetime.utcnow()
+        await db.execute(
+            sqlite_insert(JobScore)
+            .values(id=str(uuid.uuid4()), job_id=job_id, **score_data)
+            .on_conflict_do_update(
+                index_elements=["job_id"],
+                set_={**score_data, "scored_at": datetime.utcnow()},
+            )
+        )
 
         await db.execute(
-            update(JobPosting).where(JobPosting.id == job_id).values(
+            update(JobPosting)
+            .where(JobPosting.id == job_id)
+            .values(
                 auto_scored=True,
                 match_score=score.overall_score,
             )
         )
-        await db.commit()
-
-    # ── Strategy resolver ─────────────────────────────────────────────
-
-    @staticmethod
-    def _resolve_method(profile: Any) -> str:
-        """Resolve 'auto' to a concrete method based on provider tier."""
-        method = getattr(profile.scoring, "method", "auto")
-        if method == "auto":
-            return "hybrid" if profile.llm.provider in _FREE_TIER_PROVIDERS else "llm"
-        return method
-
-    # ── Prompt builders — all data sourced from profile.yaml ─────────
-
-    def _build_triage_prompt(self, job: JobPosting, profile: Any) -> str:
-        roles = ", ".join(profile.search.target_roles)
-        locations = ", ".join(
-            f"{loc.city}, {loc.country}" for loc in profile.search.locations
-        )
-        return (
-            f"{prompt_contract_block('job_scoring_triage')}\n\n"
-            f"You are a job relevance filter for a {profile.candidate.title} "
-            f"with {profile.candidate.years_experience} years experience.\n\n"
-            f"Target roles: {roles}\n"
-            f"Target locations: {locations}\n\n"
-            f"Job title: {job.title}\n"
-            f"Company: {job.company or 'unknown'}\n"
-            f"Location: {job.location or 'unknown'}\n"
-            f"Description (first 500 chars): {(job.description or '')[:500]}\n\n"
-            "Is this job relevant? Reject: junior roles, unrelated domains, locations "
-            "clearly outside target. Pass: anything plausibly matching the profile. "
-            "Map the reason only to supplied profile or job fields; use unknown rather "
-            "than assuming eligibility, sponsorship, clearance, or working pattern."
-        )
-
-    def _build_scoring_prompt(self, job: JobPosting, profile: Any) -> str:
-        weights = profile.scoring.weights
-        comp = profile.compensation
-        primary_skills = ", ".join(profile.skills.primary)
-        secondary_skills = ", ".join(profile.skills.secondary)
-        preferred_domains = ", ".join(profile.domains.preferred)
-        proof_summaries = "; ".join(p.summary for p in profile.proof_points)
-        locations = "; ".join(
-            f"{loc.city} ({loc.remote_preference})" for loc in profile.search.locations
-        )
-
-        locale_context = self._get_locale_scoring_context(profile)
-
-        return (
-            f"{prompt_contract_block('job_scoring_detailed')}\n\n"
-            f"Score this job for a candidate with the following profile:\n\n"
-            f"Title: {profile.candidate.title}, {profile.candidate.years_experience} years experience\n"
-            f"Primary skills: {primary_skills}\n"
-            f"Secondary skills: {secondary_skills}\n"
-            f"Preferred domains: {preferred_domains}\n"
-            f"Key achievements: {proof_summaries}\n"
-            f"Target locations: {locations}\n"
-            f"Rate range: {comp.currency} {comp.min_rate}–{comp.max_rate} ({comp.rate_type})\n\n"
-            f"Job:\nTitle: {job.title}\nCompany: {job.company or 'N/A'}\n"
-            f"Location: {job.location or 'N/A'}\nRate: {job.rate_text or 'N/A'}\n"
-            f"Legal/contract fields: {getattr(job, 'legal_fields', None) or {'ir35_status': job.ir35_status} if job.ir35_status else {}}\n"
-            f"Description:\n{(job.description or '')[:3000]}\n\n"
-            f"Score on four dimensions (0.0–1.0):\n"
-            f"- skill_match (weight {weights.skill_match}): how well skills match?\n"
-            f"- experience_match (weight {weights.experience_match}): seniority/domain alignment?\n"
-            f"- rate_match (weight {weights.rate_match}): rate within candidate range?\n"
-            f"- location_match (weight {weights.location_match}): location/remote policy match?\n"
-            f"{locale_context}\n"
-            f"overall_score = weighted sum using the weights above.\n\n"
-            f"Also return two keyword lists:\n"
-            f"- keyword_matches: skills/tools mentioned in the job that the candidate clearly has (max 15)\n"
-            f"- keyword_misses: skills/tools required by the job that the candidate lacks (max 10)\n"
-            f"Every rationale claim must map to a supplied profile or job field. "
-            f"Do not invent candidate metrics or justification. Component scores are "
-            f"validated and the weighted total is recomputed by the application."
-        )
-
-    def _build_llm_judge_prompt(self, job: JobPosting, profile: Any, resume_text: str) -> str:
-        """Build the holistic LLM-judge prompt with full resume and JD.
-
-        Uses resume_store.get_resume_text() for the candidate's full CV text,
-        and the job's full description.  Instructs the LLM to assess semantic
-        fit beyond keyword matching.
-        """
-        jd_text = (job.description or "")[:3000]
-        weights = profile.scoring.weights
-        comp = profile.compensation
-
-        return (
-            f"{prompt_contract_block('job_scoring_judge')}\n\n"
-            f"You are an experienced recruiter assessing candidate-job fit.\n\n"
-            f"Here is a candidate's full resume:\n{resume_text}\n\n"
-            f"Here is a job description:\nTitle: {job.title}\n"
-            f"Company: {job.company or 'N/A'}\nLocation: {job.location or 'N/A'}\n"
-            f"Rate: {job.rate_text or 'N/A'}\n\n{jd_text}\n\n"
-            f"Assess fit holistically. A candidate whose title or experience maps to "
-            f"the role counts as a strong match even if exact keywords differ "
-            f"(e.g. 'AI Project Manager' fits 'IT Project Manager'). "
-            f"Consider transferable experience, seniority, domain.\n\n"
-            f"Score on four dimensions (0.0–1.0):\n"
-            f"- skill_match (weight {weights.skill_match}): skills and toolset alignment\n"
-            f"- experience_match (weight {weights.experience_match}): seniority/domain fit\n"
-            f"- rate_match (weight {weights.rate_match}): rate within "
-            f"{comp.currency} {comp.min_rate}–{comp.max_rate} ({comp.rate_type})\n"
-            f"- location_match (weight {weights.location_match}): location/remote policy\n"
-            f"overall_score = weighted sum.\n\n"
-            f"Also return:\n"
-            f"- fit_reasoning: one holistic paragraph explaining the overall fit\n"
-            f"- strengths: 2-3 specific, concrete strengths this candidate brings\n"
-            f"- score_gaps: genuine gaps or risks (empty list if none)\n"
-            f"- keyword_matches: skills/tools the candidate clearly has (max 15)\n"
-            f"- keyword_misses: required skills the candidate lacks (max 10)\n"
-            f"Every rationale claim must map to resume or job evidence. Do not add "
-            f"candidate metrics or fabricate justification after selecting a score. "
-            f"Component scores are validated and the weighted total is recomputed "
-            f"by the application."
-        )
-
-    @staticmethod
-    def _job_evidence_text(job: JobPosting) -> str:
-        return " ".join(
-            str(value or "")
-            for value in (
-                job.title,
-                job.company,
-                job.location,
-                job.rate_text,
-                job.description,
-            )
-        )
-
-    @staticmethod
-    def _profile_evidence_text(profile: Any) -> str:
-        return " ".join(
-            (
-                str(profile.candidate.title),
-                str(profile.candidate.years_experience),
-                *map(str, profile.skills.primary),
-                *map(str, profile.skills.secondary),
-                *(
-                    str(proof.summary)
-                    for proof in profile.proof_points
-                ),
-            )
-        )
-
-    def _get_locale_scoring_context(self, profile: Any) -> str:
-        try:
-            from ..services.locale_service import get_scoring_context
-            legal_prefs: dict[str, str] = getattr(profile.compensation, "legal_preferences", {})
-            ctx = get_scoring_context(profile.locale, legal_prefs)
-            if ctx:
-                return f"Additional location_match guidance ({profile.locale} locale):\n{ctx}"
-        except Exception:
-            pass
-        return ""
+        if commit:
+            await db.commit()

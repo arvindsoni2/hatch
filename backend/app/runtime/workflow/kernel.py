@@ -108,12 +108,28 @@ class WorkflowKernel:
     async def claim_next(
         self, worker_id: str, now: datetime
     ) -> ExecutionClaimRecord | None:
+        return await self._claim(worker_id, now)
+
+    async def claim_run(
+        self, workflow_run_id: str, worker_id: str, now: datetime
+    ) -> ExecutionClaimRecord | None:
+        """Claim pending work only within the caller's durable run."""
+        return await self._claim(worker_id, now, workflow_run_id=workflow_run_id)
+
+    async def _claim(
+        self, worker_id: str, now: datetime, *, workflow_run_id: str | None = None
+    ) -> ExecutionClaimRecord | None:
         claim = None
         for attempt in range(self._lock_retry_attempts):
             try:
-                claim = await self._repository.claim_next(
-                    worker_id, now, self._lease_duration
-                )
+                if workflow_run_id is None:
+                    claim = await self._repository.claim_next(
+                        worker_id, now, self._lease_duration
+                    )
+                else:
+                    claim = await self._repository.claim_run(
+                        workflow_run_id, worker_id, now, self._lease_duration
+                    )
                 break
             except OperationalError as error:
                 if (
@@ -134,6 +150,12 @@ class WorkflowKernel:
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None:
         return await self._repository.get_attempt(attempt_id)
 
+    async def get_claim_correlation(
+        self, claim: ExecutionClaimRecord
+    ) -> dict[str, str | int]:
+        """Expose the durable ownership lineage for product binding verification."""
+        return dict(await self._repository.get_claim_correlation(claim))
+
     async def reclaim(
         self, attempt_id: str, worker_id: str, now: datetime
     ) -> ExecutionClaimRecord | None:
@@ -150,6 +172,7 @@ class WorkflowKernel:
         result: Mapping[str, object],
         *,
         now: datetime | None = None,
+        projection: Callable[[Any], Awaitable[None]] | None = None,
     ) -> bool:
         result_ref = dict(result)
         if (
@@ -161,7 +184,11 @@ class WorkflowKernel:
         finished_at = now or self._clock.now()
         if finished_at < claim.claimed_at:
             raise ValueError("clock must not finalize before the claim")
-        return await self._repository.finalize(claim, result_ref, finished_at)
+        if projection is None:
+            return await self._repository.finalize(claim, result_ref, finished_at)
+        return await self._repository.finalize(
+            claim, result_ref, finished_at, projection=projection
+        )
 
     async def persist_execution_result(
         self,

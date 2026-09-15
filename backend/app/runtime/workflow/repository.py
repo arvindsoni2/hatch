@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 from datetime import datetime, timedelta
 import logging
 import re
@@ -458,13 +460,28 @@ class SQLiteWorkflowRepository:
             return attempt
 
     async def _claim_pending(
-        self, worker_id: str, now: datetime, lease_duration: timedelta
+        self,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+        *,
+        workflow_run_id: str | None = None,
     ) -> ExecutionClaimRecord | None:
+        scope = (
+            TaskAttemptRecord.workflow_step_id.in_(
+                select(WorkflowStepRecord.id).where(
+                    WorkflowStepRecord.workflow_run_id == workflow_run_id
+                )
+            )
+            if workflow_run_id is not None
+            else True
+        )
         async with self._uow_factory.transaction() as uow:
             promoted_step_ids = set(
                 (
                     await uow.session.scalars(
                         select(TaskAttemptRecord.workflow_step_id).where(
+                            scope,
                             TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
                             TaskAttemptRecord.waiting_reason
                             == WaitingReason.RETRY_TIME,
@@ -476,6 +493,7 @@ class SQLiteWorkflowRepository:
             await uow.session.execute(
                 update(TaskAttemptRecord)
                 .where(
+                    scope,
                     TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
                     TaskAttemptRecord.waiting_reason == WaitingReason.RETRY_TIME,
                     TaskAttemptRecord.not_before <= now,
@@ -489,6 +507,7 @@ class SQLiteWorkflowRepository:
             candidate = await uow.session.scalar(
                 select(TaskAttemptRecord)
                 .where(
+                    scope,
                     TaskAttemptRecord.status == TaskAttemptStatus.PENDING,
                     (TaskAttemptRecord.not_before.is_(None))
                     | (TaskAttemptRecord.not_before <= now),
@@ -556,6 +575,20 @@ class SQLiteWorkflowRepository:
     ) -> ExecutionClaimRecord | None:
         return await self._claim_pending(
             require_worker_id(worker_id), now, lease_duration
+        )
+
+    async def claim_run(
+        self,
+        workflow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionClaimRecord | None:
+        return await self._claim_pending(
+            require_worker_id(worker_id),
+            now,
+            lease_duration,
+            workflow_run_id=workflow_run_id,
         )
 
     async def reclaim(
@@ -698,6 +731,8 @@ class SQLiteWorkflowRepository:
         claim: ExecutionClaimRecord,
         result_ref: dict[str, object],
         now: datetime,
+        *,
+        projection: Callable[[Any], Awaitable[None]] | None = None,
     ) -> bool:
         """Persist a result only when the supplied claim remains the owner."""
         active_claim = self._active_claim(claim, now)
@@ -738,6 +773,8 @@ class SQLiteWorkflowRepository:
             if attempt is None:
                 raise RuntimeError("finalized attempt disappeared before commit")
             await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
+            if projection is not None:
+                await projection(uow)
             await uow.commit()
             return True
 

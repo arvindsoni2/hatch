@@ -164,6 +164,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         db_factory=AsyncSessionLocal,
         email_generator=email_gen,
     )
+    from .runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+    from .runtime_bindings.migration.retention import install_shadow_retention
+
+    await install_shadow_retention(
+        scheduler, SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)
+    )
     scheduler.start()
     logger.info(
         "Scheduler started (full: %dh, quick: %dh, classifier: %dmin).",

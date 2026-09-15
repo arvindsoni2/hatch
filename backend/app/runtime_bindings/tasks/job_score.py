@@ -54,7 +54,7 @@ JOB_SCORE_V1 = TaskSpec(
     output_model=JobScoreOutput,
     context_requirements=(
         ContextRequirement(capability="candidate.profile_summary"),
-        ContextRequirement(capability="candidate.resume_text"),
+        ContextRequirement(capability="candidate.resume_text", required=False),
         ContextRequirement(capability="job.description"),
         ContextRequirement(capability="job.requirements"),
     ),

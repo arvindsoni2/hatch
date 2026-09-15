@@ -22,8 +22,12 @@ from ..tasks.job_score import JOB_SCORE_V1, JobScoreInput, JobScoreOutput
 
 
 ScoreOperation: TypeAlias = Callable[
-    [JobScoreInput], Awaitable[JobScoreOutput] | JobScoreOutput
+    [JobScoreInput], Awaitable[JobScoreOutput | None] | JobScoreOutput | None
 ]
+
+
+class JobScoreClaimLost(RuntimeError):
+    """A stale runtime worker has no authority to invoke any visible writer."""
 
 
 class LegacyAIRuntimeFacade:
@@ -32,11 +36,11 @@ class LegacyAIRuntimeFacade:
     def __init__(self, score: ScoreOperation) -> None:
         self._score = score
 
-    async def score_job(self, request: JobScoreInput) -> JobScoreOutput:
+    async def score_job(self, request: JobScoreInput) -> JobScoreOutput | None:
         result = self._score(request)
         if inspect.isawaitable(result):
             result = await result
-        if not isinstance(result, JobScoreOutput):
+        if result is not None and not isinstance(result, JobScoreOutput):
             raise TypeError("job score operation must return JobScoreOutput")
         return result
 
@@ -45,7 +49,7 @@ class LegacyAIRuntimeFacade:
 class JobScoreDispatchResult:
     """Visible result and its sole writer for one already-resolved mode."""
 
-    visible_result: JobScoreOutput
+    visible_result: JobScoreOutput | None
     authoritative_engine: str
     shadow_reason_code: str | None = None
 
@@ -64,7 +68,7 @@ class JobScoreMigrationDispatcher:
             raise TypeError("mode must be RuntimeMode")
         self._mode = mode
         self._legacy = LegacyAIRuntimeFacade(legacy_score)
-        self._runtime = LegacyAIRuntimeFacade(runtime_score)
+        self._runtime = runtime_score
 
     @property
     def mode(self) -> RuntimeMode:
@@ -80,9 +84,11 @@ class JobScoreMigrationDispatcher:
         if self._mode is RuntimeMode.NEW:
             try:
                 return JobScoreDispatchResult(
-                    visible_result=await self._runtime.score_job(request),
+                    visible_result=await self._runtime(request),
                     authoritative_engine="runtime",
                 )
+            except JobScoreClaimLost:
+                raise
             except Exception:
                 # TaskSpec declares the existing deterministic fallback behavior.
                 return JobScoreDispatchResult(
@@ -93,7 +99,7 @@ class JobScoreMigrationDispatcher:
 
         legacy_result = await self._legacy.score_job(request)
         try:
-            await self._runtime.score_job(request)
+            await self._runtime(request)
         except Exception:
             return JobScoreDispatchResult(
                 visible_result=legacy_result,
@@ -120,13 +126,21 @@ async def record_job_score_shadow_comparison(
     *,
     request: JobScoreInput,
     legacy_result: JobScoreOutput,
-    runtime_result: JobScoreOutput,
+    runtime_result: JobScoreOutput | None,
     runtime_execution_id: str | None = None,
     legacy_execution_ref: str | None = None,
     latency_ms: int = 0,
     input_tokens: int = 0,
     output_tokens: int = 0,
     cost_microusd: int = 0,
+    model_id: str = "unknown",
+    model_version: str = "unknown",
+    provider: str = "unknown",
+    runtime_run_id: str | None = None,
+    reason_code: str = "success",
+    reason_codes: list[str] | None = None,
+    threshold: float = 0.75,
+    model_calls: list[dict[str, object]] | None = None,
     created_at: datetime | None = None,
 ) -> object:
     """Store a bounded SHADOW comparison without retaining score content.
@@ -134,8 +148,17 @@ async def record_job_score_shadow_comparison(
     The shared store enforces the 30-day maximum and rejects content-bearing
     metrics at its persistence boundary.
     """
-    delta = round(abs(runtime_result.overall_score - legacy_result.overall_score), 4)
-    agreement = _shortlist(legacy_result) == _shortlist(runtime_result)
+    delta = (
+        None
+        if runtime_result is None
+        else round(abs(runtime_result.overall_score - legacy_result.overall_score), 4)
+    )
+    agreement = (
+        None
+        if runtime_result is None
+        else _shortlist(legacy_result, threshold)
+        == _shortlist(runtime_result, threshold)
+    )
     return await store.record(
         slice_name="job_score",
         domain_type="job_posting",
@@ -143,8 +166,16 @@ async def record_job_score_shadow_comparison(
         legacy_execution_ref=legacy_execution_ref,
         runtime_execution_id=runtime_execution_id,
         legacy_result_hash=_metadata_hash(legacy_result.model_dump(mode="json")),
-        runtime_result_hash=_metadata_hash(runtime_result.model_dump(mode="json")),
-        comparison_status="same" if delta == 0 else "different",
+        runtime_result_hash=_metadata_hash(
+            runtime_result.model_dump(mode="json")
+            if runtime_result
+            else {"reason_code": reason_code}
+        ),
+        comparison_status="runtime_failed"
+        if runtime_result is None
+        else "same"
+        if delta == 0
+        else "different",
         metrics_json={
             "score_delta": delta,
             "shortlist_agreement": agreement,
@@ -153,7 +184,18 @@ async def record_job_score_shadow_comparison(
             "input_tokens": max(0, int(input_tokens)),
             "output_tokens": max(0, int(output_tokens)),
             "cost_microusd": max(0, int(cost_microusd)),
-            "reason_code": "same" if delta == 0 else "score_delta",
+            "reason_code": reason_code
+            if runtime_result is None or reason_code != "success"
+            else "same"
+            if delta == 0
+            else "score_delta",
+            "reason_codes": reason_codes or [],
+            "model_id": model_id,
+            "model_version": model_version,
+            "provider": provider,
+            "runtime_run_id": runtime_run_id,
+            "token_measurement": "estimated" if input_tokens else "none",
+            "model_calls": model_calls or [],
         },
         created_at=created_at,
     )

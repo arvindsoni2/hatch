@@ -1,99 +1,91 @@
-"""Synthetic R2 gate measurements; this suite never changes the production mode."""
+"""Real offline deterministic conformance; never a provider promotion gate."""
 
-from statistics import mean
+import json
+import time
+from collections import Counter
 
+from sqlalchemy import select
+
+from app.agents.scorer_agent import ScorerAgent
+from app.agents.tools.event_bus import EventBus
+from app.config import settings
+from app.models.job_score import JobScore
 from app.runtime import RuntimeMode
-from app.runtime_bindings.migration.facade import JobScoreMigrationDispatcher
-from app.runtime_bindings.tasks.job_score import JobScoreInput, JobScoreOutput
+from app.runtime_bindings.migration.scoring import score_output
+from app.schemas.profile import Profile
+from job_score_test_support import job
 
 
-def _output(score: float) -> JobScoreOutput:
-    return JobScoreOutput(
-        skill_match=score,
-        experience_match=score,
-        rate_match=score,
-        location_match=score,
-        overall_score=score,
-        reasoning="synthetic_reason",
-        keyword_matches=(),
-        keyword_misses=(),
-        fit_reasoning=None,
-        strengths=(),
-        score_gaps=(),
-        scoring_method="local",
-    )
+def test_percentiles_use_nearest_rank_not_mean_or_max():
+    from job_score_benchmark_support import percentile
+
+    assert percentile(list(range(1, 21)), 50) == 10
+    assert percentile(list(range(1, 21)), 95) == 19
+    assert percentile([1, 2, 3, 4, 100], 50) == 3
 
 
-async def test_r2_synthetic_job_score_gate_is_measured_without_promoting_new(
-    runtime_fixture,
-) -> None:
+async def test_r2_offline_conformance_executes_fifty_labelled_inputs(
+    workflow_runtime, runtime_fixture, monkeypatch
+):
+    from job_score_benchmark_support import summarize
+
     cases = runtime_fixture("job_score_r2_cases.json")
-    threshold = 0.75
-    assert [case["cohort"] for case in cases].count("strong_fit") == 20
-    assert [case["cohort"] for case in cases].count("borderline") == 15
-    assert [case["cohort"] for case in cases].count("poor_fit") == 15
-
-    legacy_decisions: list[bool] = []
-    new_decisions: list[bool] = []
-    expected_decisions: list[bool] = []
-    deltas: list[float] = []
-    legacy_latencies: list[int] = []
-    new_latencies: list[int] = []
-    legacy_costs: list[int] = []
-    new_costs: list[int] = []
-    legacy_tokens: list[int] = []
-    new_tokens: list[int] = []
-
+    assert Counter(case["cohort"] for case in cases) == {
+        "strong_fit": 20,
+        "borderline": 15,
+        "poor_fit": 15,
+    }
+    assert len({case["job"]["description"] for case in cases}) == 50
+    _, factory = workflow_runtime
+    measured = []
     for case in cases:
-        request = JobScoreInput(
-            job_ref=f"job:{case['id']}",
-            profile_ref="profile:synthetic",
-            event_ref=f"event:{case['id']}",
+        candidate = Profile.model_validate(case["profile"])
+        monkeypatch.setattr("app.agents.scorer_agent.load_profile", lambda: candidate)
+        monkeypatch.setattr(
+            "app.agents.tools.profile_loader.load_profile", lambda: candidate
         )
-
-        async def legacy(_: JobScoreInput, score=case["legacy_score"]) -> JobScoreOutput:
-            return _output(score)
-
-        async def runtime(_: JobScoreInput, score=case["new_score"]) -> JobScoreOutput:
-            return _output(score)
-
-        legacy_result = await JobScoreMigrationDispatcher(
-            mode=RuntimeMode.LEGACY, legacy_score=legacy, runtime_score=runtime
-        ).score_job(request)
-        new_result = await JobScoreMigrationDispatcher(
-            mode=RuntimeMode.NEW, legacy_score=legacy, runtime_score=runtime
-        ).score_job(request)
-        assert legacy_result.authoritative_engine == "legacy"
-        assert new_result.authoritative_engine == "runtime"
-        assert 0 <= new_result.visible_result.overall_score <= 1
-
-        legacy_decisions.append(legacy_result.visible_result.overall_score >= threshold)
-        new_decisions.append(new_result.visible_result.overall_score >= threshold)
-        expected_decisions.append(case["expected_shortlist"])
-        deltas.append(
-            abs(
-                new_result.visible_result.overall_score
-                - legacy_result.visible_result.overall_score
-            )
+        monkeypatch.setattr(
+            "app.services.resume_store.get_resume_text", lambda: case["resume"]
         )
-        legacy_latencies.append(case["legacy_latency_ms"])
-        new_latencies.append(case["new_latency_ms"])
-        legacy_costs.append(case["legacy_cost_microusd"])
-        new_costs.append(case["new_cost_microusd"])
-        legacy_tokens.append(case["legacy_tokens"])
-        new_tokens.append(case["new_tokens"])
-
-    legacy_accuracy = sum(a == b for a, b in zip(legacy_decisions, expected_decisions)) / len(cases)
-    new_accuracy = sum(a == b for a, b in zip(new_decisions, expected_decisions)) / len(cases)
-    agreement = sum(a == b for a, b in zip(legacy_decisions, new_decisions)) / len(cases)
-    delta_within_tolerance = sum(delta <= 0.10 for delta in deltas) / len(cases)
-
-    assert legacy_accuracy == 1.0
-    assert new_accuracy >= 0.92
-    assert new_accuracy >= legacy_accuracy - 0.02
-    assert agreement >= 0.95
-    assert delta_within_tolerance >= 0.90
-    assert mean(new_latencies) <= 1.20 * mean(legacy_latencies)
-    assert max(new_latencies) <= 1.25 * max(legacy_latencies)
-    assert mean(new_costs) <= 1.15 * mean(legacy_costs)
-    assert max(new_tokens) <= 1.25 * max(legacy_tokens)
+        row = {
+            "id": case["id"],
+            "expected_shortlist": case["expected_shortlist"],
+            "cohort": case["cohort"],
+        }
+        for mode in (RuntimeMode.LEGACY, RuntimeMode.NEW):
+            monkeypatch.setattr(settings, "HATCH_RUNTIME_JOB_SCORE_MODE", mode)
+            scorer = ScorerAgent(runtime_factory=factory)
+            scorer._bus = EventBus()
+            async with factory.session_factory() as session:
+                posting = job(**case["job"])
+                session.add(posting)
+                await session.commit()
+                await scorer._bus.emit(
+                    "job_discovered", "scout", {"job_id": posting.id}, session
+                )
+                started = time.perf_counter()
+                outcome = await scorer.run(session)
+                row[f"{mode.value}_latency_ms"] = (time.perf_counter() - started) * 1000
+                assert outcome == {"scored": 1, "skipped": 0, "errors": 0}, case["id"]
+                durable = await session.scalar(
+                    select(JobScore).where(JobScore.job_id == posting.id)
+                )
+                score = score_output(durable)
+                row[f"{mode.value}_score"] = score.overall_score
+                row[f"{mode.value}_shortlist"] = (
+                    score.overall_score >= candidate.scoring.shortlist_threshold
+                )
+                if case["cohort"] == "borderline":
+                    assert (
+                        abs(score.overall_score - candidate.scoring.shortlist_threshold)
+                        <= 0.1001
+                    )
+        measured.append(row)
+    report = summarize(measured)
+    print("R5_OFFLINE_MEASUREMENTS=" + json.dumps(report, sort_keys=True))
+    assert report["legacy_accuracy"] >= 0.92
+    assert report["new_accuracy"] >= 0.92
+    assert report["new_accuracy"] >= report["legacy_accuracy"] - 0.02
+    assert report["shortlist_agreement"] >= 0.95
+    assert report["delta_within_tolerance"] >= 0.90
+    assert report["provider_gate_completed"] is False

@@ -584,7 +584,7 @@ class ExecutionGateway:
             return raw_result.model_copy(update={"output": None})
         try:
             serialized = (
-                raw_result.output.model_dump(mode="json")
+                raw_result.output.model_dump(mode="python")
                 if isinstance(raw_result.output, BaseModel)
                 else raw_result.output
             )

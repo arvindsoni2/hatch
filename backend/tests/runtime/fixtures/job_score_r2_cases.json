@@ -1,52 +1,2502 @@
 [
-  {"id":"strong-01","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-02","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-03","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-04","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-05","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-06","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-07","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-08","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-09","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-10","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-11","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-12","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-13","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-14","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-15","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-16","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-17","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-18","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-19","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"strong-20","cohort":"strong_fit","expected_shortlist":true,"legacy_score":0.90,"new_score":0.90,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-01","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-02","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-03","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-04","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-05","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-06","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-07","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-08","cohort":"borderline","expected_shortlist":true,"legacy_score":0.75,"new_score":0.75,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-09","cohort":"borderline","expected_shortlist":false,"legacy_score":0.70,"new_score":0.70,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-10","cohort":"borderline","expected_shortlist":false,"legacy_score":0.70,"new_score":0.70,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-11","cohort":"borderline","expected_shortlist":false,"legacy_score":0.70,"new_score":0.70,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-12","cohort":"borderline","expected_shortlist":false,"legacy_score":0.70,"new_score":0.70,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-13","cohort":"borderline","expected_shortlist":false,"legacy_score":0.70,"new_score":0.70,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-14","cohort":"borderline","expected_shortlist":false,"legacy_score":0.70,"new_score":0.70,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"borderline-15","cohort":"borderline","expected_shortlist":false,"legacy_score":0.70,"new_score":0.70,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-01","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-02","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-03","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-04","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-05","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-06","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-07","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-08","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-09","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-10","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-11","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-12","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-13","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-14","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100},
-  {"id":"poor-15","cohort":"poor_fit","expected_shortlist":false,"legacy_score":0.20,"new_score":0.20,"legacy_latency_ms":10,"new_latency_ms":11,"legacy_cost_microusd":10,"new_cost_microusd":10,"legacy_tokens":100,"new_tokens":100}
+  {
+    "id": "strong-01",
+    "cohort": "strong_fit",
+    "scenario": "Experienced cloud architect aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Cloud Architect",
+        "years_experience": 12
+      },
+      "skills": {
+        "primary": [
+          "AWS",
+          "Python"
+        ],
+        "secondary": [
+          "Terraform",
+          "Kubernetes"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Cloud Architect"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Cloud Architect with 12 years experience delivering AWS, Python, Terraform, Kubernetes projects.",
+    "job": {
+      "title": "Senior Cloud Architect",
+      "description": "Synthetic Cloud Architect role for programme 1. Requires AWS, Python, Terraform, Kubernetes and 5+ years experience. Remote UK contract paying £550 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-02",
+    "cohort": "strong_fit",
+    "scenario": "Experienced data engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Data Engineer",
+        "years_experience": 13
+      },
+      "skills": {
+        "primary": [
+          "SQL",
+          "Python"
+        ],
+        "secondary": [
+          "Spark",
+          "Airflow"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Data Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Data Engineer with 13 years experience delivering SQL, Python, Spark, Airflow projects.",
+    "job": {
+      "title": "Senior Data Engineer",
+      "description": "Synthetic Data Engineer role for programme 2. Requires SQL, Python, Spark, Airflow and 6+ years experience. Remote UK contract paying £590 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-03",
+    "cohort": "strong_fit",
+    "scenario": "Experienced frontend engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Frontend Engineer",
+        "years_experience": 14
+      },
+      "skills": {
+        "primary": [
+          "React",
+          "TypeScript"
+        ],
+        "secondary": [
+          "CSS",
+          "Jest"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Frontend Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Frontend Engineer with 14 years experience delivering React, TypeScript, CSS, Jest projects.",
+    "job": {
+      "title": "Senior Frontend Engineer",
+      "description": "Synthetic Frontend Engineer role for programme 3. Requires React, TypeScript, CSS, Jest and 7+ years experience. Remote UK contract paying £630 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-04",
+    "cohort": "strong_fit",
+    "scenario": "Experienced backend engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Backend Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Java",
+          "Spring"
+        ],
+        "secondary": [
+          "PostgreSQL",
+          "Redis"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Backend Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Backend Engineer with 15 years experience delivering Java, Spring, PostgreSQL, Redis projects.",
+    "job": {
+      "title": "Senior Backend Engineer",
+      "description": "Synthetic Backend Engineer role for programme 4. Requires Java, Spring, PostgreSQL, Redis and 8+ years experience. Remote UK contract paying £670 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-05",
+    "cohort": "strong_fit",
+    "scenario": "Experienced platform engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Platform Engineer",
+        "years_experience": 16
+      },
+      "skills": {
+        "primary": [
+          "Docker",
+          "Kubernetes"
+        ],
+        "secondary": [
+          "Linux",
+          "Prometheus"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Platform Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Platform Engineer with 16 years experience delivering Docker, Kubernetes, Linux, Prometheus projects.",
+    "job": {
+      "title": "Senior Platform Engineer",
+      "description": "Synthetic Platform Engineer role for programme 5. Requires Docker, Kubernetes, Linux, Prometheus and 9+ years experience. Remote UK contract paying £710 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-06",
+    "cohort": "strong_fit",
+    "scenario": "Experienced security engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Security Engineer",
+        "years_experience": 17
+      },
+      "skills": {
+        "primary": [
+          "SIEM",
+          "IAM"
+        ],
+        "secondary": [
+          "Splunk",
+          "Nessus"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Security Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Security Engineer with 17 years experience delivering SIEM, IAM, Splunk, Nessus projects.",
+    "job": {
+      "title": "Senior Security Engineer",
+      "description": "Synthetic Security Engineer role for programme 6. Requires SIEM, IAM, Splunk, Nessus and 5+ years experience. Remote UK contract paying £550 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-07",
+    "cohort": "strong_fit",
+    "scenario": "Experienced mobile engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Mobile Engineer",
+        "years_experience": 18
+      },
+      "skills": {
+        "primary": [
+          "Swift",
+          "Kotlin"
+        ],
+        "secondary": [
+          "Flutter",
+          "Firebase"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Mobile Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Mobile Engineer with 18 years experience delivering Swift, Kotlin, Flutter, Firebase projects.",
+    "job": {
+      "title": "Senior Mobile Engineer",
+      "description": "Synthetic Mobile Engineer role for programme 7. Requires Swift, Kotlin, Flutter, Firebase and 6+ years experience. Remote UK contract paying £590 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-08",
+    "cohort": "strong_fit",
+    "scenario": "Experienced machine learning engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Machine Learning Engineer",
+        "years_experience": 19
+      },
+      "skills": {
+        "primary": [
+          "PyTorch",
+          "Python"
+        ],
+        "secondary": [
+          "MLflow",
+          "Pandas"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Machine Learning Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Machine Learning Engineer with 19 years experience delivering PyTorch, Python, MLflow, Pandas projects.",
+    "job": {
+      "title": "Senior Machine Learning Engineer",
+      "description": "Synthetic Machine Learning Engineer role for programme 8. Requires PyTorch, Python, MLflow, Pandas and 7+ years experience. Remote UK contract paying £630 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-09",
+    "cohort": "strong_fit",
+    "scenario": "Experienced network engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Network Engineer",
+        "years_experience": 12
+      },
+      "skills": {
+        "primary": [
+          "Cisco",
+          "BGP"
+        ],
+        "secondary": [
+          "OSPF",
+          "Ansible"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Network Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Network Engineer with 12 years experience delivering Cisco, BGP, OSPF, Ansible projects.",
+    "job": {
+      "title": "Senior Network Engineer",
+      "description": "Synthetic Network Engineer role for programme 9. Requires Cisco, BGP, OSPF, Ansible and 8+ years experience. Remote UK contract paying £670 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-10",
+    "cohort": "strong_fit",
+    "scenario": "Experienced database engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Database Engineer",
+        "years_experience": 13
+      },
+      "skills": {
+        "primary": [
+          "Oracle",
+          "SQL"
+        ],
+        "secondary": [
+          "PostgreSQL",
+          "MySQL"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Database Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Database Engineer with 13 years experience delivering Oracle, SQL, PostgreSQL, MySQL projects.",
+    "job": {
+      "title": "Senior Database Engineer",
+      "description": "Synthetic Database Engineer role for programme 10. Requires Oracle, SQL, PostgreSQL, MySQL and 9+ years experience. Remote UK contract paying £710 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-11",
+    "cohort": "strong_fit",
+    "scenario": "Experienced analytics engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Analytics Engineer",
+        "years_experience": 14
+      },
+      "skills": {
+        "primary": [
+          "dbt",
+          "Snowflake"
+        ],
+        "secondary": [
+          "Looker",
+          "SQL"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Analytics Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Analytics Engineer with 14 years experience delivering dbt, Snowflake, Looker, SQL projects.",
+    "job": {
+      "title": "Senior Analytics Engineer",
+      "description": "Synthetic Analytics Engineer role for programme 11. Requires dbt, Snowflake, Looker, SQL and 5+ years experience. Remote UK contract paying £550 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-12",
+    "cohort": "strong_fit",
+    "scenario": "Experienced site reliability engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Site Reliability Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Linux",
+          "Go"
+        ],
+        "secondary": [
+          "Prometheus",
+          "Terraform"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Site Reliability Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Site Reliability Engineer with 15 years experience delivering Linux, Go, Prometheus, Terraform projects.",
+    "job": {
+      "title": "Senior Site Reliability Engineer",
+      "description": "Synthetic Site Reliability Engineer role for programme 12. Requires Linux, Go, Prometheus, Terraform and 6+ years experience. Remote UK contract paying £590 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-13",
+    "cohort": "strong_fit",
+    "scenario": "Experienced qa engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior QA Engineer",
+        "years_experience": 16
+      },
+      "skills": {
+        "primary": [
+          "Selenium",
+          "Playwright"
+        ],
+        "secondary": [
+          "Cypress",
+          "Jest"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "QA Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic QA Engineer with 16 years experience delivering Selenium, Playwright, Cypress, Jest projects.",
+    "job": {
+      "title": "Senior QA Engineer",
+      "description": "Synthetic QA Engineer role for programme 13. Requires Selenium, Playwright, Cypress, Jest and 7+ years experience. Remote UK contract paying £630 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-14",
+    "cohort": "strong_fit",
+    "scenario": "Experienced full stack engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Full Stack Engineer",
+        "years_experience": 17
+      },
+      "skills": {
+        "primary": [
+          "Node.js",
+          "React"
+        ],
+        "secondary": [
+          "MongoDB",
+          "TypeScript"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Full Stack Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Full Stack Engineer with 17 years experience delivering Node.js, React, MongoDB, TypeScript projects.",
+    "job": {
+      "title": "Senior Full Stack Engineer",
+      "description": "Synthetic Full Stack Engineer role for programme 14. Requires Node.js, React, MongoDB, TypeScript and 8+ years experience. Remote UK contract paying £670 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-15",
+    "cohort": "strong_fit",
+    "scenario": "Experienced embedded engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Embedded Engineer",
+        "years_experience": 18
+      },
+      "skills": {
+        "primary": [
+          "C++",
+          "RTOS"
+        ],
+        "secondary": [
+          "Zephyr",
+          "ARM"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Embedded Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Embedded Engineer with 18 years experience delivering C++, RTOS, Zephyr, ARM projects.",
+    "job": {
+      "title": "Senior Embedded Engineer",
+      "description": "Synthetic Embedded Engineer role for programme 15. Requires C++, RTOS, Zephyr, ARM and 9+ years experience. Remote UK contract paying £710 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-16",
+    "cohort": "strong_fit",
+    "scenario": "Experienced devops engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior DevOps Engineer",
+        "years_experience": 19
+      },
+      "skills": {
+        "primary": [
+          "Azure",
+          "Bash"
+        ],
+        "secondary": [
+          "Docker",
+          "Jenkins"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "DevOps Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic DevOps Engineer with 19 years experience delivering Azure, Bash, Docker, Jenkins projects.",
+    "job": {
+      "title": "Senior DevOps Engineer",
+      "description": "Synthetic DevOps Engineer role for programme 16. Requires Azure, Bash, Docker, Jenkins and 5+ years experience. Remote UK contract paying £550 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-17",
+    "cohort": "strong_fit",
+    "scenario": "Experienced product designer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Product Designer",
+        "years_experience": 12
+      },
+      "skills": {
+        "primary": [
+          "Figma",
+          "Sketch"
+        ],
+        "secondary": [
+          "Prototyping",
+          "Accessibility"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Product Designer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Product Designer with 12 years experience delivering Figma, Sketch, Prototyping, Accessibility projects.",
+    "job": {
+      "title": "Senior Product Designer",
+      "description": "Synthetic Product Designer role for programme 17. Requires Figma, Sketch, Prototyping, Accessibility and 6+ years experience. Remote UK contract paying £590 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-18",
+    "cohort": "strong_fit",
+    "scenario": "Experienced delivery manager aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Delivery Manager",
+        "years_experience": 13
+      },
+      "skills": {
+        "primary": [
+          "Agile",
+          "Scrum"
+        ],
+        "secondary": [
+          "Jira",
+          "Kanban"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Delivery Manager"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Delivery Manager with 13 years experience delivering Agile, Scrum, Jira, Kanban projects.",
+    "job": {
+      "title": "Senior Delivery Manager",
+      "description": "Synthetic Delivery Manager role for programme 18. Requires Agile, Scrum, Jira, Kanban and 7+ years experience. Remote UK contract paying £630 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-19",
+    "cohort": "strong_fit",
+    "scenario": "Experienced business analyst aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Business Analyst",
+        "years_experience": 14
+      },
+      "skills": {
+        "primary": [
+          "BPMN",
+          "UML"
+        ],
+        "secondary": [
+          "SQL",
+          "Tableau"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Business Analyst"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Business Analyst with 14 years experience delivering BPMN, UML, SQL, Tableau projects.",
+    "job": {
+      "title": "Senior Business Analyst",
+      "description": "Synthetic Business Analyst role for programme 19. Requires BPMN, UML, SQL, Tableau and 8+ years experience. Remote UK contract paying £670 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "strong-20",
+    "cohort": "strong_fit",
+    "scenario": "Experienced systems engineer aligned with full toolset, compensation and remote work",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Systems Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "C",
+          "Rust"
+        ],
+        "secondary": [
+          "Linux",
+          "Git"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Systems Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Systems Engineer with 15 years experience delivering C, Rust, Linux, Git projects.",
+    "job": {
+      "title": "Senior Systems Engineer",
+      "description": "Synthetic Systems Engineer role for programme 20. Requires C, Rust, Linux, Git and 9+ years experience. Remote UK contract paying £710 per day.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-01",
+    "cohort": "borderline",
+    "scenario": "Partial cloud architect toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Cloud Architect",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "AWS",
+          "Python"
+        ],
+        "secondary": [
+          "Terraform",
+          "Kubernetes"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Cloud Architect"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Cloud Architect with 15 years experience using AWS, Python, Terraform, Kubernetes.",
+    "job": {
+      "title": "Senior Cloud Architect",
+      "description": "Synthetic specialist programme 21 uses AWS. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-02",
+    "cohort": "borderline",
+    "scenario": "Partial data engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Data Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "SQL",
+          "Python"
+        ],
+        "secondary": [
+          "Spark",
+          "Airflow"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Data Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Data Engineer with 15 years experience using SQL, Python, Spark, Airflow.",
+    "job": {
+      "title": "Senior Data Engineer",
+      "description": "Synthetic specialist programme 22 uses SQL and Spark. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-03",
+    "cohort": "borderline",
+    "scenario": "Partial frontend engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Frontend Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "React",
+          "TypeScript"
+        ],
+        "secondary": [
+          "CSS",
+          "Jest"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Frontend Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Frontend Engineer with 15 years experience using React, TypeScript, CSS, Jest.",
+    "job": {
+      "title": "Senior Frontend Engineer",
+      "description": "Synthetic specialist programme 23 uses React and TypeScript. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-04",
+    "cohort": "borderline",
+    "scenario": "Partial backend engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Backend Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Java",
+          "Spring"
+        ],
+        "secondary": [
+          "PostgreSQL",
+          "Redis"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Backend Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Backend Engineer with 15 years experience using Java, Spring, PostgreSQL, Redis.",
+    "job": {
+      "title": "Senior Backend Engineer",
+      "description": "Synthetic specialist programme 24 uses Java and Spring and PostgreSQL. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-05",
+    "cohort": "borderline",
+    "scenario": "Partial platform engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Platform Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Docker",
+          "Kubernetes"
+        ],
+        "secondary": [
+          "Linux",
+          "Prometheus"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Platform Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Platform Engineer with 15 years experience using Docker, Kubernetes, Linux, Prometheus.",
+    "job": {
+      "title": "Senior Platform Engineer",
+      "description": "Synthetic specialist programme 25 uses Docker. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-06",
+    "cohort": "borderline",
+    "scenario": "Partial security engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Security Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "SIEM",
+          "IAM"
+        ],
+        "secondary": [
+          "Splunk",
+          "Nessus"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Security Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Security Engineer with 15 years experience using SIEM, IAM, Splunk, Nessus.",
+    "job": {
+      "title": "Senior Security Engineer",
+      "description": "Synthetic specialist programme 26 uses SIEM and Splunk. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-07",
+    "cohort": "borderline",
+    "scenario": "Partial mobile engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Mobile Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Swift",
+          "Kotlin"
+        ],
+        "secondary": [
+          "Flutter",
+          "Firebase"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Mobile Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Mobile Engineer with 15 years experience using Swift, Kotlin, Flutter, Firebase.",
+    "job": {
+      "title": "Senior Mobile Engineer",
+      "description": "Synthetic specialist programme 27 uses Swift and Kotlin. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-08",
+    "cohort": "borderline",
+    "scenario": "Partial machine learning engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Machine Learning Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "PyTorch",
+          "Python"
+        ],
+        "secondary": [
+          "MLflow",
+          "Pandas"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Machine Learning Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Machine Learning Engineer with 15 years experience using PyTorch, Python, MLflow, Pandas.",
+    "job": {
+      "title": "Senior Machine Learning Engineer",
+      "description": "Synthetic specialist programme 28 uses PyTorch and Python and MLflow. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-09",
+    "cohort": "borderline",
+    "scenario": "Partial network engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Network Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Cisco",
+          "BGP"
+        ],
+        "secondary": [
+          "OSPF",
+          "Ansible"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Network Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Network Engineer with 15 years experience using Cisco, BGP, OSPF, Ansible.",
+    "job": {
+      "title": "Senior Network Engineer",
+      "description": "Synthetic specialist programme 29 uses Cisco. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-10",
+    "cohort": "borderline",
+    "scenario": "Partial database engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Database Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Oracle",
+          "SQL"
+        ],
+        "secondary": [
+          "PostgreSQL",
+          "MySQL"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Database Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Database Engineer with 15 years experience using Oracle, SQL, PostgreSQL, MySQL.",
+    "job": {
+      "title": "Senior Database Engineer",
+      "description": "Synthetic specialist programme 30 uses Oracle and PostgreSQL. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-11",
+    "cohort": "borderline",
+    "scenario": "Partial analytics engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Analytics Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "dbt",
+          "Snowflake"
+        ],
+        "secondary": [
+          "Looker",
+          "SQL"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Analytics Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Analytics Engineer with 15 years experience using dbt, Snowflake, Looker, SQL.",
+    "job": {
+      "title": "Senior Analytics Engineer",
+      "description": "Synthetic specialist programme 31 uses dbt and Snowflake. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-12",
+    "cohort": "borderline",
+    "scenario": "Partial site reliability engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Site Reliability Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Linux",
+          "Go"
+        ],
+        "secondary": [
+          "Prometheus",
+          "Terraform"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Site Reliability Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Site Reliability Engineer with 15 years experience using Linux, Go, Prometheus, Terraform.",
+    "job": {
+      "title": "Senior Site Reliability Engineer",
+      "description": "Synthetic specialist programme 32 uses Linux and Go and Prometheus. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-13",
+    "cohort": "borderline",
+    "scenario": "Partial qa engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior QA Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Selenium",
+          "Playwright"
+        ],
+        "secondary": [
+          "Cypress",
+          "Jest"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "QA Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic QA Engineer with 15 years experience using Selenium, Playwright, Cypress, Jest.",
+    "job": {
+      "title": "Senior QA Engineer",
+      "description": "Synthetic specialist programme 33 uses Selenium. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-14",
+    "cohort": "borderline",
+    "scenario": "Partial full stack engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Full Stack Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Node.js",
+          "React"
+        ],
+        "secondary": [
+          "MongoDB",
+          "TypeScript"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Full Stack Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Full Stack Engineer with 15 years experience using Node.js, React, MongoDB, TypeScript.",
+    "job": {
+      "title": "Senior Full Stack Engineer",
+      "description": "Synthetic specialist programme 34 uses Node.js and MongoDB. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "borderline-15",
+    "cohort": "borderline",
+    "scenario": "Partial embedded engineer toolset; compensation undisclosed; threshold-adjacent",
+    "expected_shortlist": true,
+    "profile": {
+      "candidate": {
+        "title": "Senior Embedded Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "C++",
+          "RTOS"
+        ],
+        "secondary": [
+          "Zephyr",
+          "ARM"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Embedded Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic Embedded Engineer with 15 years experience using C++, RTOS, Zephyr, ARM.",
+    "job": {
+      "title": "Senior Embedded Engineer",
+      "description": "Synthetic specialist programme 35 uses C++ and RTOS. Applicants also need an unfamiliar proprietary package. Compensation undisclosed; remote UK work.",
+      "location": "London remote"
+    }
+  },
+  {
+    "id": "poor-01",
+    "cohort": "poor_fit",
+    "scenario": "Security Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Security Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "SIEM",
+          "IAM"
+        ],
+        "secondary": [
+          "Splunk",
+          "Nessus"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Security Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Security Engineer with 15 years experience in SIEM, IAM, Splunk, Nessus.",
+    "job": {
+      "title": "Junior Nursery Assistant",
+      "description": "Synthetic Nursery Assistant vacancy 36. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-02",
+    "cohort": "poor_fit",
+    "scenario": "Mobile Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Mobile Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Swift",
+          "Kotlin"
+        ],
+        "secondary": [
+          "Flutter",
+          "Firebase"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Mobile Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Mobile Engineer with 15 years experience in Swift, Kotlin, Flutter, Firebase.",
+    "job": {
+      "title": "Junior Bakery Apprentice",
+      "description": "Synthetic Bakery Apprentice vacancy 37. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-03",
+    "cohort": "poor_fit",
+    "scenario": "Machine Learning Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Machine Learning Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "PyTorch",
+          "Python"
+        ],
+        "secondary": [
+          "MLflow",
+          "Pandas"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Machine Learning Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Machine Learning Engineer with 15 years experience in PyTorch, Python, MLflow, Pandas.",
+    "job": {
+      "title": "Junior Veterinary Receptionist",
+      "description": "Synthetic Veterinary Receptionist vacancy 38. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-04",
+    "cohort": "poor_fit",
+    "scenario": "Network Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Network Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Cisco",
+          "BGP"
+        ],
+        "secondary": [
+          "OSPF",
+          "Ansible"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Network Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Network Engineer with 15 years experience in Cisco, BGP, OSPF, Ansible.",
+    "job": {
+      "title": "Junior Warehouse Packer",
+      "description": "Synthetic Warehouse Packer vacancy 39. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-05",
+    "cohort": "poor_fit",
+    "scenario": "Database Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Database Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Oracle",
+          "SQL"
+        ],
+        "secondary": [
+          "PostgreSQL",
+          "MySQL"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Database Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Database Engineer with 15 years experience in Oracle, SQL, PostgreSQL, MySQL.",
+    "job": {
+      "title": "Junior Hotel Housekeeper",
+      "description": "Synthetic Hotel Housekeeper vacancy 40. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-06",
+    "cohort": "poor_fit",
+    "scenario": "Analytics Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Analytics Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "dbt",
+          "Snowflake"
+        ],
+        "secondary": [
+          "Looker",
+          "SQL"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Analytics Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Analytics Engineer with 15 years experience in dbt, Snowflake, Looker, SQL.",
+    "job": {
+      "title": "Junior Retail Cashier",
+      "description": "Synthetic Retail Cashier vacancy 41. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-07",
+    "cohort": "poor_fit",
+    "scenario": "Site Reliability Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Site Reliability Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Linux",
+          "Go"
+        ],
+        "secondary": [
+          "Prometheus",
+          "Terraform"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Site Reliability Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Site Reliability Engineer with 15 years experience in Linux, Go, Prometheus, Terraform.",
+    "job": {
+      "title": "Junior Farm Labourer",
+      "description": "Synthetic Farm Labourer vacancy 42. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-08",
+    "cohort": "poor_fit",
+    "scenario": "QA Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior QA Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Selenium",
+          "Playwright"
+        ],
+        "secondary": [
+          "Cypress",
+          "Jest"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "QA Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior QA Engineer with 15 years experience in Selenium, Playwright, Cypress, Jest.",
+    "job": {
+      "title": "Junior Dental Assistant",
+      "description": "Synthetic Dental Assistant vacancy 43. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-09",
+    "cohort": "poor_fit",
+    "scenario": "Full Stack Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Full Stack Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Node.js",
+          "React"
+        ],
+        "secondary": [
+          "MongoDB",
+          "TypeScript"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Full Stack Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Full Stack Engineer with 15 years experience in Node.js, React, MongoDB, TypeScript.",
+    "job": {
+      "title": "Junior Garden Maintenance Worker",
+      "description": "Synthetic Garden Maintenance Worker vacancy 44. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-10",
+    "cohort": "poor_fit",
+    "scenario": "Embedded Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Embedded Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "C++",
+          "RTOS"
+        ],
+        "secondary": [
+          "Zephyr",
+          "ARM"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Embedded Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Embedded Engineer with 15 years experience in C++, RTOS, Zephyr, ARM.",
+    "job": {
+      "title": "Junior Kitchen Porter",
+      "description": "Synthetic Kitchen Porter vacancy 45. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-11",
+    "cohort": "poor_fit",
+    "scenario": "DevOps Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior DevOps Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Azure",
+          "Bash"
+        ],
+        "secondary": [
+          "Docker",
+          "Jenkins"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "DevOps Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior DevOps Engineer with 15 years experience in Azure, Bash, Docker, Jenkins.",
+    "job": {
+      "title": "Junior Vehicle Valeter",
+      "description": "Synthetic Vehicle Valeter vacancy 46. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-12",
+    "cohort": "poor_fit",
+    "scenario": "Product Designer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Product Designer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Figma",
+          "Sketch"
+        ],
+        "secondary": [
+          "Prototyping",
+          "Accessibility"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Product Designer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Product Designer with 15 years experience in Figma, Sketch, Prototyping, Accessibility.",
+    "job": {
+      "title": "Junior Textile Operative",
+      "description": "Synthetic Textile Operative vacancy 47. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-13",
+    "cohort": "poor_fit",
+    "scenario": "Delivery Manager applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Delivery Manager",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "Agile",
+          "Scrum"
+        ],
+        "secondary": [
+          "Jira",
+          "Kanban"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Delivery Manager"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Delivery Manager with 15 years experience in Agile, Scrum, Jira, Kanban.",
+    "job": {
+      "title": "Junior Animal Care Assistant",
+      "description": "Synthetic Animal Care Assistant vacancy 48. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-14",
+    "cohort": "poor_fit",
+    "scenario": "Business Analyst applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Business Analyst",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "BPMN",
+          "UML"
+        ],
+        "secondary": [
+          "SQL",
+          "Tableau"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Business Analyst"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Business Analyst with 15 years experience in BPMN, UML, SQL, Tableau.",
+    "job": {
+      "title": "Junior Catering Assistant",
+      "description": "Synthetic Catering Assistant vacancy 49. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  },
+  {
+    "id": "poor-15",
+    "cohort": "poor_fit",
+    "scenario": "Systems Engineer applying outside domain, seniority and location",
+    "expected_shortlist": false,
+    "profile": {
+      "candidate": {
+        "title": "Senior Systems Engineer",
+        "years_experience": 15
+      },
+      "skills": {
+        "primary": [
+          "C",
+          "Rust"
+        ],
+        "secondary": [
+          "Linux",
+          "Git"
+        ]
+      },
+      "search": {
+        "target_roles": [
+          "Systems Engineer"
+        ],
+        "locations": [
+          {
+            "city": "London",
+            "country": "UK",
+            "remote_preference": "remote"
+          }
+        ]
+      },
+      "compensation": {
+        "min_rate": 500,
+        "max_rate": 750,
+        "currency": "GBP",
+        "rate_type": "daily"
+      },
+      "scoring": {
+        "method": "local",
+        "shortlist_threshold": 0.75
+      }
+    },
+    "resume": "Synthetic senior Systems Engineer with 15 years experience in C, Rust, Linux, Git.",
+    "job": {
+      "title": "Junior Museum Attendant",
+      "description": "Synthetic Museum Attendant vacancy 50. Entry-level practical duties at our Santiago workplace. Onsite attendance required. Pay undisclosed.",
+      "location": "Santiago, Chile"
+    }
+  }
 ]
