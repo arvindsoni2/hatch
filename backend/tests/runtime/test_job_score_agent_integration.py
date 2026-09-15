@@ -25,6 +25,9 @@ from app.runtime.workflow.models import (
     TaskAttemptRecord,
 )
 from app.runtime.workflow import WorkflowKernel
+from app.runtime_bindings.migration.job_score import DurableJobScoreRuntime
+from app.runtime_bindings.migration.facade import JobScoreClaimLost
+from app.runtime_bindings.tasks.job_score import JobScoreInput
 from job_score_test_support import job, profile, install_profile, install_provider
 
 
@@ -341,3 +344,175 @@ async def test_new_preserves_triage_endpoint_and_visible_cost_accounting(
         payload = json.loads(event.payload)
         assert payload["model_used"] == candidate.llm.primary_model
         assert payload["duration_ms"] > 0
+
+
+@pytest.mark.parametrize(
+    "timing", ["after_start", "after_claim", "during_projection", "after_commit"]
+)
+async def test_new_exception_never_bypasses_runtime_fence_and_restart_projects_once(
+    workflow_runtime, monkeypatch, timing
+):
+    kernel, factory = workflow_runtime
+    install_profile(monkeypatch, profile())
+    monkeypatch.setattr(settings, "HATCH_RUNTIME_JOB_SCORE_MODE", RuntimeMode.NEW)
+    scorer = ScorerAgent(runtime_factory=factory)
+    scorer._bus = EventBus()
+    async with factory.session_factory() as session:
+        posting = job()
+        session.add(posting)
+        await session.commit()
+        event_id = await scorer._bus.emit(
+            "job_discovered", "scout", {"job_id": posting.id}, session
+        )
+        with monkeypatch.context() as failure:
+            if timing in {"after_start", "after_claim"}:
+                claim = WorkflowKernel.claim_run
+
+                async def interrupted_claim(self, *args, **kwargs):
+                    if timing == "after_claim":
+                        await claim(self, *args, **kwargs)
+                    raise TimeoutError("SYNTHETIC_EXCEPTION_CANARY")
+
+                failure.setattr(WorkflowKernel, "claim_run", interrupted_claim)
+            elif timing == "during_projection":
+                write = ScorerAgent._write_visible_score
+
+                async def interrupted_projection(self, *args, **kwargs):
+                    await write(self, *args, **kwargs)
+                    if kwargs.get("commit") is False:
+                        raise RuntimeError("SYNTHETIC_EXCEPTION_CANARY")
+
+                failure.setattr(
+                    ScorerAgent, "_write_visible_score", interrupted_projection
+                )
+            else:
+                score_job = DurableJobScoreRuntime.score_job
+
+                async def interrupted_return(self, *args, **kwargs):
+                    await score_job(self, *args, **kwargs)
+                    raise RuntimeError("SYNTHETIC_EXCEPTION_CANARY")
+
+                failure.setattr(DurableJobScoreRuntime, "score_job", interrupted_return)
+            outcome = await scorer.run(session)
+    async with factory.session_factory() as session:
+        scores = list(await session.scalars(select(JobScore)))
+        scored_events = list(
+            await session.scalars(
+                select(AgentEvent).where(AgentEvent.event_type == "job_scored")
+            )
+        )
+        assert len(scores) == (1 if timing == "after_commit" else 0)
+        assert len(scored_events) == (1 if timing == "after_commit" else 0)
+        assert outcome == {"scored": 0, "skipped": 0, "errors": 1}
+        run = await session.scalar(select(WorkflowRunRecord))
+        attempt = await session.scalar(select(TaskAttemptRecord))
+        assert (
+            attempt.status
+            == {
+                "after_start": "pending",
+                "after_claim": "running",
+                "during_projection": "running",
+                "after_commit": "succeeded",
+            }[timing]
+        )
+        original_score_id = scores[0].id if scores else None
+    recovery_time = datetime.utcnow() + timedelta(minutes=2)
+    monkeypatch.setattr(kernel.clock, "now", lambda: recovery_time)
+    await kernel.reconcile(recovery_time)
+    replacement = DurableJobScoreRuntime(kernel, worker_id="restarted", factory=factory)
+    request = JobScoreInput(
+        job_ref=f"job:{posting.id}",
+        profile_ref="profile:current",
+        event_ref=f"event:{event_id}",
+    )
+
+    async def project(uow, output, usage):
+        await scorer._project_runtime_score(uow, request, output, usage)
+
+    if timing != "after_commit":
+        assert (
+            await replacement.resume(run.id, projection=project)
+        ).output.overall_score == 0.89
+    with pytest.raises(JobScoreClaimLost, match="claim_unavailable"):
+        await replacement.resume(run.id, projection=project)
+    async with factory.session_factory() as session:
+        scores = list(await session.scalars(select(JobScore)))
+        scored_events = list(
+            await session.scalars(
+                select(AgentEvent).where(AgentEvent.event_type == "job_scored")
+            )
+        )
+        assert len(scores) == len(scored_events) == 1
+        assert scores[0].overall_score == 0.89
+        if original_score_id:
+            assert scores[0].id == original_score_id
+        assert (await session.get(TaskAttemptRecord, attempt.id)).status == "succeeded"
+        assert "SYNTHETIC_EXCEPTION_CANARY" not in scored_events[0].payload
+
+
+async def test_new_event_references_canonical_score_without_copying_model_content(
+    workflow_runtime, monkeypatch
+):
+    _, factory = workflow_runtime
+    install_profile(monkeypatch, profile("llm"))
+    canary = "SYNTHETIC_CV_MODEL_ECHO /private/candidate.txt " * 1000
+    install_provider(
+        monkeypatch,
+        [
+            {
+                "skill_match": 0.8,
+                "experience_match": 0.8,
+                "rate_match": 0.8,
+                "location_match": 0.8,
+                "overall_score": 0.8,
+                "reasoning": canary,
+                "fit_reasoning": canary,
+                "strengths": [canary],
+                "score_gaps": [canary],
+                "keyword_matches": ["AWS"],
+                "keyword_misses": [canary],
+            }
+        ],
+    )
+    monkeypatch.setattr(settings, "HATCH_RUNTIME_JOB_SCORE_MODE", RuntimeMode.NEW)
+    scorer = ScorerAgent(runtime_factory=factory)
+    scorer._bus = EventBus()
+    async with factory.session_factory() as session:
+        posting = job(description=f"AWS Python Terraform. {canary}")
+        session.add(posting)
+        await session.commit()
+        await scorer._bus.emit(
+            "job_discovered", "scout", {"job_id": posting.id}, session
+        )
+        assert await scorer.run(session) == {"scored": 1, "skipped": 0, "errors": 0}
+    async with factory.session_factory() as session:
+        score = await session.scalar(select(JobScore))
+        assert score.reasoning == score.fit_reasoning == canary
+        assert score.strengths == score.score_gaps == score.keyword_misses == [canary]
+        assert score.keyword_matches == ["AWS"]
+        events = list(await session.scalars(select(AgentEvent)))
+        assert all("SYNTHETIC_CV_MODEL_ECHO" not in event.payload for event in events)
+        scored = next(event for event in events if event.event_type == "job_scored")
+        assert len(scored.payload.encode()) < 2048
+        payload = json.loads(scored.payload)
+        assert payload["score_ref"] == f"job-score:{score.id}"
+        assert payload["job_id"] == posting.id
+        assert payload["score"] == 0.8
+        assert (
+            payload["skill_match"]
+            == payload["experience_match"]
+            == payload["rate_match"]
+            == payload["location_match"]
+            == 0.8
+        )
+        assert (
+            not {
+                "reasoning",
+                "fit_reasoning",
+                "strengths",
+                "score_gaps",
+                "keyword_matches",
+                "keyword_misses",
+            }
+            & payload.keys()
+        )

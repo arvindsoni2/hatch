@@ -236,3 +236,135 @@ docs/implementation-reports/runtime/R5-job-score-migration.md
 The pre-existing parent-owned `progress.md` change is untouched and unstaged.
 The repair commit is the commit containing this appended report; its SHA is
 reported in the final handoff (not self-embedded into its own content).
+
+## Repair round 2 — 2026-09-15
+
+Base: `f8a011f7da86e776ad313a257543d686dd23c789`. Two subsequent P1 findings
+were reproduced and repaired. This section supersedes earlier implementation
+claims about general NEW exception fallback and content-free NEW events.
+
+### Exact design rationale
+
+1. Removed NEW's catch-all legacy fallback, including the agent's legacy
+   fallback closure. All NEW score projection remains owned by the runtime.
+   Existing provider/schema/timeout failures still use its bounded local
+   fallback inside the same attempt. An unexpected lifecycle/persistence
+   exception propagates without an additional visible write: the dispatcher
+   cannot infer whether start or commit succeeded from an exception. The
+   persisted workflow remains the recovery authority. Pending/unexpired work
+   is not bypassed, expired ownership is reconciled/reclaimed, and completed
+   work refuses a second projection. Projection was extracted into one
+   production helper reused by the runtime callback and real restart tests.
+2. Replaced NEW's `output.model_dump()` event payload with explicit metadata:
+   canonical `score_ref`, job ID, numeric scores, known scoring method, model
+   ID/name and measured/estimated usage. Reasoning, fit reasoning, strengths,
+   score gaps and keyword lists remain intact in `JobScore`, not duplicated in
+   events. Four directly affected product read paths resolve the score UUID
+   and matching job identity from canonical JobScore in memory. They never
+   rewrite event rows. This preserves decision/activity/keyword views without
+   persisting model content in event metadata or resolving cross-job text.
+   Legacy payloads remain readable; no historical event rewrite is attempted.
+
+### RED / GREEN evidence
+
+- Lifecycle RED: `5 failed, 17 deselected in 1.00s`. The dispatcher swallowed
+  the exception; real agent tests found a visible score after start/claim and
+  projection rollback, and two `job_scored` events after a successful commit.
+  Faults are injected after preserving the real operation's relevant effects.
+- Lifecycle GREEN, including existing provider fallback:
+  `9 passed, 13 deselected in 2.01s`.
+- Privacy RED: `1 failed, 17 deselected in 0.47s`, because persisted events
+  contained the synthetic source/model-echo canary. The test supplies a large
+  canary in reasoning, fit reasoning, strengths, gaps and keyword misses;
+  required canonical JobScore content must survive unchanged while the event
+  stays below 2 KB and excludes all six content-bearing field names.
+- Product read-through RED: `4 failed, 4 passed in 1.34s`, because the four
+  views no longer received canonical narrative/keywords. All four views and
+  their cross-job-reference negative cases passed after read-through was added.
+
+Completed directly affected suites:
+
+```text
+timeout 120s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_agent_integration.py \
+  tests/runtime/test_job_score_migration.py tests/runtime/test_job_score_restart.py \
+  tests/runtime/test_job_score_privacy.py --tb=short
+32 passed in 5.74s
+
+timeout 120s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_event_readers.py tests/test_routers/test_jobs_router.py \
+  tests/test_routers/test_events_router.py tests/test_routers/test_analytics_router.py --tb=short
+34 passed in 3.73s
+```
+
+These database suites ran with narrowly approved execution outside the sandbox.
+The same standalone `asyncio`/`aiosqlite` in-memory probe that times out in the
+sandbox succeeds there immediately. No application/dependency workaround was
+made. The earlier round's blocked runs are still historical non-passes.
+
+### Full-backend finding and final affected rerun
+
+The completed full-backend run was not a pass:
+
+```text
+timeout 600s python -m pytest -q --no-cov tests --tb=short
+1 failed, 3688 passed, 2 skipped, 18 warnings in 381.04s (0:06:21)
+```
+
+Its only failure was
+`test_every_template_and_inline_prompt_has_runtime_metadata_wiring` in
+`tests/test_services/test_prompt_catalog.py`. The three job-scoring prompts
+had moved to `agents/tools/scoring_contract.py` in round 1, but their catalog
+source paths and audit rows still named `agents/scorer_agent.py`. Corrected
+those three catalog paths and three audit rows to the real owning module;
+no prompt text, test expectations or production mode changed.
+
+The final affected rerun after this correction completed successfully:
+
+```text
+timeout 180s python -m pytest -q --no-cov tests/runtime \
+  tests/test_agents/test_scorer_agent.py tests/test_tools/test_local_scorer.py \
+  tests/test_tools/test_semantic_scorer.py tests/test_integration/test_scoring_calibration.py \
+  tests/test_services/test_prompt_catalog.py tests/test_routers/test_jobs_router.py \
+  tests/test_routers/test_events_router.py tests/test_routers/test_analytics_router.py --tb=short
+482 passed, 1 skipped in 82.55s (0:01:22)
+```
+
+This includes all seven prompt-catalog tests, the actual offline scoring
+benchmark, runtime migration/recovery/privacy suites and the new DB-backed
+regressions. A second full-backend run was not performed; the 482-case final
+run must not be presented as a clean full-backend pass. Logs were captured at
+`/tmp/task12-round2-backend-tests.log` and
+`/tmp/task12-round2-final-affected.log` in the verification environment.
+
+Lint passes on all eleven changed/new Python files. Formatting passes on seven
+repaired/new Python files. The three narrowly edited router files and prompt
+catalog fail whole-file formatting both at base `f8a011f` and in this repair
+(each baseline
+`git show HEAD:<path> | ruff format --check --stdin-filename <path> -` exits 1).
+Unrelated formatting churn was deliberately avoided. Docs/diff checks pass;
+the unchanged migration head is `z3a4b5c6d7e8`. No migration was introduced.
+
+### Exact round-2 scoped paths
+
+```text
+.superpowers/sdd/Hatch_Architecture_Foundation_Implementation_Plan_v2/task-12-report.md
+backend/app/agents/scorer_agent.py
+backend/app/routers/analytics.py
+backend/app/routers/events.py
+backend/app/routers/jobs.py
+backend/app/runtime_bindings/migration/facade.py
+backend/app/services/job_score_event_reader.py
+backend/app/services/prompt_catalog.py
+backend/tests/runtime/job_score_test_support.py
+backend/tests/runtime/test_job_score_agent_integration.py
+backend/tests/runtime/test_job_score_event_readers.py
+backend/tests/runtime/test_job_score_migration.py
+docs/implementation-notes/PRODUCTION_PROMPT_AND_SKILL_AUDIT.md
+docs/implementation-reports/runtime/R5-job-score-migration.md
+```
+
+No production/default mode change, push, PR, or parent-owned `progress.md`
+edit. R2 live-provider latency/token/cost measurements and owner approval remain
+outstanding. No live inference benchmark was repeated in this repair; prior
+endpoint reachability observations were limited to the sandbox.

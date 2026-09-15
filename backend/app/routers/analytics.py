@@ -8,6 +8,7 @@ from ..database import get_db
 from ..repositories.analytics_repository import AnalyticsRepository
 from ..schemas.analytics import AnalyticsDashboard, FunnelResponse, SourceBreakdown, TrendResponse
 from ..services.analytics_service import AnalyticsService
+from ..services.job_score_event_reader import read_job_score_event_payloads
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -280,7 +281,6 @@ async def get_skill_gaps(
     """Return most-common skills the candidate is missing across scored jobs."""
     from sqlalchemy import select  # noqa: PLC0415
     from ..models.agent_event import AgentEvent  # noqa: PLC0415
-    import json  # noqa: PLC0415
 
     events_result = await db.execute(
         select(AgentEvent.payload)
@@ -289,11 +289,9 @@ async def get_skill_gaps(
     )
 
     gap_counts: dict[str, int] = {}
-    for row in events_result.scalars().all():
-        if not row:
-            continue
+    payloads = await read_job_score_event_payloads(events_result.scalars().all(), db)
+    for payload in payloads:
         try:
-            payload = json.loads(row) if isinstance(row, str) else row
             for kw in payload.get("keyword_misses", []):
                 kw = kw.lower().strip()
                 if kw:
@@ -474,7 +472,6 @@ async def get_skill_frequency(
     """
     from sqlalchemy import select  # noqa: PLC0415
     from ..models.job_score import JobScore  # noqa: PLC0415
-    import json  # noqa: PLC0415
 
     result = await db.execute(
         select(JobScore.reasoning, JobScore.overall_score)
@@ -493,11 +490,9 @@ async def get_skill_frequency(
     )
 
     skill_counts: dict[str, int] = {}
-    for row in events_result.scalars().all():
-        if not row:
-            continue
+    payloads = await read_job_score_event_payloads(events_result.scalars().all(), db)
+    for payload in payloads:
         try:
-            payload = json.loads(row) if isinstance(row, str) else row
             keywords = payload.get("keyword_matches", []) + payload.get("keyword_misses", [])
             for kw in keywords:
                 kw = kw.lower().strip()

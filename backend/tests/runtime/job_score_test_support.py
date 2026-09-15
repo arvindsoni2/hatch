@@ -75,6 +75,8 @@ def install_provider(monkeypatch, outcomes, *, on_primary=None):
                         await on_primary()
                     if isinstance(value, Exception):
                         raise value
+                    if isinstance(value, dict):
+                        return schema.model_validate(value)
                     return schema(
                         skill_match=value,
                         experience_match=value,

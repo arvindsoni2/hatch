@@ -199,14 +199,7 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
                 continue
             await self._bus.mark_processing(event["id"], db)
             try:
-
-                async def fallback():
-                    job = await db.get(JobPosting, event["payload"]["job_id"])
-                    return await self._persist_local_score(
-                        event, job, score_locally(job, profile), db, profile
-                    )
-
-                tag = await self._dispatch_event(event, db, fallback, profile)
+                tag = await self._dispatch_event(event, db, None, profile)
                 await self._bus.mark_completed(event["id"], db)
                 skipped += tag == "skipped"
                 scored += tag != "skipped"
@@ -215,6 +208,63 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
                 await self._bus.mark_failed(event["id"], "job_score_runtime_failed", db)
                 errors += 1
         return scored, skipped, errors
+
+    async def _project_runtime_score(self, uow, request, output, usage):
+        """Project only inside the runtime's fenced finalization transaction."""
+        job_id = request.job_ref.removeprefix("job:")
+        await self._write_visible_score(job_id, output, uow.session, commit=False)
+        score_id = (
+            await uow.session.execute(
+                select(JobScore.id).where(JobScore.job_id == job_id)
+            )
+        ).scalar_one()
+        for call in usage.model_calls:
+            uow.session.add(
+                CostTracking(
+                    agent_name="scorer",
+                    job_id=job_id,
+                    model=call["model_name"],
+                    tokens_in=call["input_tokens"],
+                    tokens_out=call["output_tokens"],
+                    cost_estimate=call["cost_microusd"] / 1_000_000,
+                )
+            )
+        payload = {
+            "job_id": job_id,
+            "score_ref": f"job-score:{score_id}",
+            "score": output.overall_score,
+            # Canonical narrative/keywords stay in JobScore, never in events.
+            **{
+                field: getattr(output, field)
+                for field in (
+                    "skill_match",
+                    "experience_match",
+                    "rate_match",
+                    "location_match",
+                )
+            },
+            "scoring_method": output.scoring_method
+            if output.scoring_method in {"local", "semantic", "llm"}
+            else "unknown",
+            "model_used": usage.model_name,
+            "tokens_in": usage.input_tokens,
+            "tokens_out": usage.output_tokens,
+            "cost_estimate": usage.cost_microusd / 1_000_000,
+            "duration_ms": usage.latency_ms,
+        }
+        await uow.session.execute(
+            sqlite_insert(AgentEvent)
+            .values(
+                id=str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, request.event_ref + ":job_scored")
+                ),
+                event_type="job_scored",
+                source_agent="scorer",
+                payload=json.dumps(payload),
+                status="pending",
+            )
+            .on_conflict_do_nothing(index_elements=["id"])
+        )
 
     async def _dispatch_event(self, event, db, legacy_operation, profile):
         mode = _JOB_SCORE_MODE.get()
@@ -228,6 +278,8 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
 
         async def legacy_score(_):
             nonlocal legacy_output
+            if legacy_operation is None:
+                raise RuntimeError("job_score_legacy_operation_unavailable")
             tag = await legacy_operation()
             if tag == "skipped":
                 return None
@@ -244,45 +296,7 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
             )
 
             async def project(uow, output, usage):
-                await self._write_visible_score(
-                    job_id, output, uow.session, commit=False
-                )
-                for call in usage.model_calls:
-                    uow.session.add(
-                        CostTracking(
-                            agent_name="scorer",
-                            job_id=job_id,
-                            model=call["model_name"],
-                            tokens_in=call["input_tokens"],
-                            tokens_out=call["output_tokens"],
-                            cost_estimate=call["cost_microusd"] / 1_000_000,
-                        )
-                    )
-                payload = {
-                    "job_id": job_id,
-                    "score": output.overall_score,
-                    **output.model_dump(mode="json", exclude={"overall_score"}),
-                    "model_used": usage.model_name,
-                    "tokens_in": usage.input_tokens,
-                    "tokens_out": usage.output_tokens,
-                    "cost_estimate": usage.cost_microusd / 1_000_000,
-                    "duration_ms": usage.latency_ms,
-                }
-                await uow.session.execute(
-                    sqlite_insert(AgentEvent)
-                    .values(
-                        id=str(
-                            uuid.uuid5(
-                                uuid.NAMESPACE_URL, request.event_ref + ":job_scored"
-                            )
-                        ),
-                        event_type="job_scored",
-                        source_agent="scorer",
-                        payload=json.dumps(payload),
-                        status="pending",
-                    )
-                    .on_conflict_do_nothing(index_elements=["id"])
-                )
+                await self._project_runtime_score(uow, request, output, usage)
 
             observed = await runtime.score_job(request, mode=mode, projection=project)
             if mode is RuntimeMode.SHADOW and legacy_output is not None:

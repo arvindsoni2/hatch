@@ -78,7 +78,7 @@ async def test_shadow_runtime_failure_never_changes_legacy_visible_result() -> N
     assert result.shadow_reason_code == "runtime_failed"
 
 
-async def test_new_runtime_failure_falls_back_to_legacy_without_duplicate_writer() -> None:
+async def test_new_runtime_exception_never_escapes_to_legacy_writer() -> None:
     calls: list[str] = []
 
     async def legacy(_: JobScoreInput) -> JobScoreOutput:
@@ -89,10 +89,8 @@ async def test_new_runtime_failure_falls_back_to_legacy_without_duplicate_writer
         calls.append("runtime")
         raise TimeoutError("synthetic timeout")
 
-    result = await JobScoreMigrationDispatcher(
-        mode=RuntimeMode.NEW, legacy_score=legacy, runtime_score=runtime
-    ).score_job(_request())
-
-    assert result.authoritative_engine == "legacy_fallback"
-    assert result.visible_result == _result(0.8)
-    assert calls == ["runtime", "legacy"]
+    with pytest.raises(TimeoutError, match="synthetic timeout"):
+        await JobScoreMigrationDispatcher(
+            mode=RuntimeMode.NEW, legacy_score=legacy, runtime_score=runtime
+        ).score_job(_request())
+    assert calls == ["runtime"]

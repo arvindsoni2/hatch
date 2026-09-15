@@ -1,4 +1,92 @@
-# R5 Job Scoring migration evidence — repair round 1
+# R5 Job Scoring migration evidence — repair round 2
+
+## Latest repair: lifecycle-safe failures and reference-only events
+
+Round 2 starts from `f8a011f` and repairs two subsequently verified P1 findings.
+The descriptions below supersede round 1's claims about general exception
+fallback and NEW event privacy; the older measured results remain historical.
+
+NEW has **no legacy exception fallback**. The runtime already owns the bounded
+provider-to-local fallback and its fenced finalization. Unexpected exceptions
+propagate to the agent's stable failure outcome without another visible write.
+An exception cannot establish whether run creation or finalization committed,
+so the dispatcher must not guess. Durable state determines recovery: a pending
+or expired claimed attempt can resume; an already-completed attempt cannot
+project again. The same production projection callback is used by execution
+and restart tests.
+
+NEW `job_scored` events now contain an explicit `job-score:<UUID>` reference,
+job identity, numeric score components and bounded model/usage/method metadata.
+Reasoning, fit reasoning, strengths, gaps and keyword lists remain only in the
+canonical product `JobScore`; no whole-model dump enters the event. An
+adversarial test supplies oversized source-like text in every explanatory
+field, verifies all required JobScore fields survive, and verifies the stored
+event is under 2 KB with none of that content.
+
+The decision trail, activity view, skill-gap view and skill-frequency view
+resolve canonical score references in memory so their required output remains
+available. Resolution checks both score UUID and event job identity, batches
+reads, and never mutates/flushed-enriches an ORM event. Cross-job references
+return no content. Existing legacy inline payloads remain readable; historical
+legacy events are not rewritten as part of this scoped repair.
+
+TDD evidence: five lifecycle RED failures demonstrated unfenced writes after
+start/claim, a projection rollback, and two visible events after a committed
+runtime result. These became nine passing lifecycle/fallback tests. The
+oversized-output privacy regression failed on retained event content before
+the allowlist/reference change. Four product-read regressions failed before
+read-through resolution and then passed, alongside cross-job rejection tests.
+
+Completed focused verification (outside the SQLite-blocking sandbox):
+
+```text
+timeout 120s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_agent_integration.py \
+  tests/runtime/test_job_score_migration.py tests/runtime/test_job_score_restart.py \
+  tests/runtime/test_job_score_privacy.py --tb=short
+32 passed in 5.74s
+
+timeout 120s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_event_readers.py tests/test_routers/test_jobs_router.py \
+  tests/test_routers/test_events_router.py tests/test_routers/test_analytics_router.py --tb=short
+34 passed in 3.73s
+```
+
+The subsequent full backend run completed, but was not clean:
+
+```text
+timeout 600s python -m pytest -q --no-cov tests --tb=short
+1 failed, 3688 passed, 2 skipped, 18 warnings in 381.04s (0:06:21)
+```
+
+The only failure was the prompt-catalog runtime-metadata wiring check. Round 1
+had moved the scoring prompts to `agents/tools/scoring_contract.py` without
+updating their three catalog paths and matching audit rows. Those six source
+references now name the actual owning module. After this correction:
+
+```text
+timeout 180s python -m pytest -q --no-cov tests/runtime \
+  tests/test_agents/test_scorer_agent.py tests/test_tools/test_local_scorer.py \
+  tests/test_tools/test_semantic_scorer.py tests/test_integration/test_scoring_calibration.py \
+  tests/test_services/test_prompt_catalog.py tests/test_routers/test_jobs_router.py \
+  tests/test_routers/test_events_router.py tests/test_routers/test_analytics_router.py --tb=short
+482 passed, 1 skipped in 82.55s (0:01:22)
+```
+
+All seven prompt-catalog checks passed in that final run, alongside runtime,
+scoring and affected product-route regressions. There was no second full
+backend rerun, so this is not a claim of a clean full-backend pass. Lint passes
+on all eleven changed Python files; seven repaired/new files pass formatting.
+The three routers and catalog retain confirmed baseline whole-file formatting
+failures without unrelated formatting changes. Docs and diff checks pass; the
+migration head remains `z3a4b5c6d7e8` and no migration was added.
+
+The round 1 database hang is now isolated to the sandbox: the same standalone
+in-memory aiosqlite probe still times out there but succeeds immediately with
+narrow approved execution permission. No dependency or application workaround
+was added. Live inference/provider measurements were not repeated in round 2;
+prior endpoint availability checks were sandbox-limited. Gate R2 remains
+incomplete and the production/default mode remains LEGACY.
 
 ## Status and superseded evidence
 

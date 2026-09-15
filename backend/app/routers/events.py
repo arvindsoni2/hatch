@@ -13,6 +13,7 @@ from ..database import get_db
 from ..models.agent_event import AgentEvent
 from ..models.cost_tracking import CostTracking
 from ..schemas.agent_events import AgentEventList, AgentEventRead
+from ..services.job_score_event_reader import read_job_score_event_payloads
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 
@@ -39,8 +40,8 @@ class ActivityList(BaseModel):
 
 # ── Human-readable event message builders ────────────────────────────────────
 
-def _humanise(event: AgentEvent) -> ActivityItem:
-    raw = event.payload or {}
+def _humanise(event: AgentEvent, resolved_payload: dict | None = None) -> ActivityItem:
+    raw = resolved_payload if resolved_payload is not None else event.payload or {}
     if isinstance(raw, str):
         import json  # noqa: PLC0415
         try:
@@ -110,8 +111,10 @@ async def get_activity(
     result = await db.execute(stmt)
     rows = result.scalars().all()
     total = len(rows)
-
-    return ActivityList(items=[_humanise(r) for r in rows], total=total)
+    payloads = await read_job_score_event_payloads([row.payload for row in rows], db)
+    return ActivityList(
+        items=[_humanise(row, payload) for row, payload in zip(rows, payloads)], total=total
+    )
 
 
 # ── Cost summary endpoint ─────────────────────────────────────────────────────

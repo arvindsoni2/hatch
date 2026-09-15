@@ -82,20 +82,13 @@ class JobScoreMigrationDispatcher:
                 authoritative_engine="legacy",
             )
         if self._mode is RuntimeMode.NEW:
-            try:
-                return JobScoreDispatchResult(
-                    visible_result=await self._runtime(request),
-                    authoritative_engine="runtime",
-                )
-            except JobScoreClaimLost:
-                raise
-            except Exception:
-                # TaskSpec declares the existing deterministic fallback behavior.
-                return JobScoreDispatchResult(
-                    visible_result=await self._legacy.score_job(request),
-                    authoritative_engine="legacy_fallback",
-                    shadow_reason_code="runtime_failed",
-                )
+            # The runtime owns fallback and projection under the same claim.
+            # An exception cannot tell us whether start/finalization committed:
+            # never create an unfenced legacy projection outside that lifecycle.
+            return JobScoreDispatchResult(
+                visible_result=await self._runtime(request),
+                authoritative_engine="runtime",
+            )
 
         legacy_result = await self._legacy.score_job(request)
         try:
