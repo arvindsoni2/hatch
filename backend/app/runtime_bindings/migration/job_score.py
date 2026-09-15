@@ -6,6 +6,7 @@ import hashlib
 import json
 import asyncio
 import time
+import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from decimal import Decimal
@@ -14,7 +15,11 @@ from typing import Any
 from datetime import datetime
 
 from app.runtime.workflow import ExecutionClaimRecord, WorkflowKernel
-from app.runtime.workflow.models import WorkflowRunRecord
+from app.runtime.workflow.models import (
+    WorkflowRunRecord,
+    WorkflowStepRecord,
+    TaskAttemptRecord,
+)
 from app.runtime import RuntimeMode
 from app.runtime.contracts import ExecutionResultCode
 from app.runtime.context.resolver import ContextResolutionError
@@ -67,6 +72,40 @@ class DurableJobScoreRuntime:
     async def start(
         self, request: JobScoreInput, *, mode: RuntimeMode = RuntimeMode.NEW
     ):
+        if mode is RuntimeMode.NEW and self._factory is not None:
+            # Reuse pre-idempotency rollout runs too. The event is the identity;
+            # changing its job/profile cannot authorize a second lifecycle.
+            async with self._factory.session_factory() as session:
+                recorded = list(
+                    await session.scalars(
+                        select(WorkflowRunRecord)
+                        .where(
+                            WorkflowRunRecord.workflow_definition_id
+                            == JOB_SCORE_V1.task_id,
+                            WorkflowRunRecord.workflow_definition_version
+                            == JOB_SCORE_V1.version,
+                            WorkflowRunRecord.runtime_mode == "new",
+                            WorkflowRunRecord.input_ref_json["event_ref"].as_string()
+                            == request.event_ref,
+                        )
+                        .limit(2)
+                    )
+                )
+            if recorded:
+                if len(recorded) != 1:
+                    raise ValueError("job_score_source_identity_conflict")
+                run = recorded[0]
+                if (
+                    run.domain_type != "job_posting"
+                    or run.domain_id != request.job_ref
+                    or any(
+                        run.input_ref_json.get(key) != value
+                        for key, value in request.model_dump().items()
+                    )
+                ):
+                    raise ValueError("job_score_source_identity_conflict")
+                self._plan = None  # Retain the first durable route on recovery.
+                return run, await self._claim_recorded_run(run)
         run = await self._kernel.start_run(
             JOB_SCORE_V1,
             input_ref={
@@ -86,16 +125,52 @@ class DurableJobScoreRuntime:
             },
             domain_ref={"domain_type": "job_posting", "domain_id": request.job_ref},
             mode=mode.value,
+            **(
+                {
+                    "run_id": str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"{JOB_SCORE_V1.task_id}:{JOB_SCORE_V1.version}:new:{request.event_ref}",
+                        )
+                    )
+                }
+                if mode is RuntimeMode.NEW
+                else {}
+            ),
         )
+        return run, await self._claim_recorded_run(run)
+
+    async def _claim_recorded_run(self, run):
         claim = await self._kernel.claim_run(
             str(run.id), self._worker_id, self._kernel.clock.now()
         )
+        if claim is None and self._factory is not None:
+            async with self._factory.session_factory() as session:
+                attempt_id = await session.scalar(
+                    select(TaskAttemptRecord.id)
+                    .join(
+                        WorkflowStepRecord,
+                        WorkflowStepRecord.id == TaskAttemptRecord.workflow_step_id,
+                    )
+                    .where(
+                        WorkflowStepRecord.workflow_run_id == run.id,
+                        TaskAttemptRecord.status == "running",
+                    )
+                    .order_by(TaskAttemptRecord.attempt_number.desc())
+                    .limit(1)
+                )
+            if attempt_id is not None:
+                # Generic reclaim checks expiry, backoff, current ownership,
+                # execution idempotency and a strictly newer fencing token.
+                claim = await self._kernel.reclaim(
+                    attempt_id, self._worker_id, self._kernel.clock.now()
+                )
         if claim is None:
             raise JobScoreClaimLost("job_score_claim_unavailable")
         correlation = await self._kernel.get_claim_correlation(claim)
         if correlation.get("workflow_run_id") != str(run.id):
             raise JobScoreClaimLost("job_score_claim_run_mismatch")
-        return run, claim
+        return claim
 
     async def score_job(
         self, request: JobScoreInput, *, mode: RuntimeMode, projection=None
@@ -122,11 +197,7 @@ class DurableJobScoreRuntime:
         )
         if run.domain_id != request.job_ref:
             raise ValueError("job_score_run_reference_mismatch")
-        claim = await self._kernel.claim_run(
-            run_id, self._worker_id, self._kernel.clock.now()
-        )
-        if claim is None:
-            raise JobScoreClaimLost("job_score_claim_unavailable")
+        claim = await self._claim_recorded_run(run)
         return await self._execute_claim(
             request,
             run,

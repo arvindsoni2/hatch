@@ -1,6 +1,74 @@
-# R5 Job Scoring migration evidence — repair round 3
+# R5 Job Scoring migration evidence — repair round 4
 
-## Latest repair: durable source acknowledgement and complete event API reads
+## Latest repair: cross-process ownership before execution
+
+Round 4 starts from `771b3f8`. A source-derived NEW run UUID is now the durable
+idempotency boundary before model execution. Its existing database primary
+key arbitrates concurrent creation; the short transaction persists run, step
+and attempt together. A collision returns only an identically bound run.
+Task/domain/mode/input conflicts fail closed. No schema migration or separate
+source lease was needed: execution ownership remains with the existing
+run-scoped claim, expiry/reclaim checks and fencing token.
+
+NEW removes its pre-run processing write and polls bounded pending/processing
+sources for restart recovery. Fresh workers reuse the source's recorded run,
+including pre-repair random-ID runs, instead of starting another lifecycle.
+They cannot invoke during an unexpired claim; after expiry the existing
+runtime reclaim policy applies and the old owner cannot finalize. Public
+retry reconciles completed work or blocks runtime-owned work without scoring.
+Changed job/profile bindings are rejected; public mismatch responses do not
+expose the original job.
+
+TDD first reproduced `5 failed in 1.18s`, then a separate public cross-job retry
+regression reproduced `1 failed, 7 deselected in 0.36s`. The expanded focused
+run passed `37 tests in 8.01s`; final ownership coverage passed `10 tests in
+6.56s`. It includes a forced concurrent run-insert collision, synchronized
+async consumers and two separately spawned
+OS processes sharing a file-backed SQLite database. Both concurrency forms
+prove one primary provider invocation, one run/execution, the two legitimate
+triage/primary cost rows and one visible score. Restart cases cover crashes
+before start, after durable start, and after claim, plus stale-fence rejection
+and pre-repair run reuse. No process-local lock grants ownership.
+
+The full backend run completed with two verification findings:
+
+```text
+timeout 600s python -m pytest -q --no-cov tests --tb=short
+2 failed, 3713 passed, 2 skipped, 18 warnings in 380.31s (0:06:20)
+```
+
+The WorkflowStore protocol lacked the new optional run-ID parameter; its
+signature and atomic identity contract are now synchronized with the
+repository. An older independent-job isolation fixture reused one source ID
+for three jobs; each independent job now has its own source ID, with its
+assertions unchanged. The new same-source race and cross-job rejection tests
+cover the distinct identity cases. The ten-case ownership run also includes a
+direct collision case added after full-suite collection. This full-backend
+run is not reported as a pass or replaced by the historical round-3 result.
+
+After those corrections, the final affected run passed:
+
+```text
+timeout 180s python -m pytest -q --no-cov tests/runtime \
+  tests/test_agents/test_scorer_agent.py tests/test_tools/test_local_scorer.py \
+  tests/test_tools/test_semantic_scorer.py tests/test_integration/test_scoring_calibration.py \
+  tests/test_services/test_prompt_catalog.py tests/test_routers/test_jobs_router.py \
+  tests/test_routers/test_events_router.py tests/test_routers/test_analytics_router.py --tb=short
+509 passed, 1 skipped in 69.47s (0:01:09)
+```
+
+This includes all runtime tests, both corrected checks and all ten ownership
+tests. A second full-backend run was not performed. Lint/formatting pass on
+all nine changed Python files; docs/diff checks pass. Migration head remains
+`z3a4b5c6d7e8`; no schema migration or dependency workaround was introduced.
+
+These are concurrency/pre-invocation crash guarantees, not a claim of
+exactly-once provider billing after an ambiguous in-flight provider failure.
+That separate case retains the existing runtime idempotency/retry policy.
+The live R2 provider/model measurements and owner approval remain outstanding;
+production/default mode remains LEGACY.
+
+## Round 3: durable source acknowledgement and complete event API reads
 
 Round 3 starts from `b60b1b3`. Source event status is now an acknowledgement of
 the authoritative runtime outcome, not permission to execute another run.

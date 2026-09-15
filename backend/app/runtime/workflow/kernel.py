@@ -74,7 +74,10 @@ class WorkflowKernel:
         input_ref: Mapping[str, object],
         domain_ref: Mapping[str, object],
         mode: str,
+        *,
+        run_id: str | None = None,
     ):
+        """Create atomically; an explicit ID may reuse only the identical binding."""
         try:
             runtime_mode = RuntimeMode(mode).value
         except ValueError as error:
@@ -86,6 +89,7 @@ class WorkflowKernel:
             domain_ref=dict(domain_ref),
             mode=runtime_mode,
             max_attempts=spec.workflow_policy.max_attempts,
+            **({"run_id": run_id} if run_id is not None else {}),
         )
         # The durable run identifier is only known after persistence. Emit the
         # span post-operation so production telemetry carries the complete

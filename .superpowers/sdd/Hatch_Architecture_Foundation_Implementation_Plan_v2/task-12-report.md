@@ -485,3 +485,152 @@ The parent-owned `progress.md` remains untouched and uncommitted. No push, PR,
 schema migration, or default/production mode change is included. Gate R2 live
 same-provider/model measurements and owner approval remain outstanding;
 offline deterministic conformance is not a substitute for that gate.
+
+## Repair round 4 — 2026-09-15
+
+Base: `771b3f86329bcc9b5e957d0b8692c13b4f0ea1ac`. The concurrent pre-run P1
+was reproduced: two consumers both observed an unbound source and created
+independent runs before either run's claim/projection fence could help.
+
+### Durable ownership design; no schema migration
+
+- NEW derives a stable run UUID from task ID/version, NEW mode and source
+  event reference. The existing workflow-run primary key is the atomic
+  cross-process arbitration boundary. A short creation transaction inserts
+  the run, step and first attempt together. A colliding insert rolls back,
+  then returns the existing run only when its task, version, domain, mode,
+  attempt policy and input references exactly match; conflicts fail closed.
+- The kernel/repository/protocol expose one optional explicit `run_id`. Calls without
+  it retain their previous behavior. No new table, column, index, migration,
+  separate source lease or process-local ownership lock is introduced.
+- The binding reuses an already-recorded source run, including random-ID runs
+  from earlier repair rounds. Job/profile rebinding and ambiguous multiple
+  bindings are rejected. Recovery retains the first persisted route rather
+  than replacing it with a later batch plan.
+- Run identity is not execution permission. A worker must win the existing
+  exact-run claim before any invocation. An unexpired owner cannot be replaced;
+  scoped reclaim applies the existing expiry, recovery backoff, idempotency
+  and fencing checks. Stale owners cannot finalize or project.
+- NEW no longer marks a source processing before creating its run. Its bounded
+  intake includes pending and processing sources so a fresh worker can recover
+  a crash before start, after durable start, or after claim. Existing owned
+  work is no longer skipped indefinitely: the same run is eligible for claim/
+  reclaim, never a new run. Public retry still does not invoke scoring or
+  reset runtime-owned work; workers perform recovery under the runtime fence.
+- Public retry now finds the source binding before validating its job, so a
+  tampered/malformed source cannot hide an existing binding. Mismatches stay
+  failed with a bounded identity-conflict code and HTTP 409, without exposing
+  the original job. Completed matching work still reconciles to completed.
+
+### RED / GREEN evidence
+
+```text
+timeout 90s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_source_ownership.py --tb=short
+RED: 5 failed in 1.18s
+```
+
+The failures covered synchronized concurrent consumers, three actual
+cancellation/crash boundaries, and cross-job rebinding. The first repaired
+ownership/source/agent run passed `34 tests in 7.35s`.
+
+A separate public-retry mismatch regression reproduced HTTP 200 where HTTP 409
+was required: `1 failed, 7 deselected in 0.36s`. After that repair, the expanded
+ownership/source/agent run passed `37 tests in 8.01s`.
+
+Final ownership-specific run (including a direct concurrent run-insert collision):
+
+```text
+timeout 90s python -m pytest -q --no-cov \
+  tests/runtime/test_job_score_source_ownership.py --tb=short
+10 passed in 6.56s
+```
+
+This includes two separately spawned OS worker processes and synchronized
+independent async consumers, all using the same file-backed SQLite database.
+Only profile/resume input and external provider transport are synthetic. Tests
+observe exactly one primary transport invocation, one workflow run, one
+runtime execution record, the two legitimate triage/primary cost records and
+one visible JobScore. The concurrent async case also checks one scored event
+and completed source status. Crash/restart tests prove no call during a live
+lease, recovery after expiry, rejection of the old finalization fence, and
+reuse of pre-idempotency random-ID runs. Job/profile collision and public
+cross-job privacy cases are also covered. The direct database-collision case
+checks that there is exactly one run, step and attempt, and that reusing its
+explicit ID with a changed profile fails without altering the recorded input.
+
+The round-3 public-retry test now checks the route itself without subsequently
+running the worker: the route must never execute work, while this repair
+intentionally allows a worker to resume an already-pending runtime run.
+
+### Full-backend verification findings
+
+The full backend run completed but was not a pass:
+
+```text
+timeout 600s python -m pytest -q --no-cov tests --tb=short
+2 failed, 3713 passed, 2 skipped, 18 warnings in 380.31s (0:06:20)
+```
+
+Both failures were investigated and corrected:
+
+1. `test_sqlite_repository_matches_the_kernel_workflow_store_contract` exposed
+   the missing optional `run_id` in the WorkflowStore protocol signature. The
+   protocol now declares the parameter and its atomic identity semantics.
+2. `test_concurrent_starts_keep_claims_and_results_isolated` supplied three
+   different jobs with one shared source ID. Its purpose is isolation across
+   independent jobs, so each fixture now has its own source ID. Its assertions
+   are unchanged; the new same-source concurrency and job/profile rejection
+   cases separately enforce the now-explicit identity invariant.
+
+The direct run-insert collision test was added after full-suite collection
+and passed in the separate final ten-case ownership run. No clean full-backend
+pass is claimed for round 4 from the historical round-3 result or this failed
+run. Logs: `/tmp/task12-round4-backend-tests.log` and
+`/tmp/task12-round4-final-ownership.log`.
+
+After both corrections, the final affected suite completed with exit 0:
+
+```text
+timeout 180s python -m pytest -q --no-cov tests/runtime \
+  tests/test_agents/test_scorer_agent.py tests/test_tools/test_local_scorer.py \
+  tests/test_tools/test_semantic_scorer.py tests/test_integration/test_scoring_calibration.py \
+  tests/test_services/test_prompt_catalog.py tests/test_routers/test_jobs_router.py \
+  tests/test_routers/test_events_router.py tests/test_routers/test_analytics_router.py --tb=short
+509 passed, 1 skipped in 69.47s (0:01:09)
+```
+
+This includes every runtime test, all ten ownership tests (including separate
+processes), the corrected protocol/isolation checks, scoring calibration and
+benchmark tests, the prompt catalog, and affected product routers. A second
+full-backend run was not performed. Log:
+`/tmp/task12-round4-final-affected.log`. Database tests ran with narrowly
+approved execution outside the independently reproduced SQLite-blocking
+sandbox. No dependency workaround was introduced.
+
+Lint and formatting pass on all nine changed/new Python files. Documentation
+validation and diff checks pass. The migration head remains
+`z3a4b5c6d7e8`; no schema migration was introduced.
+
+### Scope and limitations
+
+```text
+.superpowers/sdd/Hatch_Architecture_Foundation_Implementation_Plan_v2/task-12-report.md
+backend/app/agents/scorer_agent.py
+backend/app/runtime/storage/contracts.py
+backend/app/runtime/workflow/kernel.py
+backend/app/runtime/workflow/repository.py
+backend/app/runtime_bindings/migration/job_score.py
+backend/app/runtime_bindings/migration/source_event.py
+backend/tests/runtime/test_job_score_source_ownership.py
+backend/tests/runtime/test_job_score_source_reconciliation.py
+backend/tests/runtime/test_job_score_restart.py
+docs/implementation-reports/runtime/R5-job-score-migration.md
+```
+
+Exact-one invocation is demonstrated for concurrent starts and the tested
+pre-invocation crashes. It is not a claim of exactly-once provider billing
+after an ambiguous in-flight provider/process failure; the existing runtime
+idempotency/retry policy still governs that separate case. Gate R2 live
+same-provider/model measurements and owner approval remain outstanding.
+Default mode remains LEGACY. No push/PR or controller `progress.md` edit.

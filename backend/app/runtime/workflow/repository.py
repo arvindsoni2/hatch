@@ -10,6 +10,7 @@ import logging
 import re
 
 from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from ..evaluation.models import ExecutionRole
 from ..events.repository import enforce_metadata_only
@@ -316,27 +317,52 @@ class SQLiteWorkflowRepository:
         domain_ref: dict[str, object],
         mode: str,
         max_attempts: int,
+        run_id: str | None = None,
     ) -> WorkflowRunRecord:
         domain_type = str(domain_ref.get("domain_type") or "runtime")
         domain_id = domain_ref.get("domain_id")
         if domain_id is not None:
             domain_id = str(domain_id)
+        if run_id is not None:
+            try:
+                run_id = str(uuid.UUID(run_id))
+            except (ValueError, TypeError, AttributeError):
+                raise ValueError("workflow_run_id_invalid") from None
+        values = dict(
+            workflow_definition_id=workflow_definition_id,
+            workflow_definition_version=workflow_definition_version,
+            domain_type=domain_type,
+            domain_id=domain_id,
+            runtime_mode=mode,
+            max_attempts=max_attempts,
+            input_ref_json=input_ref,
+        )
+        try:
+            return await self._insert_run(values, run_id=run_id)
+        except IntegrityError:
+            if run_id is None:
+                raise
+            # The existing primary key is the cross-process arbitration point.
+            # Read only after the failed insert's transaction has rolled back.
+            async with self._uow_factory.transaction() as uow:
+                run = await uow.session.get(WorkflowRunRecord, run_id)
+                if run is None:
+                    raise
+                if any(getattr(run, key) != value for key, value in values.items()):
+                    raise ValueError("workflow_run_identity_conflict") from None
+                return run
+
+    async def _insert_run(self, values: dict[str, Any], *, run_id: str | None):
         async with self._uow_factory.transaction() as uow:
             run = await uow.workflows.create_run(
-                workflow_definition_id=workflow_definition_id,
-                workflow_definition_version=workflow_definition_version,
-                domain_type=domain_type,
-                domain_id=domain_id,
-                runtime_mode=mode,
-                max_attempts=max_attempts,
-                input_ref_json=input_ref,
+                **values, **({"id": run_id} if run_id is not None else {})
             )
             step = await uow.workflows.create_step(
                 workflow_run_id=run.id,
                 step_key="execute",
                 step_order=1,
-                task_id=workflow_definition_id,
-                task_version=workflow_definition_version,
+                task_id=run.workflow_definition_id,
+                task_version=run.workflow_definition_version,
             )
             await uow.workflows.create_attempt(
                 workflow_step_id=step.id, attempt_number=1

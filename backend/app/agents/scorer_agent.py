@@ -121,6 +121,14 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
         pending = await self._bus.poll(
             db, event_type="job_discovered", status="pending", limit=_BATCH_SIZE
         )
+        if _JOB_SCORE_MODE.get() is RuntimeMode.NEW:
+            recovering = await self._bus.poll(
+                db, event_type="job_discovered", status="processing", limit=_BATCH_SIZE
+            )
+            pending = sorted(
+                {event["id"]: event for event in pending + recovering}.values(),
+                key=lambda event: event["created_at"] or "",
+            )[:_BATCH_SIZE]
 
         if not pending:
             self._log.info("No pending job_discovered events.")
@@ -199,12 +207,13 @@ class ScorerAgent(ScoringPrompts, BaseAgent):
             if plan is not None and plan.deferred:
                 continue
             prior = await reconcile_job_score_source_event(event["id"], db)
-            if prior is not None:
-                await db.commit()
+            await db.commit()
+            if prior in {"scored", "skipped"}:
                 scored += prior == "scored"
                 skipped += prior == "skipped"
                 continue
-            await self._bus.mark_processing(event["id"], db)
+            # Delivery status is not ownership. A unique durable run plus its
+            # fenced claim must exist before invoking the runtime operation.
             try:
                 tag = await self._dispatch_event(event, db, None, profile)
                 await self._bus.mark_completed(event["id"], db)

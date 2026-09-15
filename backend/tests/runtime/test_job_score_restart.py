@@ -93,7 +93,12 @@ async def test_concurrent_starts_keep_claims_and_results_isolated(workflow_runti
     started = await asyncio.gather(
         *(
             runtime.start(
-                _request().model_copy(update={"job_ref": f"job:synthetic-{i}"})
+                _request().model_copy(
+                    update={
+                        "job_ref": f"job:synthetic-{i}",
+                        "event_ref": f"event:synthetic-{i}",
+                    }
+                )
             )
             for i, runtime in enumerate(runtimes)
         )

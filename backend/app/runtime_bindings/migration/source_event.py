@@ -29,26 +29,39 @@ async def reconcile_job_score_source_event(
     try:
         payload = json.loads(source.payload)
     except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("job_id"), str):
-        return None
-    job_ref = f"job:{payload['job_id']}"
+        payload = None
+    job_ref = (
+        f"job:{payload['job_id']}"
+        if isinstance(payload, dict) and isinstance(payload.get("job_id"), str)
+        else None
+    )
     runs = list(
         await db.scalars(
-            select(WorkflowRunRecord).where(
+            select(WorkflowRunRecord)
+            .where(
                 WorkflowRunRecord.workflow_definition_id == JOB_SCORE_V1.task_id,
                 WorkflowRunRecord.workflow_definition_version == JOB_SCORE_V1.version,
                 WorkflowRunRecord.runtime_mode == "new",
-                WorkflowRunRecord.domain_type == "job_posting",
-                WorkflowRunRecord.domain_id == job_ref,
-                WorkflowRunRecord.input_ref_json["job_ref"].as_string() == job_ref,
                 WorkflowRunRecord.input_ref_json["event_ref"].as_string()
                 == f"event:{event_id}",
             )
+            .limit(2)
         )
     )
     if not runs:
         return None
+    if len(runs) != 1 or any(
+        run.domain_type != "job_posting"
+        or run.domain_id != job_ref
+        or run.input_ref_json.get("job_ref") != job_ref
+        for run in runs
+    ):
+        await db.execute(
+            update(AgentEvent)
+            .where(AgentEvent.id == event_id)
+            .values(status="failed", error_message="job_score_source_identity_conflict")
+        )
+        return "runtime_owned"
     completed = next((run for run in runs if run.status == "completed"), None)
     if completed is not None:
         await db.execute(

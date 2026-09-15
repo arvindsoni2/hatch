@@ -39,6 +39,8 @@ class WorkflowStore(Protocol):
 
     Implementations may use SQLite conditional updates or PostgreSQL row locks, but
     must preserve the same fencing, waiting, and ambiguous-outcome behavior.
+    An explicit run ID atomically deduplicates creation only for an identical
+    task/domain/mode/input/policy binding; identity conflicts must be rejected.
     """
 
     async def create_run(
@@ -50,6 +52,7 @@ class WorkflowStore(Protocol):
         domain_ref: dict[str, object],
         mode: str,
         max_attempts: int,
+        run_id: str | None = None,
     ) -> WorkflowRunRecord: ...
 
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None: ...

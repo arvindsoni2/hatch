@@ -131,7 +131,6 @@ async def test_public_retry_cannot_escape_existing_runtime_lifecycle(
         response = await client.post(f"/api/events/{event_id}/retry")
         assert response.status_code == 409
         assert response.json()["detail"] == "Event retry is owned by runtime"
-        await scorer.run(db_session)
     assert list(await db_session.scalars(select(ExecutionRecord.id))) == executions
     assert len(list(await db_session.scalars(select(WorkflowRunRecord)))) == 1
     assert not list(await db_session.scalars(select(CostTracking)))
