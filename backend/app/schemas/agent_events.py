@@ -87,7 +87,7 @@ class AgentEventRead(BaseModel):
     id: str
     event_type: str
     source_agent: str
-    payload: str                  # raw JSON string as stored
+    payload: str                  # JSON string; canonical score references may be resolved for reads
     status: str
     created_at: datetime
     processed_at: datetime | None = None

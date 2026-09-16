@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 from datetime import datetime, timedelta
 import logging
 import re
 
 from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from ..evaluation.models import ExecutionRole
 from ..events.repository import enforce_metadata_only
@@ -314,27 +317,52 @@ class SQLiteWorkflowRepository:
         domain_ref: dict[str, object],
         mode: str,
         max_attempts: int,
+        run_id: str | None = None,
     ) -> WorkflowRunRecord:
         domain_type = str(domain_ref.get("domain_type") or "runtime")
         domain_id = domain_ref.get("domain_id")
         if domain_id is not None:
             domain_id = str(domain_id)
+        if run_id is not None:
+            try:
+                run_id = str(uuid.UUID(run_id))
+            except (ValueError, TypeError, AttributeError):
+                raise ValueError("workflow_run_id_invalid") from None
+        values = dict(
+            workflow_definition_id=workflow_definition_id,
+            workflow_definition_version=workflow_definition_version,
+            domain_type=domain_type,
+            domain_id=domain_id,
+            runtime_mode=mode,
+            max_attempts=max_attempts,
+            input_ref_json=input_ref,
+        )
+        try:
+            return await self._insert_run(values, run_id=run_id)
+        except IntegrityError:
+            if run_id is None:
+                raise
+            # The existing primary key is the cross-process arbitration point.
+            # Read only after the failed insert's transaction has rolled back.
+            async with self._uow_factory.transaction() as uow:
+                run = await uow.session.get(WorkflowRunRecord, run_id)
+                if run is None:
+                    raise
+                if any(getattr(run, key) != value for key, value in values.items()):
+                    raise ValueError("workflow_run_identity_conflict") from None
+                return run
+
+    async def _insert_run(self, values: dict[str, Any], *, run_id: str | None):
         async with self._uow_factory.transaction() as uow:
             run = await uow.workflows.create_run(
-                workflow_definition_id=workflow_definition_id,
-                workflow_definition_version=workflow_definition_version,
-                domain_type=domain_type,
-                domain_id=domain_id,
-                runtime_mode=mode,
-                max_attempts=max_attempts,
-                input_ref_json=input_ref,
+                **values, **({"id": run_id} if run_id is not None else {})
             )
             step = await uow.workflows.create_step(
                 workflow_run_id=run.id,
                 step_key="execute",
                 step_order=1,
-                task_id=workflow_definition_id,
-                task_version=workflow_definition_version,
+                task_id=run.workflow_definition_id,
+                task_version=run.workflow_definition_version,
             )
             await uow.workflows.create_attempt(
                 workflow_step_id=step.id, attempt_number=1
@@ -458,13 +486,28 @@ class SQLiteWorkflowRepository:
             return attempt
 
     async def _claim_pending(
-        self, worker_id: str, now: datetime, lease_duration: timedelta
+        self,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+        *,
+        workflow_run_id: str | None = None,
     ) -> ExecutionClaimRecord | None:
+        scope = (
+            TaskAttemptRecord.workflow_step_id.in_(
+                select(WorkflowStepRecord.id).where(
+                    WorkflowStepRecord.workflow_run_id == workflow_run_id
+                )
+            )
+            if workflow_run_id is not None
+            else True
+        )
         async with self._uow_factory.transaction() as uow:
             promoted_step_ids = set(
                 (
                     await uow.session.scalars(
                         select(TaskAttemptRecord.workflow_step_id).where(
+                            scope,
                             TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
                             TaskAttemptRecord.waiting_reason
                             == WaitingReason.RETRY_TIME,
@@ -476,6 +519,7 @@ class SQLiteWorkflowRepository:
             await uow.session.execute(
                 update(TaskAttemptRecord)
                 .where(
+                    scope,
                     TaskAttemptRecord.status == TaskAttemptStatus.WAITING,
                     TaskAttemptRecord.waiting_reason == WaitingReason.RETRY_TIME,
                     TaskAttemptRecord.not_before <= now,
@@ -489,6 +533,7 @@ class SQLiteWorkflowRepository:
             candidate = await uow.session.scalar(
                 select(TaskAttemptRecord)
                 .where(
+                    scope,
                     TaskAttemptRecord.status == TaskAttemptStatus.PENDING,
                     (TaskAttemptRecord.not_before.is_(None))
                     | (TaskAttemptRecord.not_before <= now),
@@ -556,6 +601,20 @@ class SQLiteWorkflowRepository:
     ) -> ExecutionClaimRecord | None:
         return await self._claim_pending(
             require_worker_id(worker_id), now, lease_duration
+        )
+
+    async def claim_run(
+        self,
+        workflow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
+    ) -> ExecutionClaimRecord | None:
+        return await self._claim_pending(
+            require_worker_id(worker_id),
+            now,
+            lease_duration,
+            workflow_run_id=workflow_run_id,
         )
 
     async def reclaim(
@@ -698,6 +757,8 @@ class SQLiteWorkflowRepository:
         claim: ExecutionClaimRecord,
         result_ref: dict[str, object],
         now: datetime,
+        *,
+        projection: Callable[[Any], Awaitable[None]] | None = None,
     ) -> bool:
         """Persist a result only when the supplied claim remains the owner."""
         active_claim = self._active_claim(claim, now)
@@ -738,6 +799,8 @@ class SQLiteWorkflowRepository:
             if attempt is None:
                 raise RuntimeError("finalized attempt disappeared before commit")
             await self._sync_lifecycle(uow, attempt.workflow_step_id, now)
+            if projection is not None:
+                await projection(uow)
             await uow.commit()
             return True
 

@@ -255,7 +255,7 @@ _CONTRACT_LIST = (
     ),
     _contract(
         _metadata("job_scoring_triage"),
-        "backend/app/agents/scorer_agent.py",
+        "backend/app/agents/tools/scoring_contract.py",
         "job_scoring",
         "_TriageResult",
         candidate="high",
@@ -264,7 +264,7 @@ _CONTRACT_LIST = (
     ),
     _contract(
         _metadata("job_scoring_detailed"),
-        "backend/app/agents/scorer_agent.py",
+        "backend/app/agents/tools/scoring_contract.py",
         "job_scoring",
         "_ScoreResult",
         candidate="high",
@@ -273,7 +273,7 @@ _CONTRACT_LIST = (
     ),
     _contract(
         _metadata("job_scoring_judge"),
-        "backend/app/agents/scorer_agent.py",
+        "backend/app/agents/tools/scoring_contract.py",
         "job_scoring",
         "_ScoreResult",
         candidate="high",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
@@ -38,6 +39,8 @@ class WorkflowStore(Protocol):
 
     Implementations may use SQLite conditional updates or PostgreSQL row locks, but
     must preserve the same fencing, waiting, and ambiguous-outcome behavior.
+    An explicit run ID atomically deduplicates creation only for an identical
+    task/domain/mode/input/policy binding; identity conflicts must be rejected.
     """
 
     async def create_run(
@@ -49,6 +52,7 @@ class WorkflowStore(Protocol):
         domain_ref: dict[str, object],
         mode: str,
         max_attempts: int,
+        run_id: str | None = None,
     ) -> WorkflowRunRecord: ...
 
     async def get_attempt(self, attempt_id: str) -> TaskAttemptRecord | None: ...
@@ -59,6 +63,14 @@ class WorkflowStore(Protocol):
 
     async def claim_next(
         self, worker_id: str, now: datetime, lease_duration: timedelta
+    ) -> ExecutionClaimRecord | None: ...
+
+    async def claim_run(
+        self,
+        workflow_run_id: str,
+        worker_id: str,
+        now: datetime,
+        lease_duration: timedelta,
     ) -> ExecutionClaimRecord | None: ...
 
     async def reclaim(
@@ -81,6 +93,8 @@ class WorkflowStore(Protocol):
         claim: ExecutionClaimRecord,
         result_ref: dict[str, object],
         now: datetime,
+        *,
+        projection: Callable[[Any], Awaitable[None]] | None = None,
     ) -> bool: ...
 
     async def begin_execution_intent(
