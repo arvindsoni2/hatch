@@ -160,3 +160,110 @@ Python 3.12 is unavailable). Runtime collection reports 169 tests. A full runtim
 execution was attempted but stalled in the existing approval test before producing
 a reliable completion count and was interrupted; no full-suite pass is claimed.
 Ruff and `git diff --check` passed. Scoped re-review remains pending.
+
+Ruling: the ledger's historical R3/R4 entries are incomplete, but `origin/main`
+contains merged PR #64 (`d20bb89`) and PR #66 (`b842957`) with the Task 9-11
+implementation/evidence commits (`eb7e4b8`, `6e27db9`, `1978b26`, and repairs).
+Treat Tasks 7-11 as complete and resume at Task 12. Cost if wrong: a missed
+unmerged change would be detected by the fresh-main base, task review, and R5
+compatibility gates before any promotion.
+
+Task 12: dispatched from fresh merged-main base `b842957` to
+`r5_task12_implementer`. Baseline: docs validation passed; Alembic sole head
+`z3a4b5c6d7e8`; Python 3.12 runtime suite `364 passed` (two cache-write
+warnings). Full local backend baseline was interrupted after `622 passed` by
+the pre-existing offline Hugging Face model-download retry; GitHub CI passed
+for the same `b842957` commit.
+
+Task 12: fix round 1/5 dispatched after independent review found five
+Important gaps: the runtime path wrapped legacy scoring rather than producing
+an independent runtime result; a global claim could cross run identity;
+SHADOW lineage/metrics/failure-retention/purge were incomplete; R2 benchmark
+claims used fake inputs and wrong percentile calculations; and agent evidence
+mocked the product boundary. No Critical findings.
+
+Task 12: Ruling: all five round-1 findings are valid and structurally coupled
+within the approved Task 12 scope. A fresh higher-capability implementer owns
+the repair because the first implementer reported the combined runtime scorer,
+targeted claim, scheduled purge, valid benchmark, and database integration
+work as materially larger than a patch. Cost if wrong: R5 takes longer, but
+the first-job-scoring architecture proof remains honest rather than promoting
+a facade-only migration.
+
+Task 12: fix round 1/5 implementation `f8a011f` completed. The re-review
+confirmed independent successful NEW/SHADOW execution, exact-run claims,
+shadow lineage/retention, and honest non-promotion R2 evidence, but found two
+Important defects: NEW error fallback can bypass a claimed runtime attempt's
+fenced lifecycle/projection, and the fenced NEW event payload can duplicate
+unbounded model-generated score prose. Focused evidence completed before a
+subsequent environment failure: runtime/scoring 418 passed, 1 skipped;
+DB-backed integration 13 passed; retention 4 passed; real benchmark 2 passed;
+non-DB contract selection 7 passed. Fresh reruns are blocked by independently
+reproducible aiosqlite `:memory:` connection hangs; no full-suite pass is
+claimed. The benchmark observes 3.161x p50 and 2.794x p95 latency, and live
+provider/token/cost evidence is unavailable, so Gate R2 remains incomplete
+and the default remains legacy.
+
+Task 12: fix round 2/5 dispatched only for runtime-owned NEW fallback fencing
+and privacy-safe NEW event payloads. These are coupled: a fallback must not
+create an independently durable visible result after a runtime run starts,
+and event payloads must contain only safe references/metadata rather than raw
+model-generated scoring prose. No NEW promotion, push, or PR is authorized.
+
+Task 12: fix round 2/5 implementation `b60b1b3` replaced unfenced NEW
+fallback with runtime-owned recovery and moved NEW event content behind a
+canonical score reference. Its final affected evidence was 482 passed, 1
+skipped; a previous full-backend run reached 3688 passed, 2 skipped, 1 stale
+prompt-catalog failure, which the affected suite then covered after correction.
+Fresh review found two Important end-to-end gaps: an error after a committed
+runtime projection can still mark the source event failed and permit a costly
+public retry/new run, and the raw public event list/detail APIs have not joined
+the reference read-through used by the other product readers.
+
+Task 12: fix round 3/5 dispatched only for post-commit source-event lifecycle
+reconciliation/retry idempotency and privacy-safe canonical-score read-through
+in the public event list/detail APIs. The repair must prove public retry cannot
+produce a duplicate runtime/model charge after a successful projection, and
+must preserve the reference-shaped output vocabulary without persisting raw
+model prose in event payloads. No NEW promotion, push, or PR is authorized.
+
+Task 12: fix round 3/5 implementation `771b3f8` added fenced source-event
+acknowledgement/reconciliation and public event list/detail reference
+hydration. Evidence: RED 7 failed/10 passed, focused GREEN 46 passed, and full
+backend 3706 passed, 2 skipped, 16 warnings, exit 0. Fresh review found one
+Important pre-dispatch race: concurrent NEW scorers can both observe no run,
+then each create/claim a distinct run and incur duplicate provider cost before
+the later projection fence acts. The sequential retry coverage does not prove
+this concurrent window closed.
+
+Task 12: fix round 4/5 dispatched only for an atomic source-event ownership or
+idempotency boundary before job-score runtime dispatch, plus true concurrent
+integration proof that exactly one run/model invocation/projection is created.
+The repair must retain crash/restart recovery and not introduce a generic
+schema change outside the Task 12 contract unless required by durable fencing.
+No NEW promotion, push, or PR is authorized.
+
+Task 12: fix round 4/5 implementation `7057fd7` uses a stable source-derived
+run identity and atomic create-or-validate binding before claim/execution, with
+existing durable lease/fence recovery. Separate-process ownership/restart and
+collision coverage passed 10 tests. Historical full backend evidence was 3713
+passed, 2 skipped, 2 failures; both compatibility failures were corrected and
+the final affected suite passed 509, 1 skipped. Fresh scoped review found no
+Critical or Important issues and confirmed generic optional-run-id compatibility,
+cross-job/profile binding rejection, and the stated distinction from ambiguous
+in-flight provider billing. A whole-Task-12 final acceptance audit is pending;
+R2 remains incomplete and legacy remains default.
+
+Task 12: implementation complete and final acceptance review CLEAN for
+`b842957..7057fd7` (SPEC: PASS, QUALITY: PASS). The implementation keeps
+LEGACY default and satisfies the reference-only task contract, independent
+runtime NEW/SHADOW execution, durable cross-process fencing/recovery,
+metadata-only persistence with transient API read-through, shadow retention,
+and prompt catalog alignment. Verification accounting is intentionally exact:
+clean full backend at `771b3f8` was 3706 passed, 2 skipped; after `7057fd7`,
+the previous full run was 3713 passed, 2 skipped, 2 corrected compatibility
+failures and the final affected suite was 509 passed, 1 skipped. No final
+full-suite pass after `7057fd7` is claimed. R2 promotion is BLOCKED: offline
+latency exceeds the threshold, live same-provider/model token/cost/latency
+evidence is absent, and owner approval is not granted. Do not set NEW default
+or begin the next mode-gated task until this gate is satisfied.
