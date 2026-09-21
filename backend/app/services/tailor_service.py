@@ -31,6 +31,10 @@ from .jd_analyser import JDAnalyser
 from .master_cv_store import load_master_cv
 from .writing_contracts import GenerationProvenance
 from ..agents.tools.profile_loader import load_profile
+from ..runtime import RuntimeMode
+from ..runtime.migration import resolve_runtime_mode
+from ..runtime_bindings.migration.cv_tailor import CVTailorRuntime
+from ..runtime_bindings.tasks.cv_tailor import CVTailorInput, CVTailorOutput
 
 logger = logging.getLogger(__name__)
 
@@ -307,8 +311,63 @@ class TailorService:
             skill_match=skill_match,
         )
 
-    @trace_workflow("cv_tailoring")
     async def generate_cv(
+        self,
+        application_id: str,
+        variant: str,
+        jd_text: str,
+        db: AsyncSession,
+        custom_instructions: str | None = None,
+        template_id: str | None = None,
+        design_settings: dict | None = None,
+    ) -> GeneratedDocumentRead:
+        """Resolve one CV migration mode before invoking its sole visible writer."""
+        mode = resolve_runtime_mode("cv_tailor")
+        if mode is RuntimeMode.LEGACY:
+            return await self._generate_cv_legacy(
+                application_id,
+                variant,
+                jd_text,
+                db,
+                custom_instructions,
+                template_id,
+                design_settings,
+            )
+        if mode is RuntimeMode.SHADOW:
+            visible = await self._generate_cv_legacy(
+                application_id,
+                variant,
+                jd_text,
+                db,
+                custom_instructions,
+                template_id,
+                design_settings,
+            )
+            try:
+                await self._evaluate_cv_runtime(
+                    application_id,
+                    variant,
+                    jd_text,
+                    custom_instructions,
+                    mode=mode,
+                )
+            except Exception:
+                # SHADOW is observational: it must never alter the already
+                # committed legacy document or turn a successful request red.
+                logger.warning("cv_tailor_shadow_runtime_failed")
+            return visible
+        return await self._generate_cv_runtime(
+            application_id,
+            variant,
+            jd_text,
+            db,
+            custom_instructions,
+            template_id,
+            design_settings,
+        )
+
+    @trace_workflow("cv_tailoring")
+    async def _generate_cv_legacy(
         self,
         application_id: str,
         variant: str,
@@ -390,6 +449,126 @@ class TailorService:
             await db.commit()
             span.set_attribute("hatch.ai.document.id", str(doc.id))
         return doc
+
+    async def _evaluate_cv_runtime(
+        self,
+        application_id: str,
+        variant: str,
+        jd_text: str,
+        custom_instructions: str | None,
+        *,
+        mode: RuntimeMode,
+    ):
+        """Generate/validate transient CV output without a visible artifact writer."""
+        analysis = await self._jd_analyser.analyse(jd_text)
+        tailored_cv, _ = await self._tailor_and_score(
+            analysis, variant, custom_instructions
+        )
+        output = CVTailorOutput(
+            tailored_cv=tailored_cv,
+            artifact_ref="artifact:shadow",
+            artifact_bytes=1,
+        )
+        return await CVTailorRuntime(produce=lambda _: output).run(
+            CVTailorInput(
+                application_ref=f"application:{application_id}",
+                job_ref="job:adhoc",
+                variant=variant,
+            ),
+            mode=mode,
+        )
+
+    async def _generate_cv_runtime(
+        self,
+        application_id: str,
+        variant: str,
+        jd_text: str,
+        db: AsyncSession,
+        custom_instructions: str | None,
+        template_id: str | None,
+        design_settings: dict | None,
+    ) -> GeneratedDocumentRead:
+        """NEW path: deterministic validation completes before artifact commit."""
+        if design_settings:
+            template_id = design_settings["template_id"]
+        if not template_id:
+            try:
+                template_id = load_profile().tailoring.default_template_id
+            except Exception:
+                template_id = "ats_classic"
+        from .resume_template_registry import resolve_template  # noqa: PLC0415
+
+        template, template_warning = resolve_template(template_id)
+        template_id = template["id"]
+        if template_warning:
+            logger.warning(template_warning)
+        analysis = await self._jd_analyser.analyse(jd_text)
+        tailored_cv, ats_result = await self._tailor_and_score(
+            analysis, variant, custom_instructions
+        )
+        output = CVTailorOutput(
+            tailored_cv=tailored_cv,
+            artifact_ref="artifact:pending",
+            artifact_bytes=1,
+        )
+        committed: GeneratedDocumentRead | None = None
+
+        async def commit_artifact(_: CVTailorOutput) -> str:
+            nonlocal committed
+            doc_repo = DocumentRepository(db)
+            personal = _load_personal()
+            version = await doc_repo.get_latest_version(application_id, "cv") + 1
+            with get_telemetry().stage_span("cv_tailoring", "render_document"):
+                file_path, file_size = self._cv_builder.build(
+                    tailored_cv,
+                    analysis,
+                    personal,
+                    application_id,
+                    version,
+                    variant,
+                    template_id,
+                )
+            committed = await doc_repo.create(
+                application_id=application_id,
+                document_type="cv",
+                version=version,
+                file_path=file_path,
+                file_size_bytes=file_size,
+                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                tailoring_params=_tailoring_params(
+                    {
+                        "variant": variant,
+                        "custom_instructions": custom_instructions,
+                        "template_id": template_id,
+                        "runtime_mode": RuntimeMode.NEW.value,
+                    },
+                    tailored_cv,
+                ),
+                ats_score=ats_result.overall_score,
+                ats_details=json.dumps(ats_result.model_dump()),
+                variant_label=variant,
+                status="generated",
+            )
+            await db.commit()
+            return f"artifact:{committed.id}"
+
+        result = await CVTailorRuntime(
+            produce=lambda _: output,
+            commit_artifact=commit_artifact,
+        ).run(
+            CVTailorInput(
+                application_ref=f"application:{application_id}",
+                job_ref="job:adhoc",
+                variant=variant,
+            ),
+            mode=RuntimeMode.NEW,
+        )
+        if result.output is None or committed is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "Tailored CV failed validation — document withheld."},
+            )
+        return committed
 
     @trace_workflow("cover_letter_generation")
     async def generate_cover_letter(
@@ -897,9 +1076,9 @@ class TailorService:
                         version=cv_version,
                         file_path=cv_path,
                         file_size_bytes=cv_size,
-                        jd_analysis_snapshot=json.dumps(
-                            analysis.model_dump()
-                        ),
+                            jd_analysis_snapshot=json.dumps(
+                                analysis.model_dump()
+                            ),
                         tailoring_params=_tailoring_params(
                             {"variant": variant},
                             tailored_cv,
@@ -918,9 +1097,9 @@ class TailorService:
                             version=cl_version,
                             file_path=cl_path,
                             file_size_bytes=cl_size,
-                            jd_analysis_snapshot=json.dumps(
-                                analysis.model_dump()
-                            ),
+                        jd_analysis_snapshot=json.dumps(
+                            analysis.model_dump()
+                        ),
                             tailoring_params=_tailoring_params(
                                 {"variant": variant},
                                 cover_letter,
