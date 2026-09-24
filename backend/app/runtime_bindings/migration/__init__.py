@@ -7,12 +7,11 @@ from .facade import (
     record_job_score_shadow_comparison,
 )
 from .job_score import DurableJobScoreRuntime
-from .cv_tailor import CVTailorMigrationDispatcher, CVTailorRuntime
+from .cv_tailor import DurableCVTailorRuntime
 
 __all__ = [
     "DurableJobScoreRuntime",
-    "CVTailorMigrationDispatcher",
-    "CVTailorRuntime",
+    "DurableCVTailorRuntime",
     "JobScoreDispatchResult",
     "JobScoreMigrationDispatcher",
     "LegacyAIRuntimeFacade",

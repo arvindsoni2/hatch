@@ -128,3 +128,92 @@ That integration must be completed before any NEW-mode promotion can be consider
 complete backend suite, live-model quality/cost measurements, and owner approval were not
 run/obtained here. These limitations block promotion; they do not change the default
 LEGACY behavior or rollback availability.
+
+## Review fix round 1 — corrected implementation evidence
+
+The preceding limitation paragraph described the pre-review implementation and is
+superseded for the stated runtime composition: R6 now uses the generic durable kernel,
+declared R4 `ProfileYamlContextProvider`, `ResumeContextProvider`, and
+`JobPostingContextProvider`, Control Plane, `ModelRouter`, fenced
+`ExecutionGateway`, and durable workflow/attempt/execution/evaluation stores. The old
+local callback dispatcher and its seam-only tests were removed. This is still not a
+production-promotion claim.
+
+### Eight review findings, repair and evidence
+
+1. **Grounding:** validation now requires a product-owned statement allowlist for every
+   summary and achievement; it no longer accepts positional provenance IDs or output
+   `source_claims`. `test_live_cv_tailor_kubernetes_claim_is_withheld_against_aws_only_master`
+   runs `CVTailor` with AWS-only source evidence and withholds invented Kubernetes.
+2. **Generic runtime composition:** `DurableCVTailorRuntime` starts/claims a durable
+   run, resolves declared context, persists Control Plane and router decisions, and
+   invokes generation/artifact capabilities through the gateway. The DB-backed NEW test
+   proves run, attempt, generation, and artifact execution lineage.
+3. **Entry routing:** `generate_cv` is the sole CV writer boundary. `generate_all` (and
+   therefore TailorAgent/UI) plus `stream_progress` bind mode at entry and delegate to
+   it. SHADOW retains one legacy visible CV and does not invoke its artifact capability;
+   NEW has no legacy writer fallback.
+4. **Metadata-only sinks:** NEW and SHADOW tailoring parameters are reduced to hashes,
+   counts, IDs, metrics, and reason codes; runtime output result hashes likewise contain
+   only artifact reference/byte and section counts. Canonical CV prose remains in the
+   DOCX artifact.
+5. **Order and bounded recovery:** generation is followed by deterministic schema,
+   required-section, artifact-contract, and source-support validation before the artifact
+   gateway. Exactly one repair and then a safe fallback candidate are allowed; validation
+   failure withholds the artifact.
+6. **Rendered artifact validation:** NEW renders to staging, verifies concrete path,
+   SHA-256, byte count and document XML sections, then binds only those metadata values
+   to the product projection before publication.
+7. **Lifecycle/failure:** staging paths include attempt-unique entropy, promotion uses a
+   no-overwrite link, staging is discarded on failure, and gateway ambiguous commit
+   outcomes are withheld/reconciled rather than retried as a second writer.
+8. **Live tests:** callback-loop migration tests were replaced by DB-backed durable
+   NEW/SHADOW mode tests. Focused test modules cover context lineage, policy/router and
+   artifact executions, sparse/conflicting/long evidence, privacy serialization,
+   repair/fallback, artifact failure, and LEGACY rollback.
+
+### Fix-round TDD/systematic-debugging record
+
+RED: removing the old dispatcher caused its seam test module to fail collection. It was
+replaced with DB-backed run/attempt/execution tests. RED: gateway artifact-handler
+exception classified as `OUTCOME_UNKNOWN` rather than a fabricated permanent failure;
+the test now asserts the safer reconciliation state and no output. RED: changing legacy
+metadata serialization broke the existing legacy compatibility expectation; metadata-only
+serialization is restricted to NEW/SHADOW and the LEGACY format remains unchanged.
+
+GREEN verification after the repair:
+
+```text
+cd backend
+python -m pytest -q --no-cov \
+  tests/runtime/test_cv_tailor_artifacts.py \
+  tests/runtime/test_cv_tailor_migration.py \
+  tests/runtime/test_cv_tailor_task.py \
+  tests/runtime/test_cv_tailor_grounding.py \
+  tests/test_services/test_blocking_gate.py
+23 passed in 1.69s
+
+ruff check app/runtime_bindings/migration/cv_tailor.py \
+  app/runtime_bindings/tasks/cv_tailor.py \
+  app/runtime_bindings/migration/__init__.py \
+  app/services/docx_cv_builder.py app/services/tailor_service.py \
+  tests/runtime/test_cv_tailor_artifacts.py \
+  tests/runtime/test_cv_tailor_migration.py \
+  tests/runtime/test_cv_tailor_grounding.py
+All checks passed
+
+python -m pytest -q --no-cov \
+  tests/test_services/test_cv_tailor.py \
+  tests/test_services/test_ats_grounded_retry.py \
+  tests/test_routers/test_tailor_router.py \
+  tests/test_routers/test_tailor_async.py
+37 passed, 6 warnings in 2.26s
+```
+
+The affected router fixture run retains existing async-job table/background coroutine
+warnings; assertions passed and R6 does not modify that async-job fixture infrastructure.
+
+Alembic remains at `z3a4b5c6d7e8`; no migration was added. The default and rollback
+remain `LEGACY` / `HATCH_RUNTIME_CV_TAILOR_MODE=legacy`. Remaining limitation: full
+provider-backed quality/cost and operational rollout evidence is intentionally out of
+scope, so R5/R6 production promotion remains separately blocked.

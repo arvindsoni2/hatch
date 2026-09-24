@@ -91,19 +91,13 @@ def _normalise(value: str) -> str:
 
 def _claims(tailored: TailoredCVResult) -> Iterable[str]:
     yield tailored.summary
-    for group in tailored.skills:
-        if isinstance(group, dict):
-            yield from (str(value) for value in group.get("items", ()) if value)
     for experience in tailored.experience:
-        yield experience.role
-        yield experience.company
-        yield experience.period
         yield from experience.achievements
-    for certification in tailored.certifications:
-        yield certification
 
 
-def validate_cv_tailor_output(output: object) -> CVTailorValidationResult:
+def validate_cv_tailor_output(
+    output: object, *, source_claims: Iterable[str] | None = None
+) -> CVTailorValidationResult:
     """Validate schema, sections, artifact and grounding in fixed order."""
 
     try:
@@ -124,18 +118,15 @@ def validate_cv_tailor_output(output: object) -> CVTailorValidationResult:
             code=ExecutionResultCode.VALIDATION_FAILURE,
             reason_code="cv_tailor_artifact_contract_invalid",
         )
-    evidence = {_normalise(claim) for claim in typed.source_claims if claim.strip()}
-    provenance = cv.generation_provenance
-    provenance_supported = provenance is not None and bool(provenance.claims) and all(
-        claim.source_evidence_ids and not claim.new_claims
-        for claim in provenance.claims
-    )
-    if evidence and any(_normalise(claim) not in evidence for claim in _claims(cv)):
-        return CVTailorValidationResult(
-            code=ExecutionResultCode.VALIDATION_FAILURE,
-            reason_code="cv_tailor_unsupported_claim",
-        )
-    if not evidence and not provenance_supported:
+    evidence = {
+        _normalise(claim) for claim in (source_claims or ()) if claim.strip()
+    }
+    # Model-produced provenance IDs are not statement-level evidence.  The
+    # caller must provide a product-owned allowlist built from the source CV;
+    # without it, no rendered summary or achievement is eligible to commit.
+    if not evidence or any(
+        _normalise(claim) not in evidence for claim in _claims(cv)
+    ):
         return CVTailorValidationResult(
             code=ExecutionResultCode.VALIDATION_FAILURE,
             reason_code="cv_tailor_unsupported_claim",

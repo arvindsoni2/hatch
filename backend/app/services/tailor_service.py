@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+import hashlib
+import zipfile
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -32,9 +34,12 @@ from .master_cv_store import load_master_cv
 from .writing_contracts import GenerationProvenance
 from ..agents.tools.profile_loader import load_profile
 from ..runtime import RuntimeMode
+from ..runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
+from ..runtime.workflow import WorkflowKernel
 from ..runtime.migration import resolve_runtime_mode
-from ..runtime_bindings.migration.cv_tailor import CVTailorRuntime
+from ..runtime_bindings.migration.cv_tailor import DurableCVTailorRuntime
 from ..runtime_bindings.tasks.cv_tailor import CVTailorInput, CVTailorOutput
+from ..database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -50,18 +55,101 @@ def _load_personal() -> dict[str, Any]:
     return load_master_cv().get("personal", {})
 
 
+def _candidate_source_statements(master: dict[str, Any]) -> tuple[str, ...]:
+    """Return only master-CV statements allowed to support rendered prose."""
+    statements: list[str] = []
+    summary = master.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        statements.append(summary)
+    for statement in (master.get("summary_variants") or {}).values():
+        if isinstance(statement, str) and statement.strip():
+            statements.append(statement)
+    for experience in master.get("experience", []):
+        if not isinstance(experience, dict):
+            continue
+        for achievement in experience.get("achievements", []):
+            text = achievement.get("text") if isinstance(achievement, dict) else achievement
+            if isinstance(text, str) and text.strip():
+                statements.append(text)
+    return tuple(dict.fromkeys(statements))
+
+
 def _tailoring_params(
     values: dict[str, Any],
     generated: Any,
 ) -> str:
-    """Serialize existing tailoring parameters with optional internal provenance."""
+    """Serialize runtime metadata only; preserve the legacy compatibility format."""
+    if values.get("runtime_mode") not in {RuntimeMode.NEW.value, RuntimeMode.SHADOW.value}:
+        provenance = getattr(generated, "generation_provenance", None)
+        if isinstance(provenance, GenerationProvenance):
+            values = {**values, "generation_provenance": provenance.to_dict()}
+        return json.dumps(values)
+    safe: dict[str, Any] = {}
+    for key in ("variant", "template_id", "runtime_mode"):
+        value = values.get(key)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            safe[key] = value
+    if values.get("custom_instructions"):
+        safe["custom_instructions_hash"] = hashlib.sha256(
+            str(values["custom_instructions"]).encode()
+        ).hexdigest()
+    if values.get("design_settings") is not None:
+        safe["design_settings_hash"] = hashlib.sha256(
+            json.dumps(values["design_settings"], sort_keys=True, default=str).encode()
+        ).hexdigest()
+    render_metadata = values.get("render_metadata")
+    if isinstance(render_metadata, dict):
+        safe["render"] = {
+            key: value for key, value in render_metadata.items()
+            if key in {"path_hash", "sha256", "byte_count", "section_count"}
+            and isinstance(value, (str, int))
+        }
     provenance = getattr(generated, "generation_provenance", None)
     if isinstance(provenance, GenerationProvenance):
-        values = {
-            **values,
-            "generation_provenance": provenance.to_dict(),
+        source = provenance.to_dict()
+        safe["provenance"] = {
+            "schema_version": provenance.evidence_schema_version,
+            "claim_count": len(provenance.claims),
+            "digest": hashlib.sha256(
+                json.dumps(source, sort_keys=True, default=str).encode()
+            ).hexdigest(),
         }
-    return json.dumps(values)
+    return json.dumps(safe, sort_keys=True)
+
+
+def _validate_rendered_cv_artifact(
+    staged_path: str, expected_size: int, tailored_cv: TailoredCVResult
+) -> dict[str, Any]:
+    """Verify the concrete staged DOCX before it is projected as a document."""
+    path = Path(staged_path)
+    if not path.is_file() or path.stat().st_size < 1 or path.stat().st_size != expected_size:
+        raise ValueError("cv_tailor_rendered_artifact_invalid")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    try:
+        with zipfile.ZipFile(path) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8", errors="ignore")
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        raise ValueError("cv_tailor_rendered_artifact_invalid") from exc
+    # Verify the model sections survived renderer projection without retaining
+    # their text in runtime/product metadata.
+    sections = (tailored_cv.summary, *(item.role for item in tailored_cv.experience))
+    if any(value and value not in xml for value in sections):
+        raise ValueError("cv_tailor_rendered_artifact_sections_invalid")
+    return {
+        "path_hash": hashlib.sha256(str(path).encode()).hexdigest(),
+        "sha256": digest,
+        "byte_count": expected_size,
+        "section_count": 2 + len(tailored_cv.experience),
+    }
+
+
+def _safe_runtime_snapshot(analysis: JDAnalysisResult, ats: ATSScoreResult) -> tuple[str, str]:
+    """Document fields are telemetry-like sinks on the NEW path: store metrics only."""
+    jd = json.dumps({"role_title": analysis.role_title, "digest": hashlib.sha256(
+        analysis.model_dump_json().encode()).hexdigest()}, sort_keys=True)
+    score = json.dumps({"overall_score": ats.overall_score, "attempts": ats.attempts,
+                        "target_score": ats.target_score, "passed_target": ats.passed_target}, sort_keys=True)
+    return jd, score
 
 
 def _cover_letter_failure_detail(
@@ -185,6 +273,7 @@ class TailorService:
         self._ats_optimiser = ATSOptimiser(self._claude)
         self._cv_builder = DocxCVBuilder()
         self._cl_builder = DocxCLBuilder()
+        self._runtime_factory = SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)
 
     def _tailoring_config(self) -> tuple[int, int]:
         try:
@@ -320,9 +409,10 @@ class TailorService:
         custom_instructions: str | None = None,
         template_id: str | None = None,
         design_settings: dict | None = None,
+        _resolved_mode: RuntimeMode | None = None,
     ) -> GeneratedDocumentRead:
         """Resolve one CV migration mode before invoking its sole visible writer."""
-        mode = resolve_runtime_mode("cv_tailor")
+        mode = _resolved_mode or resolve_runtime_mode("cv_tailor")
         if mode is RuntimeMode.LEGACY:
             return await self._generate_cv_legacy(
                 application_id,
@@ -342,6 +432,7 @@ class TailorService:
                 custom_instructions,
                 template_id,
                 design_settings,
+                runtime_mode=RuntimeMode.SHADOW,
             )
             try:
                 await self._evaluate_cv_runtime(
@@ -376,6 +467,7 @@ class TailorService:
         custom_instructions: str | None = None,
         template_id: str | None = None,
         design_settings: dict | None = None,
+        runtime_mode: RuntimeMode | None = None,
     ) -> GeneratedDocumentRead:
         """Generate a tailored CV and persist the document record.
 
@@ -438,6 +530,7 @@ class TailorService:
                         "variant": variant,
                         "custom_instructions": custom_instructions,
                         "template_id": template_id or "ats_classic",
+                        **({"runtime_mode": runtime_mode.value} if runtime_mode else {}),
                     },
                     tailored_cv,
                 ),
@@ -460,16 +553,25 @@ class TailorService:
         mode: RuntimeMode,
     ):
         """Generate/validate transient CV output without a visible artifact writer."""
-        analysis = await self._jd_analyser.analyse(jd_text)
-        tailored_cv, _ = await self._tailor_and_score(
-            analysis, variant, custom_instructions
-        )
-        output = CVTailorOutput(
-            tailored_cv=tailored_cv,
-            artifact_ref="artifact:shadow",
-            artifact_bytes=1,
-        )
-        return await CVTailorRuntime(produce=lambda _: output).run(
+        async def produce(_: CVTailorInput) -> CVTailorOutput:
+            analysis = await self._jd_analyser.analyse(jd_text)
+            tailored_cv, _ = await self._tailor_and_score(
+                analysis, variant, custom_instructions
+            )
+            return CVTailorOutput(
+                tailored_cv=tailored_cv,
+                artifact_ref="artifact:shadow",
+                artifact_bytes=1,
+            )
+
+        return await DurableCVTailorRuntime(
+            WorkflowKernel(self._runtime_factory),
+            factory=self._runtime_factory,
+            worker_id=f"cv-tailor-shadow-{application_id}",
+            produce=produce,
+            source_claims=_candidate_source_statements(_load_master_cv()),
+            job_description=jd_text,
+        ).run(
             CVTailorInput(
                 application_ref=f"application:{application_id}",
                 job_ref="job:adhoc",
@@ -502,59 +604,103 @@ class TailorService:
         template_id = template["id"]
         if template_warning:
             logger.warning(template_warning)
-        analysis = await self._jd_analyser.analyse(jd_text)
-        tailored_cv, ats_result = await self._tailor_and_score(
-            analysis, variant, custom_instructions
-        )
-        output = CVTailorOutput(
-            tailored_cv=tailored_cv,
-            artifact_ref="artifact:pending",
-            artifact_bytes=1,
-        )
+        prepared: dict[str, Any] = {}
         committed: GeneratedDocumentRead | None = None
+
+        async def produce(_: CVTailorInput) -> CVTailorOutput:
+            analysis = await self._jd_analyser.analyse(jd_text)
+            tailored_cv, ats_result = await self._tailor_and_score(
+                analysis, variant, custom_instructions
+            )
+            prepared.update(
+                analysis=analysis, tailored_cv=tailored_cv, ats_result=ats_result
+            )
+            return CVTailorOutput(
+                tailored_cv=tailored_cv,
+                artifact_ref="artifact:pending",
+                artifact_bytes=1,
+            )
 
         async def commit_artifact(_: CVTailorOutput) -> str:
             nonlocal committed
+            analysis = prepared["analysis"]
+            tailored_cv = prepared["tailored_cv"]
+            ats_result = prepared["ats_result"]
             doc_repo = DocumentRepository(db)
             personal = _load_personal()
             version = await doc_repo.get_latest_version(application_id, "cv") + 1
-            with get_telemetry().stage_span("cv_tailoring", "render_document"):
-                file_path, file_size = self._cv_builder.build(
-                    tailored_cv,
-                    analysis,
-                    personal,
-                    application_id,
-                    version,
-                    variant,
-                    template_id,
+            staged_path: str | None = None
+            try:
+                # Rendering runs outside any database write transaction.  It is
+                # immutable per durable attempt and invisible until promotion.
+                with get_telemetry().stage_span("cv_tailoring", "render_document"):
+                    staged_path, final_path, file_size = self._cv_builder.build_staged(
+                        tailored_cv,
+                        analysis,
+                        personal,
+                        application_id,
+                        version,
+                        variant,
+                        template_id,
+                        design_settings,
+                        attempt_id=f"{application_id}:{variant}:{uuid.uuid4()}",
+                    )
+                render_metadata = _validate_rendered_cv_artifact(
+                    staged_path, file_size, tailored_cv
                 )
-            committed = await doc_repo.create(
-                application_id=application_id,
-                document_type="cv",
-                version=version,
-                file_path=file_path,
-                file_size_bytes=file_size,
-                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
-                tailoring_params=_tailoring_params(
-                    {
-                        "variant": variant,
-                        "custom_instructions": custom_instructions,
-                        "template_id": template_id,
-                        "runtime_mode": RuntimeMode.NEW.value,
-                    },
-                    tailored_cv,
-                ),
-                ats_score=ats_result.overall_score,
-                ats_details=json.dumps(ats_result.model_dump()),
-                variant_label=variant,
-                status="generated",
-            )
-            await db.commit()
-            return f"artifact:{committed.id}"
+                jd_snapshot, ats_details = _safe_runtime_snapshot(analysis, ats_result)
+                # The only DB work is the product projection. No model/network
+                # call or renderer invocation is performed in this transaction.
+                committed = await doc_repo.create(
+                    application_id=application_id,
+                    document_type="cv",
+                    version=version,
+                    file_path=final_path,
+                    file_size_bytes=file_size,
+                    jd_analysis_snapshot=jd_snapshot,
+                    tailoring_params=_tailoring_params(
+                        {
+                            "variant": variant,
+                            "custom_instructions": custom_instructions,
+                            "template_id": template_id,
+                            "runtime_mode": RuntimeMode.NEW.value,
+                            "render_metadata": render_metadata,
+                        },
+                        tailored_cv,
+                    ),
+                    ats_score=ats_result.overall_score,
+                    ats_details=ats_details,
+                    variant_label=variant,
+                    status="staged",
+                )
+                await db.commit()
+                self._cv_builder.promote_staged(staged_path, final_path)
+                await doc_repo.update_status(committed.id, "generated")
+                await db.commit()
+                # Bind concrete validated metadata to the approved projection;
+                # only digests/counts are persisted.
+                logger.info(
+                    "cv_tailor_artifact_promoted id=%s bytes=%s sections=%s hash=%s",
+                    committed.id, render_metadata["byte_count"],
+                    render_metadata["section_count"], render_metadata["sha256"][:12],
+                )
+                return f"artifact:{committed.id}"
+            except Exception:
+                self._cv_builder.discard_staged(staged_path)
+                # A failed projection must not leave a misleading uncommitted
+                # session for the caller to publish later.
+                await db.rollback()
+                committed = None
+                raise
 
-        result = await CVTailorRuntime(
-            produce=lambda _: output,
+        result = await DurableCVTailorRuntime(
+            WorkflowKernel(self._runtime_factory),
+            factory=self._runtime_factory,
+            worker_id=f"cv-tailor-new-{application_id}",
+            produce=produce,
             commit_artifact=commit_artifact,
+            source_claims=_candidate_source_statements(_load_master_cv()),
+            job_description=jd_text,
         ).run(
             CVTailorInput(
                 application_ref=f"application:{application_id}",
@@ -711,6 +857,7 @@ class TailorService:
         custom_instructions: str | None = None,
         template_id: str | None = None,
         design_settings: dict | None = None,
+        _resolved_mode: RuntimeMode | None = None,
     ) -> TailorResultBundle:
         """Run the full pipeline: JD analysis → CV → Cover letter.
 
@@ -728,6 +875,7 @@ class TailorService:
         Returns:
             TailorResultBundle with document IDs and scores.
         """
+        mode = _resolved_mode or resolve_runtime_mode("cv_tailor")
         if design_settings:
             template_id = design_settings["template_id"]
         if not template_id:
@@ -762,6 +910,26 @@ class TailorService:
                     jd_text = _job.description or _job.title or ""
                     if not job_url:
                         job_url = _job.url
+        # Non-legacy package/SSE callers use the same already-bound CV entry
+        # boundary. The cover-letter flow remains product legacy scope; it
+        # never becomes a second CV writer.
+        if mode is not RuntimeMode.LEGACY:
+            cv_doc = await self.generate_cv(
+                application_id, variant, jd_text, db, custom_instructions,
+                template_id, design_settings, _resolved_mode=mode,
+            )
+            analysis = await self._jd_analyser.analyse(jd_text, job_url)
+            master_cv = _load_master_cv()
+            skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
+            tailored_cv, ats_result = await self._tailor_and_score(
+                analysis, variant, custom_instructions
+            )
+            cl_doc = await self.generate_cover_letter(application_id, variant, jd_text, db)
+            return TailorResultBundle(
+                application_id=application_id, cv_document_id=cv_doc.id,
+                cl_document_id=cl_doc.id, ats_score=ats_result, analysis=analysis,
+                skill_match=skill_match, review={"cv_runtime_mode": mode.value},
+            )
         telemetry = get_telemetry()
         doc_repo = DocumentRepository(db)
         with telemetry.workflow_span("cv_tailoring") as cv_workflow_span:
@@ -974,6 +1142,25 @@ class TailorService:
         def sse(stage: str, pct: int, message: str = "") -> str:
             payload = json.dumps({"stage": stage, "pct": pct, "message": message})
             return f"data: {payload}\n\n"
+
+        mode = resolve_runtime_mode("cv_tailor")
+        if mode is not RuntimeMode.LEGACY:
+            # SSE is an entry point, not a bypass: bind the mode once and
+            # delegate the CV write to generate_all's common boundary.
+            yield sse("tailoring_cv", 40, "Tailoring CV...")
+            try:
+                bundle = await self.generate_all(
+                    application_id, variant, jd_text, db, _resolved_mode=mode
+                )
+            except HTTPException as exc:
+                yield sse("error", 0, json.dumps(exc.detail))
+                return
+            yield sse("complete", 100, json.dumps({
+                "cv_document_id": bundle.cv_document_id,
+                "cl_document_id": bundle.cl_document_id,
+                "ats_score": bundle.ats_score.overall_score,
+            }))
+            return
 
         telemetry = get_telemetry()
         doc_repo = DocumentRepository(db)

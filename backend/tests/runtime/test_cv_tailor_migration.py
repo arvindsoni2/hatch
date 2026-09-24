@@ -1,25 +1,27 @@
-"""Migration mode and bounded repair contracts for R6 CV tailoring."""
+"""Live durable mode and rollback contracts for R6 CV tailoring."""
 
-import pytest
+from sqlalchemy import select
 
+from app.config import Settings
 from app.runtime import RuntimeMode
 from app.runtime.contracts import ExecutionResultCode
-from app.runtime_bindings.migration.cv_tailor import CVTailorMigrationDispatcher
+from app.runtime.evaluation.models import ExecutionRecord
+from app.runtime.workflow.models import TaskAttemptRecord, WorkflowRunRecord
+from app.runtime_bindings.migration.cv_tailor import DurableCVTailorRuntime
 from app.runtime_bindings.tasks.cv_tailor import CVTailorInput, CVTailorOutput
 from app.schemas.tailor import TailoredCVResult, TailoredExperience
-from app.config import Settings
 
 
 def _request() -> CVTailorInput:
     return CVTailorInput(
-        application_ref="application:synthetic-001", job_ref="job:synthetic-001"
+        application_ref="application:synthetic-002", job_ref="job:synthetic-002"
     )
 
 
-def _output(summary: str = "AWS engineer") -> CVTailorOutput:
+def _output() -> CVTailorOutput:
     return CVTailorOutput(
         tailored_cv=TailoredCVResult(
-            summary=summary,
+            summary="AWS engineer",
             skills=[{"category": "Cloud", "items": ["AWS"]}],
             experience=[
                 TailoredExperience(
@@ -30,86 +32,63 @@ def _output(summary: str = "AWS engineer") -> CVTailorOutput:
                 )
             ],
         ),
-        artifact_ref="artifact:cv-001",
+        artifact_ref="artifact:cv-002",
         artifact_bytes=100,
-        source_claims=(
-            summary,
-            "AWS",
-            "Engineer",
-            "Example Ltd",
-            "2020-2024",
-            "Delivered AWS platform migrations.",
-        ),
     )
 
 
-@pytest.mark.parametrize(
-    ("mode", "authoritative_engine", "expected_calls"),
-    [
-        (RuntimeMode.LEGACY, "legacy", ["legacy"]),
-        (RuntimeMode.SHADOW, "legacy", ["legacy", "runtime"]),
-        (RuntimeMode.NEW, "runtime", ["runtime"]),
-    ],
-)
-async def test_mode_has_exactly_one_visible_cv_writer(
-    mode, authoritative_engine, expected_calls
+async def test_new_mode_has_durable_run_attempt_generation_and_artifact_lineage(
+    workflow_runtime,
 ) -> None:
-    calls: list[str] = []
+    kernel, factory = workflow_runtime
+    committed: list[str] = []
 
-    async def legacy(_: CVTailorInput):
-        calls.append("legacy")
-        return _output()
+    async def commit(_: CVTailorOutput) -> str:
+        committed.append("commit")
+        return "artifact:committed-002"
 
-    async def runtime(_: CVTailorInput):
-        calls.append("runtime")
-        return _output()
+    result = await DurableCVTailorRuntime(
+        kernel,
+        factory=factory,
+        worker_id="new-live",
+        produce=lambda _: _output(),
+        source_claims=("AWS engineer", "Delivered AWS platform migrations."),
+        job_description="AWS required",
+        commit_artifact=commit,
+    ).run(_request(), mode=RuntimeMode.NEW)
 
-    result = await CVTailorMigrationDispatcher(
-        mode=mode, legacy_generate=legacy, runtime_generate=runtime
-    ).generate(_request())
-
-    assert result.authoritative_engine == authoritative_engine
-    assert result.visible_result == _output()
-    assert calls == expected_calls
-
-
-async def test_shadow_runtime_failure_preserves_legacy_result_and_never_promotes() -> (
-    None
-):
-    async def legacy(_: CVTailorInput):
-        return _output()
-
-    async def runtime(_: CVTailorInput):
-        raise TimeoutError("synthetic timeout")
-
-    result = await CVTailorMigrationDispatcher(
-        mode=RuntimeMode.SHADOW, legacy_generate=legacy, runtime_generate=runtime
-    ).generate(_request())
-
-    assert result.visible_result == _output()
-    assert result.authoritative_engine == "legacy"
-    assert result.shadow_reason_code == "runtime_failed"
+    assert result.code is ExecutionResultCode.SUCCESS
+    assert committed == ["commit"]
+    async with factory.session_factory() as session:
+        assert len(list(await session.scalars(select(WorkflowRunRecord)))) == 1
+        assert len(list(await session.scalars(select(TaskAttemptRecord)))) == 1
+        assert len(list(await session.scalars(select(ExecutionRecord)))) == 2
 
 
-async def test_new_validation_failure_does_not_fall_back_to_a_legacy_writer() -> None:
-    calls: list[str] = []
+async def test_shadow_mode_records_durable_evaluation_but_cannot_commit(
+    workflow_runtime,
+) -> None:
+    kernel, factory = workflow_runtime
+    committed: list[str] = []
 
-    async def legacy(_: CVTailorInput):
-        calls.append("legacy")
-        return _output()
+    async def commit(_: CVTailorOutput) -> str:
+        committed.append("unexpected")
+        return "artifact:unexpected"
 
-    async def runtime(_: CVTailorInput):
-        calls.append("runtime")
-        return ExecutionResultCode.VALIDATION_FAILURE
+    result = await DurableCVTailorRuntime(
+        kernel,
+        factory=factory,
+        worker_id="shadow-live",
+        produce=lambda _: _output(),
+        source_claims=("AWS engineer", "Delivered AWS platform migrations."),
+        job_description="AWS required",
+        commit_artifact=commit,
+    ).run(_request(), mode=RuntimeMode.SHADOW)
 
-    result = await CVTailorMigrationDispatcher(
-        mode=RuntimeMode.NEW, legacy_generate=legacy, runtime_generate=runtime
-    ).generate(_request())
-
-    assert result.visible_result is None
-    assert result.authoritative_engine == "runtime"
-    assert result.runtime_code is ExecutionResultCode.VALIDATION_FAILURE
-    assert calls == ["runtime"]
+    assert result.code is ExecutionResultCode.SUCCESS
+    assert committed == []
+    async with factory.session_factory() as session:
+        assert len(list(await session.scalars(select(ExecutionRecord)))) == 1
 
 
 def test_default_mode_remains_legacy_for_rollback() -> None:
