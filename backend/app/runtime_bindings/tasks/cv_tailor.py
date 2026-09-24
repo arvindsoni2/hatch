@@ -35,8 +35,15 @@ class CVTailorInput(BaseModel):
     job_ref: str = Field(min_length=1, max_length=256, pattern=_REFERENCE_PATTERN)
     variant: str = Field(default="A", min_length=1, max_length=32)
     request_ref: str = Field(
-        default="request:legacy", min_length=1, max_length=256, pattern=_REFERENCE_PATTERN
+        default="request:legacy",
+        min_length=1,
+        max_length=256,
+        pattern=_REFERENCE_PATTERN,
     )
+    delivery_ref: str = Field(
+        default="delivery:direct", max_length=256, pattern=_REFERENCE_PATTERN
+    )
+    input_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class CVTailorInvocation(CVTailorInput):
@@ -52,8 +59,12 @@ class CVTailorOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tailored_cv: TailoredCVResult
-    artifact_ref: str = Field(min_length=1, max_length=256, pattern=_REFERENCE_PATTERN)
-    artifact_bytes: int = Field(ge=1)
+    artifact_ref: str | None = Field(
+        default=None, min_length=1, max_length=256, pattern=_REFERENCE_PATTERN
+    )
+    artifact_bytes: int | None = Field(default=None, ge=1)
+    artifact_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    section_count: int | None = Field(default=None, ge=1)
     # A transient, in-memory allowlist of source-supported statements. It is
     # intentionally not persisted in runtime/shadow metadata.
     source_claims: tuple[str, ...] = Field(default=(), exclude=True)
@@ -118,25 +129,34 @@ def validate_cv_tailor_output(
             reason_code="cv_tailor_schema_invalid",
         )
     cv = typed.tailored_cv
-    if not cv.summary.strip() or not cv.skills or not cv.experience:
+    if (
+        not cv.summary.strip()
+        or not cv.skills
+        or not cv.experience
+        or any(not isinstance(g, dict) or not g.get("items") for g in cv.skills)
+        or any(
+            not e.role.strip()
+            or not e.company.strip()
+            or not e.period.strip()
+            or not e.achievements
+            or any(not a.strip() for a in e.achievements)
+            for e in cv.experience
+        )
+    ):
         return CVTailorValidationResult(
             code=ExecutionResultCode.VALIDATION_FAILURE,
             reason_code="cv_tailor_required_section_missing",
         )
-    if not typed.artifact_ref or typed.artifact_bytes < 1:
+    if (typed.artifact_ref is None) != (typed.artifact_bytes is None):
         return CVTailorValidationResult(
             code=ExecutionResultCode.VALIDATION_FAILURE,
             reason_code="cv_tailor_artifact_contract_invalid",
         )
-    evidence = {
-        _normalise(claim) for claim in (source_claims or ()) if claim.strip()
-    }
+    evidence = {_normalise(claim) for claim in (source_claims or ()) if claim.strip()}
     # Model-produced provenance IDs are not statement-level evidence.  The
     # caller must provide a product-owned allowlist built from the source CV;
     # without it, no rendered summary or achievement is eligible to commit.
-    if not evidence or any(
-        _normalise(claim) not in evidence for claim in _claims(cv)
-    ):
+    if not evidence or any(_normalise(claim) not in evidence for claim in _claims(cv)):
         return CVTailorValidationResult(
             code=ExecutionResultCode.VALIDATION_FAILURE,
             reason_code="cv_tailor_unsupported_claim",

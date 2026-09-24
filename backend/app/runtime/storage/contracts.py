@@ -127,6 +127,15 @@ class WorkflowStore(Protocol):
         outcome_unknown: dict[str, object] | None,
     ) -> bool: ...
 
+    async def acknowledge_execution_receipt(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        receipt_ref: str,
+        verify_receipt: Callable[[Any], Awaitable[bool]],
+        now: datetime,
+    ) -> bool: ...
+
     async def fail_or_retry(
         self,
         claim: ExecutionClaimRecord,

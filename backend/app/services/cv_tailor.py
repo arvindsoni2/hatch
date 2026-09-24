@@ -13,6 +13,7 @@ from ..observability import get_telemetry, trace_stage
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult, TailoredEducation, TailoredExperience
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
+from .generation_privacy import metadata_only
 from ..agents.tools.context_budgets import CV_GENERATE
 from .jd_analyser import _split_jinja_output
 from .master_cv_store import MasterCVMissingError, load_master_cv  # noqa: F401
@@ -298,12 +299,12 @@ class CVTailor:
             validation=numeric_validation,
             claims=_cv_claim_provenance(result, evidence_ledger),
         )
-        if result.blocking_issues:
+        if result.blocking_issues and not metadata_only.get():
             logger.warning(
                 "Blocking issues in tailored CV (document withheld): %s",
                 result.blocking_issues,
             )
-        if advisory:
+        if advisory and not metadata_only.get():
             logger.warning("Advisory fabrication warnings for tailored CV: %s", advisory)
 
         return result

@@ -39,7 +39,8 @@ from ..runtime.storage.sqlite import SQLiteRuntimeUnitOfWorkFactory
 from ..runtime.workflow import WorkflowKernel
 from ..runtime.migration import resolve_runtime_mode
 from ..runtime_bindings.migration.cv_tailor import DurableCVTailorRuntime
-from ..runtime_bindings.tasks.cv_tailor import CVTailorInput, CVTailorOutput
+from ..runtime_bindings.tasks.cv_tailor import CVTailorInput
+from .generation_privacy import metadata_capture, metadata_only
 from ..database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ def _tailoring_params(
             values = {**values, "generation_provenance": provenance.to_dict()}
         return json.dumps(values)
     safe: dict[str, Any] = {}
-    for key in ("variant", "template_id", "runtime_mode"):
+    for key in ("variant", "template_id", "runtime_mode", "delivery_ref"):
         value = values.get(key)
         if isinstance(value, (str, int, float, bool)) or value is None:
             safe[key] = value
@@ -119,7 +120,8 @@ def _tailoring_params(
 
 
 def _validate_rendered_cv_artifact(
-    staged_path: str, expected_size: int, tailored_cv: TailoredCVResult
+    staged_path: str, expected_size: int, tailored_cv: TailoredCVResult,
+    *, template_id: str | None = None, design_settings: dict | None = None,
 ) -> dict[str, Any]:
     """Verify the concrete staged DOCX before it is projected as a document."""
     path = Path(staged_path)
@@ -128,21 +130,31 @@ def _validate_rendered_cv_artifact(
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     try:
         with zipfile.ZipFile(path) as docx:
-            root = ElementTree.fromstring(docx.read("word/document.xml"))
+            if docx.getinfo("word/document.xml").file_size > 10_000_000:
+                raise ValueError("cv_tailor_rendered_artifact_invalid")
+            xml = docx.read("word/document.xml")
+            if b"<!DOCTYPE" in xml.upper() or b"<!ENTITY" in xml.upper():
+                raise ValueError("cv_tailor_rendered_artifact_invalid")
+            root = ElementTree.fromstring(xml)
             rendered_text = " ".join("".join(root.itertext()).split())
     except (OSError, KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
         raise ValueError("cv_tailor_rendered_artifact_invalid") from exc
     # ElementTree itertext handles DOCX XML escaping and text split over runs.
     # Every candidate-rendered section is checked before projection; only the
     # resulting counts and hash reach product/runtime metadata.
+    from .docx_cv_builder import _build_cv_spec
+    from .cv_tailor import _parse_tailored_cv
+    spec = _build_cv_spec(tailored_cv, JDAnalysisResult(role_title=""), {}, template_id, design_settings)
+    tailored_cv = _parse_tailored_cv(spec)
     sections = [tailored_cv.summary]
     for group in tailored_cv.skills:
         if isinstance(group, dict):
+            sections.append(group.get("category") or group.get("display_name") or group.get("name") or "")
             sections.extend(str(item) for item in group.get("items", ()) if item)
     for item in tailored_cv.experience:
         sections.extend((item.role, item.company, item.period, *item.achievements))
     for item in tailored_cv.education:
-        sections.extend((item.qualification, item.institution, item.year))
+        sections.extend((item.qualification, item.institution, item.year, item.field, item.location, *item.details))
     sections.extend(tailored_cv.certifications)
     if any(value and " ".join(value.split()) not in rendered_text for value in sections):
         raise ValueError("cv_tailor_rendered_artifact_sections_invalid")
@@ -156,7 +168,7 @@ def _validate_rendered_cv_artifact(
 
 def _safe_runtime_snapshot(analysis: JDAnalysisResult, ats: ATSScoreResult) -> tuple[str, str]:
     """Document fields are telemetry-like sinks on the NEW path: store metrics only."""
-    jd = json.dumps({"role_title": analysis.role_title, "digest": hashlib.sha256(
+    jd = json.dumps({"digest": hashlib.sha256(
         analysis.model_dump_json().encode()).hexdigest()}, sort_keys=True)
     score = json.dumps({"overall_score": ats.overall_score, "attempts": ats.attempts,
                         "target_score": ats.target_score, "passed_target": ats.passed_target}, sort_keys=True)
@@ -317,7 +329,7 @@ class TailorService:
                     status_code=422,
                     detail={
                         "error": "Tailored CV failed grounding checks — document withheld.",
-                        "issues": tailored_cv.blocking_issues,
+                        "issues": ["cv_grounding_failed"] if metadata_only.get() else tailored_cv.blocking_issues,
                         "hint": "Review the source CV evidence or re-run tailoring.",
                     },
                 )
@@ -350,7 +362,7 @@ class TailorService:
                     "ATS score %d is below target %d; preserving best grounded CV for review%s",
                     best_score.overall_score,
                     target_score,
-                    f" with unsupported gaps: {best_score.unsupported_gaps}" if best_score.unsupported_gaps else "",
+                    f" with unsupported gaps: {best_score.unsupported_gaps}" if best_score.unsupported_gaps and not metadata_only.get() else "",
                 )
                 return best_cv or tailored_cv, best_score or ats_result
 
@@ -421,9 +433,14 @@ class TailorService:
         template_id: str | None = None,
         design_settings: dict | None = None,
         _resolved_mode: RuntimeMode | None = None,
+        request_ref: str | None = None,
+        delivery_ref: str | None = None,
+        _capture: dict | None = None,
     ) -> GeneratedDocumentRead:
         """Resolve one CV migration mode before invoking its sole visible writer."""
         mode = _resolved_mode or resolve_runtime_mode("cv_tailor")
+        request_ref = request_ref or ("request:" + hashlib.sha256(delivery_ref.encode()).hexdigest() if delivery_ref else f"request:{uuid.uuid4()}")
+        delivery_ref = delivery_ref or request_ref.replace("request:", "delivery:", 1)
         if mode is RuntimeMode.LEGACY:
             return await self._generate_cv_legacy(
                 application_id,
@@ -435,7 +452,9 @@ class TailorService:
                 design_settings,
             )
         if mode is RuntimeMode.SHADOW:
-            visible = await self._generate_cv_legacy(
+            captured = {}
+            with metadata_capture():
+                visible = await self._generate_cv_legacy(
                 application_id,
                 variant,
                 jd_text,
@@ -444,6 +463,7 @@ class TailorService:
                 template_id,
                 design_settings,
                 runtime_mode=RuntimeMode.SHADOW,
+                _capture=captured,
             )
             try:
                 await self._evaluate_cv_runtime(
@@ -451,13 +471,17 @@ class TailorService:
                     variant,
                     jd_text,
                     custom_instructions,
-                    mode=mode,
                     legacy_document=visible,
+                    legacy_capture=captured, template_id=template_id,
+                    design_settings=design_settings, request_ref=request_ref,
+                    delivery_ref=delivery_ref,
                 )
             except Exception:
                 # SHADOW is observational: it must never alter the already
                 # committed legacy document or turn a successful request red.
                 logger.warning("cv_tailor_shadow_runtime_failed")
+            if _capture is not None:
+                _capture.update(captured)
             return visible
         return await self._generate_cv_runtime(
             application_id,
@@ -467,6 +491,7 @@ class TailorService:
             custom_instructions,
             template_id,
             design_settings,
+            request_ref=request_ref, delivery_ref=delivery_ref, capture=_capture,
         )
 
     @trace_workflow("cv_tailoring")
@@ -480,6 +505,7 @@ class TailorService:
         template_id: str | None = None,
         design_settings: dict | None = None,
         runtime_mode: RuntimeMode | None = None,
+        _capture: dict | None = None,
     ) -> GeneratedDocumentRead:
         """Generate a tailored CV and persist the document record.
 
@@ -533,6 +559,17 @@ class TailorService:
                 template_id,
             )
 
+        if runtime_mode is RuntimeMode.SHADOW:
+            from .docx_cv_builder import _build_cv_spec
+            from .cv_tailor import _parse_tailored_cv
+            from ..runtime_bindings.migration.cv_tailor import cv_content
+            rendered = _parse_tailored_cv(_build_cv_spec(tailored_cv, analysis, personal, template_id))
+            with zipfile.ZipFile(file_path, "a") as archive:
+                archive.writestr("hatch/cv.json", json.dumps(cv_content(rendered)))
+            file_size = Path(file_path).stat().st_size
+            if _capture is not None:
+                _capture.update(cv=rendered, ats=ats_result, analysis=analysis)
+
         with get_telemetry().stage_span(
             "cv_tailoring",
             "persist_document",
@@ -562,245 +599,85 @@ class TailorService:
             span.set_attribute("hatch.ai.document.id", str(doc.id))
         return doc
 
-    async def _evaluate_cv_runtime(
-        self,
-        application_id: str,
-        variant: str,
-        jd_text: str,
-        custom_instructions: str | None,
-        *,
-        mode: RuntimeMode,
-        legacy_document: GeneratedDocumentRead,
+    async def _run_cv_runtime(
+        self, application_id, variant, jd_text, custom_instructions, template_id,
+        design_settings, *, mode, request_ref, delivery_ref,
     ):
-        """Generate/validate transient CV output without a visible artifact writer."""
-        async def produce(_: CVTailorInput) -> CVTailorOutput:
-            analysis = await self._jd_analyser.analyse(jd_text)
-            tailored_cv, _ = await self._tailor_and_score(
-                analysis, variant, custom_instructions
-            )
-            return CVTailorOutput(
-                tailored_cv=tailored_cv,
-                artifact_ref="artifact:shadow",
-                artifact_bytes=1,
-            )
-
-        result = await DurableCVTailorRuntime(
-            WorkflowKernel(self._runtime_factory),
-            factory=self._runtime_factory,
-            worker_id=f"cv-tailor-shadow-{application_id}",
-            produce=produce,
-            source_claims=_candidate_source_statements(_load_master_cv()),
-            job_description=jd_text,
-        ).run(
-            CVTailorInput(
-                application_ref=f"application:{application_id}",
-                job_ref="job:adhoc",
-                variant=variant,
-                request_ref=f"request:{uuid.uuid4()}",
-            ),
-            mode=mode,
+        from .resume_template_registry import resolve_template
+        template, _ = resolve_template((design_settings or {}).get("template_id") or template_id or load_profile().tailoring.default_template_id)
+        runtime = DurableCVTailorRuntime(
+            WorkflowKernel(self._runtime_factory), factory=self._runtime_factory,
+            worker_id=f"cv-tailor-{uuid.uuid4().hex}",
+            master_cv=_load_master_cv(), profile=load_profile(),
+            job_description=jd_text, builder=self._cv_builder,
+            template_id=template["id"], design_settings=design_settings,
+            custom_instructions=custom_instructions,
         )
+        from ..runtime_bindings.migration.cv_tailor import digest
+        result = await runtime.run(CVTailorInput(
+            application_ref=f"application:{application_id}", job_ref="job:adhoc",
+            variant=variant, request_ref=request_ref, delivery_ref=delivery_ref,
+            input_hash=digest({"jd": jd_text, "instructions": custom_instructions,
+                "template": template["id"], "design": design_settings}),
+        ), mode=mode)
+        return runtime, result
+
+    async def _evaluate_cv_runtime(
+        self, application_id, variant, jd_text, custom_instructions, *,
+        legacy_document, legacy_capture, template_id, design_settings,
+        request_ref, delivery_ref,
+    ):
+        from ..runtime_bindings.migration.cv_tailor import content_hash
+        runtime, result = await self._run_cv_runtime(
+            application_id, variant, jd_text, custom_instructions, template_id,
+            design_settings, mode=RuntimeMode.SHADOW, request_ref=request_ref,
+            delivery_ref=delivery_ref,
+        )
+        if runtime.claim is None:
+            return result
         async with self._runtime_factory.transaction() as uow:
+            # A real observed legacy completion, linked to the same comparison
+            # attempt. It is not a claim that legacy used runtime generation.
+            legacy_execution = await uow.evaluations.record_execution(
+                task_attempt_id=runtime.claim.task_attempt_id,
+                execution_role="primary", capability_id="cv.tailor.legacy",
+                capability_version=1, result_class="success",
+                metadata_json={"document_ref": legacy_document.id,
+                    "result_hash": content_hash(legacy_capture["cv"])},
+            )
+            legacy_hash = content_hash(legacy_capture["cv"])
+            runtime_hash = content_hash(result.output.tailored_cv) if result.output else None
             await uow.shadow.record(
-                slice_name="cv_tailor",
-                domain_type="application",
+                slice_name="cv_tailor", domain_type="application",
                 domain_id_hash="sha256:" + hashlib.sha256(application_id.encode()).hexdigest(),
-                legacy_execution_ref=f"document:{legacy_document.id}",
-                runtime_execution_id=None,
-                legacy_result_hash="sha256:" + hashlib.sha256(
-                    f"{legacy_document.id}:{legacy_document.file_size_bytes}".encode()
-                ).hexdigest(),
-                runtime_result_hash="sha256:" + hashlib.sha256(
-                    f"{result.code.value}:{result.reason_code}:{result.artifact_ref or ''}".encode()
-                ).hexdigest(),
-                comparison_status="same" if result.code.value == "success" else "runtime_failed",
-                metrics_json={
-                    "mode": mode.value,
-                    "reason_code": result.reason_code,
-                    "runtime_committed": False,
-                },
+                legacy_execution_ref=legacy_execution.id,
+                runtime_execution_id=result.execution_id,
+                legacy_result_hash="sha256:" + legacy_hash,
+                runtime_result_hash="sha256:" + runtime_hash if runtime_hash else None,
+                comparison_status=("same" if legacy_hash == runtime_hash else "different") if runtime_hash else "runtime_failed",
+                metrics_json={"reason_code": result.reason_code, "runtime_committed": False,
+                    "legacy_score": legacy_capture["ats"].overall_score,
+                    "runtime_score": result.ats.overall_score if result.ats else None,
+                    "repair_count": result.repair_count},
             )
             await uow.commit()
         return result
 
     async def _generate_cv_runtime(
-        self,
-        application_id: str,
-        variant: str,
-        jd_text: str,
-        db: AsyncSession,
-        custom_instructions: str | None,
-        template_id: str | None,
-        design_settings: dict | None,
-    ) -> GeneratedDocumentRead:
-        """NEW path: deterministic validation completes before artifact commit."""
-        if design_settings:
-            template_id = design_settings["template_id"]
-        if not template_id:
-            try:
-                template_id = load_profile().tailoring.default_template_id
-            except Exception:
-                template_id = "ats_classic"
-        from .resume_template_registry import resolve_template  # noqa: PLC0415
-
-        template, template_warning = resolve_template(template_id)
-        template_id = template["id"]
-        if template_warning:
-            logger.warning(template_warning)
-        prepared: dict[str, Any] = {}
-        committed: GeneratedDocumentRead | None = None
-
-        async def produce(_: CVTailorInput) -> CVTailorOutput:
-            analysis = await self._jd_analyser.analyse(jd_text)
-            # This is deliberately generation-only. Deterministic runtime
-            # validation must complete before ATS/model evaluation or render.
-            tailored_cv = await self._cv_tailor.tailor(
-                analysis, variant, custom_instructions
-            )
-            if tailored_cv.blocking_issues:
-                raise HTTPException(
-                    status_code=422,
-                    detail={"error": "Tailored CV failed grounding checks — document withheld."},
-                )
-            prepared.update(analysis=analysis, tailored_cv=tailored_cv)
-            return CVTailorOutput(
-                tailored_cv=tailored_cv,
-                artifact_ref="artifact:pending",
-                artifact_bytes=1,
-            )
-
-        async def commit_artifact(_: CVTailorOutput) -> str:
-            nonlocal committed
-            analysis = prepared["analysis"]
-            tailored_cv = prepared["tailored_cv"]
-            # ATS evaluation is bounded behind the deterministic validator and
-            # receives only an already-approved candidate draft.
-            ats_result = await self._ats_optimiser.score(
-                _cv_to_plain_text(tailored_cv),
-                analysis,
-                evidence_bank=_master_cv_evidence_bank(_load_master_cv()),
-                target_score=self._tailoring_config()[0],
-            )
-            ats_result.attempts = 1
-            ats_result.target_score = self._tailoring_config()[0]
-            ats_result.passed_target = (
-                ats_result.overall_score >= ats_result.target_score
-            )
-            doc_repo = DocumentRepository(db)
-            personal = _load_personal()
-            version = await doc_repo.get_latest_version(application_id, "cv") + 1
-            staged_path: str | None = None
-            final_path: str | None = None
-            promoted = False
-            try:
-                # Rendering runs outside any database write transaction.  It is
-                # immutable per durable attempt and invisible until promotion.
-                with get_telemetry().stage_span("cv_tailoring", "render_document"):
-                    staged_path, final_path, file_size = self._cv_builder.build_staged(
-                        tailored_cv,
-                        analysis,
-                        personal,
-                        application_id,
-                        version,
-                        variant,
-                        template_id,
-                        design_settings,
-                        attempt_id=f"{application_id}:{variant}:{uuid.uuid4()}",
-                    )
-                render_metadata = _validate_rendered_cv_artifact(
-                    staged_path, file_size, tailored_cv
-                )
-                jd_snapshot, ats_details = _safe_runtime_snapshot(analysis, ats_result)
-                # The only DB work is the product projection. No model/network
-                # call or renderer invocation is performed in this transaction.
-                committed = await doc_repo.create(
-                    application_id=application_id,
-                    document_type="cv",
-                    version=version,
-                    file_path=final_path,
-                    file_size_bytes=file_size,
-                    jd_analysis_snapshot=jd_snapshot,
-                    tailoring_params=_tailoring_params(
-                        {
-                            "variant": variant,
-                            "custom_instructions": custom_instructions,
-                            "template_id": template_id,
-                            "runtime_mode": RuntimeMode.NEW.value,
-                            "render_metadata": render_metadata,
-                        },
-                        tailored_cv,
-                    ),
-                    ats_score=ats_result.overall_score,
-                    ats_details=ats_details,
-                    variant_label=variant,
-                    status="generated",
-                )
-                # The DB row is only flushed here.  It is not visible to
-                # product history/download queries until the validated staged
-                # artifact has been atomically promoted and this commit wins.
-                self._cv_builder.promote_staged(staged_path, final_path)
-                promoted = True
-                await db.commit()
-                # Bind concrete validated metadata to the approved projection;
-                # only digests/counts are persisted.
-                logger.info(
-                    "cv_tailor_artifact_promoted id=%s bytes=%s sections=%s hash=%s",
-                    committed.id, render_metadata["byte_count"],
-                    render_metadata["section_count"], render_metadata["sha256"][:12],
-                )
-                return f"artifact:{committed.id}"
-            except Exception:
-                self._cv_builder.discard_staged(staged_path)
-                # Never unlink a peer's final name after a promotion conflict.
-                # This request owns a final path only once its own promotion
-                # returned successfully.
-                if final_path and promoted:
-                    Path(final_path).unlink(missing_ok=True)
-                # A failed projection must not leave a misleading uncommitted
-                # session for the caller to publish later.
-                await db.rollback()
-                committed = None
-                raise
-
-        async def repair(_: CVTailorInput) -> CVTailorOutput:
-            analysis = prepared["analysis"]
-            repaired = await self._cv_tailor.tailor(
-                analysis,
-                variant,
-                (custom_instructions or "")
-                + "\nRepair only unsupported or missing statements using exact source-CV wording.",
-            )
-            prepared["tailored_cv"] = repaired
-            return CVTailorOutput(
-                tailored_cv=repaired,
-                artifact_ref="artifact:staged",
-                artifact_bytes=1,
-            )
-
-        result = await DurableCVTailorRuntime(
-            WorkflowKernel(self._runtime_factory),
-            factory=self._runtime_factory,
-            worker_id=f"cv-tailor-new-{application_id}",
-            produce=produce,
-            repair=repair,
-            commit_artifact=commit_artifact,
-            source_claims=_candidate_source_statements(_load_master_cv()),
-            job_description=jd_text,
-        ).run(
-            CVTailorInput(
-                application_ref=f"application:{application_id}",
-                job_ref="job:adhoc",
-                variant=variant,
-                request_ref=f"request:{uuid.uuid4()}",
-            ),
-            mode=RuntimeMode.NEW,
+        self, application_id, variant, jd_text, db, custom_instructions,
+        template_id, design_settings, *, request_ref, delivery_ref, capture=None,
+    ):
+        _, result = await self._run_cv_runtime(
+            application_id, variant, jd_text, custom_instructions, template_id,
+            design_settings, mode=RuntimeMode.NEW, request_ref=request_ref,
+            delivery_ref=delivery_ref,
         )
-        if result.output is None or committed is None:
-            raise HTTPException(
-                status_code=422,
-                detail={"error": "Tailored CV failed validation — document withheld."},
-            )
-        return committed
+        if result.document is None:
+            raise HTTPException(status_code=422, detail={"error": "cv_tailor_withheld", "reason_code": result.reason_code})
+        if capture is not None:
+            capture.update(cv=result.output.tailored_cv, ats=result.ats,
+                analysis=result.analysis or JDAnalysisResult(role_title=jd_text.splitlines()[0][:200] if jd_text else ""))
+        return result.document
 
     @trace_workflow("cover_letter_generation")
     async def generate_cover_letter(
@@ -809,6 +686,9 @@ class TailorService:
         variant: str,
         jd_text: str,
         db: AsyncSession,
+        _cv_context: dict | None = None,
+        _runtime_mode: RuntimeMode | None = None,
+        _delivery_ref: str | None = None,
     ) -> GeneratedDocumentRead:
         """Generate a tailored cover letter and persist the document record.
 
@@ -821,9 +701,29 @@ class TailorService:
         Returns:
             GeneratedDocumentRead for the saved .docx record.
         """
+        from sqlalchemy import select
         doc_repo = DocumentRepository(db)
-        analysis = await self._jd_analyser.analyse(jd_text)
-        tailored_cv, _ = await self._tailor_and_score(analysis, variant)
+        if _runtime_mode is not None and _delivery_ref:
+            from ..models.document import GeneratedDocument
+            existing = await db.scalars(
+                select(GeneratedDocument).where(
+                    GeneratedDocument.application_id == application_id,
+                    GeneratedDocument.document_type == "cover_letter",
+                    GeneratedDocument.variant_label == variant,
+                ).order_by(GeneratedDocument.version.desc())
+            )
+            for candidate in existing:
+                try:
+                    params = json.loads(candidate.tailoring_params or "{}")
+                except (TypeError, ValueError):
+                    continue
+                if params.get("delivery_ref") == _delivery_ref:
+                    return GeneratedDocumentRead.model_validate(candidate)
+        if _cv_context is None:
+            analysis = await self._jd_analyser.analyse(jd_text)
+            tailored_cv, _ = await self._tailor_and_score(analysis, variant)
+        else:
+            analysis, tailored_cv = _cv_context["analysis"], _cv_context["cv"]
 
         personal = _load_personal()
         cl_variant = select_tone_variant(analysis)
@@ -834,7 +734,7 @@ class TailorService:
         if failure_detail:
             raise HTTPException(
                 status_code=422,
-                detail=failure_detail,
+                detail={"error": "cover_letter_validation_failed"} if _runtime_mode else failure_detail,
             )
 
         version = await doc_repo.get_latest_version(application_id, "cover_letter") + 1
@@ -864,9 +764,10 @@ class TailorService:
                 version=version,
                 file_path=file_path,
                 file_size_bytes=file_size,
-                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                jd_analysis_snapshot=_safe_runtime_snapshot(analysis, _cv_context["ats"])[0] if _cv_context else json.dumps(analysis.model_dump()),
                 tailoring_params=_tailoring_params(
-                    {"variant": variant},
+                    {"variant": variant, **({"runtime_mode": _runtime_mode.value} if _runtime_mode else {}),
+                     **({"delivery_ref": _delivery_ref} if _delivery_ref else {})},
                     cover_letter,
                 ),
                 variant_label=variant,
@@ -927,7 +828,7 @@ class TailorService:
         db.add(app)
         await db.flush()
         await db.commit()
-        logger.info("Auto-created application %s for manual job '%s'", app.id, job.title)
+        logger.info("Auto-created application %s", app.id)
         return app.id
 
     async def generate_all(
@@ -944,6 +845,8 @@ class TailorService:
         template_id: str | None = None,
         design_settings: dict | None = None,
         _resolved_mode: RuntimeMode | None = None,
+        request_ref: str | None = None,
+        delivery_ref: str | None = None,
     ) -> TailorResultBundle:
         """Run the full pipeline: JD analysis → CV → Cover letter.
 
@@ -1000,21 +903,30 @@ class TailorService:
         # boundary. The cover-letter flow remains product legacy scope; it
         # never becomes a second CV writer.
         if mode is not RuntimeMode.LEGACY:
-            cv_doc = await self.generate_cv(
-                application_id, variant, jd_text, db, custom_instructions,
-                template_id, design_settings, _resolved_mode=mode,
-            )
-            analysis = await self._jd_analyser.analyse(jd_text, job_url)
-            master_cv = _load_master_cv()
-            skill_match = self._jd_analyser.compute_skill_match(analysis, master_cv)
-            tailored_cv, ats_result = await self._tailor_and_score(
-                analysis, variant, custom_instructions
-            )
-            cl_doc = await self.generate_cover_letter(application_id, variant, jd_text, db)
+            results = []
+            variants = [variant, "B" if variant == "A" else "A"] if generate_variants else [variant]
+            identity = delivery_ref or f"delivery:{uuid.uuid4()}"
+            for label in variants:
+                captured = {}
+                with metadata_capture():
+                    cv_doc = await self.generate_cv(
+                        application_id, label, jd_text, db, custom_instructions,
+                        template_id, design_settings, _resolved_mode=mode,
+                        request_ref=request_ref or identity.replace("delivery:", "request:", 1),
+                        delivery_ref=f"{identity}:{label.lower()}", _capture=captured,
+                    )
+                    cl_doc = await self.generate_cover_letter(application_id, label, jd_text, db,
+                        _cv_context=captured, _runtime_mode=mode,
+                        _delivery_ref=f"{identity}:{label.lower()}")
+                results.append((cv_doc, cl_doc, captured))
+            cv_doc, cl_doc, captured = results[0]
             return TailorResultBundle(
                 application_id=application_id, cv_document_id=cv_doc.id,
-                cl_document_id=cl_doc.id, ats_score=ats_result, analysis=analysis,
-                skill_match=skill_match, review={"cv_runtime_mode": mode.value},
+                cl_document_id=cl_doc.id, ats_score=captured["ats"], analysis=captured["analysis"],
+                skill_match=self._jd_analyser.compute_skill_match(captured["analysis"], _load_master_cv()),
+                review={"cv_runtime_mode": mode.value, "variants": [
+                    {"variant": cv.variant_label, "cv_document_id": cv.id, "cl_document_id": cl.id}
+                    for cv, cl, _ in results]},
             )
         telemetry = get_telemetry()
         doc_repo = DocumentRepository(db)

@@ -12,6 +12,7 @@ from ..observability import get_telemetry, trace_stage
 from ..schemas.tailor import ATSScoreResult, JDAnalysisResult, KeywordMatch
 from ..skills.skill_loader import SkillLoader, SkillRegistry
 from .llm_client import LLMClient
+from .generation_privacy import metadata_only
 from ..agents.tools.context_budgets import ATS
 from .jd_analyser import _split_jinja_output
 from .prompt_catalog import (
@@ -134,6 +135,9 @@ class ATSOptimiser:
                     else "model_error"
                 ),
             )
+            if metadata_only.get():
+                logger.warning("cv_ats_model_failed")
+                raise ValueError("cv_ats_model_failed") from None
             logger.warning("Claude ATS scoring failed, using algorithmic only: %s", exc)
             semantic_score = algo_score
             format_warnings = []

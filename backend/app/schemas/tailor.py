@@ -172,7 +172,9 @@ class ATSScoreResult(BaseModel):
 
 class TailorRequest(BaseModel):
     application_id: str | None = None   # None = auto-create from job metadata
-    variant: str = "A"
+    variant: Literal["A", "B"] = "A"
+    request_id: str | None = Field(default=None, max_length=128, pattern=r"^[a-zA-Z0-9._:-]+$")
+    delivery_id: str | None = Field(default=None, max_length=128, pattern=r"^[a-zA-Z0-9._:-]+$")
     generate_cv: bool = True
     generate_cover_letter: bool = True
     custom_instructions: str | None = None

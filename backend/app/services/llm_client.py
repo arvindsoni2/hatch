@@ -20,6 +20,7 @@ from pydantic import BaseModel as PydanticBaseModel
 
 from ..agents.tools.llm_factory import get_json_model, get_primary_model, record_trace
 from ..agents.tools.profile_loader import load_profile
+from .generation_privacy import metadata_only
 
 logger = logging.getLogger(__name__)
 
@@ -167,10 +168,15 @@ class LLMClient:
                 if _is_timeout_error(exc):
                     raise
                 last_error = exc
-                logger.warning("JSON parse failed (attempt %d/3): %s", attempt + 1, exc)
-                if attempt == 0:
+                if metadata_only.get():
+                    logger.warning("generation_json_invalid attempt=%d", attempt + 1)
+                else:
+                    logger.warning("JSON parse failed (attempt %d/3): %s", attempt + 1, exc)
+                if attempt == 0 and not metadata_only.get():
                     logger.debug("Raw LLM output (first 500 chars): %r", cleaned[:500])
 
+        if metadata_only.get():
+            raise ValueError("generation_json_invalid") from None
         raise ValueError(f"LLM did not return valid JSON after 3 attempts: {last_error}")
 
     async def complete_structured(

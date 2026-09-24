@@ -1013,6 +1013,61 @@ class SQLiteWorkflowRepository:
             await uow.commit()
             return True
 
+    async def acknowledge_execution_receipt(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        receipt_ref: str,
+        verify_receipt: Callable[[Any], Awaitable[bool]],
+        now: datetime,
+    ) -> bool:
+        """Close one ambiguous artifact intent after durable receipt verification."""
+        if (
+            not isinstance(receipt_ref, str)
+            or not receipt_ref
+            or len(receipt_ref) > 128
+        ):
+            raise ValueError("receipt_ref must be a bounded identifier")
+        enforce_metadata_only({"execution_receipt_ref": receipt_ref}, path="receipt")
+        if now < claim.claimed_at or now > claim.claimed_at + timedelta(seconds=30):
+            return False
+        active_claim = self._active_claim(claim, now)
+        async with self._uow_factory.transaction() as uow:
+            attempt = await uow.session.get(TaskAttemptRecord, claim.task_attempt_id)
+            if (
+                attempt is None
+                or attempt.status != TaskAttemptStatus.RUNNING
+                or attempt.current_claim_id != claim.id
+                or attempt.claim_fencing_token != claim.fencing_token
+                or not attempt.execution_intent_active
+                or not _requires_reconciliation(
+                    attempt.side_effect_class, attempt.idempotency_class
+                )
+            ):
+                return False
+            if not await verify_receipt(uow):
+                return False
+            updated = await uow.session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.id == claim.task_attempt_id,
+                    TaskAttemptRecord.status == TaskAttemptStatus.RUNNING,
+                    TaskAttemptRecord.current_claim_id == claim.id,
+                    TaskAttemptRecord.claim_fencing_token == claim.fencing_token,
+                    TaskAttemptRecord.execution_intent_active.is_(True),
+                    active_claim,
+                )
+                .values(
+                    result_ref_json={"execution_receipt_ref": receipt_ref},
+                    execution_intent_active=False,
+                    updated_at=now,
+                )
+            )
+            if updated.rowcount != 1:
+                return False
+            await uow.commit()
+            return True
+
     async def mark_outcome_unknown(
         self,
         claim: ExecutionClaimRecord,

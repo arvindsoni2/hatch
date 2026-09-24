@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult
+from .generation_privacy import metadata_only
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,8 @@ class DocxCVBuilder:
                 cwd=str(_TEMPLATES_DIR),
             )
             if result.returncode != 0:
+                if metadata_only.get():
+                    raise RuntimeError("cv_render_failed")
                 logger.error("CV docx generation failed: %s", result.stderr)
                 raise RuntimeError(f"generate_cv_docx.js failed: {result.stderr[:500]}")
 
@@ -101,15 +104,8 @@ class DocxCVBuilder:
         preventing partially rendered files or concurrent attempts from
         clobbering the visible filename.
         """
-        out_dir = _OUTPUT_BASE / application_id
-        staging_dir = out_dir / ".staging"
-        staging_dir.mkdir(parents=True, exist_ok=True)
-        suffix = uuid.uuid5(uuid.NAMESPACE_URL, attempt_id).hex
-        staged = (staging_dir / f"cv_v{version}_{variant_label}_{suffix}.docx").resolve()
-        final = (out_dir / f"cv_v{version}_{variant_label}_{suffix}.docx").resolve()
-        expected_parent = _OUTPUT_BASE.resolve()
-        if not str(staged).startswith(str(expected_parent)) or not str(final).startswith(str(expected_parent)):
-            raise ValueError("Output path traversal detected")
+        staged, final = map(Path, self.staging_paths(application_id, version, variant_label, attempt_id))
+        staged.parent.mkdir(parents=True, exist_ok=True)
         spec = _build_cv_spec(tailored_cv, jd_analysis, personal, template_id, design_settings)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
             json.dump(spec, tf, indent=2)
@@ -121,10 +117,23 @@ class DocxCVBuilder:
             )
             if result.returncode != 0:
                 staged.unlink(missing_ok=True)
-                raise RuntimeError(f"generate_cv_docx.js failed: {result.stderr[:500]}")
+                raise RuntimeError("cv_render_failed")
             return str(staged), str(final), staged.stat().st_size
+        except BaseException:
+            staged.unlink(missing_ok=True)
+            raise
         finally:
             os.unlink(spec_path)
+
+    @staticmethod
+    def staging_paths(application_id: str, version: int, variant: str, attempt_id: str) -> tuple[str, str]:
+        suffix = uuid.uuid5(uuid.NAMESPACE_URL, attempt_id).hex
+        out_dir = _OUTPUT_BASE / application_id
+        name = f"cv_v{version}_{variant}_{suffix}.docx"
+        staged, final = (out_dir / ".staging" / name).resolve(), (out_dir / name).resolve()
+        if not staged.is_relative_to(_OUTPUT_BASE.resolve()) or not final.is_relative_to(_OUTPUT_BASE.resolve()):
+            raise ValueError("cv_artifact_path_invalid")
+        return str(staged), str(final)
 
     @staticmethod
     def promote_staged(staged_path: str, final_path: str) -> None:
