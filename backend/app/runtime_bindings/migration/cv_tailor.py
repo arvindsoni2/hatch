@@ -34,6 +34,7 @@ from app.runtime_bindings.context.models import ContextSourceMetadata
 from ..tasks.cv_tailor import (
     CV_TAILOR_V1,
     CVTailorInput,
+    CVTailorInvocation,
     CVTailorOutput,
     validate_cv_tailor_output,
 )
@@ -179,13 +180,15 @@ class DurableCVTailorRuntime:
             CapabilityDescriptor(
                 capability_id="cv.tailor.generate",
                 version=1,
-                input_model=CVTailorInput,
+                input_model=CVTailorInvocation,
                 output_model=CVTailorOutput,
                 side_effect_class=SideEffectClass.READ_ONLY_EXTERNAL,
                 idempotency_class=IdempotencyClass.IDEMPOTENT,
-                # Product callback owns its network client. The gateway still
-                # fences the attempt and records an execution regardless.
-                requires_data_egress=False,
+                requires_data_egress=(
+                    routing.selected_descriptor.local_or_cloud == "cloud"
+                ),
+                uses_model_routing=True,
+                uses_provider_routing=True,
             ),
             NativeCapabilityAdapter(generate),
         )
@@ -195,7 +198,11 @@ class DurableCVTailorRuntime:
         generated = await gateway.invoke(
             claim,
             capability_id="cv.tailor.generate",
-            payload=request.model_dump(),
+            payload={
+                **request.model_dump(),
+                "model_id": routing.selected_descriptor.model_id,
+                "provider": routing.selected_descriptor.provider,
+            },
             policy=policy,
             selection_proof=routing.selection_proof,
         )

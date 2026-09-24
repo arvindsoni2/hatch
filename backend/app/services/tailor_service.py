@@ -691,6 +691,7 @@ class TailorService:
             version = await doc_repo.get_latest_version(application_id, "cv") + 1
             staged_path: str | None = None
             final_path: str | None = None
+            promoted = False
             try:
                 # Rendering runs outside any database write transaction.  It is
                 # immutable per durable attempt and invisible until promotion.
@@ -738,6 +739,7 @@ class TailorService:
                 # product history/download queries until the validated staged
                 # artifact has been atomically promoted and this commit wins.
                 self._cv_builder.promote_staged(staged_path, final_path)
+                promoted = True
                 await db.commit()
                 # Bind concrete validated metadata to the approved projection;
                 # only digests/counts are persisted.
@@ -749,7 +751,10 @@ class TailorService:
                 return f"artifact:{committed.id}"
             except Exception:
                 self._cv_builder.discard_staged(staged_path)
-                if final_path:
+                # Never unlink a peer's final name after a promotion conflict.
+                # This request owns a final path only once its own promotion
+                # returned successfully.
+                if final_path and promoted:
                     Path(final_path).unlink(missing_ok=True)
                 # A failed projection must not leave a misleading uncommitted
                 # session for the caller to publish later.

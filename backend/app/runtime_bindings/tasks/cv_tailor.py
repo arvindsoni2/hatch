@@ -39,6 +39,13 @@ class CVTailorInput(BaseModel):
     )
 
 
+class CVTailorInvocation(CVTailorInput):
+    """Gateway-only request including its router-authorized model identity."""
+
+    model_id: str = Field(min_length=1, max_length=128, pattern=_REFERENCE_PATTERN)
+    provider: str = Field(min_length=1, max_length=128, pattern=_REFERENCE_PATTERN)
+
+
 class CVTailorOutput(BaseModel):
     """Validated CV content plus an opaque artifact contract."""
 

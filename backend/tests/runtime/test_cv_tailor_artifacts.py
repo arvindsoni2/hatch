@@ -5,6 +5,7 @@ from app.runtime.contracts import ExecutionResultCode
 from app.runtime_bindings.migration.cv_tailor import DurableCVTailorRuntime
 from app.runtime_bindings.tasks.cv_tailor import CVTailorInput, CVTailorOutput
 from app.schemas.tailor import TailoredCVResult, TailoredExperience
+from app.services.docx_cv_builder import DocxCVBuilder
 
 
 def _request() -> CVTailorInput:
@@ -177,3 +178,20 @@ async def test_durable_shadow_persists_run_context_and_execution_without_artifac
     async with factory.session_factory() as session:
         assert len(list(await session.scalars(select(WorkflowRunRecord)))) == 1
         assert len(list(await session.scalars(select(ExecutionRecord)))) == 1
+
+
+def test_promotion_conflict_never_deletes_a_peer_final_artifact(tmp_path) -> None:
+    staged = tmp_path / "staged.docx"
+    final = tmp_path / "final.docx"
+    staged.write_bytes(b"ours")
+    final.write_bytes(b"peer")
+
+    try:
+        DocxCVBuilder.promote_staged(str(staged), str(final))
+    except RuntimeError as exc:
+        assert str(exc) == "cv_artifact_promotion_conflict"
+    else:
+        raise AssertionError("expected no-overwrite promotion conflict")
+
+    assert final.read_bytes() == b"peer"
+    assert staged.read_bytes() == b"ours"

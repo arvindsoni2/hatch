@@ -256,3 +256,27 @@ The new request-identity regression is `test_request_identity_allows_repeat_gene
 The R6 public report is updated to reflect that validation precedes ATS evaluation. Full
 provider-latency lease-renewal and real HTTP completion coverage remain rollout gates;
 LEGACY default and R5 promotion block remain unchanged.
+
+## Review fix round 3 — gateway and publish ownership
+
+This round closes two additional concrete production hazards. The generation capability
+now uses a gateway-only invocation contract carrying the router-selected `model_id` and
+`provider`, with model/provider routing enabled and `requires_data_egress` derived from
+the selected descriptor. This prevents a payload from selecting a different configured
+route and makes cloud egress subject to Control Plane authorization.
+
+Artifact promotion now tracks whether this request actually won publication. Failure
+cleanup never unlinks a final path after a promotion conflict, preventing one concurrent
+attempt from deleting a peer's document. The regression
+`test_promotion_conflict_never_deletes_a_peer_final_artifact` verifies the peer final and
+losing staging artifact remain intact. Focused durable artifact/migration verification:
+
+```text
+10 passed in 1.92s
+```
+
+Remaining work is explicitly not represented as complete here: product callback use of
+resolved context contents, gateway-lineaged repair/fallback, delivery-identity reuse,
+lease renewal/reconciliation, exact package reuse, and completed HTTP integration require
+further design and test work. They remain blocked from production promotion; LEGACY stays
+the default.

@@ -19,6 +19,10 @@ execution, deterministic validation, and (only in NEW) the artifact execution.
 The gateway fences both capability executions and carries an idempotency key
 derived from the task attempt.
 
+The gateway-only generation invocation includes the router-authorized model and provider;
+cloud selections require Control Plane egress authorization. Artifact conflict cleanup is
+ownership-safe: a losing attempt never deletes a peer's final file.
+
 ## Safety controls
 
 - Candidate support is statement-level: every rendered summary and achievement
