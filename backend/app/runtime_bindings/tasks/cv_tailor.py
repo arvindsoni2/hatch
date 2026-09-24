@@ -34,6 +34,9 @@ class CVTailorInput(BaseModel):
     )
     job_ref: str = Field(min_length=1, max_length=256, pattern=_REFERENCE_PATTERN)
     variant: str = Field(default="A", min_length=1, max_length=32)
+    request_ref: str = Field(
+        default="request:legacy", min_length=1, max_length=256, pattern=_REFERENCE_PATTERN
+    )
 
 
 class CVTailorOutput(BaseModel):

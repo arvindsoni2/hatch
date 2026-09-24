@@ -217,3 +217,42 @@ Alembic remains at `z3a4b5c6d7e8`; no migration was added. The default and rollb
 remain `LEGACY` / `HATCH_RUNTIME_CV_TAILOR_MODE=legacy`. Remaining limitation: full
 provider-backed quality/cost and operational rollout evidence is intentionally out of
 scope, so R5/R6 production promotion remains separately blocked.
+
+## Review fix round 2 — production-path corrections
+
+The second review found that several first-round claims overstated the live path. This
+round corrects the actual service implementation rather than changing only seam tests:
+
+- NEW `produce` now invokes only CV generation. The generic runtime performs deterministic
+  validation before the ATS evaluator is invoked; ATS runs only after validation inside
+  the gateway-controlled artifact path. A single repair invocation is passed through the
+  real service; unsuccessful repair safely withholds instead of committing.
+- SHADOW legacy document records now use the same metadata-only JD/ATS projection as NEW,
+  and a bounded `runtime_shadow_comparisons` row links the legacy document reference to
+  runtime outcome hashes/reason code without CV prose.
+- Each service request passes a fresh `request_ref` into `CVTailorInput`; the durable run
+  identity uses that reference, so intentional repeat generation is not collapsed with a
+  prior request. The gateway retains attempt-scoped idempotency for duplicate delivery.
+- Render validation now opens `word/document.xml` as XML, uses `itertext()` to handle XML
+  escaping/run splitting, and checks summary, skills, experience identity/bullets,
+  education and certifications. Only path/hash/byte/section metadata is persisted.
+- The document row remains uncommitted until no-overwrite promotion succeeds. Renderer
+  partial staging and failed final paths are cleaned up on failure, so history/download
+  visibility follows successful promotion and commit.
+
+Focused verification after this correction:
+
+```text
+cd backend
+python -m pytest -q --no-cov \
+  tests/runtime/test_cv_tailor_artifacts.py \
+  tests/runtime/test_cv_tailor_migration.py \
+  tests/runtime/test_cv_tailor_grounding.py \
+  tests/test_services/test_blocking_gate.py
+20 passed in 1.89s
+```
+
+The new request-identity regression is `test_request_identity_allows_repeat_generation_without_filename_reuse`.
+The R6 public report is updated to reflect that validation precedes ATS evaluation. Full
+provider-latency lease-renewal and real HTTP completion coverage remain rollout gates;
+LEGACY default and R5 promotion block remain unchanged.

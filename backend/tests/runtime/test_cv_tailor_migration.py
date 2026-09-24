@@ -91,5 +91,35 @@ async def test_shadow_mode_records_durable_evaluation_but_cannot_commit(
         assert len(list(await session.scalars(select(ExecutionRecord)))) == 1
 
 
+async def test_request_identity_allows_repeat_generation_without_filename_reuse(
+    workflow_runtime,
+) -> None:
+    kernel, factory = workflow_runtime
+    commits: list[str] = []
+
+    async def commit(_: CVTailorOutput) -> str:
+        commits.append("commit")
+        return f"artifact:repeat-{len(commits)}"
+
+    runtime = DurableCVTailorRuntime(
+        kernel,
+        factory=factory,
+        worker_id="repeat-live",
+        produce=lambda _: _output(),
+        source_claims=("AWS engineer", "Delivered AWS platform migrations."),
+        job_description="AWS required",
+        commit_artifact=commit,
+    )
+    for request_ref in ("request:repeat-1", "request:repeat-2"):
+        await runtime.run(
+            _request().model_copy(update={"request_ref": request_ref}),
+            mode=RuntimeMode.NEW,
+        )
+
+    assert commits == ["commit", "commit"]
+    async with factory.session_factory() as session:
+        assert len(list(await session.scalars(select(WorkflowRunRecord)))) == 2
+
+
 def test_default_mode_remains_legacy_for_rollback() -> None:
     assert Settings(_env_file=None).HATCH_RUNTIME_CV_TAILOR_MODE is RuntimeMode.LEGACY

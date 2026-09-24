@@ -102,7 +102,7 @@ class DurableCVTailorRuntime:
             run_id=str(
                 uuid.uuid5(
                     uuid.NAMESPACE_URL,
-                    f"cv.tailor:1:{mode.value}:{request.application_ref}:{request.job_ref}:{request.variant}",
+                    f"cv.tailor:1:{mode.value}:{request.request_ref}",
                 )
             ),
         )

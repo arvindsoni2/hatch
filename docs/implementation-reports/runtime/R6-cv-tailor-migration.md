@@ -25,7 +25,7 @@ derived from the task attempt.
   must exactly match a product-owned master-CV statement allowlist. Model
   provenance labels and empty `source_claims` do not authorize a claim.
 - Deterministic schema, required-section, artifact-contract, and support checks
-  run before evaluator repair/fallback and before rendering. Repair is bounded
+  run before ATS/model evaluation, evaluator repair/fallback, and rendering. Repair is bounded
   to one attempt; an invalid result is withheld.
 - NEW rendering uses attempt-unique immutable staging paths. The staged DOCX
   has path/hash/size/section checks before projection and is published by a

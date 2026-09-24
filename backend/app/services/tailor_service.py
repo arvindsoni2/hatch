@@ -6,6 +6,7 @@ import logging
 import uuid
 import hashlib
 import zipfile
+from xml.etree import ElementTree
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -127,19 +128,29 @@ def _validate_rendered_cv_artifact(
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     try:
         with zipfile.ZipFile(path) as docx:
-            xml = docx.read("word/document.xml").decode("utf-8", errors="ignore")
-    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+            root = ElementTree.fromstring(docx.read("word/document.xml"))
+            rendered_text = " ".join("".join(root.itertext()).split())
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
         raise ValueError("cv_tailor_rendered_artifact_invalid") from exc
-    # Verify the model sections survived renderer projection without retaining
-    # their text in runtime/product metadata.
-    sections = (tailored_cv.summary, *(item.role for item in tailored_cv.experience))
-    if any(value and value not in xml for value in sections):
+    # ElementTree itertext handles DOCX XML escaping and text split over runs.
+    # Every candidate-rendered section is checked before projection; only the
+    # resulting counts and hash reach product/runtime metadata.
+    sections = [tailored_cv.summary]
+    for group in tailored_cv.skills:
+        if isinstance(group, dict):
+            sections.extend(str(item) for item in group.get("items", ()) if item)
+    for item in tailored_cv.experience:
+        sections.extend((item.role, item.company, item.period, *item.achievements))
+    for item in tailored_cv.education:
+        sections.extend((item.qualification, item.institution, item.year))
+    sections.extend(tailored_cv.certifications)
+    if any(value and " ".join(value.split()) not in rendered_text for value in sections):
         raise ValueError("cv_tailor_rendered_artifact_sections_invalid")
     return {
         "path_hash": hashlib.sha256(str(path).encode()).hexdigest(),
         "sha256": digest,
         "byte_count": expected_size,
-        "section_count": 2 + len(tailored_cv.experience),
+        "section_count": len(sections),
     }
 
 
@@ -441,6 +452,7 @@ class TailorService:
                     jd_text,
                     custom_instructions,
                     mode=mode,
+                    legacy_document=visible,
                 )
             except Exception:
                 # SHADOW is observational: it must never alter the already
@@ -500,6 +512,13 @@ class TailorService:
         tailored_cv, ats_result = await self._tailor_and_score(
             analysis, variant, custom_instructions
         )
+        if runtime_mode is RuntimeMode.SHADOW:
+            jd_snapshot, ats_details = _safe_runtime_snapshot(analysis, ats_result)
+        else:
+            jd_snapshot, ats_details = (
+                json.dumps(analysis.model_dump()),
+                json.dumps(ats_result.model_dump()),
+            )
 
         personal = _load_personal()
         version = await doc_repo.get_latest_version(application_id, "cv") + 1
@@ -524,7 +543,7 @@ class TailorService:
                 version=version,
                 file_path=file_path,
                 file_size_bytes=file_size,
-                jd_analysis_snapshot=json.dumps(analysis.model_dump()),
+                jd_analysis_snapshot=jd_snapshot,
                 tailoring_params=_tailoring_params(
                     {
                         "variant": variant,
@@ -535,7 +554,7 @@ class TailorService:
                     tailored_cv,
                 ),
                 ats_score=ats_result.overall_score,
-                ats_details=json.dumps(ats_result.model_dump()),
+                ats_details=ats_details,
                 variant_label=variant,
                 status="generated",
             )
@@ -551,6 +570,7 @@ class TailorService:
         custom_instructions: str | None,
         *,
         mode: RuntimeMode,
+        legacy_document: GeneratedDocumentRead,
     ):
         """Generate/validate transient CV output without a visible artifact writer."""
         async def produce(_: CVTailorInput) -> CVTailorOutput:
@@ -564,7 +584,7 @@ class TailorService:
                 artifact_bytes=1,
             )
 
-        return await DurableCVTailorRuntime(
+        result = await DurableCVTailorRuntime(
             WorkflowKernel(self._runtime_factory),
             factory=self._runtime_factory,
             worker_id=f"cv-tailor-shadow-{application_id}",
@@ -576,9 +596,32 @@ class TailorService:
                 application_ref=f"application:{application_id}",
                 job_ref="job:adhoc",
                 variant=variant,
+                request_ref=f"request:{uuid.uuid4()}",
             ),
             mode=mode,
         )
+        async with self._runtime_factory.transaction() as uow:
+            await uow.shadow.record(
+                slice_name="cv_tailor",
+                domain_type="application",
+                domain_id_hash="sha256:" + hashlib.sha256(application_id.encode()).hexdigest(),
+                legacy_execution_ref=f"document:{legacy_document.id}",
+                runtime_execution_id=None,
+                legacy_result_hash="sha256:" + hashlib.sha256(
+                    f"{legacy_document.id}:{legacy_document.file_size_bytes}".encode()
+                ).hexdigest(),
+                runtime_result_hash="sha256:" + hashlib.sha256(
+                    f"{result.code.value}:{result.reason_code}:{result.artifact_ref or ''}".encode()
+                ).hexdigest(),
+                comparison_status="same" if result.code.value == "success" else "runtime_failed",
+                metrics_json={
+                    "mode": mode.value,
+                    "reason_code": result.reason_code,
+                    "runtime_committed": False,
+                },
+            )
+            await uow.commit()
+        return result
 
     async def _generate_cv_runtime(
         self,
@@ -609,12 +652,17 @@ class TailorService:
 
         async def produce(_: CVTailorInput) -> CVTailorOutput:
             analysis = await self._jd_analyser.analyse(jd_text)
-            tailored_cv, ats_result = await self._tailor_and_score(
+            # This is deliberately generation-only. Deterministic runtime
+            # validation must complete before ATS/model evaluation or render.
+            tailored_cv = await self._cv_tailor.tailor(
                 analysis, variant, custom_instructions
             )
-            prepared.update(
-                analysis=analysis, tailored_cv=tailored_cv, ats_result=ats_result
-            )
+            if tailored_cv.blocking_issues:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"error": "Tailored CV failed grounding checks — document withheld."},
+                )
+            prepared.update(analysis=analysis, tailored_cv=tailored_cv)
             return CVTailorOutput(
                 tailored_cv=tailored_cv,
                 artifact_ref="artifact:pending",
@@ -625,11 +673,24 @@ class TailorService:
             nonlocal committed
             analysis = prepared["analysis"]
             tailored_cv = prepared["tailored_cv"]
-            ats_result = prepared["ats_result"]
+            # ATS evaluation is bounded behind the deterministic validator and
+            # receives only an already-approved candidate draft.
+            ats_result = await self._ats_optimiser.score(
+                _cv_to_plain_text(tailored_cv),
+                analysis,
+                evidence_bank=_master_cv_evidence_bank(_load_master_cv()),
+                target_score=self._tailoring_config()[0],
+            )
+            ats_result.attempts = 1
+            ats_result.target_score = self._tailoring_config()[0]
+            ats_result.passed_target = (
+                ats_result.overall_score >= ats_result.target_score
+            )
             doc_repo = DocumentRepository(db)
             personal = _load_personal()
             version = await doc_repo.get_latest_version(application_id, "cv") + 1
             staged_path: str | None = None
+            final_path: str | None = None
             try:
                 # Rendering runs outside any database write transaction.  It is
                 # immutable per durable attempt and invisible until promotion.
@@ -671,11 +732,12 @@ class TailorService:
                     ats_score=ats_result.overall_score,
                     ats_details=ats_details,
                     variant_label=variant,
-                    status="staged",
+                    status="generated",
                 )
-                await db.commit()
+                # The DB row is only flushed here.  It is not visible to
+                # product history/download queries until the validated staged
+                # artifact has been atomically promoted and this commit wins.
                 self._cv_builder.promote_staged(staged_path, final_path)
-                await doc_repo.update_status(committed.id, "generated")
                 await db.commit()
                 # Bind concrete validated metadata to the approved projection;
                 # only digests/counts are persisted.
@@ -687,17 +749,35 @@ class TailorService:
                 return f"artifact:{committed.id}"
             except Exception:
                 self._cv_builder.discard_staged(staged_path)
+                if final_path:
+                    Path(final_path).unlink(missing_ok=True)
                 # A failed projection must not leave a misleading uncommitted
                 # session for the caller to publish later.
                 await db.rollback()
                 committed = None
                 raise
 
+        async def repair(_: CVTailorInput) -> CVTailorOutput:
+            analysis = prepared["analysis"]
+            repaired = await self._cv_tailor.tailor(
+                analysis,
+                variant,
+                (custom_instructions or "")
+                + "\nRepair only unsupported or missing statements using exact source-CV wording.",
+            )
+            prepared["tailored_cv"] = repaired
+            return CVTailorOutput(
+                tailored_cv=repaired,
+                artifact_ref="artifact:staged",
+                artifact_bytes=1,
+            )
+
         result = await DurableCVTailorRuntime(
             WorkflowKernel(self._runtime_factory),
             factory=self._runtime_factory,
             worker_id=f"cv-tailor-new-{application_id}",
             produce=produce,
+            repair=repair,
             commit_artifact=commit_artifact,
             source_claims=_candidate_source_statements(_load_master_cv()),
             job_description=jd_text,
@@ -706,6 +786,7 @@ class TailorService:
                 application_ref=f"application:{application_id}",
                 job_ref="job:adhoc",
                 variant=variant,
+                request_ref=f"request:{uuid.uuid4()}",
             ),
             mode=RuntimeMode.NEW,
         )

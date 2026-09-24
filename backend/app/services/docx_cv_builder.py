@@ -120,6 +120,7 @@ class DocxCVBuilder:
                 text=True, timeout=60, cwd=str(_TEMPLATES_DIR),
             )
             if result.returncode != 0:
+                staged.unlink(missing_ok=True)
                 raise RuntimeError(f"generate_cv_docx.js failed: {result.stderr[:500]}")
             return str(staged), str(final), staged.stat().st_size
         finally:
