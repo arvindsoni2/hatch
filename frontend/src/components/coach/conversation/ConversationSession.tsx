@@ -365,14 +365,13 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
 
   const deleteTranscript = useCallback(() => {
     const attemptId = live?.active_attempt?.id;
-    if (attemptId === undefined || !window.confirm("Delete this answer transcript?")) return;
+    if (attemptId === undefined) return;
     setPrivacyStatus(null);
     setPrivacyError(null);
     executeReviewCommand("delete_transcript", { attempt_id: attemptId });
   }, [executeReviewCommand, live?.active_attempt?.id]);
 
   const deleteSession = useCallback(() => {
-    if (!window.confirm("Delete this interview and its retained data? This cannot be undone.")) return;
     setPrivacyPending(true);
     setPrivacyStatus(null);
     setPrivacyError(null);
