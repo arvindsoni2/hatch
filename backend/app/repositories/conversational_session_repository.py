@@ -1105,6 +1105,78 @@ class ConversationalSessionRepository:
             )
         return snapshots
 
+    async def load_export_snapshot(self, session_id: str, request):
+        """Capture the report and retention versions used by a synchronous export."""
+
+        from ..services.coach_report_export import ExportSnapshot
+
+        session = await self._session.get(InterviewSession, session_id)
+        if (
+            session is None
+            or session.experience_version != "conversational_v1"
+            or session.deletion_state != "not_requested"
+            or session.report_state not in {"completed", "fallback"}
+            or session.activity_version != request.expected_activity_version
+            or session.retention_version != request.expected_retention_version
+        ):
+            return None
+        attempts = list(
+            (
+                await self._session.scalars(
+                    select(SessionRecording)
+                    .where(
+                        SessionRecording.session_id == session_id,
+                        SessionRecording.attempt_state != "deleted",
+                    )
+                    .order_by(SessionRecording.created_at, SessionRecording.id)
+                )
+            ).all()
+        )
+        transcript = tuple(
+            {
+                "attempt_id": attempt.id,
+                "transcript": attempt.transcript,
+            }
+            for attempt in attempts
+            if request.include_transcript and attempt.transcript is not None
+        )
+        attempt_history = tuple(
+            {
+                "attempt_id": attempt.id,
+                "attempt_state": attempt.attempt_state,
+                "evaluation_state": attempt.evaluation_state,
+            }
+            for attempt in attempts
+            if request.include_attempt_history
+        )
+        return ExportSnapshot(
+            session_id=session.id,
+            report_state=session.report_state,
+            activity_version=session.activity_version,
+            retention_version=session.retention_version,
+            report_json=session.report_json if isinstance(session.report_json, dict) else {},
+            retention_summary=(
+                dict(session.retention_policy_json)
+                if isinstance(session.retention_policy_json, dict)
+                else None
+            ),
+            transcript=transcript,
+            attempt_history=attempt_history,
+        )
+
+    async def export_versions_match(
+        self, session_id: str, activity_version: int, retention_version: int
+    ) -> bool:
+        session = await self._session.get(InterviewSession, session_id)
+        return bool(
+            session is not None
+            and session.experience_version == "conversational_v1"
+            and session.deletion_state == "not_requested"
+            and session.report_state in {"completed", "fallback"}
+            and session.activity_version == activity_version
+            and session.retention_version == retention_version
+        )
+
     async def delete_attempt_transcript(self, claim):
         """Physically remove one transcript and fence every derived worker."""
 
