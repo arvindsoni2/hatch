@@ -10,6 +10,10 @@ COACH_EVALUATION_OUTCOMES = "hatch.coach.evaluation.outcomes"
 COACH_RUBRIC_OUTCOMES = "hatch.coach.rubric.outcomes"
 COACH_REPORT_OUTCOMES = "hatch.coach.report.outcomes"
 COACH_ASYNC_JOB_OUTCOMES = "hatch.coach.async_job.outcomes"
+COACH_CONVERSATION_OUTCOMES = "hatch.coach.conversation.outcomes"
+COACH_PROGRESS_OUTCOMES = "hatch.coach.progress.outcomes"
+COACH_EXPORT_OUTCOMES = "hatch.coach.export.outcomes"
+COACH_PRIVACY_OUTCOMES = "hatch.coach.privacy.outcomes"
 
 COACH_OUTCOME_METRICS = {
     "model_answer": COACH_MODEL_ANSWER_OUTCOMES,
@@ -17,6 +21,10 @@ COACH_OUTCOME_METRICS = {
     "rubric": COACH_RUBRIC_OUTCOMES,
     "report": COACH_REPORT_OUTCOMES,
     "async_job": COACH_ASYNC_JOB_OUTCOMES,
+    "conversation": COACH_CONVERSATION_OUTCOMES,
+    "progress": COACH_PROGRESS_OUTCOMES,
+    "export": COACH_EXPORT_OUTCOMES,
+    "privacy": COACH_PRIVACY_OUTCOMES,
 }
 
 

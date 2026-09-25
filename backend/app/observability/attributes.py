@@ -43,6 +43,8 @@ COACH_MODEL_ANSWER_OUTCOME = "hatch.coach.model_answer_outcome"
 COACH_EVALUATION_STATE = "hatch.coach.evaluation_state"
 COACH_RUBRIC_SOURCE = "hatch.coach.rubric_source"
 COACH_REPORT_STATE = "hatch.coach.report_state"
+COACH_STATE_VERSION = "hatch.coach.state_version"
+COACH_COMMAND_TYPE = "hatch.coach.command_type"
 COACH_QUESTION_COUNT_TOTAL = "hatch.coach.question_count_total"
 COACH_QUESTION_COUNT_EVALUATED = "hatch.coach.question_count_evaluated"
 COACH_QUESTION_COUNT_SKIPPED = "hatch.coach.question_count_skipped"
@@ -86,6 +88,7 @@ _STRING_KEYS = frozenset(
         COACH_EVALUATION_STATE,
         COACH_RUBRIC_SOURCE,
         COACH_REPORT_STATE,
+        COACH_COMMAND_TYPE,
         COACH_SESSION_ID,
         ASYNC_JOB_ID,
         COACH_SUITE_VERSION,
@@ -110,6 +113,7 @@ _INTEGER_KEYS = frozenset(
         COACH_QUESTION_COUNT_UNANSWERED,
         COACH_FOLLOWUP_FOCUS_COUNT,
         COACH_REPETITION,
+        COACH_STATE_VERSION,
     }
 )
 _BOOLEAN_KEYS = frozenset(
@@ -128,6 +132,7 @@ _CORRELATION_KEYS = frozenset(
         DOCUMENT_ID,
         COACH_SESSION_ID,
         ASYNC_JOB_ID,
+        COACH_STATE_VERSION,
     }
 )
 _SECRET_SHAPE = re.compile(
