@@ -254,7 +254,7 @@ async def test_live_projection_exposes_no_error_context_or_planning_content(
             {"record_self_assessment", "return_to_review"},
             set(),
         ),
-        ("completed", set(), {"record_self_assessment", "return_to_review"}),
+        ("completed", {"record_self_assessment"}, {"return_to_review"}),
     ],
 )
 async def test_live_reflection_commands_follow_active_review_state(

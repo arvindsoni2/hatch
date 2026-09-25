@@ -45,6 +45,7 @@ from ..schemas.coach_conversation import (
     ConversationCommandResult,
     DeleteAudioPayload,
     EditTranscriptPayload,
+    EndSessionPayload,
     FinishAnswerPayload,
     KeepSpeakingPayload,
     RecordCaptureHardStopPayload,
@@ -53,6 +54,7 @@ from ..schemas.coach_conversation import (
     RequestHintPayload,
     RetryAnswerPayload,
     RetryProcessingPayload,
+    RetryReportPayload,
     UpdateRetentionPayload,
 )
 from .async_job_service import AsyncJobService
@@ -326,6 +328,9 @@ class ConversationCommandService:
         if request.command_type == "retry_processing":
             assert isinstance(request.payload, RetryProcessingPayload)
             return await self._retry_processing(session, request)
+        if request.command_type == "retry_report":
+            assert isinstance(request.payload, RetryReportPayload)
+            return await self._retry_report(session, request)
         if request.command_type in {"retry_setup", "rebuild_plan"}:
             return await self._claim_setup(session, request)
         if request.command_type == "request_hint":
@@ -355,6 +360,9 @@ class ConversationCommandService:
             return await self._delete_audio(session, request, request.payload)
         if request.command_type == "skip_question":
             return await self._skip_question(session, request)
+        if request.command_type == "end_session":
+            assert isinstance(request.payload, EndSessionPayload)
+            return await self._end_session(session, request, request.payload)
         raise ConversationCommandError("coach_conversation_invalid_state")
 
     async def _return_to_review(
@@ -377,20 +385,191 @@ class ConversationCommandService:
         payload: RecordSelfAssessmentPayload,
     ) -> ConversationCommandResult:
         recorded_at = datetime.utcnow()
-        await self.repository.record_attempt_self_assessment(
-            session_id=session.id,
-            attempt_id=payload.attempt_id,
-            assessment=CandidateSelfAssessment(
-                comfort_level=payload.comfort_level,
-                felt_complete=payload.felt_complete,
-                note=payload.note,
-                recorded_at=recorded_at,
-            ),
-            expected_state_version=request.expected_state_version,
+        assessment = CandidateSelfAssessment(
+            comfort_level=payload.comfort_level,
+            felt_complete=payload.felt_complete,
+            note=payload.note,
             recorded_at=recorded_at,
         )
+        report_job_id: str | None = None
+        if session.status == "completed":
+            report_job = await AsyncJobService.create(
+                self.db, "coach_conversational_report"
+            )
+            await self.repository.record_completed_self_assessment(
+                session_id=session.id,
+                attempt_id=payload.attempt_id,
+                assessment=assessment,
+                expected_state_version=request.expected_state_version,
+                recorded_at=recorded_at,
+                report_job_id=report_job.id,
+            )
+            self._post_commit_job_id = report_job.id
+            report_job_id = report_job.id
+        else:
+            await self.repository.record_attempt_self_assessment(
+                session_id=session.id,
+                attempt_id=payload.attempt_id,
+                assessment=assessment,
+                expected_state_version=request.expected_state_version,
+                recorded_at=recorded_at,
+            )
         await self.db.refresh(session)
-        return await self._result(session, request)
+        return await self._result(
+            session,
+            request,
+            async_job_id=report_job_id,
+        )
+
+    async def _retry_report(
+        self, session: InterviewSession, request: ConversationCommandRequest
+    ) -> ConversationCommandResult:
+        if session.report_state != "failed" or session.report_job_id is not None:
+            raise ConversationCommandError("coach_report_not_ready")
+        if session.status == "active" and session.recoverable_error_scope == "initial_report":
+            build_reason = "manual_retry"
+            target_state = "reporting"
+        elif (
+            session.status == "completed"
+            and session.conversation_state == "completed"
+            and session.report_build_reason
+            in {"transcript_deletion_rebuild", "reflection_update_rebuild"}
+        ):
+            build_reason = session.report_build_reason
+            target_state = "completed"
+        else:
+            raise ConversationCommandError("coach_report_not_ready")
+        prior_state = session.conversation_state
+        report_job = await AsyncJobService.create(self.db, "coach_conversational_report")
+        state_version = await self._change_session_state(
+            session,
+            request,
+            values={
+                "conversation_state": target_state,
+                "report_state": "building",
+                "report_job_id": report_job.id,
+                "report_started_at": datetime.utcnow(),
+                "report_build_reason": build_reason,
+                "report_contract_version": REPORT_CONTRACT,
+            },
+        )
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=(
+                SessionEventInput(
+                    event_type="report_claimed",
+                    actor_type="candidate",
+                    state_version=state_version,
+                    state_before=prior_state,
+                    state_after=target_state,
+                    command_id=request.command_id,
+                    payload_json={"report_build_reason": build_reason},
+                ),
+            ),
+        )
+        self._post_commit_job_id = report_job.id
+        return await self._result(session, request, async_job_id=report_job.id)
+
+    async def _end_session(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: EndSessionPayload,
+    ) -> ConversationCommandResult:
+        prior_state = session.conversation_state
+        if prior_state == "paused":
+            if session.resume_state == "listening":
+                if payload.paused_draft_action != "discard_draft":
+                    raise ConversationCommandError("coach_conversation_invalid_state")
+                if session.active_recording_id is not None:
+                    draft = await self.db.get(SessionRecording, session.active_recording_id)
+                    if draft is not None and draft.attempt_state in {"draft", "uploaded"}:
+                        draft.attempt_state = "cancelled"
+                prior_state = "asking"
+            else:
+                prior_state = session.resume_state or "asking"
+        if prior_state == "recoverable_error" and session.recoverable_error_scope != "attempt_processing":
+            raise ConversationCommandError("coach_conversation_invalid_state")
+
+        question = (
+            await self.db.scalar(
+                select(SessionQuestion).where(
+                    SessionQuestion.id == session.active_question_id,
+                    SessionQuestion.session_id == session.id,
+                )
+            )
+            if session.active_question_id is not None
+            else None
+        )
+        attempt = (
+            await self.db.get(SessionRecording, payload.attempt_id)
+            if payload.attempt_id is not None
+            else None
+        )
+        if payload.unaccepted_attempt_action == "accept_attempt":
+            if (
+                question is None
+                or attempt is None
+                or attempt.session_id != session.id
+                or attempt.question_id != question.id
+                or attempt.attempt_state not in {"completed", "unavailable"}
+                or question.accepted_recording_id is not None
+            ):
+                raise ConversationCommandError("coach_attempt_not_active")
+            question.accepted_recording_id = attempt.id
+            question.accepted_at = datetime.utcnow()
+            question.question_state = "answered"
+        elif payload.unaccepted_attempt_action == "exclude_attempt":
+            if attempt is not None and attempt.session_id == session.id:
+                if attempt.attempt_state in {"pending_processing", "recoverable_error"}:
+                    attempt.attempt_state = "unavailable"
+                    attempt.evaluation_state = "unavailable"
+                if question is not None and question.accepted_recording_id is None:
+                    question.question_state = "skipped"
+        elif question is not None and question.question_state == "asked":
+            question.question_state = "skipped"
+
+        report_job = await AsyncJobService.create(self.db, "coach_conversational_report")
+        state_version = await self._change_session_state(
+            session,
+            request,
+            values={
+                "status": "active",
+                "conversation_state": "reporting",
+                "resume_state": None,
+                "active_question_id": None,
+                "active_root_question_id": None,
+                "active_recording_id": None,
+                "report_state": "building",
+                "report_json": None,
+                "report_job_id": report_job.id,
+                "report_started_at": datetime.utcnow(),
+                "report_build_reason": "initial_completion",
+                "report_contract_version": REPORT_CONTRACT,
+                "activity_version": InterviewSession.activity_version + 1,
+            },
+            required_state=session.conversation_state,
+        )
+        await self.repository.append_session_events(
+            session_id=session.id,
+            events=(
+                SessionEventInput(
+                    event_type="report_claimed",
+                    actor_type="candidate",
+                    state_version=state_version,
+                    state_before=prior_state,
+                    state_after="reporting",
+                    question_id=question.id if question else None,
+                    recording_id=attempt.id if attempt else None,
+                    command_id=request.command_id,
+                    payload_json={"report_build_reason": "initial_completion"},
+                ),
+            ),
+        )
+        self._post_commit_job_id = report_job.id
+        return await self._result(
+            session, request, result="accepted_processing", async_job_id=report_job.id
+        )
 
     async def _accept_attempt(
         self,

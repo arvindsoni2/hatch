@@ -3076,7 +3076,7 @@ async def test_active_self_assessment_overwrites_without_changing_quality(
 
 
 @pytest.mark.asyncio
-async def test_completed_self_assessment_is_rejected_without_receipt(
+async def test_completed_self_assessment_requires_a_valid_attempt_without_receipt(
     db_session: AsyncSession,
 ) -> None:
     session, _ = await seed_session(
@@ -3099,12 +3099,60 @@ async def test_completed_self_assessment_is_rejected_without_receipt(
             user_id="local", session_id=session.id, request=request
         )
 
-    assert raised.value.code == "coach_conversation_invalid_state"
+    assert raised.value.code == "coach_attempt_not_active"
     assert await db_session.scalar(
         select(func.count(ConversationCommandResultRecord.id)).where(
             ConversationCommandResultRecord.command_id == request.command_id
         )
     ) == 0
+
+
+@pytest.mark.asyncio
+async def test_completed_self_assessment_claims_atomic_reflection_rebuild(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="completed", status="completed", version=9, question_count=1
+    )
+    session.report_state = "completed"
+    session.report_json = {"session_level": "developing"}
+    attempt = SessionRecording(
+        id="completed-attempt-valid",
+        session_id=session.id,
+        question_id=questions[0].id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        attempt_version=0,
+    )
+    db_session.add(attempt)
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "record_self_assessment",
+            version=9,
+            command_id="completed-reflection-valid",
+            payload={
+                "attempt_id": attempt.id,
+                "comfort_level": "medium",
+                "felt_complete": True,
+                "note": "Keep the result specific.",
+            },
+        ),
+    )
+
+    await db_session.refresh(session)
+    job = await db_session.get(AsyncJob, result.async_job_id)
+    assert result.state == "completed"
+    assert session.conversation_state == "completed"
+    assert session.report_state == "building"
+    assert session.report_build_reason == "reflection_update_rebuild"
+    assert session.report_json is None
+    assert job is not None and job.type == "coach_conversational_report"
 
 
 async def _seed_review_attempt_for_acceptance(
