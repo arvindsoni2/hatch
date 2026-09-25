@@ -16,6 +16,8 @@ EVIDENCE_GROUNDING_CONTRACT = "coach_evidence_grounding_v1"
 FOLLOW_UP_CONTRACT = "coach_follow_up_v1"
 REPORT_CONTRACT = "coach_conversational_report_v1"
 PROGRESS_CONTRACT = "coach_conversational_progress_v2"
+EXPORT_CONTRACT = "coach_report_export_v1"
+HARD_DELETE_CONTRACT = "coach_session_hard_delete_v1"
 DELIVERY_POLICY = "coach_delivery_policy_v1"
 SELF_ASSESSMENT_CONTRACT = "coach_candidate_self_assessment_v1"
 
@@ -104,6 +106,11 @@ class ErrorDefinition:
     http_status: int
     retryable: bool
     message: str
+
+    @property
+    def status(self) -> int:
+        """Compatibility name for callers that use HTTP status terminology."""
+        return self.http_status
 
 
 def _conflict(message: str, *, retryable: bool = False) -> ErrorDefinition:
@@ -262,3 +269,12 @@ _ERROR_REGISTRY: dict[str, ErrorDefinition] = {
 }
 
 ERROR_REGISTRY: Final[Mapping[str, ErrorDefinition]] = MappingProxyType(_ERROR_REGISTRY)
+
+# Public name used by PR4 diagnostics and route adapters.  Keep the existing
+# ErrorDefinition shape so legacy callers and contract tests remain stable.
+CoachErrorContract = ErrorDefinition
+
+
+def error_contract(code: str) -> CoachErrorContract:
+    """Return the one canonical, content-free contract for an error code."""
+    return ERROR_REGISTRY[code]

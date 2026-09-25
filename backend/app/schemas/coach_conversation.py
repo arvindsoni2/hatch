@@ -29,8 +29,11 @@ from ..services.coach_conversational_contracts import (
     DELIVERY_POLICY,
     EVIDENCE_GROUNDING_CONTRACT,
     ERROR_REGISTRY,
+    EXPORT_CONTRACT,
     FOLLOW_UP_CONTRACT,
+    HARD_DELETE_CONTRACT,
     LIVE_VIEW_CONTRACT,
+    PROGRESS_CONTRACT,
     REPORT_CONTRACT,
     RUBRIC_CONTRACT,
 )
@@ -883,6 +886,72 @@ class RetentionStatus(StrictContractModel):
     audio_policy: AudioRetentionPolicy
     current_audio_state: AudioRetentionState | None
     retryable_audio_cleanup_attempt_id: SafeToken | None
+
+
+class ReportExportRequest(StrictContractModel):
+    format: Literal["json", "markdown"]
+    expected_activity_version: NonNegativeInt
+    expected_retention_version: NonNegativeInt
+    include_transcript: bool = False
+    include_evidence_details: bool = False
+    include_attempt_history: bool = False
+    include_candidate_reflection: bool = True
+    contract_version: Literal[EXPORT_CONTRACT]
+
+
+class HardDeletionCommandRequest(StrictContractModel):
+    command_id: SafeToken
+    confirmation: Literal["DELETE"]
+    contract_version: Literal[HARD_DELETE_CONTRACT]
+
+
+class DeletionCommandResult(StrictContractModel):
+    command_id: SafeToken
+    result_state: Literal["processing", "failed", "completed"]
+    error_code: str | None = None
+    completed_at: datetime | None = None
+    expires_at: datetime | None = None
+    contract_version: Literal[HARD_DELETE_CONTRACT]
+
+
+class ConversationalReportRead(StrictContractModel):
+    session_id: SafeToken
+    report_state: Literal["completed", "fallback"]
+    activity_version: NonNegativeInt
+    retention_version: NonNegativeInt
+    session_level: ConversationalLevel
+    dimensions: dict[str, Any]
+    strengths: list[Any] = Field(default_factory=list)
+    improvement_priorities: list[Any] = Field(default_factory=list)
+    evidence_review_items: list[Any] = Field(default_factory=list)
+    question_summaries: list[Any] = Field(default_factory=list)
+    practice_suggestions: list[Any] = Field(default_factory=list)
+    candidate_reflection: dict[str, Any] | None = None
+    retention_summary: RetentionStatus | None = None
+    compatibility_key: SafeToken
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    contract_version: Literal[REPORT_CONTRACT]
+
+
+class ConversationalProgressRead(StrictContractModel):
+    selector_mode: Literal["exact", "filtered"]
+    applied_filters: dict[str, str] = Field(default_factory=dict)
+    group_limit: Annotated[int, Field(ge=1, le=100)]
+    total_groups: NonNegativeInt
+    returned_groups: NonNegativeInt
+    groups_truncated: bool
+    groups: list[dict[str, Any]] = Field(default_factory=list)
+    contract_version: Literal[PROGRESS_CONTRACT]
+
+
+class SupportDiagnosticsRead(StrictContractModel):
+    session_id: SafeToken
+    status: ConversationStatus
+    conversation_state: ConversationState
+    report_state: str
+    error_code: str | None = None
+    retryable: bool | None = None
+    contract_version: Literal["coach_support_diagnostics_v1"]
 
 
 class AttemptAudioUploadRead(StrictContractModel):
