@@ -1032,6 +1032,75 @@ class ConversationalSessionRepository:
             candidate_reflection=reflection,
         )
 
+    async def load_progress_snapshots(self, selector):
+        """Load owner-scoped, completed conversational report projections."""
+
+        from ..services.coach_conversational_progress import ProgressSnapshot
+
+        filters = [
+            InterviewSession.experience_version == "conversational_v1",
+            InterviewSession.report_state.in_(("completed", "fallback")),
+            InterviewSession.deletion_state == "not_requested",
+        ]
+        if selector.mode == "exact":
+            filters.append(InterviewSession.id == selector.session_id)
+        else:
+            for column, value in (
+                (InterviewSession.application_id, selector.application_id),
+                (InterviewSession.compatibility_key, selector.compatibility_key),
+                (InterviewSession.company_name, selector.company_name),
+                (InterviewSession.role_title, selector.role_title),
+            ):
+                if value is not None:
+                    filters.append(column == value)
+        sessions = list(
+            (
+                await self._session.scalars(
+                    select(InterviewSession)
+                    .where(*filters)
+                    .order_by(InterviewSession.completed_at, InterviewSession.id)
+                )
+            ).all()
+        )
+        snapshots: list[ProgressSnapshot] = []
+        for session in sessions:
+            report = session.report_json if isinstance(session.report_json, dict) else {}
+            raw_dimensions = report.get("dimensions", {})
+            dimensions = {
+                name: value
+                for name, value in raw_dimensions.items()
+                if isinstance(name, str) and value in (
+                    "needs_work",
+                    "developing",
+                    "interview_ready",
+                    "strong",
+                    "not_assessed",
+                )
+            }
+            level = report.get("session_level", "not_assessed")
+            if level not in {
+                "needs_work",
+                "developing",
+                "interview_ready",
+                "strong",
+                "not_assessed",
+            }:
+                level = "not_assessed"
+            snapshots.append(
+                ProgressSnapshot(
+                    session_id=session.id,
+                    compatibility_key=session.compatibility_key or "",
+                    activity_version=session.activity_version,
+                    completed_at=session.completed_at or session.created_at,
+                    session_level=level,
+                    dimensions=dimensions,
+                    application_id=session.application_id,
+                    company_name=session.company_name,
+                    role_title=session.role_title,
+                )
+            )
+        return snapshots
+
     async def _finalise_report(
         self,
         *,
