@@ -37,7 +37,7 @@ from ..services.coach_conversation_commands import (
 )
 from ..services.coach_service import CoachService
 from ..services.coach_reconciliation import reconcile_session
-from ..services.coach_conversational_contracts import ERROR_REGISTRY
+from ..services.coach_conversational_contracts import ERROR_REGISTRY, REPORT_CONTRACT
 from ..services.coach_live_view import CoachLiveViewError, CoachLiveViewService
 from ..services.coach_media_storage import (
     CoachMediaError,
@@ -195,7 +195,7 @@ async def get_conversational_report(
                 if isinstance(session.retention_policy_json, dict)
                 else None
             ),
-            "contract_version": "coach_conversational_report_v1",
+            "contract_version": REPORT_CONTRACT,
         }
     )
     try:
