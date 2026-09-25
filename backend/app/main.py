@@ -235,21 +235,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class ConversationalRawPathBoundaryMiddleware(BaseHTTPMiddleware):
-    """Reject only encoded-separator command/live paths before route matching."""
+    """Reject encoded-separator conversational session paths before route matching."""
 
     _PREFIX = b"/api/coach/sessions/"
-    _SUFFIXES = {"POST": b"/commands", "GET": b"/live"}
+    _SUFFIXES = {
+        "GET": (b"/live", b"/report", b"/diagnostics"),
+        "POST": (b"/commands", b"/exports", b"/deletion-commands"),
+    }
 
     async def dispatch(self, request: StarletteRequest, call_next):
-        suffix = self._SUFFIXES.get(request.method)
+        suffixes = self._SUFFIXES.get(request.method, ())
         raw_path = request.scope.get("raw_path", b"")
-        if isinstance(raw_path, bytes) and suffix is not None:
+        if isinstance(raw_path, bytes) and suffixes:
             candidate = raw_path.split(b"?", 1)[0]
             normalized, has_encoded_separator = _normalize_encoded_separators(candidate)
             if (
                 has_encoded_separator
                 and normalized.startswith(self._PREFIX)
-                and normalized.endswith(suffix)
+                and any(normalized.endswith(suffix) for suffix in suffixes)
             ):
                 from .routers.coach_conversation import (  # noqa: PLC0415
                     conversation_error_response,
@@ -657,6 +660,18 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         """Keep strict conversational command validation free of client echoes."""
         known_create_code = _known_conversational_create_validation_code(request, error)
+        pr4_route = request.url.path == "/api/coach/conversational-progress" or (
+            request.url.path.startswith("/api/coach/sessions/")
+            and any(
+                request.url.path.endswith(suffix)
+                for suffix in (
+                    "/report",
+                    "/exports",
+                    "/deletion-commands",
+                    "/diagnostics",
+                )
+            )
+        )
         if (
             (
                 request.url.path.startswith("/api/coach/sessions/")
@@ -664,6 +679,7 @@ def create_app() -> FastAPI:
             )
             or known_create_code is not None
             or _is_malformed_conversational_create(request, error)
+            or pr4_route
         ):
             from .routers.coach_conversation import (  # noqa: PLC0415
                 conversation_error_response,

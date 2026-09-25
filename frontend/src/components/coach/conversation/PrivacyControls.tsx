@@ -8,6 +8,8 @@ interface PrivacyControlsProps {
   pending?: boolean;
   onDeleteTranscript: () => void;
   onDeleteSession: () => void;
+  statusMessage?: string | null;
+  errorMessage?: string | null;
 }
 
 export function PrivacyControls({
@@ -16,6 +18,8 @@ export function PrivacyControls({
   pending = false,
   onDeleteTranscript,
   onDeleteSession,
+  statusMessage = null,
+  errorMessage = null,
 }: PrivacyControlsProps) {
   return (
     <section aria-labelledby="privacy-controls-title" className="space-y-4 rounded-[var(--radius-card)] border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -27,6 +31,8 @@ export function PrivacyControls({
         {canDeleteTranscript ? <Button type="button" variant="outline" disabled={pending} onClick={onDeleteTranscript}>Delete transcript</Button> : null}
         {canDeleteSession ? <Button type="button" variant="destructive" disabled={pending} onClick={onDeleteSession}>Delete interview</Button> : null}
       </div>
+      {statusMessage ? <p role="status" className="text-sm text-[var(--text-muted)]">{statusMessage}</p> : null}
+      {errorMessage ? <p role="alert" className="text-sm text-[var(--danger)]">{errorMessage}</p> : null}
     </section>
   );
 }

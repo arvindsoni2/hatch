@@ -39,6 +39,7 @@ export function ReportExportControls({ report }: { report: ConversationalReportR
       <div className="flex flex-wrap gap-3">
         <Button type="button" variant="outline" loading={pending === "json"} disabled={pending !== null} onClick={() => void exportFormat("json")}>JSON</Button>
         <Button type="button" variant="outline" loading={pending === "markdown"} disabled={pending !== null} onClick={() => void exportFormat("markdown")}>Markdown</Button>
+        <Button type="button" variant="outline" disabled={pending !== null} onClick={() => window.print()}>Print</Button>
       </div>
       {error ? <p role="alert" className="text-sm text-[var(--danger)]">The report changed before it could be exported. Refresh and try again.</p> : null}
     </section>
