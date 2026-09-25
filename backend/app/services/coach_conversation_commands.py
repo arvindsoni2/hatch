@@ -44,6 +44,7 @@ from ..schemas.coach_conversation import (
     ConversationCommandRequest,
     ConversationCommandResult,
     DeleteAudioPayload,
+    DeleteTranscriptPayload,
     EditTranscriptPayload,
     EndSessionPayload,
     FinishAnswerPayload,
@@ -77,6 +78,7 @@ from .coach_retention import (
     CoachRetentionService,
     queue_audio_cleanup,
 )
+from .coach_privacy import TranscriptDeletionClaim
 
 PROCESSING_CONTRACT = "coach_processing_v1"
 logger = logging.getLogger(__name__)
@@ -358,6 +360,9 @@ class ConversationCommandService:
         if request.command_type == "delete_audio":
             assert isinstance(request.payload, DeleteAudioPayload)
             return await self._delete_audio(session, request, request.payload)
+        if request.command_type == "delete_transcript":
+            assert isinstance(request.payload, DeleteTranscriptPayload)
+            return await self._delete_transcript(session, request, request.payload)
         if request.command_type == "skip_question":
             return await self._skip_question(session, request)
         if request.command_type == "end_session":
@@ -1919,6 +1924,39 @@ class ConversationCommandService:
             request,
             result="accepted_processing",
             async_job_id=cleanup_claim.job_id,
+        )
+
+    async def _delete_transcript(
+        self,
+        session: InterviewSession,
+        request: ConversationCommandRequest,
+        payload: DeleteTranscriptPayload,
+    ) -> ConversationCommandResult:
+        attempt = await self.db.scalar(
+            select(SessionRecording).where(
+                SessionRecording.id == payload.attempt_id,
+                SessionRecording.session_id == session.id,
+            )
+        )
+        if attempt is None:
+            raise ConversationCommandError("coach_attempt_not_active")
+        result = await self.repository.delete_attempt_transcript(
+            TranscriptDeletionClaim(
+                session_id=session.id,
+                attempt_id=attempt.id,
+                expected_attempt_version=attempt.attempt_version,
+                expected_processing_generation=attempt.processing_generation,
+                expected_state_version=request.expected_state_version,
+                expected_activity_version=session.activity_version,
+            )
+        )
+        self._post_commit_job_id = result.report_job_id
+        await self.db.refresh(session)
+        return await self._result(
+            session,
+            request,
+            result=("accepted_processing" if result.report_job_id else "completed"),
+            async_job_id=result.report_job_id,
         )
 
     async def _skip_question(
