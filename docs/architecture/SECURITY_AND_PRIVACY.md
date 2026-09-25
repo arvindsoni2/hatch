@@ -53,6 +53,27 @@ Discovery and import requests go from the backend to public job sources. Hatch d
 
 Master CV files, generated CVs, cover letters, and interview materials should be treated as sensitive personal data.
 
+## Conversational Coach
+
+Conversational Coach is disabled by default with
+`HATCH_COACH_CONVERSATIONAL_ENABLED=false`. When enabled, typed answers,
+transcripts, audio, evidence snapshots, reports, and deletion receipts are
+separate privacy surfaces. Audio defaults to `delete_after_processing` and
+transcript deletion removes transcript-derived storage before a version-fenced
+report rebuild. Hard deletion removes the session and owned child/media data;
+only a bounded content-free receipt remains temporarily (30 days by default).
+
+The conversational report uses named levels and grounded evidence statuses. It
+does not infer emotion, confidence, personality, culture fit, or deception.
+Exports omit raw audio and filesystem paths. Support diagnostics and telemetry
+use registered content-free codes and bounded identifiers; prompt, transcript,
+CV, job-description, and model-response bodies are not emitted.
+
+If a cloud AI provider is configured, the provider may receive the answer,
+transcript, selected evidence, or role context needed for that operation. Local
+AI keeps those prompts within the local workspace. Review provider terms before
+enabling cloud processing.
+
 ## Logs And Diagnostics
 
 Docker logs, host logs, and diagnostic outputs may contain operational details. Review them before sharing publicly.
