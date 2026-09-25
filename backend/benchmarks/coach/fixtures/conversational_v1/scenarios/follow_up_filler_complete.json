@@ -1,0 +1,10 @@
+{
+  "scenario_id": "follow_up_filler_complete",
+  "stage": "follow_up",
+  "group": "follow_up",
+  "description": "Synthetic complete answer with filler does not create a follow-up.",
+  "qualification_scope": "harness_contract",
+  "input": {"transcript": "Well, I led the safe migration across three teams and reduced verified lead time by 18 percent.", "accepted_attempt_id": "attempt-1", "current_accepted_attempt_id": "attempt-1", "target_dimension_levels": {"impact": "strong"}, "existing_duplicate_keys": [], "persisted_follow_up_count": 0, "root_skipped": false, "session_ended": false, "case": "no_follow_up"},
+  "expected": {"outcome": "completed", "admitted": false},
+  "scoring": {}, "quality_dimensions": []
+}
