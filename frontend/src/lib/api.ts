@@ -1652,6 +1652,100 @@ export interface SessionFeedbackReport {
   question_evaluations: QuestionEvaluationSummary[];
 }
 
+export type ConversationalLevel =
+  | "needs_work"
+  | "developing"
+  | "interview_ready"
+  | "strong"
+  | "not_assessed";
+export type ConversationalTrend =
+  | "improving"
+  | "stable"
+  | "mixed"
+  | "declining"
+  | "not_enough_evidence";
+
+export interface ConversationalReportRead {
+  session_id: string;
+  report_state: "completed" | "fallback";
+  activity_version: number;
+  retention_version: number;
+  session_level: ConversationalLevel;
+  dimensions: Record<string, ConversationalLevel>;
+  strengths: unknown[];
+  improvement_priorities: unknown[];
+  evidence_review_items: unknown[];
+  question_summaries: unknown[];
+  practice_suggestions: unknown[];
+  candidate_reflection: Record<string, unknown> | null;
+  retention_summary: Record<string, unknown> | null;
+  compatibility_key: string;
+  contract_version: "coach_conversational_report_v1";
+}
+
+export interface ConversationalProgressGroup {
+  compatibility_key: string;
+  session_count: number;
+  latest_session_id: string;
+  latest_activity_version: number;
+  latest_session_level: ConversationalLevel;
+  trend: ConversationalTrend;
+  sessions: Array<{
+    session_id: string;
+    activity_version: number;
+    completed_at: string;
+    session_level: ConversationalLevel;
+    dimensions: Record<string, ConversationalLevel>;
+  }>;
+}
+
+export interface ConversationalProgressRead {
+  selector_mode: "exact" | "filtered";
+  applied_filters: Record<string, string>;
+  group_limit: number;
+  total_groups: number;
+  returned_groups: number;
+  groups_truncated: boolean;
+  groups: ConversationalProgressGroup[];
+  contract_version: "coach_conversational_progress_v2";
+}
+
+export interface ReportExportRequest {
+  format: "json" | "markdown";
+  expected_activity_version: number;
+  expected_retention_version: number;
+  include_transcript?: boolean;
+  include_evidence_details?: boolean;
+  include_attempt_history?: boolean;
+  include_candidate_reflection?: boolean;
+  contract_version: "coach_report_export_v1";
+}
+
+export interface HardDeletionCommandRequest {
+  command_id: string;
+  confirmation: "DELETE";
+  contract_version: "coach_session_hard_delete_v1";
+}
+
+export interface DeletionCommandResult {
+  command_id: string;
+  result_state: "processing" | "failed" | "completed";
+  error_code: string | null;
+  completed_at: string | null;
+  expires_at: string | null;
+  contract_version: "coach_session_hard_delete_v1";
+}
+
+export interface SupportDiagnosticsRead {
+  session_id: string;
+  status: string;
+  conversation_state: ConversationState;
+  report_state: string;
+  error_code: string | null;
+  retryable: boolean | null;
+  contract_version: "coach_support_diagnostics_v1";
+}
+
 export interface CompanyResearchResponse {
   company_name: string;
   sector: string | null;
@@ -1692,6 +1786,61 @@ export async function getCoachConversationLive(
 ): Promise<ConversationLiveView> {
   return apiFetch<ConversationLiveView>(
     `/api/coach/sessions/${sessionId}/live`,
+    { cache: "no-store" },
+  );
+}
+
+export async function getConversationalReport(
+  sessionId: string,
+): Promise<ConversationalReportRead> {
+  return apiFetch<ConversationalReportRead>(
+    `/api/coach/sessions/${sessionId}/report`,
+    { cache: "no-store" },
+  );
+}
+
+export async function getConversationalProgress(
+  filters: Record<string, string | number | boolean | undefined> = {},
+): Promise<ConversationalProgressRead> {
+  const params = buildQueryString(filters);
+  return apiFetch<ConversationalProgressRead>(
+    `/api/coach/conversational-progress${params}`,
+    { cache: "no-store" },
+  );
+}
+
+export async function exportConversationalReport(
+  sessionId: string,
+  request: ReportExportRequest,
+): Promise<Response> {
+  const response = await fetch(`${API_BASE}/api/coach/sessions/${sessionId}/exports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const raw = await response.text().catch(() => response.statusText);
+    throw new ApiError(raw || response.statusText, response.status, raw);
+  }
+  return response;
+}
+
+export async function requestHardDeletion(
+  sessionId: string,
+  request: HardDeletionCommandRequest,
+): Promise<DeletionCommandResult> {
+  return apiFetch<DeletionCommandResult>(
+    `/api/coach/sessions/${sessionId}/deletion-commands`,
+    { method: "POST", body: JSON.stringify(request) },
+  );
+}
+
+export async function getSupportDiagnostics(
+  sessionId: string,
+): Promise<SupportDiagnosticsRead> {
+  return apiFetch<SupportDiagnosticsRead>(
+    `/api/coach/sessions/${sessionId}/diagnostics`,
     { cache: "no-store" },
   );
 }

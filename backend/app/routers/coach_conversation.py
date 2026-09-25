@@ -35,6 +35,8 @@ from ..services.coach_conversation_commands import (
     ConversationCommandError,
     ConversationCommandService,
 )
+from ..services.coach_service import CoachService
+from ..services.coach_reconciliation import reconcile_session
 from ..services.coach_conversational_contracts import ERROR_REGISTRY
 from ..services.coach_live_view import CoachLiveViewError, CoachLiveViewService
 from ..services.coach_media_storage import (
@@ -159,7 +161,7 @@ async def get_live(
 
 @router.get(
     "/sessions/{session_id}/report",
-    response_model=ConversationalReportRead,
+    response_model=None,
     responses=CANONICAL_ERROR_RESPONSES,
 )
 async def get_conversational_report(
@@ -169,6 +171,9 @@ async def get_conversational_report(
     if safe_id_error is not None:
         return safe_id_error
     session = await db.get(InterviewSession, session_id)
+    if session is not None and session.experience_version != "conversational_v1":
+        await reconcile_session(db, session_id)
+        return await CoachService().get_report(session_id, db)
     if (
         session is None
         or session.experience_version != "conversational_v1"
