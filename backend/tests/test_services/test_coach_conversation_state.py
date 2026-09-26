@@ -94,6 +94,7 @@ COARSE_TRANSITION_PROJECTIONS: dict[tuple[str, str], frozenset[str]] = {
     ("completed", "completed"): frozenset(
         {
             "retry_report",
+            "record_self_assessment",
             "delete_audio",
             "delete_transcript",
         }
@@ -240,10 +241,9 @@ def test_allowed_commands_are_derived_from_transition_registry() -> None:
 @pytest.mark.parametrize(
     ("state", "status", "command_type"),
     [
-        ("completed", "active", "retry_report"),
-        ("completed", "active", "record_self_assessment"),
-        ("completed", "completed", "record_self_assessment"),
-        ("ready", "active", "update_retention"),
+            ("completed", "active", "retry_report"),
+            ("completed", "active", "record_self_assessment"),
+            ("ready", "active", "update_retention"),
         ("completed", "active", "delete_audio"),
     ],
 )

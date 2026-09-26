@@ -1,0 +1,10 @@
+{
+  "scenario_id": "rubric_relevant_no_impact",
+  "stage": "conversational_rubric",
+  "group": "rubric",
+  "description": "Synthetic relevant answer without a verified impact remains not assessed for impact.",
+  "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "I helped the team coordinate the migration.", "recording_type": "text", "case": "vague"},
+  "expected": {"outcome": "completed", "named_level": "not_assessed"},
+  "scoring": {}, "quality_dimensions": []
+}

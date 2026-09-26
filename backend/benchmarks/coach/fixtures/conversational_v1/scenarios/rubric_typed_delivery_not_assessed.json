@@ -1,0 +1,10 @@
+{
+  "scenario_id": "rubric_typed_delivery_not_assessed",
+  "stage": "conversational_rubric",
+  "group": "rubric",
+  "description": "Synthetic typed answer leaves delivery dimension not assessed.",
+  "qualification_scope": "harness_contract",
+  "input": {"question": "How did you improve delivery?", "transcript": "I led a safe migration.", "recording_type": "text", "case": "vague"},
+  "expected": {"outcome": "completed", "named_level": "not_assessed"},
+  "scoring": {}, "quality_dimensions": []
+}

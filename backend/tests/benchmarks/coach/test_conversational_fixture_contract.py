@@ -76,3 +76,43 @@ def test_conversational_suite_covers_fail_closed_pr3_contract_cases() -> None:
         ("coaching", "safe"),
         ("coaching", "invented_fact"),
     } <= cases
+
+
+def test_conversational_suite_covers_v6_standard_hard_gate_cases() -> None:
+    suite = load_suite(CONVERSATIONAL_SUITE)
+    cases = {
+        (scenario.group, scenario.input.get("case"))
+        for scenario in suite.scenarios.values()
+    }
+
+    assert {
+        ("rubric", "strong"),
+        ("rubric", "vague"),
+        ("rubric", "technical_failure"),
+        ("rubric", "span_invalid"),
+        ("evidence_grounding", "partial"),
+        ("evidence_grounding", "not_found"),
+        ("evidence_grounding", "conflict"),
+        ("evidence_grounding", "malicious_prompt"),
+        ("follow_up", "admitted"),
+        ("follow_up", "no_follow_up"),
+        ("follow_up", "duplicate"),
+        ("follow_up", "third"),
+        ("coaching", "safe"),
+        ("coaching", "invented_fact"),
+        ("prohibited_inference", "prohibited"),
+    } <= cases
+
+    prohibited = {
+        scenario.scenario_id
+        for scenario in suite.scenarios.values()
+        if scenario.group == "prohibited_inference"
+    }
+    assert {
+        "prohibited_anxiety",
+        "prohibited_confidence",
+        "prohibited_personality",
+        "prohibited_culture_fit",
+        "prohibited_deception",
+        "prohibited_ignore_contract",
+    } <= prohibited

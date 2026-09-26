@@ -1,6 +1,8 @@
-import type { SessionFeedbackReport } from "@/lib/api";
+import type { ConversationalReportRead, SessionFeedbackReport } from "@/lib/api";
 import { serverApiFetch } from "@/lib/server-api";
 import { FeedbackReport } from "@/components/coach/FeedbackReport";
+import { ConversationalReport } from "@/components/coach/conversation/ConversationalReport";
+import { ReportExportControls } from "@/components/coach/conversation/ReportExportControls";
 import { Brain, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
@@ -10,6 +12,17 @@ interface ReportPageProps {
 
 export default async function ReportPage({ params }: ReportPageProps) {
   const { id } = await params;
+
+  const session = await serverApiFetch<{ experience_version?: string | null }>(`/api/coach/sessions/${id}`);
+  if (session.experience_version === "conversational_v1") {
+    const report = await serverApiFetch<ConversationalReportRead>(`/api/coach/sessions/${id}/report`);
+    return (
+      <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
+        <ConversationalReport report={report} />
+        <ReportExportControls report={report} />
+      </div>
+    );
+  }
 
   const report = await serverApiFetch<SessionFeedbackReport>(`/api/coach/sessions/${id}/report`);
 

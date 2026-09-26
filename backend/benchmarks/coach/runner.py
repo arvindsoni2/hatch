@@ -377,7 +377,11 @@ def _scenario_result(
         calibration_in_range=calibration_in_range,
         calibration_applicable=calibration_applicable,
         calibration_error=calibration_error,
-        output_excerpt=_bounded_value(stage_execution.output),
+        output_excerpt=(
+            _content_free_conversational_excerpt(stage_execution.output)
+            if scenario.group is not None
+            else _bounded_value(stage_execution.output)
+        ),
     )
 
 
@@ -394,6 +398,49 @@ def _bounded_value(value: Any, *, depth: int = 0) -> Any:
             for key, item in list(value.items())[:30]
         }
     return value
+
+
+_CONVERSATIONAL_ARTIFACT_KEYS = frozenset(
+    {
+        "admitted",
+        "answer_level",
+        "error_code",
+        "evidence_level",
+        "fallback",
+        "follow_up_admitted",
+        "level",
+        "repair_count",
+        "state",
+    }
+)
+
+
+def _content_free_conversational_excerpt(value: Any) -> dict[str, Any]:
+    """Keep only contract metadata in public conversational benchmark artifacts."""
+    if not isinstance(value, dict):
+        return {}
+    excerpt: dict[str, Any] = {}
+    for key, child in value.items():
+        if key in _CONVERSATIONAL_ARTIFACT_KEYS and isinstance(
+            child, (bool, int, float, str)
+        ):
+            excerpt[key] = child
+        elif key == "dimensions" and isinstance(child, dict):
+            levels = {
+                str(name): item.get("level")
+                for name, item in child.items()
+                if isinstance(item, dict) and isinstance(item.get("level"), str)
+            }
+            if levels:
+                excerpt["dimension_levels"] = levels
+        elif key == "claims" and isinstance(child, list):
+            statuses = [
+                item.get("status")
+                for item in child
+                if isinstance(item, dict) and isinstance(item.get("status"), str)
+            ]
+            excerpt["claim_statuses"] = statuses
+    return excerpt
 
 
 def _timeout_result(
