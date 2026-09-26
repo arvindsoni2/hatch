@@ -4,6 +4,7 @@
 2. No raw max_tokens/num_ctx integer literals in app code (excluding context_budgets.py
    itself and test files).
 """
+
 from __future__ import annotations
 
 import re
@@ -23,6 +24,13 @@ def test_cv_generate_fits_primary_ctx() -> None:
     )
 
 
+def test_runtime_context_package_budget_fits_primary_ctx() -> None:
+    """Declared packages reserve a bounded prompt allowance before model output."""
+    from app.agents.tools.context_budgets import CONTEXT_PACKAGE, PRIMARY_CTX
+
+    assert CONTEXT_PACKAGE.prompt + CONTEXT_PACKAGE.max_output <= PRIMARY_CTX
+
+
 def test_no_literal_token_budgets_in_app_code() -> None:
     """Regex tripwire: no (max_tokens|num_ctx)=<digits> outside context_budgets.py."""
     pattern = re.compile(r"(max_tokens|num_ctx)\s*=\s*\d")
@@ -34,7 +42,9 @@ def test_no_literal_token_budgets_in_app_code() -> None:
         text = py_file.read_text(encoding="utf-8")
         for lineno, line in enumerate(text.splitlines(), start=1):
             if pattern.search(line):
-                violations.append(f"{py_file.relative_to(_APP_ROOT.parent.parent)}:{lineno}: {line.strip()}")
+                violations.append(
+                    f"{py_file.relative_to(_APP_ROOT.parent.parent)}:{lineno}: {line.strip()}"
+                )
 
     assert not violations, (
         "Raw token-budget literals found — use constants from context_budgets.py:\n"

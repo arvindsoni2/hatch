@@ -1,0 +1,9 @@
+{
+  "session": {
+    "company_name": "Synthetic Industries",
+    "role_title": "Platform Engineer"
+  },
+  "question": "Describe a synthetic migration plan.",
+  "answer": "I would inventory dependencies and validate each migration stage.",
+  "expected_reason_code": "stale_async_job_recovered"
+}

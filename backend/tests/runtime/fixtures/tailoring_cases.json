@@ -1,0 +1,22 @@
+{
+  "summary": "Cloud architect focused on secure platform delivery.",
+  "skills": [{"category": "Cloud", "items": ["AWS", "Terraform"]}],
+  "experience": [
+    {
+      "role": "Platform Architect",
+      "company": "Synthetic Systems Ltd",
+      "period": "2022-Present",
+      "achievements": ["Designed a reusable cloud landing-zone pattern."]
+    }
+  ],
+  "education": [
+    {
+      "qualification": "BSc Computer Science",
+      "institution": "Example University",
+      "year": "2010"
+    }
+  ],
+  "certifications": ["Synthetic Cloud Practitioner"],
+  "ats_keywords_embedded": ["AWS", "Terraform"],
+  "tailoring_notes": "Reordered existing evidence for the target role."
+}

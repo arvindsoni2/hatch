@@ -1,0 +1,12 @@
+{
+  "subject_line": "Application for Cloud Platform Architect",
+  "greeting": "Dear Hiring Manager,",
+  "body_paragraphs": [
+    "I am applying for the Cloud Platform Architect role.",
+    "My synthetic profile demonstrates AWS and Terraform platform delivery.",
+    "I would welcome a discussion about the role."
+  ],
+  "sign_off": "Yours sincerely,",
+  "word_count": 999,
+  "key_keywords_used": ["AWS", "Terraform"]
+}

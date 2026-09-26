@@ -61,11 +61,17 @@ class SafeSpan:
         self._span = span
         self._parent = parent
         self._failed = False
+        self._error_code: str | None = None
         self._attributes: dict[str, Any] = {}
 
     @property
     def failed(self) -> bool:
         return self._failed
+
+    @property
+    def error_code(self) -> str | None:
+        """Return the bounded status code without requiring the optional OTel API."""
+        return self._error_code
 
     def set_attribute(self, key: str, value: Any) -> None:
         attributes = sanitize_attributes({key: value})
@@ -104,15 +110,17 @@ class SafeSpan:
         del exception
 
     def set_error(self, code: str) -> None:
+        stable_code = code[:64]
         self._failed = True
+        self._error_code = stable_code
         if self._parent is not None:
-            self._parent.set_error(code)
+            self._parent.set_error(stable_code)
         if self._span is None:
             return
         try:
             from opentelemetry.trace.status import Status, StatusCode
 
-            self._span.set_status(Status(StatusCode.ERROR, code[:64]))
+            self._span.set_status(Status(StatusCode.ERROR, stable_code))
         except Exception:
             return
 
@@ -226,6 +234,10 @@ class TelemetryRuntime:
         try:
             start_options: dict[str, Any] = {
                 "attributes": sanitize_attributes(attributes),
+                # Default OTel exception events retain message and stack trace.
+                # Model/content paths therefore use stable error codes only.
+                "record_exception": False,
+                "set_status_on_exception": False,
             }
             if link_context is not None:
                 from opentelemetry.context import Context
@@ -247,7 +259,7 @@ class TelemetryRuntime:
             yield span
         except BaseException as exc:
             span.record_exception(exc)
-            span.set_error(type(exc).__name__)
+            span.set_error("runtime_unhandled_error")
             raise
         finally:
             _current_span.reset(token)
@@ -700,7 +712,6 @@ def _build_enabled_runtime(settings: Any) -> TelemetryRuntime:
     from opentelemetry.sdk.trace.export import (
         BatchSpanProcessor,
         ConsoleSpanExporter,
-        SimpleSpanProcessor,
     )
 
     endpoint = str(settings.HATCH_OTLP_ENDPOINT).strip()
@@ -724,7 +735,10 @@ def _build_enabled_runtime(settings: Any) -> TelemetryRuntime:
         str(settings.LOG_LEVEL).upper() == "DEBUG"
     )
     if console_enabled:
-        tracer_provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
+        # Console export must never synchronously stall a workflow thread.
+        tracer_provider.add_span_processor(
+            BatchSpanProcessor(ConsoleSpanExporter(), export_timeout_millis=5000)
+        )
         readers.append(
             PeriodicExportingMetricReader(
                 ConsoleMetricExporter(),

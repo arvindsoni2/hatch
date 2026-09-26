@@ -54,6 +54,15 @@ COACH_FOLLOWUP_FOCUS_COUNT = "hatch.coach.followup_focus_count"
 COACH_SESSION_ID = "hatch.coach.session_id"
 ASYNC_JOB_ID = "hatch.async_job_id"
 
+# Runtime identifiers are allowed on spans for trace correlation only. They
+# are deliberately removed by ``sanitize_metric_attributes``.
+RUNTIME_WORKFLOW_RUN_ID = "hatch.workflow_run_id"
+RUNTIME_WORKFLOW_STEP_ID = "hatch.workflow_step_id"
+RUNTIME_TASK_ATTEMPT_ID = "hatch.task_attempt_id"
+RUNTIME_EXECUTION_ID = "hatch.execution_id"
+RUNTIME_TASK_ID = "hatch.task_id"
+RUNTIME_TASK_VERSION = "hatch.task_version"
+
 # Benchmark correlation reuses PR42's authoritative shared keys where they
 # already exist rather than introducing aliases.
 COACH_BENCHMARK_RUN_ID = BENCHMARK_RUN_ID
@@ -91,6 +100,11 @@ _STRING_KEYS = frozenset(
         COACH_COMMAND_TYPE,
         COACH_SESSION_ID,
         ASYNC_JOB_ID,
+        RUNTIME_WORKFLOW_RUN_ID,
+        RUNTIME_WORKFLOW_STEP_ID,
+        RUNTIME_TASK_ATTEMPT_ID,
+        RUNTIME_EXECUTION_ID,
+        RUNTIME_TASK_ID,
         COACH_SUITE_VERSION,
         COACH_PROFILE,
         COACH_BENCHMARK_STATUS,
@@ -114,6 +128,7 @@ _INTEGER_KEYS = frozenset(
         COACH_FOLLOWUP_FOCUS_COUNT,
         COACH_REPETITION,
         COACH_STATE_VERSION,
+        RUNTIME_TASK_VERSION,
     }
 )
 _BOOLEAN_KEYS = frozenset(
@@ -133,6 +148,12 @@ _CORRELATION_KEYS = frozenset(
         COACH_SESSION_ID,
         ASYNC_JOB_ID,
         COACH_STATE_VERSION,
+        RUNTIME_WORKFLOW_RUN_ID,
+        RUNTIME_WORKFLOW_STEP_ID,
+        RUNTIME_TASK_ATTEMPT_ID,
+        RUNTIME_EXECUTION_ID,
+        RUNTIME_TASK_ID,
+        RUNTIME_TASK_VERSION,
     }
 )
 _SECRET_SHAPE = re.compile(

@@ -4,6 +4,7 @@ Reads /props from each llamacpp endpoint, computes the largest (prompt + output)
 routed to that server, and warns if the slot context is too small. Soft warning only —
 never blocks startup; the risk is truncation, not corruption.
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,23 +34,52 @@ async def assert_context_budgets(llm_cfg: Any) -> None:
         return
 
     from .context_budgets import (  # noqa: PLC0415
-        CV_GENERATE, TRIAGE, SCORING, CL_BODY, CL_SNIPPET,
-        JD_ANALYSIS, ATS, COMPANY_RESEARCH, CV_PARSE,
-        ANSWER_EVAL, MODEL_ANSWER, QUESTION_GEN, FEEDBACK,
-        COACH_RUBRIC, GENERIC,
+        CV_GENERATE,
+        TRIAGE,
+        SCORING,
+        CL_BODY,
+        CL_SNIPPET,
+        JD_ANALYSIS,
+        ATS,
+        COMPANY_RESEARCH,
+        CV_PARSE,
+        ANSWER_EVAL,
+        MODEL_ANSWER,
+        QUESTION_GEN,
+        FEEDBACK,
+        COACH_RUBRIC,
+        CONTEXT_PACKAGE,
+        GENERIC,
     )
 
     # Largest budget routed to each server (prompt + output)
     primary_max = max(
-        p + o for p, o in [
-            CV_GENERATE, SCORING, CL_BODY, CL_SNIPPET, JD_ANALYSIS,
-            ATS, COMPANY_RESEARCH, CV_PARSE, ANSWER_EVAL, MODEL_ANSWER,
-            QUESTION_GEN, FEEDBACK, COACH_RUBRIC, GENERIC,
+        p + o
+        for p, o in [
+            CV_GENERATE,
+            SCORING,
+            CL_BODY,
+            CL_SNIPPET,
+            JD_ANALYSIS,
+            ATS,
+            COMPANY_RESEARCH,
+            CV_PARSE,
+            ANSWER_EVAL,
+            MODEL_ANSWER,
+            QUESTION_GEN,
+            FEEDBACK,
+            COACH_RUBRIC,
+            CONTEXT_PACKAGE,
+            GENERIC,
         ]
     )
     triage_max = sum(TRIAGE)  # prompt + output
 
-    triage_url = (getattr(llm_cfg, "triage_base_url", "") or llm_cfg.base_url or "").rstrip("/v1").rstrip("/")
+    triage_url = (
+        (getattr(llm_cfg, "triage_base_url", "") or llm_cfg.base_url or "")
+        .rstrip("/v1")
+        .rstrip("/")
+    )
     primary_url = (llm_cfg.base_url or "").rstrip("/v1").rstrip("/")
 
     for label, base_url, required in [
@@ -65,15 +95,16 @@ async def assert_context_budgets(llm_cfg: Any) -> None:
                 resp.raise_for_status()
                 props = resp.json()
         except Exception:
-            logger.debug("llamacpp %s /props unreachable — skipping context check.", label)
+            logger.debug(
+                "llamacpp %s /props unreachable — skipping context check.", label
+            )
             continue
 
         # /props returns n_ctx at top level on older builds; newer llama.cpp
         # moves it into default_generation_settings.
-        total_ctx = (
-            props.get("n_ctx")
-            or props.get("default_generation_settings", {}).get("n_ctx", 0)
-        )
+        total_ctx = props.get("n_ctx") or props.get(
+            "default_generation_settings", {}
+        ).get("n_ctx", 0)
         parallel = props.get("n_parallel", 1) or 1
         slot_ctx = total_ctx // parallel
 
@@ -84,14 +115,18 @@ async def assert_context_budgets(llm_cfg: Any) -> None:
                 f"routed to it ({required} tokens). Truncation risk on long calls."
             )
             logger.warning(msg)
-            _degraded_details.append({
-                "server": label,
-                "slot_ctx": slot_ctx,
-                "required": required,
-                "reason": "context_budget_exceeds_slot",
-            })
+            _degraded_details.append(
+                {
+                    "server": label,
+                    "slot_ctx": slot_ctx,
+                    "required": required,
+                    "reason": "context_budget_exceeds_slot",
+                }
+            )
         else:
             logger.info(
                 "llamacpp %s: slot context %d >= required %d — OK.",
-                label, slot_ctx, required,
+                label,
+                slot_ctx,
+                required,
             )

@@ -8,7 +8,6 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic import BaseModel
-import json as _json
 
 from sqlalchemy import func, select
 
@@ -26,6 +25,7 @@ from ..schemas.job import (
 )
 from ..services.archive_service import archive_old_jobs, unarchive_job
 from ..services.job_service import JobService
+from ..services.job_score_event_reader import read_job_score_event_payloads
 from ..schemas.job_import import (
     JobUrlImportPreviewRequest, JobUrlImportPreviewResponse,
     JobUrlImportSaveRequest, JobUrlImportSaveResponse,
@@ -456,6 +456,9 @@ async def get_job_decisions(
         .order_by(AgentEvent.created_at.asc())
     )
     events = events_result.scalars().all()
+    event_payloads = await read_job_score_event_payloads(
+        [event.payload for event in events], db
+    )
 
     # Fetch cost tracking records for this job
     cost_result = await db.execute(
@@ -479,8 +482,7 @@ async def get_job_decisions(
     step_num += 1
 
     # Build steps from events
-    for event in events:
-        payload: dict = _json.loads(event.payload) if event.payload else {}
+    for event, payload in zip(events, event_payloads):
         etype = event.event_type
 
         if etype == "job_scored":
