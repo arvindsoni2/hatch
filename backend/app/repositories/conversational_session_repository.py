@@ -1543,43 +1543,137 @@ class ConversationalSessionRepository:
         return report
 
     async def load_export_snapshot(self, session_id: str, request):
-        """Capture the report and retention versions used by a synchronous export."""
+        """Capture versions, analysis and permitted sources in one SQL statement.
 
+        Correlated JSON aggregates avoid an attempts × evidence Cartesian
+        product. Column reads bypass the identity cache; SQLite's statement
+        snapshot prevents deletion/cleanup from splitting content and versions.
+        No source path or media URI is selected.
+        """
+        from types import SimpleNamespace
+        from ..schemas.coach_conversation import ConversationalReportRead
         from ..services.coach_report_export import ExportSnapshot
+        from ..services.coach_text_spans import validate_code_point_span
 
-        report = await self.load_report_read_snapshot(session_id)
-        if (
-            report is None
-            or report["activity_version"] != request.expected_activity_version
-            or report["retention_version"] != request.expected_retention_version
-        ):
+        def json_object(fields):
+            return func.json_object(*[part for pair in fields.items() for part in pair])
+
+        attempts_query = select(func.json_group_array(json_object({
+            "id": SessionRecording.id,
+            "created_at": SessionRecording.created_at,
+            "attempt_state": SessionRecording.attempt_state,
+            "evaluation_state": SessionRecording.evaluation_state,
+            "audio_retention_policy": SessionRecording.audio_retention_policy,
+            "audio_retention_state": SessionRecording.audio_retention_state,
+            "has_transcript": case((SessionRecording.transcript.is_not(None), 1), else_=0),
+            "transcript": SessionRecording.transcript if request.include_transcript else null(),
+            "source_transcript": InterviewTranscriptVersion.transcript if request.include_evidence_details else null(),
+            "is_contributor": case((and_(
+                SessionQuestion.accepted_recording_id == SessionRecording.id,
+                SessionQuestion.source_deleted.is_(False),
+                SessionRecording.attempt_state == "completed",
+                SessionRecording.evaluation_state == "completed",
+                InterviewTranscriptVersion.transcript.is_not(None),
+                InterviewAttemptEvaluation.id.is_not(None),
+            ), 1), else_=0),
+        }))).select_from(SessionRecording).outerjoin(SessionQuestion, and_(
+            SessionQuestion.id == SessionRecording.question_id,
+            SessionQuestion.session_id == session_id,
+        )).outerjoin(InterviewTranscriptVersion, and_(
+            InterviewTranscriptVersion.id == SessionRecording.current_transcript_version_id,
+            InterviewTranscriptVersion.recording_id == SessionRecording.id,
+        )).outerjoin(InterviewAttemptEvaluation, and_(
+            InterviewAttemptEvaluation.id == SessionRecording.current_evaluation_version_id,
+            InterviewAttemptEvaluation.recording_id == SessionRecording.id,
+            InterviewAttemptEvaluation.transcript_version_id == InterviewTranscriptVersion.id,
+            InterviewAttemptEvaluation.state == "completed",
+        )).where(SessionRecording.session_id == session_id).scalar_subquery()
+        evidence_query = select(func.json_group_array(json_object({
+            name: getattr(CoachSessionEvidenceRecord, name) for name in (
+                "evidence_id", "source_type", "source_record_id", "source_record_version",
+                "snapshot_text", "approval_state", "content_hash", "snapshot_hash",
+            )
+        }))).where(CoachSessionEvidenceRecord.session_id == session_id).scalar_subquery()
+        row = (await self._session.execute(select(
+            InterviewSession.report_json, InterviewSession.report_state,
+            InterviewSession.activity_version, InterviewSession.retention_version,
+            InterviewSession.session_plan_json,
+            attempts_query.label("attempts_json"),
+            (evidence_query if request.include_evidence_details else null()).label("evidence_json"),
+        ).where(
+            InterviewSession.id == session_id,
+            InterviewSession.experience_version == "conversational_v1",
+            InterviewSession.status == "completed",
+            InterviewSession.conversation_state == "completed",
+            InterviewSession.deletion_state == "not_requested",
+            InterviewSession.report_state.in_(("completed", "fallback")),
+        ))).one_or_none()
+        if row is None:
             return None
-        attempts = list(
-            (
-                await self._session.scalars(
-                    select(SessionRecording)
-                    .where(
-                        SessionRecording.session_id == session_id,
-                    )
-                    .order_by(SessionRecording.created_at, SessionRecording.id)
-                    .execution_options(populate_existing=True)
-                )
-            ).all()
-        )
+        if (
+            row.activity_version != request.expected_activity_version
+            or row.retention_version != request.expected_retention_version
+        ):
+            raise ValueError("coach_export_source_changed")
+        if not isinstance(row.report_json, dict) or row.report_json.get("activity_version") != row.activity_version:
+            return None
+        attempts = sorted(json.loads(row.attempts_json or "[]"), key=lambda item: (item["created_at"], item["id"]))
+        retention = self._report_retention_summary([SimpleNamespace(
+            **{key: item[key] for key in ("id", "audio_retention_policy", "audio_retention_state", "attempt_state")},
+            transcript=True if item["has_transcript"] else None,
+        ) for item in attempts])
+        report = {**row.report_json, "session_id": session_id, "report_state": row.report_state,
+                  "activity_version": row.activity_version, "retention_version": row.retention_version,
+                  "retention_summary": retention}
+        try:
+            report = ConversationalReportRead.model_validate(report).model_dump(mode="json")
+        except ValueError:
+            return None
+        contributors = {item["id"]: item for item in attempts if item["is_contributor"]}
+        references = {}
+        for item in report["evidence_review_items"] if request.include_evidence_details else ():
+            contributor = contributors.get(item["attempt_id"])
+            if contributor is None:
+                continue
+            try:
+                validate_code_point_span(contributor["source_transcript"], item["transcript_start"], item["transcript_end"], item["claim_text"])
+            except ValueError:
+                continue
+            for evidence_id in item["evidence_ids"]:
+                references.setdefault(evidence_id, {"attempt_ids": set(), "claim_ids": set()})
+                references[evidence_id]["attempt_ids"].add(item["attempt_id"])
+                references[evidence_id]["claim_ids"].add(item["claim_id"])
+        plan = row.session_plan_json if isinstance(row.session_plan_json, dict) else {}
+        selection = plan.get("evidence_selection", {})
+        selection = selection if isinstance(selection, dict) else {}
+        labels = {
+            "approved": "Approved source", "confirmed": "Confirmed source",
+            "reviewed_final": "Final reviewed source", "reviewed": "Reviewed source",
+            "candidate_selected_unapproved": "Candidate-selected unapproved source",
+            "draft": "Draft source",
+        }
+        evidence_details = []
+        for source in sorted(json.loads(row.evidence_json or "[]"), key=lambda item: item["evidence_id"]):
+            approval = source["approval_state"]
+            if source["evidence_id"] not in references or approval not in labels:
+                continue
+            if approval == "candidate_selected_unapproved" and not (
+                source["source_type"] == "application_cv" and selection.get("application_cv") == "current_if_no_approved"
+            ):
+                continue
+            if approval == "draft" and selection.get("draft_evidence_consent") is not True:
+                continue
+            if not isinstance(source["snapshot_text"], str) or not 1 <= len(source["snapshot_text"]) <= 2000:
+                continue
+            evidence_details.append({**source, "approval_label": labels[approval],
+                **{key: sorted(values) for key, values in references[source["evidence_id"]].items()}})
         transcript = tuple(
-            {
-                "attempt_id": attempt.id,
-                "transcript": attempt.transcript,
-            }
+            {"attempt_id": attempt["id"], "transcript": attempt["transcript"]}
             for attempt in attempts
-            if request.include_transcript and attempt.transcript is not None
+            if request.include_transcript and attempt["attempt_state"] != "deleted" and attempt["transcript"] is not None
         )
         attempt_history = tuple(
-            {
-                "attempt_id": attempt.id,
-                "attempt_state": attempt.attempt_state,
-                "evaluation_state": attempt.evaluation_state,
-            }
+            {"attempt_id": attempt["id"], "attempt_state": attempt["attempt_state"], "evaluation_state": attempt["evaluation_state"]}
             for attempt in attempts
             if request.include_attempt_history
         )
@@ -1595,6 +1689,7 @@ class ConversationalSessionRepository:
             },
             retention_summary=report["retention_summary"],
             transcript=transcript,
+            evidence_details=tuple(evidence_details),
             attempt_history=attempt_history,
         )
 
@@ -1607,6 +1702,8 @@ class ConversationalSessionRepository:
                     exists().where(
                         InterviewSession.id == session_id,
                         InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.status == "completed",
+                        InterviewSession.conversation_state == "completed",
                         InterviewSession.deletion_state == "not_requested",
                         InterviewSession.report_state.in_(("completed", "fallback")),
                         InterviewSession.activity_version == activity_version,

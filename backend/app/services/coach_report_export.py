@@ -21,6 +21,7 @@ _PRIVATE_KEYS = frozenset(
         "video_url",
         "filename",
         "path",
+        "source_path",
         "retention_summary",
     }
 )
@@ -88,7 +89,7 @@ def _safe_value(value: object) -> object:
 
 def _filename(session_id: str, extension: str) -> str:
     safe_id = _SAFE_FILENAME.sub("-", session_id).strip("-_") or "session"
-    return f"coach-report-{safe_id}.{extension}"
+    return f"hatch-coach-{safe_id}.{extension}"
 
 
 def _json_document(
@@ -104,6 +105,11 @@ def _json_document(
     document["retention_version"] = snapshot.retention_version
     document["report_state"] = snapshot.report_state
     document["contract_version"] = "coach_report_export_v1"
+    document["source_disclaimer"] = "Hatch source matching, not independent verification."
+    # Optional source content is controlled only by this request, never by
+    # similarly named keys accidentally persisted in an analytical report.
+    for key in ("transcript", "evidence_details", "attempt_history"):
+        document.pop(key, None)
     if request.include_candidate_reflection:
         reflection = snapshot.report_json.get("candidate_reflection")
         if reflection is not None:
@@ -128,16 +134,26 @@ def _markdown_document(document: Mapping[str, object]) -> str:
         ("Evidence review", document.get("evidence_review_items", [])),
         ("Question summaries", document.get("question_summaries", [])),
         ("Practice suggestions", document.get("practice_suggestions", [])),
-        ("Candidate reflection", document.get("candidate_reflection", {})),
         ("Retention summary", document.get("retention_summary", {"attempts": []})),
     ]
+    for key, title in (
+        ("candidate_reflection", "Candidate reflection"),
+        ("transcript", "Transcript"),
+        ("evidence_details", "Evidence details"),
+        ("attempt_history", "Attempt history"),
+    ):
+        if key in document:
+            sections.append((title, document[key]))
     lines = ["# Conversational interview report", ""]
     for title, value in sections:
         lines.extend(
             (
                 f"## {title}",
                 "",
-                json.dumps(value, ensure_ascii=False, sort_keys=True),
+                "```json",
+                json.dumps(value, ensure_ascii=False, sort_keys=True)
+                .replace("<", "\\u003c").replace(">", "\\u003e").replace("`", "\\u0060"),
+                "```",
                 "",
             )
         )
@@ -145,7 +161,7 @@ def _markdown_document(document: Mapping[str, object]) -> str:
         (
             "## Source disclaimer",
             "",
-            "This report is grounded in the accepted conversational interview evidence available at export time.",
+            "Hatch source matching, not independent verification.",
             "",
         )
     )
@@ -170,7 +186,7 @@ def render_report_export(
             )
             + "\n"
         ).encode("utf-8")
-        media_type = "application/json"
+        media_type = "application/json; charset=utf-8"
         extension = "json"
     else:
         body = _markdown_document(document).encode("utf-8")
