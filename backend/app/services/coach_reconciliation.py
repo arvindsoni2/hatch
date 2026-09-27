@@ -17,6 +17,7 @@ from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
+    CoachSessionDeletionResult,
     InterviewSession,
     InterviewTranscriptVersion,
     SessionQuestion,
@@ -1569,11 +1570,44 @@ async def reconcile_conversational_session(
         select(InterviewSession).where(
             InterviewSession.id == session_id,
             InterviewSession.experience_version == "conversational_v1",
-            InterviewSession.deletion_state == "not_requested",
         )
     )
     if session is None:
         return 0
+    if session.deletion_state != "not_requested":
+        if (
+            session.deletion_state != "deleting"
+            or session.deletion_claim_expires_at is None
+            or session.deletion_claim_expires_at >= now
+            or not session.deletion_job_id
+            or not session.deletion_command_id
+            or not session.deletion_claim_token
+        ):
+            return 0
+        from .coach_privacy import HardDeletionClaim, session_deletion_key
+
+        receipt = await db.scalar(select(CoachSessionDeletionResult).where(
+            CoachSessionDeletionResult.session_key_hash == session_deletion_key(session.id),
+            CoachSessionDeletionResult.command_id == session.deletion_command_id,
+            CoachSessionDeletionResult.result_state == "processing",
+        ))
+        if receipt is None:
+            return 0
+        claim = HardDeletionClaim(
+            session_id=session.id, session_key_hash=receipt.session_key_hash,
+            command_id=session.deletion_command_id, request_hash=receipt.request_hash,
+            job_id=session.deletion_job_id, deletion_generation=session.deletion_generation,
+            claim_token=session.deletion_claim_token,
+        )
+        try:
+            await ConversationalSessionRepository(db).fail_hard_deletion(
+                claim, "coach_deletion_claim_expired", now,
+            )
+            await db.commit()
+            return 1
+        except Exception:
+            await db.rollback()
+            return 0
     try:
         changed = await _reconcile_expired_setup_claim(db, session, now)
         if not changed:
@@ -1750,6 +1784,7 @@ async def reconcile_job(db: AsyncSession, job_id: str) -> int:
                 or_(
                     InterviewSession.report_job_id == job_id,
                     InterviewSession.setup_job_id == job_id,
+                    InterviewSession.deletion_job_id == job_id,
                 )
             )
             .limit(1)
@@ -2541,6 +2576,14 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                 ),
             ).where(
                 or_(
+                    and_(
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.deletion_state == "deleting",
+                        InterviewSession.deletion_job_id.is_not(None),
+                        InterviewSession.deletion_command_id.is_not(None),
+                        InterviewSession.deletion_claim_token.is_not(None),
+                        InterviewSession.deletion_claim_expires_at < now,
+                    ),
                     and_(
                         InterviewSession.experience_version != "conversational_v1",
                         or_(

@@ -52,6 +52,7 @@ from ..services.coach_conversational_progress import (
     ProgressSelector,
 )
 from ..services.coach_privacy import CoachPrivacyService, HardDeletionClaim
+from ..services.coach_privacy_queue import queue_hard_deletion
 from ..services.coach_report_export import export_report
 from ..services.coach_support_diagnostics import build_support_diagnostics
 from .coach import _require_safe_id
@@ -279,6 +280,7 @@ async def request_hard_deletion(
         ).claim_hard_deletion(session_id, request, now=datetime.utcnow())
         if isinstance(result, HardDeletionClaim):
             await db.commit()
+            queue_hard_deletion(result)
             return DeletionCommandResult(
                 command_id=request.command_id,
                 result_state="processing",
@@ -306,7 +308,11 @@ async def get_conversational_diagnostics(
     if safe_id_error is not None:
         return safe_id_error
     session = await db.get(InterviewSession, session_id)
-    if session is None or session.experience_version != "conversational_v1":
+    if (
+        session is None
+        or session.experience_version != "conversational_v1"
+        or session.deletion_state != "not_requested"
+    ):
         return conversation_error_response("coach_report_unavailable")
     return build_support_diagnostics(
         session, error_code=session.recoverable_error_code

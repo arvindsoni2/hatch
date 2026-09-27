@@ -170,6 +170,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await install_shadow_retention(
         scheduler, SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)
     )
+    from .services.coach_privacy_queue import install_deletion_receipt_retention
+
+    await install_deletion_receipt_retention(scheduler, AsyncSessionLocal)
     scheduler.start()
     logger.info(
         "Scheduler started (full: %dh, quick: %dh, classifier: %dmin).",
