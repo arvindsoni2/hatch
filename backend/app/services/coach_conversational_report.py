@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol, TypeAlias
 
 from .coach_conversational_contracts import CONTENT_DIMENSIONS, REPORT_CONTRACT
+from ..schemas.coach_conversation import ConversationalReportCounts
 
 Level: TypeAlias = Literal[
     "needs_work", "developing", "interview_ready", "strong", "not_assessed"
@@ -25,9 +26,7 @@ ORDINAL_TO_LEVEL: dict[int, Level] = {
     3: "interview_ready",
     4: "strong",
 }
-CRITICAL_DIMENSIONS = frozenset(
-    {"relevance", "structure", "specificity", "role_depth"}
-)
+CRITICAL_DIMENSIONS = frozenset({"relevance", "structure", "specificity", "role_depth"})
 
 
 @dataclass(frozen=True)
@@ -127,9 +126,7 @@ def derive_session_level(levels: Mapping[str, Level | str]) -> Level:
         dimension: _level(levels.get(dimension, "not_assessed"))
         for dimension in CONTENT_DIMENSIONS
     }
-    assessed_levels = [
-        level for level in assessed.values() if level != "not_assessed"
-    ]
+    assessed_levels = [level for level in assessed.values() if level != "not_assessed"]
     assessed_count = len(assessed_levels)
     if assessed_count < 5:
         return "not_assessed"
@@ -139,8 +136,12 @@ def derive_session_level(levels: Mapping[str, Level | str]) -> Level:
         level in {"interview_ready", "strong"} for level in assessed_levels
     )
     needs_work_count = sum(level == "needs_work" for level in assessed_levels)
-    critical_assessed = all(assessed[name] != "not_assessed" for name in CRITICAL_DIMENSIONS)
-    critical_needs_work = sum(assessed[name] == "needs_work" for name in CRITICAL_DIMENSIONS)
+    critical_assessed = all(
+        assessed[name] != "not_assessed" for name in CRITICAL_DIMENSIONS
+    )
+    critical_needs_work = sum(
+        assessed[name] == "needs_work" for name in CRITICAL_DIMENSIONS
+    )
     non_critical_needs_work = sum(
         assessed[name] == "needs_work"
         for name in set(CONTENT_DIMENSIONS) - CRITICAL_DIMENSIONS
@@ -163,7 +164,9 @@ def derive_session_level(levels: Mapping[str, Level | str]) -> Level:
         return "interview_ready"
     if (
         assessed_count >= 5
-        and ready_or_strong_count + sum(level == "developing" for level in assessed_levels) >= 5
+        and ready_or_strong_count
+        + sum(level == "developing" for level in assessed_levels)
+        >= 5
         and critical_needs_work <= 1
         and needs_work_count <= 2
     ):
@@ -185,12 +188,8 @@ def aggregate_root_bundle(
         if followup.target_dimension == dimension
         and _level(followup.levels.get(dimension, "not_assessed")) != "not_assessed"
     ]
-    gap_repair = [
-        item for item in relevant if item.aggregation_role == "gap_repair"
-    ]
-    primary = [
-        item for item in relevant if item.aggregation_role == "primary_evidence"
-    ]
+    gap_repair = [item for item in relevant if item.aggregation_role == "gap_repair"]
+    primary = [item for item in relevant if item.aggregation_role == "primary_evidence"]
 
     contributor_ids = (root.attempt_id,) + tuple(item.attempt_id for item in relevant)
     if root_level == "not_assessed":
@@ -200,10 +199,14 @@ def aggregate_root_bundle(
             (_level(item.levels[dimension]) for item in primary),
             key=LEVEL_TO_ORDINAL.__getitem__,
         )
-        return BundleDimension(final, contributor_ids, "root_unavailable_primary_evidence")
+        return BundleDimension(
+            final, contributor_ids, "root_unavailable_primary_evidence"
+        )
 
     upward = LEVEL_TO_ORDINAL[root_level]
-    if any(LEVEL_TO_ORDINAL[_level(item.levels[dimension])] > upward for item in gap_repair):
+    if any(
+        LEVEL_TO_ORDINAL[_level(item.levels[dimension])] > upward for item in gap_repair
+    ):
         upward = min(upward + 1, LEVEL_TO_ORDINAL["strong"])
 
     if primary:
@@ -235,7 +238,9 @@ def build_conversational_report(
         "activity_version": snapshot.activity_version,
         "session_level": derive_session_level(dimensions),
         "dimensions": dimensions,
-        "counts": dict(snapshot.counts),
+        "counts": ConversationalReportCounts.model_validate(
+            dict(snapshot.counts)
+        ).model_dump(),
         "compatibility_key": snapshot.compatibility_key,
         "contract_version": REPORT_CONTRACT,
     }

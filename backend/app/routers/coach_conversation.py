@@ -37,7 +37,7 @@ from ..services.coach_conversation_commands import (
 )
 from ..services.coach_service import CoachService
 from ..services.coach_reconciliation import reconcile_session
-from ..services.coach_conversational_contracts import ERROR_REGISTRY, REPORT_CONTRACT
+from ..services.coach_conversational_contracts import ERROR_REGISTRY
 from ..services.coach_live_view import CoachLiveViewError, CoachLiveViewService
 from ..services.coach_media_storage import (
     CoachMediaError,
@@ -61,7 +61,9 @@ router = APIRouter(prefix="/api/coach", tags=["coach"])
 
 CANONICAL_ERROR_RESPONSES = {
     status: {"model": ConversationErrorResponse}
-    for status in sorted({definition.http_status for definition in ERROR_REGISTRY.values()})
+    for status in sorted(
+        {definition.http_status for definition in ERROR_REGISTRY.values()}
+    )
 }
 
 
@@ -175,32 +177,21 @@ async def get_conversational_report(
     if session is not None and session.experience_version != "conversational_v1":
         await reconcile_session(db, session_id)
         return await CoachService().get_report(session_id, db)
-    if (
-        session is None
-        or session.experience_version != "conversational_v1"
-        or session.deletion_state != "not_requested"
-        or session.report_state not in {"completed", "fallback"}
-        or not isinstance(session.report_json, dict)
-    ):
-        return conversation_error_response("coach_report_unavailable")
-    report = dict(session.report_json)
-    report.pop("retention_summary", None)
-    report.update(
-        {
-            "session_id": session.id,
-            "report_state": session.report_state,
-            "activity_version": session.activity_version,
-            "retention_version": session.retention_version,
-            "retention_summary": (
-                dict(session.retention_policy_json)
-                if isinstance(session.retention_policy_json, dict)
-                else None
-            ),
-            "contract_version": REPORT_CONTRACT,
-        }
+    report = await ConversationalSessionRepository(db).load_report_read_snapshot(
+        session_id
     )
+    if report is None:
+        return conversation_error_response("coach_report_unavailable")
     try:
-        return ConversationalReportRead.model_validate(report)
+        validated = ConversationalReportRead.model_validate(report)
+        return JSONResponse(
+            validated.model_dump(mode="json"),
+            headers={
+                "X-Hatch-Session-Activity-Version": str(validated.activity_version),
+                "X-Hatch-Retention-Version": str(validated.retention_version),
+                "Cache-Control": "no-store",
+            },
+        )
     except ValueError:
         return conversation_error_response("coach_report_unavailable")
 
@@ -258,7 +249,9 @@ async def export_conversational_report(
         if code not in ERROR_REGISTRY:
             code = "coach_report_unavailable"
         return conversation_error_response(code)
-    return Response(payload.body, media_type=payload.media_type, headers=payload.headers())
+    return Response(
+        payload.body, media_type=payload.media_type, headers=payload.headers()
+    )
 
 
 @router.post(
@@ -314,9 +307,7 @@ async def get_conversational_diagnostics(
         or session.deletion_state != "not_requested"
     ):
         return conversation_error_response("coach_report_unavailable")
-    return build_support_diagnostics(
-        session, error_code=session.recoverable_error_code
-    )
+    return build_support_diagnostics(session, error_code=session.recoverable_error_code)
 
 
 @router.post(

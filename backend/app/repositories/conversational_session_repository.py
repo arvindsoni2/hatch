@@ -969,8 +969,6 @@ class ConversationalSessionRepository:
 
         roots: dict[str, tuple[AcceptedAnswer, list[AcceptedAnswer]]] = {}
         reflection: dict[str, object] | None = None
-        accepted_count = 0
-        assessed_count = 0
         for question in questions:
             recording_id = question.accepted_recording_id
             if recording_id is None or recording_id not in recordings:
@@ -1010,8 +1008,6 @@ class ConversationalSessionRepository:
                     else question.follow_up_aggregation_role or "gap_repair"
                 ),
             )
-            accepted_count += 1
-            assessed_count += int(bool(levels))
             if reflection is None and recording.self_assessment_json:
                 reflection = dict(recording.self_assessment_json)
             root_id = question.root_question_id or question.id
@@ -1023,6 +1019,15 @@ class ConversationalSessionRepository:
         bundles = tuple(
             (root, tuple(followups)) for root, followups in roots.values()
         )
+        attempts = list((await self._session.scalars(
+            select(SessionRecording).where(SessionRecording.session_id == session_id)
+        )).all())
+        planned = [q for q in questions if q.question_kind == "planned"]
+        followups = [q for q in questions if q.question_kind == "follow_up"]
+        hints = await self._session.scalar(select(func.count()).select_from(
+            InterviewSessionEvent
+        ).where(InterviewSessionEvent.session_id == session_id,
+                InterviewSessionEvent.event_type == "hint_presented"))
         return ReportInputSnapshot(
             session_id=session_id,
             activity_version=activity_version,
@@ -1030,9 +1035,15 @@ class ConversationalSessionRepository:
             accepted_root_bundles=bundles,
             compatibility_key=session.compatibility_key or "",
             counts={
-                "accepted_attempts": accepted_count,
-                "assessed_attempts": assessed_count,
-                "root_bundles": len(bundles),
+                "planned_questions_total": len(planned),
+                "planned_questions_answered": sum(q.question_state == "answered" for q in planned),
+                "planned_questions_skipped": sum(q.question_state == "skipped" for q in planned),
+                "follow_ups_asked": sum(q.question_state != "pending" for q in followups),
+                "follow_ups_answered": sum(q.question_state == "answered" for q in followups),
+                "accepted_attempts": sum(q.accepted_recording_id in recordings for q in questions),
+                "retry_attempts": sum(a.attempt_kind == "retry" for a in attempts),
+                "unavailable_attempts": sum(a.attempt_state == "unavailable" for a in attempts),
+                "hints_used": hints,
             },
             candidate_reflection=reflection,
         )
@@ -1106,6 +1117,61 @@ class ConversationalSessionRepository:
             )
         return snapshots
 
+    @staticmethod
+    def _report_retention_summary(attempts):
+        """Project current retention only; never expose media paths or content."""
+        return {"attempts": [
+            {
+                "attempt_id": attempt.id,
+                "audio_policy": attempt.audio_retention_policy,
+                "audio_state": attempt.audio_retention_state,
+                "transcript_state": (
+                    "deleted" if attempt.attempt_state == "deleted" else
+                    "retained" if attempt.transcript is not None else "unavailable"
+                ),
+                "audio_cleanup_retryable": attempt.audio_retention_state == "delete_failed",
+            }
+            for attempt in attempts if attempt.id is not None
+        ]}
+
+    async def load_report_read_snapshot(self, session_id: str):
+        """One SQL statement captures analysis, versions and current retention.
+
+        Column projections deliberately bypass the ORM identity cache. SQLite
+        statement snapshot isolation also prevents a concurrent cleanup from
+        splitting the session versions and its attempt retention overlay.
+        """
+        rows = (await self._session.execute(select(
+            InterviewSession.report_json, InterviewSession.report_state,
+            InterviewSession.activity_version, InterviewSession.retention_version,
+            SessionRecording.id, SessionRecording.audio_retention_policy,
+            SessionRecording.audio_retention_state, SessionRecording.attempt_state,
+            SessionRecording.transcript.is_not(None).label("has_transcript"),
+        ).select_from(InterviewSession).outerjoin(
+            SessionRecording, SessionRecording.session_id == InterviewSession.id
+        ).where(
+            InterviewSession.id == session_id,
+            InterviewSession.experience_version == "conversational_v1",
+            InterviewSession.deletion_state == "not_requested",
+            InterviewSession.report_state.in_(("completed", "fallback")),
+        ).order_by(SessionRecording.created_at, SessionRecording.id))).all()
+        if not rows or not isinstance(rows[0].report_json, dict):
+            return None
+        from types import SimpleNamespace
+        attempts = [SimpleNamespace(
+            id=r.id, audio_retention_policy=r.audio_retention_policy,
+            audio_retention_state=r.audio_retention_state, attempt_state=r.attempt_state,
+            transcript=True if r.has_transcript else None,
+        ) for r in rows if r.id is not None]
+        report = dict(rows[0].report_json)
+        report.update(
+            session_id=session_id, report_state=rows[0].report_state,
+            activity_version=rows[0].activity_version,
+            retention_version=rows[0].retention_version,
+            retention_summary=self._report_retention_summary(attempts),
+        )
+        return report
+
     async def load_export_snapshot(self, session_id: str, request):
         """Capture the report and retention versions used by a synchronous export."""
 
@@ -1156,11 +1222,7 @@ class ConversationalSessionRepository:
             activity_version=session.activity_version,
             retention_version=session.retention_version,
             report_json=session.report_json if isinstance(session.report_json, dict) else {},
-            retention_summary=(
-                dict(session.retention_policy_json)
-                if isinstance(session.retention_policy_json, dict)
-                else None
-            ),
+            retention_summary=self._report_retention_summary(attempts),
             transcript=transcript,
             attempt_history=attempt_history,
         )

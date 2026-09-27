@@ -1665,6 +1665,28 @@ export type ConversationalTrend =
   | "declining"
   | "not_enough_evidence";
 
+export interface ConversationalReportCounts {
+  planned_questions_total: number;
+  planned_questions_answered: number;
+  planned_questions_skipped: number;
+  follow_ups_asked: number;
+  follow_ups_answered: number;
+  accepted_attempts: number;
+  retry_attempts: number;
+  unavailable_attempts: number;
+  hints_used: number;
+}
+
+export interface ReportRetentionSummary {
+  attempts: Array<{
+    attempt_id: string;
+    audio_policy: "delete_after_processing" | "retain_until_deleted" | null;
+    audio_state: "not_applicable" | "temporary" | "retained" | "delete_pending" | "deleted" | "delete_failed" | null;
+    transcript_state: "retained" | "deleted" | "unavailable";
+    audio_cleanup_retryable: boolean;
+  }>;
+}
+
 export interface ConversationalReportRead {
   session_id: string;
   report_state: "completed" | "fallback";
@@ -1672,13 +1694,14 @@ export interface ConversationalReportRead {
   retention_version: number;
   session_level: ConversationalLevel;
   dimensions: Record<string, ConversationalLevel>;
+  counts: ConversationalReportCounts;
   strengths: unknown[];
   improvement_priorities: unknown[];
   evidence_review_items: unknown[];
   question_summaries: unknown[];
   practice_suggestions: unknown[];
   candidate_reflection: Record<string, unknown> | null;
-  retention_summary: Record<string, unknown> | null;
+  retention_summary: ReportRetentionSummary;
   compatibility_key: string;
   contract_version: "coach_conversational_report_v1";
 }
