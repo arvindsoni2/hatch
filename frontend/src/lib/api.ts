@@ -1745,11 +1745,20 @@ export interface ConversationalReportQuestion {
 
 export interface ConversationalProgressGroup {
   compatibility_key: string;
-  session_count: number;
-  latest_session_id: string;
-  latest_activity_version: number;
-  latest_session_level: ConversationalLevel;
-  trend: ConversationalTrend;
+  context: {
+    application_id: string | null;
+    company_name: string | null;
+    role_title: string | null;
+    role_family: string | null;
+    role_level: string | null;
+    interview_type: string | null;
+  };
+  current_levels: Record<ConversationalReportDimension, ConversationalLevel>;
+  previous_levels: Record<ConversationalReportDimension, ConversationalLevel>;
+  trends: Record<ConversationalReportDimension, ConversationalTrend>;
+  strongest_areas: ConversationalReportStrength[];
+  priority_areas: ConversationalReportPriority[];
+  evidence_review_items: ConversationalReportEvidence[];
   sessions: Array<{
     session_id: string;
     activity_version: number;
@@ -1758,6 +1767,13 @@ export interface ConversationalProgressGroup {
     dimensions: Record<string, ConversationalLevel>;
   }>;
 }
+
+type ProgressBroadFilters = Partial<Record<"application_id" | "role_family" | "role_level" | "interview_type", string>>;
+export type ConversationalProgressSelector =
+  | ({ compatibility_key: string } & { [Key in keyof ProgressBroadFilters]?: never })
+  | ({ compatibility_key?: never } & ProgressBroadFilters & (
+    { application_id: string } | { role_family: string } | { role_level: string } | { interview_type: string }
+  ));
 
 export interface ConversationalProgressRead {
   selector_mode: "exact" | "filtered";
@@ -1860,7 +1876,7 @@ export async function getConversationalReport(
 }
 
 export async function getConversationalProgress(
-  filters: Record<string, string | number | boolean | undefined> = {},
+  filters: ConversationalProgressSelector,
 ): Promise<ConversationalProgressRead> {
   const params = buildQueryString(filters);
   return apiFetch<ConversationalProgressRead>(
@@ -2055,6 +2071,8 @@ export interface PlanFollowUpResponse {
 export interface CoachCapabilities {
   face_analysis: boolean;
   tts: boolean;
+  conversational?: boolean;
+  conversational_interview?: boolean;
 }
 
 /** Plan a follow-up session targeting the weakest rubric dimensions. */
