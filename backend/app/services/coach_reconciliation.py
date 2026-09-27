@@ -1559,6 +1559,66 @@ async def recover_exhausted_transcription_claim(
         return False
 
 
+async def _reconcile_conversational_report(db, session, now):
+    """Fail abandoned report ownership; never schedule a new candidate retry."""
+    if session.report_state != "building" or session.report_job_id is None:
+        return 0
+    repository = ConversationalSessionRepository(db)
+    claim = await repository.load_report_build_claim(
+        session.report_job_id, now=now, for_recovery=True
+    )
+    if claim is None:
+        # Missing job rows are failures, not authority to reconstruct a worker.
+        # Reconciliation may release only this expired current aggregate owner.
+        job = await db.get(AsyncJob, session.report_job_id)
+        initial = session.report_build_reason in {"initial_completion", "manual_retry"}
+        rebuild = session.report_build_reason in {
+            "transcript_deletion_rebuild",
+            "reflection_update_rebuild",
+        }
+        if (
+            (job is not None and job.type != "coach_conversational_report")
+            or session.report_started_at is None
+            or not (
+                (
+                    initial
+                    and (session.status, session.conversation_state)
+                    == ("active", "reporting")
+                )
+                or (
+                    rebuild
+                    and (session.status, session.conversation_state)
+                    == ("completed", "completed")
+                )
+            )
+        ):
+            return 0
+        from .coach_conversational_report import ReportBuildClaim
+
+        claim = ReportBuildClaim(
+            session.id,
+            session.activity_version,
+            session.report_build_reason,
+            session.report_job_id,
+            session.report_started_at
+            + timedelta(
+                seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
+            ),
+        )
+    job = await db.get(AsyncJob, claim.job_id)
+    if now < claim.deadline_at and (
+        job is None or job.status in {"pending", "running"}
+    ):
+        return 0
+    return int(
+        await repository.fail_conversational_report(
+            claim,
+            now=now,
+            error_code="coach_report_claim_expired",
+        )
+    )
+
+
 async def reconcile_conversational_session(
     db: AsyncSession,
     session_id: str,
@@ -1610,6 +1670,8 @@ async def reconcile_conversational_session(
             return 0
     try:
         changed = await _reconcile_expired_setup_claim(db, session, now)
+        if not changed:
+            changed = await _reconcile_conversational_report(db, session, now)
         if not changed:
             changed = await _reconcile_processing_answer(db, session, now)
         if not changed:
@@ -2604,6 +2666,18 @@ async def reconcile_stale_coach_state(batch_size: int = 100) -> int:
                             ),
                             actionable_advancing,
                             actionable_follow_up,
+                            and_(
+                                InterviewSession.report_state == "building",
+                                InterviewSession.report_job_id.is_not(None),
+                                or_(
+                                    InterviewSession.report_started_at <= now - timedelta(seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS),
+                                    exists().where(
+                                        AsyncJob.id == InterviewSession.report_job_id,
+                                        AsyncJob.type == "coach_conversational_report",
+                                        AsyncJob.status.in_(("failed", "done", "cancelled")),
+                                    ),
+                                ),
+                            ),
                             due_audio_cleanup,
                             due_cancelled_upload_cleanup,
                             and_(

@@ -267,6 +267,43 @@ async def test_report_read_versions_and_retention_do_not_split_during_cleanup(
     await asyncio.gather(cleanups(), reads())
 
 
+async def test_export_snapshot_and_version_recheck_ignore_cached_session_identity(
+    coach_database,
+):
+    from sqlalchemy import update
+
+    await seed_built_report(coach_database, with_audio=True)
+    async with coach_database() as reader:
+        cached = await reader.get(InterviewSession, "readable-report")
+        assert cached.retention_version == 0
+        async with coach_database() as writer:
+            await writer.execute(
+                update(InterviewSession)
+                .where(InterviewSession.id == cached.id)
+                .values(retention_version=1)
+            )
+            await writer.execute(
+                update(SessionRecording)
+                .where(SessionRecording.id == "retained-attempt")
+                .values(audio_retention_state="deleted")
+            )
+            await writer.commit()
+        repository = ConversationalSessionRepository(reader)
+        assert not await repository.export_versions_match(cached.id, 3, 0)
+        snapshot = await repository.load_export_snapshot(
+            cached.id,
+            ReportExportRequest(
+                format="json",
+                expected_activity_version=3,
+                expected_retention_version=1,
+                contract_version="coach_report_export_v1",
+            ),
+        )
+        assert snapshot is not None
+        assert snapshot.retention_version == 1
+        assert snapshot.retention_summary["attempts"][0]["audio_state"] == "deleted"
+
+
 def synthetic_session(**values):
     return InterviewSession(
         company_name="Synthetic Ltd",

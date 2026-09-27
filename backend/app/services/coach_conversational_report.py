@@ -5,10 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, asdict
 from types import MappingProxyType
+from datetime import datetime
 from typing import Literal, Protocol, TypeAlias
 
 from .coach_conversational_contracts import CONTENT_DIMENSIONS, REPORT_CONTRACT
-from ..schemas.coach_conversation import ConversationalReportCounts
+from ..schemas.coach_conversation import (
+    ConversationalReportCounts,
+    ConversationalReportRead,
+)
 
 Level: TypeAlias = Literal[
     "needs_work", "developing", "interview_ready", "strong", "not_assessed"
@@ -85,6 +89,7 @@ class ReportBuildClaim:
         "manual_retry",
     ]
     job_id: str
+    deadline_at: datetime | None = None
 
 
 class ReportRepository(Protocol):
@@ -385,6 +390,18 @@ def build_conversational_report(
     }
     if snapshot.candidate_reflection is not None:
         report["candidate_reflection"] = dict(snapshot.candidate_reflection)
+    # Validate the same consumer contract before publication, with a temporary
+    # empty overlay. Persist analysis only, never the captured retention state.
+    report = ConversationalReportRead.model_validate(
+        {
+            **report,
+            "report_state": "completed",
+            "retention_version": snapshot.retention_version,
+            "retention_summary": {"attempts": []},
+        }
+    ).model_dump(
+        mode="json", exclude={"report_state", "retention_version", "retention_summary"}
+    )
     return ConversationalReportSnapshot(report, "completed")
 
 

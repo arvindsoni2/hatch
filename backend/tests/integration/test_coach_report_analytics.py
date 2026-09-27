@@ -181,6 +181,7 @@ async def seed_populated_report(factory):
                     actor_type="candidate",
                 )
             )
+        row.event_version = 3
         await db.commit()
 
 

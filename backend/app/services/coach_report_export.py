@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
-from ..schemas.coach_conversation import ReportExportRequest
+from ..schemas.coach_conversation import ReportExportRequest, ReportRetentionSummary
 
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9_-]+")
 _PRIVATE_KEYS = frozenset(
@@ -55,6 +55,8 @@ class ExportPayload:
             "Content-Disposition": f'attachment; filename="{self.filename}"',
             "X-Coach-Activity-Version": str(self.activity_version),
             "X-Coach-Retention-Version": str(self.retention_version),
+            "X-Hatch-Session-Activity-Version": str(self.activity_version),
+            "X-Hatch-Retention-Version": str(self.retention_version),
         }
 
 
@@ -89,9 +91,15 @@ def _filename(session_id: str, extension: str) -> str:
     return f"coach-report-{safe_id}.{extension}"
 
 
-def _json_document(snapshot: ExportSnapshot, request: ReportExportRequest) -> dict[str, object]:
+def _json_document(
+    snapshot: ExportSnapshot, request: ReportExportRequest
+) -> dict[str, object]:
     document = dict(_safe_value(snapshot.report_json))
     document.pop("retention_summary", None)
+    if snapshot.retention_summary is not None:
+        document["retention_summary"] = ReportRetentionSummary.model_validate(
+            dict(snapshot.retention_summary)
+        ).model_dump(mode="json")
     document["activity_version"] = snapshot.activity_version
     document["retention_version"] = snapshot.retention_version
     document["report_state"] = snapshot.report_state
@@ -121,10 +129,18 @@ def _markdown_document(document: Mapping[str, object]) -> str:
         ("Question summaries", document.get("question_summaries", [])),
         ("Practice suggestions", document.get("practice_suggestions", [])),
         ("Candidate reflection", document.get("candidate_reflection", {})),
+        ("Retention summary", document.get("retention_summary", {"attempts": []})),
     ]
     lines = ["# Conversational interview report", ""]
     for title, value in sections:
-        lines.extend((f"## {title}", "", json.dumps(value, ensure_ascii=False, sort_keys=True), ""))
+        lines.extend(
+            (
+                f"## {title}",
+                "",
+                json.dumps(value, ensure_ascii=False, sort_keys=True),
+                "",
+            )
+        )
     lines.extend(
         (
             "## Source disclaimer",
@@ -149,7 +165,9 @@ def render_report_export(
     document = _json_document(snapshot, request)
     if request.format == "json":
         body = (
-            json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            json.dumps(
+                document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
             + "\n"
         ).encode("utf-8")
         media_type = "application/json"

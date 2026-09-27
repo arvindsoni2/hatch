@@ -177,6 +177,12 @@ async def get_conversational_report(
     if session is not None and session.experience_version != "conversational_v1":
         await reconcile_session(db, session_id)
         return await CoachService().get_report(session_id, db)
+    if (
+        session is not None
+        and session.deletion_state == "not_requested"
+        and session.report_state == "building"
+    ):
+        await reconcile_session(db, session_id)
     report = await ConversationalSessionRepository(db).load_report_read_snapshot(
         session_id
     )
