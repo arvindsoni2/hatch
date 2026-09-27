@@ -114,12 +114,9 @@ async def run_hard_deletion(
     *,
     now: datetime,
 ) -> DeletionCommandResult:
-    try:
-        return await repository.finalise_hard_deletion(claim, now)
-    except Exception:
-        return await repository.fail_hard_deletion(
-            claim, "coach_session_deletion_failed", now
-        )
+    # The worker owns rollback/commit. Failure publication must happen only
+    # after rolling back the unsuccessful deletion transaction.
+    return await repository.finalise_hard_deletion(claim, now)
 
 
 async def expire_deletion_receipts(

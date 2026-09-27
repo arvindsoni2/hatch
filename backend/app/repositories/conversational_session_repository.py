@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Sequence
 
-from sqlalchemy import and_, delete, exists, func, or_, select, update
+from sqlalchemy import and_, case, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,7 @@ from ..services.coach_media_storage import (
     open_verified_audio_deletion_lease,
     open_verified_audio_read_lease,
     owned_audio_path_is_file,
+    owned_audio_path_is_missing,
     publish_staged_audio,
 )
 from ..services.coach_conversational_contracts import (
@@ -1426,7 +1427,29 @@ class ConversationalSessionRepository:
         session = await self._session.get(InterviewSession, session_id)
         if session is None:
             raise ConversationalRepositoryError("coach_session_not_found")
+        # Serialize competing requests before allocating a job or receipt, then
+        # recheck replay: the first lookup may have preceded the winner's commit.
+        if session.experience_version != "conversational_v1":
+            raise ConversationalRepositoryError("coach_contract_unsupported")
+        await self._session.execute(
+            update(InterviewSession)
+            .where(InterviewSession.id == session_id)
+            .values(deletion_generation=InterviewSession.deletion_generation)
+        )
+        replay = await self._session.scalar(
+            select(CoachSessionDeletionResult).where(
+                CoachSessionDeletionResult.session_key_hash == key_hash,
+                CoachSessionDeletionResult.command_id == request.command_id,
+            )
+        )
+        if replay is not None:
+            await self._session.refresh(session)
+            return await self.claim_hard_deletion(
+                session_id, request, request_hash, now
+            )
         job = await AsyncJobService.create(self._session, "coach_session_hard_deletion")
+        await self._session.refresh(session)
+        previous_job_ids = {session.setup_job_id, session.report_job_id}
         token = str(uuid.uuid4())
         expires_at = now + timedelta(days=settings.HATCH_COACH_DELETION_RECEIPT_DAYS)
         result = CoachSessionDeletionResult(
@@ -1442,6 +1465,10 @@ class ConversationalSessionRepository:
             .where(
                 InterviewSession.id == session_id,
                 InterviewSession.deletion_state.in_(("not_requested", "failed")),
+                InterviewSession.deletion_job_id.is_(None),
+                InterviewSession.deletion_command_id.is_(None),
+                InterviewSession.deletion_claim_token.is_(None),
+                InterviewSession.deletion_claim_expires_at.is_(None),
             )
             .values(
                 deletion_state="deleting",
@@ -1449,13 +1476,91 @@ class ConversationalSessionRepository:
                 deletion_job_id=job.id,
                 deletion_command_id=request.command_id,
                 deletion_claim_token=token,
-                deletion_claim_expires_at=expires_at,
+                deletion_claim_expires_at=now
+                + timedelta(
+                    seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
+                ),
                 deletion_started_at=now,
                 deletion_error_code=None,
+                deletion_failed_at=None,
+                setup_generation=InterviewSession.setup_generation + 1,
+                setup_job_id=None,
+                setup_claim_token=None,
+                setup_claimed_at=None,
+                setup_claim_expires_at=None,
+                report_job_id=None,
+                report_started_at=None,
             )
         )
         if changed.rowcount != 1:
             raise ConversationalRepositoryError("coach_session_deletion_failed")
+        previous_job_ids.update(
+            (
+                await self._session.scalars(
+                    select(SessionRecording.async_job_id).where(
+                        SessionRecording.session_id == session_id,
+                        SessionRecording.async_job_id.is_not(None),
+                    )
+                )
+            ).all()
+        )
+        for job_column, owned_model in (
+            (InterviewAttemptEvaluation.async_job_id, InterviewAttemptEvaluation),
+            (InterviewAttemptStage.job_id, InterviewAttemptStage),
+        ):
+            previous_job_ids.update(
+                (
+                    await self._session.scalars(
+                        select(job_column)
+                        .join(
+                            SessionRecording,
+                            owned_model.recording_id == SessionRecording.id,
+                        )
+                        .where(
+                            SessionRecording.session_id == session_id,
+                            job_column.is_not(None),
+                        )
+                    )
+                ).all()
+            )
+        await self._session.execute(
+            update(SessionRecording)
+            .where(
+                SessionRecording.session_id == session_id,
+                SessionRecording.attempt_state.in_(
+                    ("draft", "uploaded", "pending_processing", "recoverable_error")
+                ),
+            )
+            .values(processing_generation=SessionRecording.processing_generation + 1)
+        )
+        await self._session.execute(
+            update(SessionRecording)
+            .where(SessionRecording.session_id == session_id)
+            .values(async_job_id=None)
+        )
+        await self._session.execute(
+            update(AsyncJob)
+            .where(
+                AsyncJob.id.in_(previous_job_ids - {None}),
+                AsyncJob.status.in_(("pending", "running")),
+            )
+            .values(status="cancelled", result_json=None, error=None)
+        )
+        # Completed report jobs keep a detached copy after report_job_id clears.
+        # Scope cleanup to their persisted session identity; tolerate old invalid
+        # JSON without allowing it to abort this privacy transaction.
+        await self._session.execute(
+            update(AsyncJob)
+            .where(
+                AsyncJob.type == "coach_conversational_report",
+                case(
+                    (func.json_valid(AsyncJob.result_json) == 1,
+                     func.json_extract(AsyncJob.result_json, "$.session_id")),
+                    else_=None,
+                ) == session_id,
+            )
+            .values(result_json=None, error=None)
+        )
         await self._session.flush()
         await self._session.refresh(session)
         return HardDeletionClaim(
@@ -1473,14 +1578,28 @@ class ConversationalSessionRepository:
 
         if not isinstance(claim, HardDeletionClaim):
             raise ConversationalRepositoryError("coach_session_deletion_failed")
-        session = await self._session.get(InterviewSession, claim.session_id)
-        if (
-            session is None
-            or session.deletion_state != "deleting"
-            or session.deletion_job_id != claim.job_id
-            or session.deletion_generation != claim.deletion_generation
-            or session.deletion_claim_token != claim.claim_token
-        ):
+        # Acquire SQLite write ownership before touching any media. A Python
+        # precheck alone permits a superseded worker to remove current content.
+        fence = self._hard_deletion_fence(claim) + (
+            InterviewSession.deletion_claim_expires_at >= now,
+        )
+        locked = await self._session.execute(
+            update(InterviewSession)
+            .where(*fence)
+            .values(deletion_generation=InterviewSession.deletion_generation)
+        )
+        if locked.rowcount != 1:
+            raise ConversationalRepositoryError("coach_session_deletion_failed")
+        receipt = await self._session.scalar(
+            select(CoachSessionDeletionResult).where(
+                CoachSessionDeletionResult.session_key_hash == claim.session_key_hash,
+                CoachSessionDeletionResult.command_id == claim.command_id,
+                CoachSessionDeletionResult.request_hash == claim.request_hash,
+                CoachSessionDeletionResult.result_state == "processing",
+            )
+        )
+        job = await self._session.get(AsyncJob, claim.job_id)
+        if receipt is None or job is None or job.status not in {"pending", "running"}:
             raise ConversationalRepositoryError("coach_session_deletion_failed")
         attempts = list(
             (
@@ -1488,91 +1607,162 @@ class ConversationalSessionRepository:
                     select(SessionRecording).where(
                         SessionRecording.session_id == claim.session_id,
                         SessionRecording.audio_uri.is_not(None),
-                        SessionRecording.audio_content_hash.is_not(None),
-                        SessionRecording.audio_retention_state != "deleted",
                     )
                 )
             ).all()
         )
-        for attempt in attempts:
+        media = {
+            (attempt.audio_uri, attempt.audio_content_hash) for attempt in attempts
+        }
+        media.update(
+            (
+                await self._session.execute(
+                    select(
+                        InterviewAttemptUpload.storage_uri,
+                        InterviewAttemptUpload.content_sha256,
+                    )
+                    .join(
+                        SessionRecording,
+                        SessionRecording.id == InterviewAttemptUpload.attempt_id,
+                    )
+                    .where(SessionRecording.session_id == claim.session_id)
+                )
+            ).all()
+        )
+        storage_root = Path(settings.HATCH_COACH_MEDIA_ROOT).absolute()
+        for uri, content_hash in sorted(media, key=lambda item: item[0]):
+            path = Path(uri).absolute()
+            if (
+                path.parent != storage_root / claim.session_id
+                or not isinstance(content_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", content_hash)
+            ):
+                raise ConversationalRepositoryError("coach_session_deletion_failed")
+            if owned_audio_path_is_missing(storage_root, path):
+                continue
             lease = open_verified_audio_deletion_lease(
-                Path(settings.HATCH_COACH_MEDIA_ROOT),
-                Path(attempt.audio_uri),
-                attempt.audio_content_hash,
+                storage_root,
+                path,
+                content_hash,
             )
             try:
-                lease.delete_owned()
+                if not lease.delete_owned():
+                    raise ConversationalRepositoryError("coach_session_deletion_failed")
             finally:
                 lease.close()
+        completed_at = max(now, datetime.utcnow())
         job_change = await self._session.execute(
             update(AsyncJob)
-            .where(AsyncJob.id == claim.job_id, AsyncJob.status.in_(("pending", "running")))
-            .values(status="done", result_json=json.dumps({"result": "deleted"}), error=None)
+            .where(
+                AsyncJob.id == claim.job_id, AsyncJob.status.in_(("pending", "running"))
+            )
+            .values(
+                status="done", result_json=json.dumps({"result": "deleted"}), error=None
+            )
         )
-        await self._session.execute(
+        deleted = await self._session.execute(
             delete(InterviewSession).where(
-                InterviewSession.id == claim.session_id,
-                InterviewSession.deletion_state == "deleting",
-                InterviewSession.deletion_job_id == claim.job_id,
-                InterviewSession.deletion_generation == claim.deletion_generation,
+                *self._hard_deletion_fence(claim),
+                InterviewSession.deletion_claim_expires_at >= completed_at,
             )
         )
-        receipt = await self._session.scalar(
-            select(CoachSessionDeletionResult).where(
-                CoachSessionDeletionResult.session_key_hash == claim.session_key_hash,
-                CoachSessionDeletionResult.command_id == claim.command_id,
-            )
-        )
-        if receipt is None or job_change.rowcount != 1:
+        if deleted.rowcount != 1 or job_change.rowcount != 1:
             raise ConversationalRepositoryError("coach_session_deletion_failed")
         receipt.result_state = "completed"
-        receipt.completed_at = now
+        receipt.completed_at = completed_at
+        receipt.expires_at = completed_at + timedelta(
+            days=settings.HATCH_COACH_DELETION_RECEIPT_DAYS
+        )
         await self._session.flush()
         from ..schemas.coach_conversation import DeletionCommandResult
 
         return DeletionCommandResult(
             command_id=claim.command_id,
             result_state="completed",
-            completed_at=now,
+            completed_at=completed_at,
             expires_at=receipt.expires_at,
             contract_version=HARD_DELETE_CONTRACT,
+        )
+
+    @staticmethod
+    def _hard_deletion_fence(claim):
+        return (
+            InterviewSession.id == claim.session_id,
+            InterviewSession.deletion_state == "deleting",
+            InterviewSession.deletion_job_id == claim.job_id,
+            InterviewSession.deletion_generation == claim.deletion_generation,
+            InterviewSession.deletion_command_id == claim.command_id,
+            InterviewSession.deletion_claim_token == claim.claim_token,
         )
 
     async def fail_hard_deletion(self, claim, error_code: str, now: datetime):
         from ..schemas.coach_conversation import DeletionCommandResult
 
-        await self._session.execute(
+        changed = await self._session.execute(
             update(InterviewSession)
-            .where(
-                InterviewSession.id == claim.session_id,
-                InterviewSession.deletion_state == "deleting",
-                InterviewSession.deletion_job_id == claim.job_id,
-                InterviewSession.deletion_generation == claim.deletion_generation,
-                InterviewSession.deletion_claim_token == claim.claim_token,
-            )
+            .where(*self._hard_deletion_fence(claim))
             .values(
                 deletion_state="failed",
                 deletion_job_id=None,
+                deletion_command_id=None,
                 deletion_claim_token=None,
+                deletion_claim_expires_at=None,
+                deletion_started_at=None,
                 deletion_error_code=error_code,
                 deletion_failed_at=now,
+                state_version=InterviewSession.state_version + 1,
+            )
+            .returning(
+                InterviewSession.state_version, InterviewSession.conversation_state
             )
         )
+        state = changed.one_or_none()
+        if state is None:
+            raise ConversationalRepositoryError("coach_session_deletion_failed")
         await self._session.execute(
             update(AsyncJob)
-            .where(AsyncJob.id == claim.job_id, AsyncJob.status.in_(("pending", "running")))
+            .where(
+                AsyncJob.id == claim.job_id, AsyncJob.status.in_(("pending", "running"))
+            )
             .values(status="failed", result_json=None, error=error_code)
         )
         receipt = await self._session.scalar(
             select(CoachSessionDeletionResult).where(
                 CoachSessionDeletionResult.session_key_hash == claim.session_key_hash,
                 CoachSessionDeletionResult.command_id == claim.command_id,
+                CoachSessionDeletionResult.request_hash == claim.request_hash,
+                CoachSessionDeletionResult.result_state == "processing",
             )
         )
-        if receipt is not None:
-            receipt.result_state = "failed"
-            receipt.error_code = error_code
-            receipt.completed_at = now
+        if receipt is None:
+            raise ConversationalRepositoryError("coach_session_deletion_failed")
+        receipt.result_state = "failed"
+        receipt.error_code = error_code
+        receipt.completed_at = now
+        receipt.expires_at = now + timedelta(
+            days=settings.HATCH_COACH_DELETION_RECEIPT_DAYS
+        )
+        await self.append_session_events(
+            session_id=claim.session_id,
+            events=(
+                SessionEventInput(
+                    event_type=(
+                        "hard_deletion_claim_expired"
+                        if error_code == "coach_deletion_claim_expired"
+                        else "hard_deletion_failed"
+                    ),
+                    actor_type=(
+                        "reconciler"
+                        if error_code == "coach_deletion_claim_expired"
+                        else "worker"
+                    ),
+                    state_version=state[0],
+                    state_before=state[1],
+                    state_after=state[1],
+                    payload_json={"error_code": error_code},
+                ),
+            ),
+        )
         await self._session.flush()
         return DeletionCommandResult(
             command_id=claim.command_id,
@@ -1588,7 +1778,12 @@ class ConversationalSessionRepository:
             (
                 await self._session.scalars(
                     select(CoachSessionDeletionResult)
-                    .where(CoachSessionDeletionResult.expires_at <= now)
+                    .where(
+                        CoachSessionDeletionResult.expires_at <= now,
+                        CoachSessionDeletionResult.result_state.in_(
+                            ("completed", "failed")
+                        ),
+                    )
                     .order_by(CoachSessionDeletionResult.expires_at)
                     .limit(limit)
                 )

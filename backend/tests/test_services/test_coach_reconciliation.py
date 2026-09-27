@@ -41,6 +41,16 @@ from app.services.coach_attempt_pipeline import _process_attempt_claim
 from app.services.coach_service import CoachService
 
 
+@pytest.fixture(autouse=True)
+def isolate_review_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recovery tests exercise persisted state, never a developer's AI endpoint."""
+    class UnavailableModel:
+        async def complete_json(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic provider unavailable")
+
+    monkeypatch.setattr("app.services.llm_client.LLMClient", UnavailableModel)
+
+
 async def _session_with_question(db_session):
     session = InterviewSession(
         company_name="Example",
