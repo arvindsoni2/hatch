@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Sequence
 
-from sqlalchemy import and_, case, delete, exists, func, or_, select, update
+from sqlalchemy import and_, case, delete, exists, func, null, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,7 @@ from ..config import settings
 from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     CoachSessionDeletionResult,
+    CoachSessionEvidenceRecord,
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
@@ -834,7 +835,12 @@ class ConversationalSessionRepository:
         from ..services.coach_conversational_report import ReportBuildClaim
 
         session = await self._session.get(InterviewSession, session_id)
-        if session is None or session.activity_version != expected_activity_version:
+        if (
+            session is None
+            or session.activity_version != expected_activity_version
+            or session.deletion_state != "not_requested"
+            or session.experience_version != "conversational_v1"
+        ):
             return None
         already_claimed = (
             session.report_state == "building"
@@ -849,6 +855,7 @@ class ConversationalSessionRepository:
                     InterviewSession.id == session_id,
                     InterviewSession.activity_version == expected_activity_version,
                     InterviewSession.status == "active",
+                    InterviewSession.deletion_state == "not_requested",
                     InterviewSession.conversation_state == "reporting",
                     InterviewSession.report_state == "building",
                     InterviewSession.report_job_id.is_(None),
@@ -875,7 +882,9 @@ class ConversationalSessionRepository:
         *,
         session_id: str,
         expected_activity_version: int,
-        build_reason: Literal["transcript_deletion_rebuild", "reflection_update_rebuild"],
+        build_reason: Literal[
+            "transcript_deletion_rebuild", "reflection_update_rebuild"
+        ],
         job_id: str,
         now: datetime,
     ):
@@ -901,7 +910,9 @@ class ConversationalSessionRepository:
                     InterviewSession.activity_version == expected_activity_version,
                     InterviewSession.status == "completed",
                     InterviewSession.conversation_state == "completed",
-                    InterviewSession.report_state.in_(("completed", "fallback", "failed")),
+                    InterviewSession.report_state.in_(
+                        ("completed", "fallback", "failed")
+                    ),
                     InterviewSession.report_job_id.is_(None),
                     InterviewSession.deletion_state == "not_requested",
                 )
@@ -924,21 +935,226 @@ class ConversationalSessionRepository:
             job_id=job_id,
         )
 
-    async def load_report_input_snapshot(
-        self, session_id: str, activity_version: int
+    async def persist_report_build_claim(self, job_id: str):
+        """Freeze claim identity before command commit, not at dispatch time."""
+        row = (
+            await self._session.execute(
+                select(
+                    InterviewSession.id,
+                    InterviewSession.activity_version,
+                    InterviewSession.report_build_reason,
+                ).where(
+                    InterviewSession.report_job_id == job_id,
+                    InterviewSession.report_state == "building",
+                    InterviewSession.deletion_state == "not_requested",
+                    InterviewSession.experience_version == "conversational_v1",
+                )
+            )
+        ).one_or_none()
+        if row is None:
+            return False
+        changed = await self._session.execute(
+            update(AsyncJob)
+            .where(
+                AsyncJob.id == job_id,
+                AsyncJob.type == "coach_conversational_report",
+                AsyncJob.status == "pending",
+            )
+            .values(
+                result_json=json.dumps(
+                    {
+                        "session_id": row.id,
+                        "activity_version": row.activity_version,
+                        "build_reason": row.report_build_reason,
+                        "job_id": job_id,
+                    },
+                    sort_keys=True,
+                )
+            )
+        )
+        return changed.rowcount == 1
+
+    async def load_report_build_claim(
+        self, job_id: str, *, now=None, for_recovery=False
     ):
+        from ..services.coach_conversational_report import ReportBuildClaim
+
+        now = now or datetime.utcnow()
+        row = (
+            await self._session.execute(
+                select(
+                    InterviewSession.id,
+                    InterviewSession.activity_version,
+                    InterviewSession.report_build_reason,
+                    InterviewSession.report_started_at,
+                    InterviewSession.status,
+                    InterviewSession.conversation_state,
+                    AsyncJob.result_json,
+                    AsyncJob.status.label("job_status"),
+                )
+                .join(AsyncJob, AsyncJob.id == InterviewSession.report_job_id)
+                .where(
+                    InterviewSession.report_job_id == job_id,
+                    InterviewSession.experience_version == "conversational_v1",
+                    InterviewSession.deletion_state == "not_requested",
+                    InterviewSession.report_state == "building",
+                    AsyncJob.type == "coach_conversational_report",
+                )
+            )
+        ).one_or_none()
+        if row is None or row.report_started_at is None:
+            return None
+        initial = row.report_build_reason in {"initial_completion", "manual_retry"}
+        rebuild = row.report_build_reason in {
+            "transcript_deletion_rebuild",
+            "reflection_update_rebuild",
+        }
+        if not (
+            (
+                initial
+                and (row.status, row.conversation_state) == ("active", "reporting")
+            )
+            or (
+                rebuild
+                and (row.status, row.conversation_state) == ("completed", "completed")
+            )
+        ):
+            return None
+        deadline = row.report_started_at + timedelta(
+            seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
+        )
+        if not for_recovery and (
+            row.job_status not in {"pending", "running"} or now >= deadline
+        ):
+            return None
+        expected = {
+            "session_id": row.id,
+            "activity_version": row.activity_version,
+            "build_reason": row.report_build_reason,
+            "job_id": job_id,
+        }
+        try:
+            persisted = json.loads(row.result_json) if row.result_json else None
+        except (ValueError, TypeError):
+            return None
+        # Older lost-dispatch claims lacked frozen metadata. Recovery may fail
+        # those shells, but a worker must never reconstruct fresh authority.
+        if (
+            persisted != expected
+            or type((persisted or {}).get("activity_version")) is not int
+        ):
+            if not (for_recovery and persisted is None):
+                return None
+        return ReportBuildClaim(**expected, deadline_at=deadline)
+
+    async def fail_conversational_report(
+        self,
+        claim,
+        *,
+        now,
+        error_code,
+        actor_type: Literal["worker", "reconciler"] = "worker",
+    ):
+        """Atomic terminal failure on the same report owner, after caller rollback."""
+        rebuild = claim.build_reason in {
+            "transcript_deletion_rebuild",
+            "reflection_update_rebuild",
+        }
+        values = {
+            "report_state": "failed",
+            "report_job_id": None,
+            "report_started_at": None,
+            "report_json": null(),
+            "state_version": InterviewSession.state_version + 1,
+            "last_activity_at": now,
+        }
+        if not rebuild:
+            values.update(
+                conversation_state="recoverable_error",
+                recoverable_error_scope="initial_report",
+                recoverable_error_code="coach_report_conversational_snapshot_stale",
+            )
+        try:
+            async with self._session.begin_nested():
+                changed = await self._session.execute(
+                    update(InterviewSession)
+                    .where(
+                        InterviewSession.id == claim.session_id,
+                        InterviewSession.activity_version == claim.activity_version,
+                        InterviewSession.report_job_id == claim.job_id,
+                        InterviewSession.report_build_reason == claim.build_reason,
+                        InterviewSession.report_state == "building",
+                        InterviewSession.deletion_state == "not_requested",
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.status
+                        == ("completed" if rebuild else "active"),
+                        InterviewSession.conversation_state
+                        == ("completed" if rebuild else "reporting"),
+                    )
+                    .values(**values)
+                    .returning(InterviewSession.state_version)
+                )
+                version = changed.scalar_one_or_none()
+                if version is None:
+                    raise StaleVersion("coach_report_stale_claim")
+                job = await self._session.get(AsyncJob, claim.job_id)
+                if job is not None:
+                    if job.type != "coach_conversational_report":
+                        raise StaleVersion("coach_report_stale_claim")
+                    await self._session.execute(
+                        update(AsyncJob)
+                        .where(
+                            AsyncJob.id == claim.job_id,
+                            AsyncJob.type == "coach_conversational_report",
+                        )
+                        .values(
+                            status="failed",
+                            result_json=None,
+                            error=error_code,
+                            updated_at=now,
+                        )
+                    )
+                await self.append_session_events(
+                    session_id=claim.session_id,
+                    events=(
+                        SessionEventInput(
+                            event_type="report_rebuild_failed",
+                            actor_type=actor_type,
+                            state_version=version,
+                            state_before="completed" if rebuild else "reporting",
+                            state_after="completed" if rebuild else "recoverable_error",
+                            payload_json={"report_build_reason": claim.build_reason},
+                        ),
+                    ),
+                )
+            return True
+        except StaleVersion:
+            return False
+
+    async def load_report_input_snapshot(self, session_id: str, activity_version: int):
         """Capture only accepted, current, completed evaluation inputs."""
 
         from ..services.coach_conversational_report import (
             AcceptedAnswer,
             ReportInputSnapshot,
+            ReportQuestionSnapshot,
+            ReportEvidenceSnapshot,
         )
 
-        session = await self._session.get(InterviewSession, session_id)
+        session = await self._session.scalar(
+            select(InterviewSession)
+            .where(
+                InterviewSession.id == session_id,
+                InterviewSession.activity_version == activity_version,
+                InterviewSession.deletion_state == "not_requested",
+            )
+            .execution_options(populate_existing=True)
+        )
         if (
             session is None
             or session.activity_version != activity_version
             or session.experience_version != "conversational_v1"
+            or session.deletion_state != "not_requested"
         ):
             return None
         questions = list(
@@ -953,7 +1169,8 @@ class ConversationalSessionRepository:
         accepted_ids = [
             question.accepted_recording_id
             for question in questions
-            if question.accepted_recording_id is not None and not question.source_deleted
+            if question.accepted_recording_id is not None
+            and not question.source_deleted
         ]
         recordings = {
             recording.id: recording
@@ -969,14 +1186,27 @@ class ConversationalSessionRepository:
 
         roots: dict[str, tuple[AcceptedAnswer, list[AcceptedAnswer]]] = {}
         reflection: dict[str, object] | None = None
-        accepted_count = 0
-        assessed_count = 0
+        contributors = {}
+        evidence_items = []
+        selected_evidence = set(
+            (
+                await self._session.scalars(
+                    select(CoachSessionEvidenceRecord.evidence_id).where(
+                        CoachSessionEvidenceRecord.session_id == session_id
+                    )
+                )
+            ).all()
+        )
         for question in questions:
             recording_id = question.accepted_recording_id
             if recording_id is None or recording_id not in recordings:
                 continue
             recording = recordings[recording_id]
-            if recording.attempt_state not in {"completed", "unavailable"}:
+            if (
+                question.source_deleted
+                or recording.question_id != question.id
+                or recording.attempt_state not in {"completed", "unavailable"}
+            ):
                 continue
             evaluation = (
                 await self._session.get(
@@ -986,11 +1216,32 @@ class ConversationalSessionRepository:
                 if recording.current_evaluation_version_id is not None
                 else None
             )
-            if evaluation is None or evaluation.state not in {"completed", "unavailable"}:
+            if (
+                evaluation is None
+                or evaluation.recording_id != recording.id
+                or evaluation.state != recording.attempt_state
+                or evaluation.state not in {"completed", "unavailable"}
+                or evaluation.transcript_version_id
+                != recording.current_transcript_version_id
+            ):
+                continue
+            transcript = (
+                await self._session.get(
+                    InterviewTranscriptVersion, recording.current_transcript_version_id
+                )
+                if recording.current_transcript_version_id
+                else None
+            )
+            if evaluation.state == "completed" and (
+                transcript is None
+                or transcript.recording_id != recording.id
+                or transcript.transcript is None
+            ):
                 continue
             raw_dimensions = (
                 evaluation.rubric_json.get("dimensions", {})
-                if isinstance(evaluation.rubric_json, dict)
+                if evaluation.state == "completed"
+                and isinstance(evaluation.rubric_json, dict)
                 else {}
             )
             levels = {
@@ -1010,8 +1261,58 @@ class ConversationalSessionRepository:
                     else question.follow_up_aggregation_role or "gap_repair"
                 ),
             )
-            accepted_count += 1
-            assessed_count += int(bool(levels))
+            contributors[question.id] = (recording, evaluation)
+            findings = evaluation.evidence_findings_json
+            for finding in (
+                findings.get("claims", [])
+                if isinstance(findings, dict) and evaluation.state == "completed"
+                else []
+            ):
+                if not isinstance(finding, dict) or not isinstance(
+                    finding.get("evidence_ids"), (list, tuple)
+                ):
+                    continue
+                if not set(finding["evidence_ids"]) <= selected_evidence:
+                    continue
+                from ..schemas.coach_conversation import ReportEvidenceReviewItem
+
+                try:
+                    item = ReportEvidenceReviewItem.model_validate(
+                        {
+                            "attempt_id": recording.id,
+                            **{
+                                name: finding.get(name)
+                                for name in (
+                                    "claim_id",
+                                    "claim_text",
+                                    "transcript_start",
+                                    "transcript_end",
+                                    "status",
+                                    "evidence_ids",
+                                    "explanation",
+                                    "candidate_action",
+                                )
+                            },
+                        }
+                    )
+                    from ..services.coach_text_spans import validate_code_point_span
+
+                    validate_code_point_span(
+                        transcript.transcript,
+                        item.transcript_start,
+                        item.transcript_end,
+                        item.claim_text,
+                    )
+                except ValueError:
+                    continue
+                evidence_items.append(
+                    ReportEvidenceSnapshot(
+                        **{
+                            **item.model_dump(),
+                            "evidence_ids": tuple(item.evidence_ids),
+                        }
+                    )
+                )
             if reflection is None and recording.self_assessment_json:
                 reflection = dict(recording.self_assessment_json)
             root_id = question.root_question_id or question.id
@@ -1020,8 +1321,38 @@ class ConversationalSessionRepository:
             elif root_id in roots:
                 roots[root_id][1].append(answer)
 
-        bundles = tuple(
-            (root, tuple(followups)) for root, followups in roots.values()
+        bundles = tuple((root, tuple(followups)) for root, followups in roots.values())
+        contributor_ids = {
+            answer.attempt_id
+            for root, followups in bundles
+            for answer in (root, *followups)
+        }
+        contributors = {
+            question_id: pair
+            for question_id, pair in contributors.items()
+            if pair[0].id in contributor_ids
+        }
+        evidence_items = [
+            item for item in evidence_items if item.attempt_id in contributor_ids
+        ]
+        attempts = list(
+            (
+                await self._session.scalars(
+                    select(SessionRecording).where(
+                        SessionRecording.session_id == session_id
+                    )
+                )
+            ).all()
+        )
+        planned = [q for q in questions if q.question_kind == "planned"]
+        followups = [q for q in questions if q.question_kind == "adaptive_follow_up"]
+        hints = await self._session.scalar(
+            select(func.count())
+            .select_from(InterviewSessionEvent)
+            .where(
+                InterviewSessionEvent.session_id == session_id,
+                InterviewSessionEvent.event_type == "hint_presented",
+            )
         )
         return ReportInputSnapshot(
             session_id=session_id,
@@ -1030,11 +1361,47 @@ class ConversationalSessionRepository:
             accepted_root_bundles=bundles,
             compatibility_key=session.compatibility_key or "",
             counts={
-                "accepted_attempts": accepted_count,
-                "assessed_attempts": assessed_count,
-                "root_bundles": len(bundles),
+                "planned_questions_total": len(planned),
+                "planned_questions_answered": sum(
+                    q.question_state == "answered" for q in planned
+                ),
+                "planned_questions_skipped": sum(
+                    q.question_state == "skipped" for q in planned
+                ),
+                "follow_ups_asked": sum(
+                    q.question_state != "pending" for q in followups
+                ),
+                "follow_ups_answered": sum(
+                    q.question_state == "answered" for q in followups
+                ),
+                "accepted_attempts": sum(
+                    q.accepted_recording_id in recordings for q in questions
+                ),
+                "retry_attempts": sum(a.attempt_kind == "retry" for a in attempts),
+                "unavailable_attempts": sum(
+                    a.attempt_state == "unavailable" for a in attempts
+                ),
+                "hints_used": hints,
             },
             candidate_reflection=reflection,
+            questions=tuple(
+                ReportQuestionSnapshot(
+                    question_id=q.id,
+                    root_question_id=q.root_question_id or q.id,
+                    question_kind=q.question_kind,
+                    question_state=q.question_state,
+                    question_text=q.text,
+                    accepted_attempt_id=contributors[q.id][0].id
+                    if q.id in contributors
+                    else None,
+                    answer_level=contributors[q.id][1].answer_level or "not_assessed"
+                    if q.id in contributors
+                    else "not_assessed",
+                )
+                for q in questions
+                if not q.source_deleted
+            ),
+            evidence=tuple(evidence_items),
         )
 
     async def load_progress_snapshots(self, selector):
@@ -1106,19 +1473,71 @@ class ConversationalSessionRepository:
             )
         return snapshots
 
+    @staticmethod
+    def _report_retention_summary(attempts):
+        """Project current retention only; never expose media paths or content."""
+        return {"attempts": [
+            {
+                "attempt_id": attempt.id,
+                "audio_policy": attempt.audio_retention_policy,
+                "audio_state": attempt.audio_retention_state,
+                "transcript_state": (
+                    "deleted" if attempt.attempt_state == "deleted" else
+                    "retained" if attempt.transcript is not None else "unavailable"
+                ),
+                "audio_cleanup_retryable": attempt.audio_retention_state == "delete_failed",
+            }
+            for attempt in attempts if attempt.id is not None
+        ]}
+
+    async def load_report_read_snapshot(self, session_id: str):
+        """One SQL statement captures analysis, versions and current retention.
+
+        Column projections deliberately bypass the ORM identity cache. SQLite
+        statement snapshot isolation also prevents a concurrent cleanup from
+        splitting the session versions and its attempt retention overlay.
+        """
+        rows = (await self._session.execute(select(
+            InterviewSession.report_json, InterviewSession.report_state,
+            InterviewSession.activity_version, InterviewSession.retention_version,
+            SessionRecording.id, SessionRecording.audio_retention_policy,
+            SessionRecording.audio_retention_state, SessionRecording.attempt_state,
+            SessionRecording.transcript.is_not(None).label("has_transcript"),
+        ).select_from(InterviewSession).outerjoin(
+            SessionRecording, SessionRecording.session_id == InterviewSession.id
+        ).where(
+            InterviewSession.id == session_id,
+            InterviewSession.experience_version == "conversational_v1",
+            InterviewSession.deletion_state == "not_requested",
+            InterviewSession.report_state.in_(("completed", "fallback")),
+        ).order_by(SessionRecording.created_at, SessionRecording.id))).all()
+        if not rows or not isinstance(rows[0].report_json, dict):
+            return None
+        from types import SimpleNamespace
+        attempts = [SimpleNamespace(
+            id=r.id, audio_retention_policy=r.audio_retention_policy,
+            audio_retention_state=r.audio_retention_state, attempt_state=r.attempt_state,
+            transcript=True if r.has_transcript else None,
+        ) for r in rows if r.id is not None]
+        report = dict(rows[0].report_json)
+        report.update(
+            session_id=session_id, report_state=rows[0].report_state,
+            activity_version=rows[0].activity_version,
+            retention_version=rows[0].retention_version,
+            retention_summary=self._report_retention_summary(attempts),
+        )
+        return report
+
     async def load_export_snapshot(self, session_id: str, request):
         """Capture the report and retention versions used by a synchronous export."""
 
         from ..services.coach_report_export import ExportSnapshot
 
-        session = await self._session.get(InterviewSession, session_id)
+        report = await self.load_report_read_snapshot(session_id)
         if (
-            session is None
-            or session.experience_version != "conversational_v1"
-            or session.deletion_state != "not_requested"
-            or session.report_state not in {"completed", "fallback"}
-            or session.activity_version != request.expected_activity_version
-            or session.retention_version != request.expected_retention_version
+            report is None
+            or report["activity_version"] != request.expected_activity_version
+            or report["retention_version"] != request.expected_retention_version
         ):
             return None
         attempts = list(
@@ -1127,9 +1546,9 @@ class ConversationalSessionRepository:
                     select(SessionRecording)
                     .where(
                         SessionRecording.session_id == session_id,
-                        SessionRecording.attempt_state != "deleted",
                     )
                     .order_by(SessionRecording.created_at, SessionRecording.id)
+                    .execution_options(populate_existing=True)
                 )
             ).all()
         )
@@ -1151,16 +1570,16 @@ class ConversationalSessionRepository:
             if request.include_attempt_history
         )
         return ExportSnapshot(
-            session_id=session.id,
-            report_state=session.report_state,
-            activity_version=session.activity_version,
-            retention_version=session.retention_version,
-            report_json=session.report_json if isinstance(session.report_json, dict) else {},
-            retention_summary=(
-                dict(session.retention_policy_json)
-                if isinstance(session.retention_policy_json, dict)
-                else None
-            ),
+            session_id=session_id,
+            report_state=report["report_state"],
+            activity_version=report["activity_version"],
+            retention_version=report["retention_version"],
+            report_json={
+                key: value
+                for key, value in report.items()
+                if key != "retention_summary"
+            },
+            retention_summary=report["retention_summary"],
             transcript=transcript,
             attempt_history=attempt_history,
         )
@@ -1168,14 +1587,19 @@ class ConversationalSessionRepository:
     async def export_versions_match(
         self, session_id: str, activity_version: int, retention_version: int
     ) -> bool:
-        session = await self._session.get(InterviewSession, session_id)
         return bool(
-            session is not None
-            and session.experience_version == "conversational_v1"
-            and session.deletion_state == "not_requested"
-            and session.report_state in {"completed", "fallback"}
-            and session.activity_version == activity_version
-            and session.retention_version == retention_version
+            await self._session.scalar(
+                select(
+                    exists().where(
+                        InterviewSession.id == session_id,
+                        InterviewSession.experience_version == "conversational_v1",
+                        InterviewSession.deletion_state == "not_requested",
+                        InterviewSession.report_state.in_(("completed", "fallback")),
+                        InterviewSession.activity_version == activity_version,
+                        InterviewSession.retention_version == retention_version,
+                    )
+                )
+            )
         )
 
     async def delete_attempt_transcript(self, claim):
@@ -1807,6 +2231,8 @@ class ConversationalSessionRepository:
         event_type = (
             "report_fallback_completed"
             if report_state == "fallback"
+            else "report_rebuild_completed"
+            if completed_rebuild
             else "report_completed"
         )
         target_state = "completed" if completed_rebuild else "reporting"
@@ -1818,13 +2244,20 @@ class ConversationalSessionRepository:
                     AsyncJob.type == "coach_conversational_report",
                     AsyncJob.status.in_(("pending", "running")),
                 )
-                .values(status="done", result_json=json.dumps(report_json, sort_keys=True), error=None)
+                .values(
+                    status="done",
+                    result_json=json.dumps(report_json, sort_keys=True),
+                    error=None,
+                )
             )
             values: dict[str, object] = {
                 "report_json": report_json,
                 "report_state": report_state,
                 "report_job_id": None,
                 "report_started_at": None,
+                "state_version": InterviewSession.state_version + 1,
+                "recoverable_error_scope": None,
+                "recoverable_error_code": None,
             }
             if not completed_rebuild:
                 values.update(
@@ -1840,7 +2273,15 @@ class ConversationalSessionRepository:
                     InterviewSession.report_state == "building",
                     InterviewSession.report_job_id == claim.job_id,
                     InterviewSession.report_build_reason == claim.build_reason,
-                    InterviewSession.status == ("completed" if completed_rebuild else "active"),
+                    InterviewSession.deletion_state == "not_requested",
+                    InterviewSession.experience_version == "conversational_v1",
+                    InterviewSession.report_started_at
+                    >= datetime.utcnow()
+                    - timedelta(
+                        seconds=settings.HATCH_COACH_TIMEOUT_CONVERSATIONAL_JOB_SECONDS
+                    ),
+                    InterviewSession.status
+                    == ("completed" if completed_rebuild else "active"),
                     InterviewSession.conversation_state == target_state,
                 )
                 .values(**values)
@@ -1862,7 +2303,9 @@ class ConversationalSessionRepository:
                             or 0
                         ),
                         state_before=target_state,
-                        state_after="completed" if not completed_rebuild else target_state,
+                        state_after="completed"
+                        if not completed_rebuild
+                        else target_state,
                         payload_json={"report_build_reason": claim.build_reason},
                     ),
                 ),
@@ -1871,7 +2314,10 @@ class ConversationalSessionRepository:
         return True
 
     async def finalise_conversational_report(
-        self, claim, report_json: dict[str, object], report_state: Literal["completed", "fallback"]
+        self,
+        claim,
+        report_json: dict[str, object],
+        report_state: Literal["completed", "fallback"],
     ) -> bool:
         from ..services.coach_conversational_report import ReportBuildClaim
 
@@ -1888,7 +2334,10 @@ class ConversationalSessionRepository:
             return False
 
     async def finalise_completed_session_report_rebuild(
-        self, claim, report_json: dict[str, object], report_state: Literal["completed", "fallback"]
+        self,
+        claim,
+        report_json: dict[str, object],
+        report_state: Literal["completed", "fallback"],
     ) -> bool:
         from ..services.coach_conversational_report import ReportBuildClaim
 

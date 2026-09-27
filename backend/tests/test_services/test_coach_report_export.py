@@ -33,11 +33,21 @@ def snapshot() -> ExportSnapshot:
             "retention_summary": {"audio": "retained"},
             "raw_audio_url": "/private/audio.wav",
         },
-        retention_summary={"audio": "retained"},
+        retention_summary={
+            "attempts": [
+                {
+                    "attempt_id": "attempt-opaque",
+                    "audio_policy": "retain_until_deleted",
+                    "audio_state": "deleted",
+                    "transcript_state": "retained",
+                    "audio_cleanup_retryable": False,
+                }
+            ]
+        },
     )
 
 
-def test_json_export_is_sorted_stable_and_excludes_live_or_raw_media(snapshot):
+def test_json_export_is_sorted_stable_and_uses_live_not_persisted_retention(snapshot):
     first = render_report_export(snapshot, request("json"))
     second = render_report_export(snapshot, request("json"))
 
@@ -45,7 +55,11 @@ def test_json_export_is_sorted_stable_and_excludes_live_or_raw_media(snapshot):
     assert first.etag == second.etag
     assert first.body.endswith(b"\n")
     assert b"raw_audio_url" not in first.body
-    assert b"retention_summary" not in first.body
+    import json
+
+    assert json.loads(first.body)["retention_summary"] == snapshot.retention_summary
+    assert first.headers()["X-Hatch-Session-Activity-Version"] == "3"
+    assert first.headers()["X-Hatch-Retention-Version"] == "4"
     assert first.filename == "coach-report-session-opaque-1.json"
 
 
@@ -55,6 +69,8 @@ def test_markdown_export_has_fixed_sections_and_no_raw_link(snapshot):
     text = payload.body.decode("utf-8")
     assert text.index("## Session level") < text.index("## Dimensions")
     assert "/private/audio.wav" not in text
+    assert "## Retention summary" in text
+    assert '"audio_state": "deleted"' in text
     assert payload.media_type == "text/markdown; charset=utf-8"
 
 
@@ -64,7 +80,9 @@ async def test_export_rechecks_both_source_versions(snapshot):
         async def load_export_snapshot(self, session_id, request):
             return snapshot
 
-        async def export_versions_match(self, session_id, activity_version, retention_version):
+        async def export_versions_match(
+            self, session_id, activity_version, retention_version
+        ):
             return False
 
     with pytest.raises(ValueError, match="source_changed"):

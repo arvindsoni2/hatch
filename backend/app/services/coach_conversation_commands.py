@@ -62,6 +62,7 @@ from .async_job_service import AsyncJobService
 from .coach_command_projection import contextual_allowed_commands
 from .coach_coaching import CoachCoachingService, build_coaching_skeleton
 from .coach_attempt_pipeline import queue_attempt_processing
+from .coach_report_queue import queue_conversational_report
 from .coach_conversation_state import require_transition
 from .coach_followup_policy import FollowUpContext, FollowUpPolicy
 from .coach_conversational_contracts import (
@@ -195,6 +196,16 @@ class ConversationCommandService:
             )
             if not completed:
                 raise ConversationCommandError("coach_conversation_invalid_state")
+            report_job_id = None
+            if (
+                self._post_commit_job_id is not None
+                and self._post_commit_attempt_claim is None
+            ):
+                job = await self.db.get(AsyncJob, self._post_commit_job_id)
+                if job is not None and job.type == "coach_conversational_report":
+                    if not await self.repository.persist_report_build_claim(job.id):
+                        raise ConversationCommandError("coach_report_not_ready")
+                    report_job_id = job.id
             await self.db.commit()
         except ConversationVersionConflict as error:
             self._close_pending_audio_lease()
@@ -247,6 +258,11 @@ class ConversationCommandService:
             self._close_pending_audio_lease()
             await self.db.rollback()
             raise
+        if report_job_id is not None:
+            try:
+                queue_conversational_report(report_job_id)
+            except Exception:
+                logger.warning("coach.report.dispatch_failed")
         if self._post_commit_attempt_claim is not None:
             try:
                 queue_attempt_processing(self._post_commit_attempt_claim)
@@ -431,7 +447,14 @@ class ConversationCommandService:
     ) -> ConversationCommandResult:
         if session.report_state != "failed" or session.report_job_id is not None:
             raise ConversationCommandError("coach_report_not_ready")
-        if session.status == "active" and session.recoverable_error_scope == "initial_report":
+        if (
+            session.status == "active"
+            and session.conversation_state == "recoverable_error"
+            and session.recoverable_error_scope == "initial_report"
+            and session.recoverable_error_code
+            == "coach_report_conversational_snapshot_stale"
+            and ERROR_REGISTRY[session.recoverable_error_code].retryable
+        ):
             build_reason = "manual_retry"
             target_state = "reporting"
         elif (

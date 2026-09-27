@@ -70,6 +70,10 @@ def disable_real_attempt_worker_dispatch(monkeypatch: pytest.MonkeyPatch) -> Non
         "app.services.coach_conversation_commands.queue_audio_cleanup",
         lambda _claim: None,
     )
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_conversational_report",
+        lambda _job_id: None,
+    )
     class UnavailableModel:
         async def complete_json(self, *_args, **_kwargs):
             raise RuntimeError("provider unavailable")

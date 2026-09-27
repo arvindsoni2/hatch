@@ -145,7 +145,9 @@ LowercaseSha256: TypeAlias = Annotated[
     str, StringConstraints(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 ]
 PositiveByteSize: TypeAlias = Annotated[int, Field(gt=0)]
-BoundedMimeType: TypeAlias = Annotated[str, StringConstraints(min_length=1, max_length=128)]
+BoundedMimeType: TypeAlias = Annotated[
+    str, StringConstraints(min_length=1, max_length=128)
+]
 
 
 class StrictContractModel(BaseModel):
@@ -914,23 +916,110 @@ class DeletionCommandResult(StrictContractModel):
     contract_version: Literal[HARD_DELETE_CONTRACT]
 
 
+class ConversationalReportCounts(StrictContractModel):
+    planned_questions_total: NonNegativeInt
+    planned_questions_answered: NonNegativeInt
+    planned_questions_skipped: NonNegativeInt
+    follow_ups_asked: NonNegativeInt
+    follow_ups_answered: NonNegativeInt
+    accepted_attempts: NonNegativeInt
+    retry_attempts: NonNegativeInt
+    unavailable_attempts: NonNegativeInt
+    hints_used: NonNegativeInt
+
+
+class ReportAttemptRetention(StrictContractModel):
+    attempt_id: SafeToken
+    audio_policy: AudioRetentionPolicy | None
+    audio_state: AudioRetentionState | None
+    transcript_state: Literal["retained", "deleted", "unavailable"]
+    audio_cleanup_retryable: bool
+
+
+class ReportRetentionSummary(StrictContractModel):
+    attempts: list[ReportAttemptRetention]
+
+
+ReportDimension = Literal[
+    "relevance",
+    "structure",
+    "specificity",
+    "impact",
+    "role_depth",
+    "clarity",
+    "conciseness",
+]
+
+
+class ReportStrength(StrictContractModel):
+    dimension: ReportDimension
+    level: ConversationalLevel
+    assessed_bundle_count: NonNegativeInt
+    contributor_attempt_ids: list[SafeToken]
+
+
+class ReportPriority(ReportStrength):
+    next_action: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class ReportPracticeSuggestion(StrictContractModel):
+    dimension: ReportDimension
+    next_action: Annotated[str, Field(min_length=1, max_length=1000)]
+    contributor_attempt_ids: list[SafeToken]
+
+
+class ReportQuestionSummary(StrictContractModel):
+    question_id: SafeToken
+    root_question_id: SafeToken
+    question_kind: Literal["planned", "adaptive_follow_up"]
+    question_state: Literal["pending", "asked", "answered", "skipped"]
+    question_text: str
+    accepted_attempt_id: SafeToken | None
+    answer_level: ConversationalLevel
+
+
+class ReportEvidenceReviewItem(StrictContractModel):
+    attempt_id: SafeToken
+    claim_id: Annotated[str, Field(min_length=1, max_length=128)]
+    claim_text: Annotated[str, Field(min_length=1, max_length=2000)]
+    transcript_start: NonNegativeInt
+    transcript_end: NonNegativeInt
+    status: Literal[
+        "supported", "partially_supported", "conflicting", "not_found", "not_verifiable"
+    ]
+    evidence_ids: list[Annotated[str, Field(min_length=1, max_length=128)]]
+    explanation: Annotated[str, Field(min_length=1, max_length=2000)]
+    candidate_action: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
 class ConversationalReportRead(StrictContractModel):
     session_id: SafeToken
     report_state: Literal["completed", "fallback"]
     activity_version: NonNegativeInt
     retention_version: NonNegativeInt
     session_level: ConversationalLevel
-    dimensions: dict[str, Any]
-    strengths: list[Any] = Field(default_factory=list)
-    improvement_priorities: list[Any] = Field(default_factory=list)
-    evidence_review_items: list[Any] = Field(default_factory=list)
-    question_summaries: list[Any] = Field(default_factory=list)
-    practice_suggestions: list[Any] = Field(default_factory=list)
+    dimensions: dict[ReportDimension, ConversationalLevel]
+    counts: ConversationalReportCounts
+    strengths: list[ReportStrength]
+    improvement_priorities: list[ReportPriority]
+    unassessed_areas: list[ReportDimension]
+    evidence_review_items: list[ReportEvidenceReviewItem]
+    question_summaries: list[ReportQuestionSummary]
+    practice_suggestions: list[ReportPracticeSuggestion]
     candidate_reflection: dict[str, Any] | None = None
-    retention_summary: RetentionStatus | None = None
+    retention_summary: ReportRetentionSummary
     compatibility_key: SafeToken
     diagnostics: dict[str, Any] = Field(default_factory=dict)
     contract_version: Literal[REPORT_CONTRACT]
+
+    @field_validator("dimensions")
+    @classmethod
+    def require_all_report_dimensions(cls, value):
+        from ..services.coach_conversational_contracts import CONTENT_DIMENSIONS
+
+        if set(value) != set(CONTENT_DIMENSIONS):
+            raise ValueError("report requires all content dimensions")
+        return value
 
 
 class ConversationalProgressRead(StrictContractModel):
@@ -1059,9 +1148,9 @@ class ConversationEvidenceFinding(StrictContractModel):
     transcript_end: Annotated[int, Field(gt=0)]
     status: Literal["supported", "partially_supported", "not_found", "conflicting"]
     source_label: Annotated[str, Field(min_length=1, max_length=80)] | None
-    source_approval: Literal[
-        "approved", "reviewed", "candidate_selected_unapproved", "draft"
-    ] | None
+    source_approval: (
+        Literal["approved", "reviewed", "candidate_selected_unapproved", "draft"] | None
+    )
     explanation: Annotated[str, Field(min_length=1, max_length=2_000)]
     candidate_action: Annotated[str, Field(min_length=1, max_length=1_000)]
 
@@ -1087,7 +1176,9 @@ class ConversationAnswerReviewRead(StrictContractModel):
     dimensions: dict[str, ConversationReviewDimension]
     delivery: ConversationDeliveryReview
     evidence_consistency: ConversationalLevel
-    evidence_findings: Annotated[list[ConversationEvidenceFinding], Field(max_length=30)]
+    evidence_findings: Annotated[
+        list[ConversationEvidenceFinding], Field(max_length=30)
+    ]
     coaching: ConversationCoachingReview | None
     accepted_at: datetime | None
 
