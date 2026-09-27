@@ -121,6 +121,26 @@ async def test_commands_really_dispatch_reports_after_request_session_closes(
         assert response.json()["candidate_reflection"]["note"] == "Synthetic reflection"
     async with coach_database() as db:
         job_count = await db.scalar(select(func.count()).select_from(AsyncJob))
+        completion_type = (
+            "report_rebuild_completed"
+            if reason in {"transcript_deletion_rebuild", "reflection_update_rebuild"}
+            else "report_completed"
+        )
+        completion_events = list(
+            (
+                await db.scalars(
+                    select(InterviewSessionEvent).where(
+                        InterviewSessionEvent.session_id == row.id,
+                        InterviewSessionEvent.event_type.in_(
+                            ("report_completed", "report_rebuild_completed")
+                        ),
+                    )
+                )
+            ).all()
+        )
+        assert len(completion_events) == 1
+        assert completion_events[0].event_type == completion_type
+        assert completion_events[0].actor_type == "worker"
     for _ in range(2):
         assert (await read_report_http(coach_database, row.id)).status_code == 200
     async with coach_database() as db:
@@ -169,6 +189,13 @@ async def test_lost_dispatch_is_recovered_as_failed_without_automatic_retry(
             "active" if reason == "initial_completion" else "completed"
         )
         assert (await db.get(AsyncJob, "lost-report-job")).status == "failed"
+        failure_event = await db.scalar(
+            select(InterviewSessionEvent).where(
+                InterviewSessionEvent.session_id == row.id,
+                InterviewSessionEvent.event_type == "report_rebuild_failed",
+            )
+        )
+        assert failure_event.actor_type == "reconciler"
         assert await reconcile_conversational_session(db, row.id, now=now) == 0
         assert await db.scalar(select(func.count()).select_from(AsyncJob)) == 1
         retry = ConversationCommandRequest.model_validate(
@@ -228,6 +255,13 @@ async def test_report_worker_rolls_back_before_fenced_failure_publication(
         assert job.status == "failed"
         assert job.result_json is None
         assert job.error == "coach_report_worker_failed"
+        failure_event = await db.scalar(
+            select(InterviewSessionEvent).where(
+                InterviewSessionEvent.session_id == row.id,
+                InterviewSessionEvent.event_type == "report_rebuild_failed",
+            )
+        )
+        assert failure_event.actor_type == "worker"
         assert (
             await db.scalar(
                 select(func.count())

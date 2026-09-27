@@ -1615,6 +1615,7 @@ async def _reconcile_conversational_report(db, session, now):
             claim,
             now=now,
             error_code="coach_report_claim_expired",
+            actor_type="reconciler",
         )
     )
 

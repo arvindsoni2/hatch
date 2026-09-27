@@ -1047,7 +1047,14 @@ class ConversationalSessionRepository:
                 return None
         return ReportBuildClaim(**expected, deadline_at=deadline)
 
-    async def fail_conversational_report(self, claim, *, now, error_code):
+    async def fail_conversational_report(
+        self,
+        claim,
+        *,
+        now,
+        error_code,
+        actor_type: Literal["worker", "reconciler"] = "worker",
+    ):
         """Atomic terminal failure on the same report owner, after caller rollback."""
         rebuild = claim.build_reason in {
             "transcript_deletion_rebuild",
@@ -1112,7 +1119,7 @@ class ConversationalSessionRepository:
                     events=(
                         SessionEventInput(
                             event_type="report_rebuild_failed",
-                            actor_type="worker",
+                            actor_type=actor_type,
                             state_version=version,
                             state_before="completed" if rebuild else "reporting",
                             state_after="completed" if rebuild else "recoverable_error",
@@ -2224,6 +2231,8 @@ class ConversationalSessionRepository:
         event_type = (
             "report_fallback_completed"
             if report_state == "fallback"
+            else "report_rebuild_completed"
+            if completed_rebuild
             else "report_completed"
         )
         target_state = "completed" if completed_rebuild else "reporting"
