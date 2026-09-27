@@ -362,7 +362,7 @@ async def test_hidden_deletion_state_is_excluded_from_normal_reads(
         assert exported.status_code == 409
         assert (
             await ConversationalSessionRepository(db).load_progress_snapshots(
-                ProgressSelector(mode="filtered", compatibility_key="synthetic-key")
+                ProgressSelector(mode="exact", compatibility_key="synthetic-key")
             )
             == []
         )

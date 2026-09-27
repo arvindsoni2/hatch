@@ -1022,6 +1022,49 @@ class ConversationalReportRead(StrictContractModel):
         return value
 
 
+ConversationalTrend = Literal[
+    "improving", "stable", "mixed", "declining", "not_enough_evidence"
+]
+
+
+class ProgressContext(StrictContractModel):
+    application_id: SafeToken | None
+    company_name: str | None
+    role_title: str | None
+    role_family: str | None
+    role_level: str | None
+    interview_type: str | None
+
+
+class ProgressSession(StrictContractModel):
+    session_id: SafeToken
+    activity_version: NonNegativeInt
+    completed_at: str
+    session_level: ConversationalLevel
+    dimensions: dict[ReportDimension, ConversationalLevel]
+
+
+class ConversationalProgressGroup(StrictContractModel):
+    compatibility_key: SafeToken
+    context: ProgressContext
+    sessions: list[ProgressSession]
+    current_levels: dict[ReportDimension, ConversationalLevel]
+    previous_levels: dict[ReportDimension, ConversationalLevel]
+    trends: dict[ReportDimension, ConversationalTrend]
+    strongest_areas: list[ReportStrength]
+    priority_areas: list[ReportPriority]
+    evidence_review_items: list[ReportEvidenceReviewItem]
+
+    @field_validator("current_levels", "previous_levels", "trends")
+    @classmethod
+    def require_all_progress_dimensions(cls, value):
+        from ..services.coach_conversational_contracts import CONTENT_DIMENSIONS
+
+        if set(value) != set(CONTENT_DIMENSIONS):
+            raise ValueError("progress requires all content dimensions")
+        return value
+
+
 class ConversationalProgressRead(StrictContractModel):
     selector_mode: Literal["exact", "filtered"]
     applied_filters: dict[str, str] = Field(default_factory=dict)
@@ -1029,8 +1072,20 @@ class ConversationalProgressRead(StrictContractModel):
     total_groups: NonNegativeInt
     returned_groups: NonNegativeInt
     groups_truncated: bool
-    groups: list[dict[str, Any]] = Field(default_factory=list)
+    groups: list[ConversationalProgressGroup]
     contract_version: Literal[PROGRESS_CONTRACT]
+
+    @model_validator(mode="after")
+    def require_consistent_group_counts(self) -> Self:
+        if (
+            self.returned_groups != len(self.groups)
+            or self.returned_groups > self.group_limit
+            or self.total_groups < self.returned_groups
+            or self.groups_truncated != (self.total_groups > self.returned_groups)
+            or (self.selector_mode == "exact" and (self.total_groups > 1 or self.groups_truncated))
+        ):
+            raise ValueError("inconsistent progress group counts")
+        return self
 
 
 class SupportDiagnosticsRead(StrictContractModel):

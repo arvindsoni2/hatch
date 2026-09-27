@@ -7,7 +7,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -208,29 +208,33 @@ async def get_conversational_report(
     responses=CANONICAL_ERROR_RESPONSES,
 )
 async def get_conversational_progress(
-    session_id: str | None = Query(default=None),
-    application_id: str | None = Query(default=None),
-    compatibility_key: str | None = Query(default=None),
-    company_name: str | None = Query(default=None),
-    role_title: str | None = Query(default=None),
-    group_limit: int = Query(default=20, ge=1, le=100),
+    request: Request,
+    application_id: str | None = Query(default=None, min_length=1, max_length=128),
+    compatibility_key: str | None = Query(default=None, min_length=1, max_length=128),
+    role_family: str | None = Query(default=None, min_length=1, max_length=128),
+    role_level: str | None = Query(default=None, min_length=1, max_length=128),
+    interview_type: str | None = Query(default=None, min_length=1, max_length=128),
+    group_limit: int | None = Query(default=None, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationalProgressRead | JSONResponse:
     try:
+        supported = {"compatibility_key", "application_id", "role_family", "role_level", "interview_type"}
+        if any(name not in supported for name in request.query_params):
+            raise ValueError("unsupported progress filter")
         selector = ProgressSelector(
-            mode="exact" if session_id is not None else "filtered",
-            session_id=session_id,
+            mode="exact" if compatibility_key is not None else "filtered",
             application_id=application_id,
             compatibility_key=compatibility_key,
-            company_name=company_name,
-            role_title=role_title,
+            role_family=role_family,
+            role_level=role_level,
+            interview_type=interview_type,
         )
     except ValueError:
         return conversation_error_response("coach_progress_selector_conflict")
     result = await ConversationalProgressService(
         ConversationalSessionRepository(db)
-    ).get_progress(selector, group_limit)
-    return result
+    ).get_progress(selector, settings.HATCH_COACH_PROGRESS_MAX_GROUPS)
+    return JSONResponse(content=result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
 
 @router.post(
