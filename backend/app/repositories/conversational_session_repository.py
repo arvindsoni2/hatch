@@ -26,6 +26,7 @@ from ..config import settings
 from ..models.async_job import AsyncJob
 from ..models.coach_session import (
     CoachSessionDeletionResult,
+    CoachSessionEvidenceRecord,
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
@@ -932,6 +933,8 @@ class ConversationalSessionRepository:
         from ..services.coach_conversational_report import (
             AcceptedAnswer,
             ReportInputSnapshot,
+            ReportQuestionSnapshot,
+            ReportEvidenceSnapshot,
         )
 
         session = await self._session.get(InterviewSession, session_id)
@@ -969,12 +972,21 @@ class ConversationalSessionRepository:
 
         roots: dict[str, tuple[AcceptedAnswer, list[AcceptedAnswer]]] = {}
         reflection: dict[str, object] | None = None
+        contributors = {}
+        evidence_items = []
+        selected_evidence = set((await self._session.scalars(select(
+            CoachSessionEvidenceRecord.evidence_id
+        ).where(CoachSessionEvidenceRecord.session_id == session_id))).all())
         for question in questions:
             recording_id = question.accepted_recording_id
             if recording_id is None or recording_id not in recordings:
                 continue
             recording = recordings[recording_id]
-            if recording.attempt_state not in {"completed", "unavailable"}:
+            if (
+                question.source_deleted
+                or recording.question_id != question.id
+                or recording.attempt_state not in {"completed", "unavailable"}
+            ):
                 continue
             evaluation = (
                 await self._session.get(
@@ -984,11 +996,22 @@ class ConversationalSessionRepository:
                 if recording.current_evaluation_version_id is not None
                 else None
             )
-            if evaluation is None or evaluation.state not in {"completed", "unavailable"}:
+            if (
+                evaluation is None
+                or evaluation.recording_id != recording.id
+                or evaluation.state != recording.attempt_state
+                or evaluation.state not in {"completed", "unavailable"}
+                or evaluation.transcript_version_id != recording.current_transcript_version_id
+            ):
+                continue
+            transcript = await self._session.get(InterviewTranscriptVersion, recording.current_transcript_version_id) if recording.current_transcript_version_id else None
+            if evaluation.state == "completed" and (
+                transcript is None or transcript.recording_id != recording.id or transcript.transcript is None
+            ):
                 continue
             raw_dimensions = (
                 evaluation.rubric_json.get("dimensions", {})
-                if isinstance(evaluation.rubric_json, dict)
+                if evaluation.state == "completed" and isinstance(evaluation.rubric_json, dict)
                 else {}
             )
             levels = {
@@ -1008,6 +1031,27 @@ class ConversationalSessionRepository:
                     else question.follow_up_aggregation_role or "gap_repair"
                 ),
             )
+            contributors[question.id] = (recording, evaluation)
+            findings = evaluation.evidence_findings_json
+            for finding in (findings.get("claims", []) if isinstance(findings, dict) and evaluation.state == "completed" else []):
+                if not isinstance(finding, dict) or not isinstance(finding.get("evidence_ids"), (list, tuple)):
+                    continue
+                if not set(finding["evidence_ids"]) <= selected_evidence:
+                    continue
+                from ..schemas.coach_conversation import ReportEvidenceReviewItem
+                try:
+                    item = ReportEvidenceReviewItem.model_validate({
+                        "attempt_id": recording.id,
+                        **{name: finding.get(name) for name in (
+                            "claim_id", "claim_text", "transcript_start", "transcript_end",
+                            "status", "evidence_ids", "explanation", "candidate_action",
+                        )},
+                    })
+                    from ..services.coach_text_spans import validate_code_point_span
+                    validate_code_point_span(transcript.transcript, item.transcript_start, item.transcript_end, item.claim_text)
+                except ValueError:
+                    continue
+                evidence_items.append(ReportEvidenceSnapshot(**{**item.model_dump(), "evidence_ids": tuple(item.evidence_ids)}))
             if reflection is None and recording.self_assessment_json:
                 reflection = dict(recording.self_assessment_json)
             root_id = question.root_question_id or question.id
@@ -1019,11 +1063,14 @@ class ConversationalSessionRepository:
         bundles = tuple(
             (root, tuple(followups)) for root, followups in roots.values()
         )
+        contributor_ids = {answer.attempt_id for root, followups in bundles for answer in (root, *followups)}
+        contributors = {question_id: pair for question_id, pair in contributors.items() if pair[0].id in contributor_ids}
+        evidence_items = [item for item in evidence_items if item.attempt_id in contributor_ids]
         attempts = list((await self._session.scalars(
             select(SessionRecording).where(SessionRecording.session_id == session_id)
         )).all())
         planned = [q for q in questions if q.question_kind == "planned"]
-        followups = [q for q in questions if q.question_kind == "follow_up"]
+        followups = [q for q in questions if q.question_kind == "adaptive_follow_up"]
         hints = await self._session.scalar(select(func.count()).select_from(
             InterviewSessionEvent
         ).where(InterviewSessionEvent.session_id == session_id,
@@ -1046,6 +1093,14 @@ class ConversationalSessionRepository:
                 "hints_used": hints,
             },
             candidate_reflection=reflection,
+            questions=tuple(ReportQuestionSnapshot(
+                question_id=q.id, root_question_id=q.root_question_id or q.id,
+                question_kind=q.question_kind, question_state=q.question_state,
+                question_text=q.text,
+                accepted_attempt_id=contributors[q.id][0].id if q.id in contributors else None,
+                answer_level=contributors[q.id][1].answer_level or "not_assessed" if q.id in contributors else "not_assessed",
+            ) for q in questions if not q.source_deleted),
+            evidence=tuple(evidence_items),
         )
 
     async def load_progress_snapshots(self, selector):

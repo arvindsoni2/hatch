@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+from types import MappingProxyType
 from typing import Literal, Protocol, TypeAlias
 
 from .coach_conversational_contracts import CONTENT_DIMENSIONS, REPORT_CONTRACT
@@ -37,6 +38,33 @@ class AcceptedAnswer:
     levels: Mapping[str, Level]
     target_dimension: str | None = None
     aggregation_role: Literal["root", "gap_repair", "primary_evidence"] = "root"
+
+    def __post_init__(self):
+        object.__setattr__(self, "levels", MappingProxyType(dict(self.levels)))
+
+
+@dataclass(frozen=True)
+class ReportQuestionSnapshot:
+    question_id: str
+    root_question_id: str
+    question_kind: str
+    question_state: str
+    question_text: str
+    accepted_attempt_id: str | None
+    answer_level: Level
+
+
+@dataclass(frozen=True)
+class ReportEvidenceSnapshot:
+    attempt_id: str
+    claim_id: str
+    claim_text: str
+    transcript_start: int
+    transcript_end: int
+    status: str
+    evidence_ids: tuple[str, ...]
+    explanation: str
+    candidate_action: str
 
 
 @dataclass(frozen=True)
@@ -90,6 +118,17 @@ class ReportInputSnapshot:
     compatibility_key: str
     counts: Mapping[str, int] = field(default_factory=dict)
     candidate_reflection: Mapping[str, object] | None = None
+    questions: tuple[ReportQuestionSnapshot, ...] = ()
+    evidence: tuple[ReportEvidenceSnapshot, ...] = ()
+
+    def __post_init__(self):
+        object.__setattr__(self, "counts", MappingProxyType(dict(self.counts)))
+        if self.candidate_reflection is not None:
+            object.__setattr__(
+                self,
+                "candidate_reflection",
+                MappingProxyType(dict(self.candidate_reflection)),
+            )
 
 
 @dataclass(frozen=True)
@@ -227,17 +266,117 @@ def build_conversational_report(
     """Build deterministic report values from an immutable input snapshot."""
 
     dimensions: dict[str, Level] = {}
+    bundles: dict[str, list[BundleDimension]] = {}
+    dimension_counts = {}
     for dimension in CONTENT_DIMENSIONS:
-        bundle_levels = [
-            aggregate_root_bundle(root, followups, dimension).level
+        bundles[dimension] = [
+            aggregate_root_bundle(root, followups, dimension)
             for root, followups in snapshot.accepted_root_bundles
         ]
+        bundle_levels = [bundle.level for bundle in bundles[dimension]]
         dimensions[dimension] = lower_median(bundle_levels)
+        dimension_counts[dimension] = {
+            level: bundle_levels.count(level) for level in LEVEL_TO_ORDINAL
+        }
+    assessed_counts = {
+        dimension: sum(bundle.level != "not_assessed" for bundle in bundles[dimension])
+        for dimension in CONTENT_DIMENSIONS
+    }
+    assessed = [
+        dimension
+        for dimension in CONTENT_DIMENSIONS
+        if dimensions[dimension] != "not_assessed"
+    ]
+    priority_order = {
+        dimension: position for position, dimension in enumerate(CONTENT_DIMENSIONS)
+    }
+    strongest = sorted(
+        [
+            dimension
+            for dimension in assessed
+            if dimensions[dimension] in {"strong", "interview_ready"}
+        ],
+        key=lambda dimension: (
+            -LEVEL_TO_ORDINAL[dimensions[dimension]],
+            -assessed_counts[dimension],
+            priority_order[dimension],
+        ),
+    )[:3]
+    weakest = sorted(
+        assessed,
+        key=lambda dimension: (
+            LEVEL_TO_ORDINAL[dimensions[dimension]],
+            -assessed_counts[dimension],
+            priority_order[dimension],
+        ),
+    )[:2]
+    actions = {
+        "relevance": "Practise answering the question directly using the accepted answer as your starting point.",
+        "structure": "Rehearse a clear situation, task, action and result sequence for the accepted answer.",
+        "specificity": "Review the accepted answer and add concrete details you can substantiate.",
+        "impact": "Clarify the outcome in the accepted answer without inventing results or metrics.",
+        "role_depth": "Explain your own decisions and trade-offs in the accepted answer.",
+        "clarity": "Rehearse the accepted answer with a clear opening and concise explanations.",
+        "conciseness": "Trim repetition in the accepted answer while preserving relevant evidence.",
+    }
+
+    def area(dimension, *, next_action=False):
+        result = {
+            "dimension": dimension,
+            "level": dimensions[dimension],
+            "assessed_bundle_count": assessed_counts[dimension],
+            "contributor_attempt_ids": list(
+                dict.fromkeys(
+                    attempt_id
+                    for bundle in bundles[dimension]
+                    if bundle.level != "not_assessed"
+                    for attempt_id in bundle.contributor_attempt_ids
+                )
+            ),
+        }
+        if next_action:
+            result["next_action"] = actions[dimension]
+        return result
+
+    priorities = [area(dimension, next_action=True) for dimension in weakest]
     report: dict[str, object] = {
         "session_id": snapshot.session_id,
         "activity_version": snapshot.activity_version,
         "session_level": derive_session_level(dimensions),
         "dimensions": dimensions,
+        "strengths": [area(dimension) for dimension in strongest],
+        "improvement_priorities": priorities,
+        "unassessed_areas": [
+            dimension
+            for dimension in CONTENT_DIMENSIONS
+            if dimensions[dimension] == "not_assessed"
+        ],
+        "question_summaries": [asdict(question) for question in snapshot.questions],
+        "evidence_review_items": [
+            {**asdict(item), "evidence_ids": list(item.evidence_ids)}
+            for item in snapshot.evidence
+        ],
+        "practice_suggestions": [
+            {
+                "dimension": item["dimension"],
+                "next_action": item["next_action"],
+                "contributor_attempt_ids": item["contributor_attempt_ids"],
+            }
+            for item in priorities
+        ],
+        "diagnostics": {
+            "dimension_counts": dimension_counts,
+            "root_bundles": [
+                {
+                    "root_attempt_id": root.attempt_id,
+                    "dimensions": {
+                        dimension: asdict(bundles[dimension][index])
+                        for dimension in CONTENT_DIMENSIONS
+                    },
+                }
+                for index, (root, _) in enumerate(snapshot.accepted_root_bundles)
+            ],
+        },
         "counts": ConversationalReportCounts.model_validate(
             dict(snapshot.counts)
         ).model_dump(),

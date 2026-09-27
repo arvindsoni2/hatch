@@ -1695,15 +1695,52 @@ export interface ConversationalReportRead {
   session_level: ConversationalLevel;
   dimensions: Record<string, ConversationalLevel>;
   counts: ConversationalReportCounts;
-  strengths: unknown[];
-  improvement_priorities: unknown[];
-  evidence_review_items: unknown[];
-  question_summaries: unknown[];
-  practice_suggestions: unknown[];
+  strengths: ConversationalReportStrength[];
+  improvement_priorities: ConversationalReportPriority[];
+  unassessed_areas: ConversationalReportDimension[];
+  evidence_review_items: ConversationalReportEvidence[];
+  question_summaries: ConversationalReportQuestion[];
+  practice_suggestions: Array<Pick<ConversationalReportPriority, "dimension" | "next_action" | "contributor_attempt_ids">>;
   candidate_reflection: Record<string, unknown> | null;
   retention_summary: ReportRetentionSummary;
   compatibility_key: string;
+  diagnostics: Record<string, unknown>;
   contract_version: "coach_conversational_report_v1";
+}
+
+export type ConversationalReportDimension = "relevance" | "structure" | "specificity" | "impact" | "role_depth" | "clarity" | "conciseness";
+
+export interface ConversationalReportStrength {
+  dimension: ConversationalReportDimension;
+  level: ConversationalLevel;
+  assessed_bundle_count: number;
+  contributor_attempt_ids: string[];
+}
+
+export interface ConversationalReportPriority extends ConversationalReportStrength {
+  next_action: string;
+}
+
+export interface ConversationalReportEvidence {
+  attempt_id: string;
+  claim_id: string;
+  claim_text: string;
+  transcript_start: number;
+  transcript_end: number;
+  status: "supported" | "partially_supported" | "conflicting" | "not_found" | "not_verifiable";
+  evidence_ids: string[];
+  explanation: string;
+  candidate_action: string;
+}
+
+export interface ConversationalReportQuestion {
+  question_id: string;
+  root_question_id: string;
+  question_kind: "planned" | "adaptive_follow_up";
+  question_state: "pending" | "asked" | "answered" | "skipped";
+  question_text: string;
+  accepted_attempt_id: string | null;
+  answer_level: ConversationalLevel;
 }
 
 export interface ConversationalProgressGroup {
