@@ -4,7 +4,7 @@ Execution date: 27 September 2026.
 
 ## Scope and status
 
-Repair B PR #70 was confirmed merged before this branch started. This checkpoint completes the approved repair plan's Tasks 6–8: compatible dimension-level progress, report/progress UI, and permitted evidence-aware export. All three tasks are implemented and verified; the final whole-branch review is pending at this interim record.
+Repair B PR #70 was confirmed merged before this branch started. This checkpoint completes the approved repair plan's Tasks 6–8: compatible dimension-level progress, report/progress UI, and permitted evidence-aware export. All three tasks are implemented, verified and reviewed inline. Repair C is ready for the user's integration choice, not a Phase 2 or release acceptance decision.
 
 Base: `aa567e15c9fa6f9a3eae079a7257503c9aea5b4b`, updated `origin/main`. Branch: `fix/coach-phase1-progress-export-repairs`; target: `main`. Worktree: `.worktrees/coach-phase1-progress-export-repairs`. Inline execution only; no subagents. Root checkout, user PDF, untracked readiness report, and prior worktrees remain untouched. No push, merge, deployment, rollout enablement or Phase 2 work is included in this checkpoint.
 
@@ -70,6 +70,14 @@ Task 8 RED: **42 failed / 19 passed in 3.68s**, exit 1; actual source and state/
 The full regression logs include asynchronous test-cleanup exceptions (`no such table: async_jobs` / un-retrieved task exceptions), in addition to deliberately exercised worker failures. These patterns occur in the merged baseline and Task 6 full run as well; Task 8 and Task 6 logs each contain 120 matching lines at inspection. They are disclosed test-harness noise, not silently reclassified as clean runtime acceptance. This checkpoint does not repair unrelated legacy fixture teardown or establish restart/process acceptance from those logs.
 
 Task 8 specification/security review checked V6 consent/approval boundaries, parent ownership/current contributor checks, code-point spans, strict report/state/version fences, opt-in content, deletion-safe failures, deterministic attachments and no raw audio/path/artifact access. Subsequent code-quality review checked the one-statement consistency boundary, linear aggregate cardinality, deterministic ordering, typed report validation and serializer sanitization. No critical/important issue remains in this task's scope; final whole-branch author review remains separate.
+
+## Final checkpoint review
+
+Production review range: `aa567e15c9fa6f9a3eae079a7257503c9aea5b4b..2fd4abf`. Commits: `c05dd88` (Task 6), `51e635c` (Task 7), `2fd4abf` (Task 8). The following report-only commit records this final review without changing verified production or test source. Task completion checks additionally passed 299 backend tests (Task 6), 5 UI component tests (Task 7), and 78 backend export/privacy/DAST tests in 6.36s (Task 8).
+
+After Task 8's completion ledger entry, a separate whole-branch self-review used the generated 150,386-byte review package. Specification/security compliance was reviewed first, then code quality, against the approved plan's five review-focus classes: deletion/stale workers, claim/dispatch failure, production-built report privacy, populated independent progress/UI, and honest separation of mocked/harness from application/model acceptance. Actual consumers, deterministic dimension algorithm, strict projections, SQL filters/aggregate ownership, serializer fences, fixtures and disclosure record were inspected.
+
+Verdicts: no unresolved critical/important finding in Tasks 6–8; no deferred minors or silently declined-to-judge behaviors. This is author self-review under the user's no-subagent preference, weaker than an independent review; the user decides whether it is sufficient before merge. Remaining acceptance/runtime/specification work below is not declared complete. Complete V6 reread remains the publication gate before creating the next PR. Worktree, locked dependencies and ignored execution evidence remain available for review; no cleanup of ongoing plan evidence or unrelated worktrees occurred.
 
 ## Remaining checkpoints
 
