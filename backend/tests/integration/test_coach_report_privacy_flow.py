@@ -273,6 +273,10 @@ async def test_export_snapshot_and_version_recheck_ignore_cached_session_identit
     from sqlalchemy import update
 
     await seed_built_report(coach_database, with_audio=True)
+    async with coach_database() as db:
+        row = await db.get(InterviewSession, "readable-report")
+        row.status = row.conversation_state = "completed"
+        await db.commit()
     async with coach_database() as reader:
         cached = await reader.get(InterviewSession, "readable-report")
         assert cached.retention_version == 0
@@ -302,6 +306,273 @@ async def test_export_snapshot_and_version_recheck_ignore_cached_session_identit
         assert snapshot is not None
         assert snapshot.retention_version == 1
         assert snapshot.retention_summary["attempts"][0]["audio_state"] == "deleted"
+
+
+async def seed_export_report(factory, *, consent=True):
+    from app.models.coach_session import CoachSessionEvidenceRecord
+    from app.services.coach_conversational_report import build_conversational_report
+    from test_coach_report_analytics import seed_populated_report
+
+    await seed_populated_report(factory)
+    async with factory() as db:
+        row = await db.get(InterviewSession, "populated-report")
+        row.status = row.conversation_state = "completed"
+        row.session_plan_json = {"evidence_selection": {
+            "application_cv": "current_if_no_approved" if consent else "approved_only",
+            "draft_evidence_consent": consent,
+        }}
+        for evidence_id, approval, text in (
+            ("selected-unapproved", "candidate_selected_unapproved", "UNAPPROVED-SOURCE-CANARY"),
+            ("selected-draft", "draft", "DRAFT-SOURCE-CANARY"),
+            ("unused-approved", "approved", "UNRELATED-SOURCE-CANARY"),
+        ):
+            db.add(CoachSessionEvidenceRecord(
+                session_id=row.id, evidence_id=evidence_id,
+                source_type="application_cv" if approval == "candidate_selected_unapproved" else "question_bank",
+                source_record_id=f"source-{evidence_id}", source_record_version="2",
+                source_path="PRIVATE-EVIDENCE-PATH", snapshot_text=text,
+                approval_state=approval, content_hash="c" * 64, snapshot_hash="d" * 64,
+            ))
+        evaluation = await db.get(InterviewAttemptEvaluation, "evaluation-root-1")
+        findings = json.loads(json.dumps(evaluation.evidence_findings_json))
+        findings["claims"][0]["evidence_ids"] += ["selected-unapproved", "selected-draft"]
+        evaluation.evidence_findings_json = findings
+        attempt = await db.get(SessionRecording, "accepted-root-1")
+        attempt.self_assessment_json = {"note": "REFLECTION-SOURCE-CANARY"}
+        attempt.audio_uri = "PRIVATE-AUDIO-PATH"
+        await db.flush()
+        snapshot = await ConversationalSessionRepository(db).load_report_input_snapshot(row.id, 7)
+        row.report_json = build_conversational_report(snapshot).persisted_json()
+        row.report_state = "completed"
+        await db.commit()
+
+
+async def export_report_http(factory, *, format_name="json", activity=7, retention=0, **flags):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from app.database import get_db
+    from app.routers.coach_conversation import router
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def request_db():
+        async with factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = request_db
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        return await client.post("/api/coach/sessions/populated-report/exports", json={
+            "format": format_name, "expected_activity_version": activity,
+            "expected_retention_version": retention,
+            "contract_version": "coach_report_export_v1", **flags,
+        })
+
+
+@pytest.mark.parametrize("format_name", ["json", "markdown"])
+async def test_actual_export_projects_only_report_referenced_consented_evidence(coach_database, format_name):
+    await seed_export_report(coach_database)
+    plain = await export_report_http(coach_database, format_name=format_name)
+    included = await export_report_http(coach_database, format_name=format_name, include_evidence_details=True)
+    repeated = await export_report_http(coach_database, format_name=format_name, include_evidence_details=True)
+    assert plain.status_code == included.status_code == repeated.status_code == 200, included.text
+    assert included.content == repeated.content
+    assert included.headers["etag"] == repeated.headers["etag"]
+    for canary in ("Synthetic approved evidence", "UNAPPROVED-SOURCE-CANARY", "DRAFT-SOURCE-CANARY"):
+        assert canary not in plain.text
+        assert canary in included.text
+    for canary in ("UNRELATED-SOURCE-CANARY", "PRIVATE-EVIDENCE-PATH", "PRIVATE-AUDIO-PATH"):
+        assert canary not in plain.text and canary not in included.text
+    assert "Candidate-selected unapproved source" in included.text
+    assert "Draft source" in included.text
+    assert "not independent verification" in included.text
+    assert included.headers["content-disposition"] == f'attachment; filename="hatch-coach-populated-report.{"json" if format_name == "json" else "md"}"'
+    assert included.headers["content-type"] == f'{"application/json" if format_name == "json" else "text/markdown"}; charset=utf-8'
+    assert included.headers["cache-control"] == "no-store"
+    assert included.headers["x-hatch-session-activity-version"] == "7"
+    if format_name == "json":
+        details = included.json()["evidence_details"]
+        assert [item["evidence_id"] for item in details] == ["approved-evidence", "selected-draft", "selected-unapproved"]
+        assert details[-1]["approval_state"] == "candidate_selected_unapproved"
+        assert details[-1]["source_record_version"] == "2"
+        assert details[-1]["attempt_ids"] == ["accepted-root-1"]
+
+
+@pytest.mark.parametrize("format_name", ["json", "markdown"])
+async def test_export_does_not_promote_unconsented_sources(coach_database, format_name):
+    await seed_export_report(coach_database, consent=False)
+    response = await export_report_http(coach_database, format_name=format_name, include_evidence_details=True)
+    assert response.status_code == 200, response.text
+    assert "Synthetic approved evidence" in response.text
+    assert "UNAPPROVED-SOURCE-CANARY" not in response.text
+    assert "DRAFT-SOURCE-CANARY" not in response.text
+
+
+@pytest.mark.parametrize("state", ["active", "asking"])
+async def test_export_requires_both_completed_states(coach_database, state):
+    await seed_export_report(coach_database)
+    async with coach_database() as db:
+        row = await db.get(InterviewSession, "populated-report")
+        if state == "active":
+            row.status = "active"
+        else:
+            row.conversation_state = "asking"
+        await db.commit()
+    response = await export_report_http(coach_database)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_report_unavailable"
+
+
+@pytest.mark.parametrize("version", ["activity", "retention"])
+async def test_export_version_mismatch_has_canonical_source_changed_error(coach_database, version):
+    await seed_export_report(coach_database)
+    response = await export_report_http(coach_database, **{version: 6 if version == "activity" else 1})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "coach_export_source_changed"
+
+
+@pytest.mark.parametrize("format_name", ["json", "markdown"])
+@pytest.mark.parametrize("mutation", ["activity", "retention", "hard_delete", "status"])
+async def test_export_rechecks_real_concurrent_mutation_before_response(
+    coach_database, monkeypatch, format_name, mutation,
+):
+    from sqlalchemy import update
+
+    await seed_export_report(coach_database)
+    original = ConversationalSessionRepository.load_export_snapshot
+
+    async def capture_then_mutate(repository, session_id, request):
+        snapshot = await original(repository, session_id, request)
+        assert snapshot is not None
+        async with coach_database() as writer:
+            if mutation == "hard_delete":
+                await CoachPrivacyService(ConversationalSessionRepository(writer)).claim_hard_deletion(
+                    session_id, deletion_request("export-race-delete"), now=datetime.utcnow(),
+                )
+            else:
+                values = {"activity_version": 8} if mutation == "activity" else (
+                    {"retention_version": 1} if mutation == "retention" else {"status": "active"}
+                )
+                await writer.execute(update(InterviewSession).where(InterviewSession.id == session_id).values(**values))
+            await writer.commit()
+        return snapshot
+
+    monkeypatch.setattr(ConversationalSessionRepository, "load_export_snapshot", capture_then_mutate)
+    response = await export_report_http(coach_database, format_name=format_name,
+        include_transcript=True, include_evidence_details=True, include_attempt_history=True)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "coach_export_source_changed"
+    assert "SOURCE-CANARY" not in response.text and "Synthetic answer" not in response.text
+    assert "content-disposition" not in response.headers
+
+
+@pytest.mark.parametrize("format_name", ["json", "markdown"])
+async def test_export_after_real_transcript_deletion_and_report_rebuild_excludes_sources(
+    coach_database, format_name,
+):
+    from app.models.coach_session import InterviewTranscriptVersion
+    from app.schemas.coach_conversation import ConversationCommandRequest
+    from app.services.coach_conversation_commands import ConversationCommandService
+    from app.services.coach_conversational_report import build_conversational_report
+    from test_coach_report_dispatch import await_terminal
+
+    await seed_export_report(coach_database)
+    canary = "DELETED-TRANSCRIPT-CANARY"
+    async with coach_database() as db:
+        attempt = await db.get(SessionRecording, "accepted-root-1")
+        attempt.transcript = canary
+        transcript = await db.get(InterviewTranscriptVersion, attempt.current_transcript_version_id)
+        transcript.transcript = canary
+        evaluation = await db.get(InterviewAttemptEvaluation, attempt.current_evaluation_version_id)
+        findings = json.loads(json.dumps(evaluation.evidence_findings_json))
+        findings["claims"][0].update(claim_text=canary, transcript_end=len(canary))
+        evaluation.evidence_findings_json = findings
+        await db.flush()
+        row = await db.get(InterviewSession, "populated-report")
+        source = await ConversationalSessionRepository(db).load_report_input_snapshot(row.id, 7)
+        row.report_json = build_conversational_report(source).persisted_json()
+        await db.commit()
+    before = await export_report_http(coach_database, format_name=format_name,
+        include_transcript=True, include_evidence_details=True)
+    assert before.status_code == 200
+    assert canary in before.text and "UNAPPROVED-SOURCE-CANARY" in before.text
+    async with coach_database() as db:
+        row = await db.get(InterviewSession, "populated-report")
+        result = await ConversationCommandService(db).execute(user_id="local", session_id=row.id,
+            request=ConversationCommandRequest.model_validate({
+                "command_id": "delete-export-transcript", "command_type": "delete_transcript",
+                "expected_state_version": row.state_version,
+                "payload": {"attempt_id": "accepted-root-1"},
+                "contract_version": "coach_conversation_command_v1",
+            }))
+        assert result.async_job_id is not None
+    row, job = await await_terminal(coach_database, result.async_job_id)
+    assert job.status == "done" and row.report_state == "completed"
+    after = await export_report_http(coach_database, format_name=format_name,
+        activity=row.activity_version, retention=row.retention_version,
+        include_transcript=True, include_evidence_details=True, include_attempt_history=True)
+    assert after.status_code == 200, after.text
+    for forbidden in (canary, "UNAPPROVED-SOURCE-CANARY", "DRAFT-SOURCE-CANARY", "REFLECTION-SOURCE-CANARY"):
+        assert forbidden not in after.text
+    assert "Synthetic approved evidence" in after.text
+    async with coach_database() as db:
+        attempt = await db.get(SessionRecording, "accepted-root-1")
+        assert attempt.transcript is None and attempt.attempt_state == "deleted"
+
+
+@pytest.mark.parametrize("invalid_source", ["foreign_evaluation", "source_deleted", "stale_span", "deleted_attempt"])
+async def test_export_evidence_ignores_no_longer_current_contributors(coach_database, invalid_source):
+    from app.models.coach_session import SessionQuestion, InterviewTranscriptVersion
+
+    await seed_export_report(coach_database)
+    async with coach_database() as db:
+        attempt = await db.get(SessionRecording, "accepted-root-1")
+        if invalid_source == "foreign_evaluation":
+            attempt.current_evaluation_version_id = "evaluation-root-2"
+        elif invalid_source == "source_deleted":
+            question = await db.get(SessionQuestion, "root-1")
+            question.source_deleted = True
+        elif invalid_source == "stale_span":
+            transcript = await db.get(InterviewTranscriptVersion, attempt.current_transcript_version_id)
+            transcript.transcript = "A different current answer"
+        else:
+            attempt.attempt_state = "deleted"
+            # Residual content must not be exported even in a corrupt deleted row.
+            attempt.transcript = "DELETED-RESIDUAL-CANARY"
+        await db.commit()
+    response = await export_report_http(coach_database, include_evidence_details=True, include_transcript=True)
+    assert response.status_code == 200, response.text
+    for forbidden in ("UNAPPROVED-SOURCE-CANARY", "DRAFT-SOURCE-CANARY", "DELETED-RESIDUAL-CANARY"):
+        assert forbidden not in response.text
+    assert "Synthetic approved evidence" in response.text
+
+
+async def test_export_snapshot_is_one_statement_and_creates_no_artifact(coach_database, tmp_path):
+    from sqlalchemy import event, select, func
+
+    await seed_export_report(coach_database)
+    statements = []
+    async with coach_database() as db:
+        engine = db.bind.sync_engine
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+        event.listen(engine, "before_cursor_execute", capture)
+        try:
+            snapshot = await ConversationalSessionRepository(db).load_export_snapshot("populated-report", ReportExportRequest(
+                format="json", expected_activity_version=7, expected_retention_version=0,
+                include_transcript=True, include_evidence_details=True, include_attempt_history=True,
+                contract_version="coach_report_export_v1",
+            ))
+        finally:
+            event.remove(engine, "before_cursor_execute", capture)
+        assert snapshot is not None
+        assert len(statements) == 1
+        before = await db.scalar(select(func.count()).select_from(AsyncJob))
+    for _ in range(2):
+        assert (await export_report_http(coach_database)).status_code == 200
+    async with coach_database() as db:
+        assert await db.scalar(select(func.count()).select_from(AsyncJob)) == before
+    assert not list(tmp_path.rglob("*.md")) and not list(tmp_path.rglob("*.json"))
 
 
 def synthetic_session(**values):
@@ -362,7 +633,7 @@ async def test_hidden_deletion_state_is_excluded_from_normal_reads(
         assert exported.status_code == 409
         assert (
             await ConversationalSessionRepository(db).load_progress_snapshots(
-                ProgressSelector(mode="filtered", compatibility_key="synthetic-key")
+                ProgressSelector(mode="exact", compatibility_key="synthetic-key")
             )
             == []
         )

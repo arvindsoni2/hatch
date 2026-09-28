@@ -182,3 +182,81 @@ test("submits hard deletion only after accessible confirmation and never opens a
   await expect(page.getByText("Deletion is processing.")).toBeVisible();
   expect(browserDialogOpened).toBe(false);
 });
+
+// Mocked HTTP responses exercise browser wiring/rendering only, not integrated
+// backend execution, report reconstruction, privacy outcomes or model acceptance.
+test("selects legal progress contexts and keeps dimension groups and hostile findings separate", async ({ page }) => {
+  await bypassOnboarding(page);
+  const requests: Array<Record<string, string>> = [];
+  const dimensions = { relevance: "developing", structure: "strong", specificity: "not_assessed",
+    impact: "not_assessed", role_depth: "not_assessed", clarity: "not_assessed", conciseness: "not_assessed" };
+  const session = { id: SESSION_ID, company_name: "Synthetic", role_title: "Engineer",
+    status: "completed", overall_score: null, created_at: "2026-01-01T10:00:00",
+    experience_version: "conversational_v1", conversation_state: "completed",
+    session_level: "developing", retention_summary: null };
+  await page.route("**/api/coach/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/coach/capabilities") return json(route, {
+      face_analysis: false, tts: false, conversational_interview: true,
+    });
+    if (url.pathname === "/api/coach/sessions") return json(route, [session]);
+    if (url.pathname === `/api/coach/sessions/${SESSION_ID}`) return json(route, {
+      ...session, application_id: "application-progress-ui", questions: [],
+    });
+    if (url.pathname === `/api/coach/sessions/${SESSION_ID}/report`) return json(route, {
+      session_id: SESSION_ID, report_state: "completed", activity_version: 1, retention_version: 0,
+      session_level: "developing", dimensions, compatibility_key: "key-a",
+      counts: { planned_questions_total: 2, planned_questions_answered: 2, planned_questions_skipped: 0,
+        follow_ups_asked: 0, follow_ups_answered: 0, accepted_attempts: 2,
+        retry_attempts: 0, unavailable_attempts: 0, hints_used: 0 },
+      strengths: [], improvement_priorities: [], unassessed_areas: ["specificity", "impact", "role_depth", "clarity", "conciseness"],
+      evidence_review_items: [], question_summaries: [], practice_suggestions: [],
+      candidate_reflection: null, retention_summary: { attempts: [] }, diagnostics: {},
+      contract_version: "coach_conversational_report_v1",
+    });
+    if (url.pathname === "/api/coach/conversational-progress") {
+      const filters = Object.fromEntries(url.searchParams.entries());
+      requests.push(filters);
+      const keys = "application_id" in filters ? ["a", "b"] : ["a"];
+      return json(route, {
+        selector_mode: "application_id" in filters ? "filtered" : "exact", applied_filters: filters,
+        group_limit: 20, total_groups: keys.length, returned_groups: keys.length, groups_truncated: false,
+        groups: keys.map((key) => ({
+          compatibility_key: `key-${key}`, context: { application_id: "application-progress-ui",
+            company_name: "Synthetic", role_title: `Format ${key.toUpperCase()}`,
+            role_family: "software_engineering", role_level: "senior", interview_type: "behavioural" },
+          sessions: [{ session_id: `session-${key}`, activity_version: 1,
+            completed_at: "2026-01-01T10:00:00", session_level: "developing", dimensions }],
+          current_levels: dimensions, previous_levels: { ...dimensions, relevance: "strong" },
+          trends: { relevance: key === "a" ? "mixed" : "declining", structure: "stable",
+            specificity: "not_enough_evidence", impact: "not_enough_evidence",
+            role_depth: "not_enough_evidence", clarity: "not_enough_evidence", conciseness: "not_enough_evidence" },
+          strongest_areas: [], priority_areas: [], evidence_review_items: [{
+            attempt_id: ATTEMPT_ID, claim_id: `claim-${key}`, claim_text: HOSTILE_TRANSCRIPT,
+            transcript_start: 0, transcript_end: Array.from(HOSTILE_TRANSCRIPT).length,
+            status: "not_verifiable", evidence_ids: [], explanation: "No permitted matching source.",
+            candidate_action: "Review the source before reuse.",
+          }],
+        })), contract_version: "coach_conversational_progress_v2",
+      });
+    }
+    return route.fallback();
+  });
+  await page.goto("/coach");
+  await expect(page.getByRole("combobox", { name: "Progress interview" })).toBeVisible();
+  expect(requests).toEqual([]);
+  await page.getByRole("combobox", { name: "Progress interview" }).selectOption(SESSION_ID);
+  await expect(page.getByRole("heading", { name: "Format A" })).toBeVisible();
+  const tables = page.getByRole("table");
+  await expect(tables).toHaveCount(1);
+  await expect(tables.nth(0).getByText("Mixed")).toBeVisible();
+  await expect(page.getByText(HOSTILE_TRANSCRIPT).first()).toBeVisible();
+  await expect(page.locator("img")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __coachPrivacyXss?: boolean }).__coachPrivacyXss)).toBeUndefined();
+  expect(requests.at(-1)).toEqual({ compatibility_key: "key-a" });
+  await page.getByRole("combobox", { name: "Compare interviews" }).selectOption("application");
+  await expect.poll(() => requests.at(-1)).toEqual({ application_id: "application-progress-ui" });
+  await expect(tables).toHaveCount(2);
+  await expect(tables.nth(0).getByText("Mixed")).toBeVisible();
+  await expect(tables.nth(1).getByText("Declining")).toBeVisible();
+});

@@ -10,7 +10,7 @@ from typing import Literal, Protocol
 
 from ..schemas.coach_conversation import ConversationalProgressRead
 from .coach_conversational_report import LEVEL_TO_ORDINAL, Level
-from .coach_conversational_contracts import PROGRESS_CONTRACT
+from .coach_conversational_contracts import CONTENT_DIMENSIONS, PROGRESS_CONTRACT
 
 Trend = Literal[
     "improving",
@@ -24,25 +24,25 @@ Trend = Literal[
 @dataclass(frozen=True)
 class ProgressSelector:
     mode: Literal["exact", "filtered"]
-    session_id: str | None = None
     application_id: str | None = None
     compatibility_key: str | None = None
-    company_name: str | None = None
-    role_title: str | None = None
+    role_family: str | None = None
+    role_level: str | None = None
+    interview_type: str | None = None
 
     def __post_init__(self) -> None:
         filters = (
             self.application_id,
-            self.compatibility_key,
-            self.company_name,
-            self.role_title,
+            self.role_family,
+            self.role_level,
+            self.interview_type,
         )
         if self.mode == "exact":
-            if self.session_id is None or any(value is not None for value in filters):
-                raise ValueError("exact selector accepts only session_id")
+            if not self.compatibility_key or any(value is not None for value in filters):
+                raise ValueError("exact selector accepts only compatibility_key")
         elif self.mode == "filtered":
-            if self.session_id is not None:
-                raise ValueError("filtered selector cannot include session_id")
+            if self.compatibility_key is not None or not any(filters):
+                raise ValueError("filtered selector requires a broad filter and no exact key")
         else:
             raise ValueError("unsupported progress selector mode")
 
@@ -58,6 +58,12 @@ class ProgressSnapshot:
     application_id: str | None = None
     company_name: str | None = None
     role_title: str | None = None
+    role_family: str | None = None
+    role_level: str | None = None
+    interview_type: str | None = None
+    strengths: tuple[Mapping[str, object], ...] = ()
+    priorities: tuple[Mapping[str, object], ...] = ()
+    evidence_review_items: tuple[Mapping[str, object], ...] = ()
 
 
 class ProgressSnapshotRepository(Protocol):
@@ -89,14 +95,14 @@ def derive_trend(levels: Sequence[Level | str]) -> Trend:
 
 def _matches(snapshot: ProgressSnapshot, selector: ProgressSelector) -> bool:
     if selector.mode == "exact":
-        return snapshot.session_id == selector.session_id
+        return snapshot.compatibility_key == selector.compatibility_key
     return all(
         getattr(snapshot, field_name) == value
         for field_name, value in (
             ("application_id", selector.application_id),
-            ("compatibility_key", selector.compatibility_key),
-            ("company_name", selector.company_name),
-            ("role_title", selector.role_title),
+            ("role_family", selector.role_family),
+            ("role_level", selector.role_level),
+            ("interview_type", selector.interview_type),
         )
         if value is not None
     )
@@ -106,11 +112,11 @@ def _filters(selector: ProgressSelector) -> dict[str, str]:
     return {
         field_name: value
         for field_name, value in (
-            ("session_id", selector.session_id),
             ("application_id", selector.application_id),
             ("compatibility_key", selector.compatibility_key),
-            ("company_name", selector.company_name),
-            ("role_title", selector.role_title),
+            ("role_family", selector.role_family),
+            ("role_level", selector.role_level),
+            ("interview_type", selector.interview_type),
         )
         if value is not None
     }
@@ -137,34 +143,56 @@ def get_progress(
             members,
             key=lambda item: (item.completed_at, item.session_id),
         )
+        latest = ordered[-1]
+        assessed = {
+            dimension: [
+                item.dimensions[dimension]
+                for item in ordered
+                if item.dimensions.get(dimension) in LEVEL_TO_ORDINAL
+                and item.dimensions[dimension] != "not_assessed"
+            ][-3:]
+            for dimension in CONTENT_DIMENSIONS
+        }
         group_rows.append(
             {
                 "compatibility_key": compatibility_key,
-                "session_count": len(ordered),
-                "latest_session_id": ordered[-1].session_id,
-                "latest_activity_version": ordered[-1].activity_version,
-                "latest_session_level": ordered[-1].session_level,
-                "trend": derive_trend([item.session_level for item in ordered]),
+                "context": {
+                    name: getattr(latest, name)
+                    for name in (
+                        "application_id", "company_name", "role_title", "role_family",
+                        "role_level", "interview_type",
+                    )
+                },
+                "current_levels": {
+                    name: levels[-1] if levels else "not_assessed"
+                    for name, levels in assessed.items()
+                },
+                "previous_levels": {
+                    name: levels[-2] if len(levels) >= 2 else "not_assessed"
+                    for name, levels in assessed.items()
+                },
+                "trends": {name: derive_trend(levels) for name, levels in assessed.items()},
+                "strongest_areas": list(latest.strengths),
+                "priority_areas": list(latest.priorities),
+                "evidence_review_items": list(latest.evidence_review_items),
                 "sessions": [
                     {
                         "session_id": item.session_id,
                         "activity_version": item.activity_version,
                         "completed_at": item.completed_at.isoformat(),
                         "session_level": item.session_level,
-                        "dimensions": dict(item.dimensions),
+                        "dimensions": {
+                            name: item.dimensions.get(name, "not_assessed")
+                            for name in CONTENT_DIMENSIONS
+                        },
                     }
                     for item in ordered
                 ],
             }
         )
 
-    group_rows.sort(
-        key=lambda item: (
-            item["sessions"][-1]["completed_at"],
-            item["compatibility_key"],
-        ),
-        reverse=True,
-    )
+    group_rows.sort(key=lambda item: item["compatibility_key"])
+    group_rows.sort(key=lambda item: item["sessions"][-1]["completed_at"], reverse=True)
     return ConversationalProgressRead(
         selector_mode=selector.mode,
         applied_filters=_filters(selector),

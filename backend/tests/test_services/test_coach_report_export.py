@@ -60,7 +60,8 @@ def test_json_export_is_sorted_stable_and_uses_live_not_persisted_retention(snap
     assert json.loads(first.body)["retention_summary"] == snapshot.retention_summary
     assert first.headers()["X-Hatch-Session-Activity-Version"] == "3"
     assert first.headers()["X-Hatch-Retention-Version"] == "4"
-    assert first.filename == "coach-report-session-opaque-1.json"
+    assert first.filename == "hatch-coach-session-opaque-1.json"
+    assert first.media_type == "application/json; charset=utf-8"
 
 
 def test_markdown_export_has_fixed_sections_and_no_raw_link(snapshot):
@@ -87,3 +88,49 @@ async def test_export_rechecks_both_source_versions(snapshot):
 
     with pytest.raises(ValueError, match="source_changed"):
         await export_report("session-opaque-1", request(), Repository())
+
+
+@pytest.mark.parametrize("format_name", ["json", "markdown"])
+@pytest.mark.parametrize("flags", range(16))
+def test_export_include_flags_apply_independently_in_both_formats(format_name, flags):
+    import json
+
+    source = ExportSnapshot(
+        session_id='opaque/"\r\nInjected: true', report_state="completed",
+        activity_version=3, retention_version=4,
+        report_json={"session_level": "strong", "candidate_reflection": {"note": "REFLECTION-CANARY"}},
+        transcript=({"transcript": "TRANSCRIPT-CANARY", "audio_uri": "PRIVATE-AUDIO"},),
+        evidence_details=({"snapshot_text": "EVIDENCE-CANARY", "source_path": "PRIVATE-PATH"},),
+        attempt_history=({"attempt_id": "HISTORY-CANARY", "path": "PRIVATE-PATH"},),
+    )
+    options = request(format_name).model_copy(update={
+        "include_transcript": bool(flags & 1), "include_evidence_details": bool(flags & 2),
+        "include_attempt_history": bool(flags & 4), "include_candidate_reflection": bool(flags & 8),
+    })
+    payload = render_report_export(source, options)
+    assert payload == render_report_export(source, options)
+    body = payload.body.decode()
+    for bit, canary in enumerate(("TRANSCRIPT-CANARY", "EVIDENCE-CANARY", "HISTORY-CANARY", "REFLECTION-CANARY")):
+        assert (canary in body) == bool(flags & (1 << bit))
+    assert "PRIVATE-AUDIO" not in body and "PRIVATE-PATH" not in body
+    assert "source_path" not in body
+    assert payload.filename.startswith("hatch-coach-")
+    assert not any(character in payload.filename for character in '\r\n/"')
+    assert payload.headers()["Cache-Control"] == "no-store"
+    if format_name == "json":
+        assert "not independent verification" in json.loads(body)["source_disclaimer"]
+    else:
+        assert "not independent verification" in body
+
+
+def test_markdown_treats_hostile_source_as_literal_data(snapshot):
+    from dataclasses import replace
+
+    hostile = '<img src=x onerror=alert(1)> [open](javascript:alert(1)) ```\n# forged'
+    source = replace(snapshot, evidence_details=({"snapshot_text": hostile},))
+    payload = render_report_export(source, request("markdown").model_copy(update={"include_evidence_details": True}))
+    text = payload.body.decode()
+    assert "## Evidence details" in text
+    assert "<img" not in text
+    assert text.count("```json") == text.count("\n```\n")
+    assert "\\u003cimg" in text
