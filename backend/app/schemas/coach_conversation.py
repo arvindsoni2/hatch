@@ -1224,6 +1224,20 @@ class ConversationCoachingReview(StrictContractModel):
     example_revision: Annotated[str, Field(min_length=1, max_length=2_000)]
 
 
+class ConversationCoachingStored(ConversationCoachingReview):
+    """Persisted coaching also carries non-display evidence and level authority."""
+
+    answer_level: ConversationalLevel
+    transcript_evidence: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=2_000)]],
+        Field(max_length=2),
+    ]
+    evidence_review_items: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=2_000)]],
+        Field(max_length=30),
+    ]
+
+
 class ConversationAnswerReviewRead(StrictContractModel):
     evaluation_id: SafeToken
     evaluation_state: Literal["completed", "unavailable", "invalid"]

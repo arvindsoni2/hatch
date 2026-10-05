@@ -26,6 +26,7 @@ from ..schemas.coach_conversation import (
     ConversationAnswerReviewRead,
     ConversationAttemptHistoryRead,
     ConversationCoachingReview,
+    ConversationCoachingStored,
     ConversationDeliveryObservation,
     ConversationDeliveryReview,
     ConversationEvidenceFinding,
@@ -349,11 +350,22 @@ class CoachLiveViewService:
                         candidate_action=claim["candidate_action"],
                     )
                 )
-            coaching = (
-                ConversationCoachingReview.model_validate(evaluation.coaching_json)
-                if evaluation.coaching_json is not None
-                else None
-            )
+            coaching = None
+            if evaluation.coaching_json is not None:
+                stored_coaching = ConversationCoachingStored.model_validate(
+                    evaluation.coaching_json
+                )
+                if stored_coaching.answer_level != evaluation.answer_level:
+                    raise CoachLiveViewError("coach_conversation_invalid_state")
+                coaching = ConversationCoachingReview.model_validate(
+                    stored_coaching.model_dump(
+                        exclude={
+                            "answer_level",
+                            "transcript_evidence",
+                            "evidence_review_items",
+                        }
+                    )
+                )
             return ConversationAnswerReviewRead(
                 evaluation_id=evaluation.id,
                 evaluation_state="completed",

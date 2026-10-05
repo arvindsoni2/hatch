@@ -740,8 +740,9 @@ def create_app() -> FastAPI:
     app.include_router(interviews_ical_router)
     app.include_router(analytics_router)
     app.include_router(tailor_router)
-    app.include_router(coach_router)
+    # The version-aware report reader must win the shared legacy/conversational URL.
     app.include_router(coach_conversation_router)
+    app.include_router(coach_router)
     app.include_router(digest_router)
     app.include_router(emails_router)
     app.include_router(ghost_router)
