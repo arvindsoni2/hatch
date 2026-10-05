@@ -174,7 +174,9 @@ async def get_conversational_report(
     if safe_id_error is not None:
         return safe_id_error
     session = await db.get(InterviewSession, session_id)
-    if session is not None and session.experience_version != "conversational_v1":
+    if session is None:
+        return await CoachService().get_report(session_id, db)
+    if session.experience_version != "conversational_v1":
         await reconcile_session(db, session_id)
         return await CoachService().get_report(session_id, db)
     if (

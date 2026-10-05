@@ -76,7 +76,7 @@ function isTransportFailure(error: unknown): error is TypeError {
 type LiveRefreshResult =
   | { kind: "accepted"; live: ConversationLiveView; readSequence: number }
   | { kind: "stale"; readSequence: number }
-  | { kind: "failed"; readSequence: number };
+  | { kind: "failed"; readSequence: number; conflict: boolean };
 
 type CommandExecutionResult = {
   post:
@@ -115,6 +115,7 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
   const acceptedStateVersion = useRef(-1);
   const lastRecorderAuthority = useRef<ConversationLiveView | null>(null);
   const latestAuthority = useRef<ConversationLiveView | null>(null);
+  const transientLiveConflicts = useRef(0);
   const pendingAuthorityReads = useRef(new Map<number, Promise<LiveRefreshResult>>());
 
   const refreshLive = useCallback((announce = true): Promise<LiveRefreshResult> => {
@@ -135,20 +136,34 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
         acceptedStateVersion.current = current.state_version;
         lastRecorderAuthority.current = current;
         latestAuthority.current = current;
+        transientLiveConflicts.current = 0;
         setLive(current);
         setLoadError(false);
         if (announce) setAnnouncement(stateLabel(current));
         return { kind: "accepted", live: current, readSequence };
-      } catch {
+      } catch (error) {
         if (readSequence < nextReadSequence.current || readSequence < acceptedReadSequence.current) {
           return { kind: "stale", readSequence };
         }
+        const previous = latestAuthority.current;
+        if (
+          isConflict(error)
+          && previous !== null
+          && (previous.conversation_state === "processing_answer" || previous.conversation_state === "reporting")
+          && transientLiveConflicts.current < 2
+        ) {
+          // A transient 409 during processing may clear on the next poll.
+          // Keep only the last processing view so polling remains active.
+          transientLiveConflicts.current += 1;
+          return { kind: "failed", readSequence, conflict: true };
+        }
+        transientLiveConflicts.current = 0;
         acceptedReadSequence.current = readSequence;
         latestAuthority.current = null;
         setLive(null);
         setLoadError(true);
         setAnnouncement("We could not refresh this interview. Try again.");
-        return { kind: "failed", readSequence };
+        return { kind: "failed", readSequence, conflict: isConflict(error) };
       }
     })();
     pendingAuthorityReads.current.set(readSequence, read);
@@ -215,8 +230,15 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
         if (!isTransportFailure(error)) throw error;
         commandResult = await sendCoachConversationCommand(sessionId, request);
       }
-      const refreshed = await refreshLive();
+      let refreshed = await refreshLive();
       const accepted = ACCEPTED_COMMAND_RESULTS.has(commandResult.result);
+      if (accepted && (commandResult.state === "processing_answer" || commandResult.state === "reporting")) {
+        for (const delayMs of [250, 750]) {
+          if (refreshed.kind !== "failed" || !refreshed.conflict) break;
+          await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+          refreshed = await refreshLive();
+        }
+      }
       if (accepted && refreshed.kind === "accepted" && options.clearTextAfterRefresh) setTextAnswer("");
       return {
         post: accepted ? { kind: "accepted", result: commandResult } : { kind: "rejected" },

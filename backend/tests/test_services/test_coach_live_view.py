@@ -419,8 +419,11 @@ async def test_live_projects_exact_review_and_attempt_history_from_current_autho
                 },
             },
             coaching_json={
+                "answer_level": level,
                 "positive_observation": "The example is relevant.",
                 "priority_improvement": "Make the outcome clearer.",
+                "transcript_evidence": ["I led"],
+                "evidence_review_items": [],
                 "suggested_structure": "State the situation, action, and result.",
                 "practice_instruction": "Practise once using only verified details.",
                 "example_revision": "I led the migration and achieved [add verified metric].",
@@ -462,6 +465,7 @@ async def test_live_projects_exact_review_and_attempt_history_from_current_autho
     assert view.answer_review.delivery.level == "not_assessed"
     assert view.answer_review.evidence_findings[0].source_label == "Draft source"
     assert view.answer_review.coaching is not None
+    assert view.answer_review.coaching.positive_observation == "The example is relevant."
     assert [item.model_dump(mode="json") for item in view.attempt_history] == [
         {
             "attempt_id": "review-history-attempt-1",
@@ -480,6 +484,19 @@ async def test_live_projects_exact_review_and_attempt_history_from_current_autho
             "audio_state": "not_applicable",
         },
     ]
+
+    # Persisted coaching metadata is not display authority; a stale or altered
+    # level must not be projected as a valid live review.
+    evaluation.coaching_json = {
+        **evaluation.coaching_json,
+        "answer_level": "needs_work",
+    }
+    await db_session.commit()
+    with pytest.raises(CoachLiveViewError) as raised:
+        await CoachLiveViewService(db_session).get_live_view(
+            user_id="local", session_id=session.id
+        )
+    assert raised.value.code == "coach_conversation_invalid_state"
 
 
 @pytest.mark.asyncio
