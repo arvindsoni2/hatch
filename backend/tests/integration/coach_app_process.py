@@ -17,9 +17,12 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class CoachAppProcess:
-    def __init__(self, database_path: Path, media_root: Path) -> None:
+    def __init__(
+        self, database_path: Path, media_root: Path, *, app_module: str = "app.main:app"
+    ) -> None:
         self.database_path = database_path.resolve()
         self.media_root = media_root.resolve()
+        self.app_module = app_module
         self._process: asyncio.subprocess.Process | None = None
         self._base_url: str | None = None
 
@@ -54,7 +57,9 @@ class CoachAppProcess:
             for key, value in os.environ.items()
             if key in {"PATH", "LD_LIBRARY_PATH", "LANG", "LC_ALL", "TZ", "HOME"}
         } | {
-            "PYTHONPATH": str(BACKEND_DIR),
+            "PYTHONPATH": os.pathsep.join(
+                (str(BACKEND_DIR), str(BACKEND_DIR / "tests" / "integration"))
+            ),
             "DATABASE_URL": f"sqlite+aiosqlite:///{self.database_path}",
             "HATCH_CONFIG_DIR": str(config),
             "HATCH_COACH_MEDIA_ROOT": str(self.media_root),
@@ -79,7 +84,7 @@ class CoachAppProcess:
                 sys.executable,
                 "-m",
                 "uvicorn",
-                "app.main:app",
+                self.app_module,
                 "--host",
                 "127.0.0.1",
                 "--port",
