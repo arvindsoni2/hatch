@@ -3661,6 +3661,7 @@ class ConversationalSessionRepository:
                         processing_generation=next_generation,
                     )
                 )
+                await self._session.flush()
                 self._session.add(
                     InterviewAttemptEvaluation(
                         id=evaluation_id,

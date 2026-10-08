@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -352,8 +353,16 @@ def exact_processing_snapshot(
                 transcript_id is None
                 or source_transcript_id != transcript_id
                 or len(transcription_rows) != 1
-                or transcription_rows[0].stage_state != "reused"
-                or transcription_rows[0].reused_from_stage_id is None
+                or not (
+                    (
+                        transcription_rows[0].stage_state == "reused"
+                        and transcription_rows[0].reused_from_stage_id is not None
+                    )
+                    or (
+                        transcription_rows[0].stage_state == "not_applicable"
+                        and transcription_rows[0].reused_from_stage_id is None
+                    )
+                )
             ):
                 return None
     else:
@@ -411,6 +420,22 @@ async def _claim_source_transcript_is_valid(
             and claim["source_transcript_version_id"] is None
         )
     transcription = transcription_rows[0]
+    if transcription.stage_state == "not_applicable":
+        transcript = await db.get(
+            InterviewTranscriptVersion, evaluation.transcript_version_id
+        )
+        return bool(
+            transcript is not None
+            and transcript.recording_id == attempt.id
+            and transcript.source == "candidate_edit"
+            and transcript.created_by == "candidate"
+            and transcript.edit_reason == "transcription_error"
+            and transcript.version_number >= 2
+            and transcript.processing_generation == claim["processing_generation"]
+            and transcript.content_hash
+            == hashlib.sha256(transcript.transcript.encode("utf-8")).hexdigest()
+            and claim["source_transcript_version_id"] == transcript.id
+        )
     expected_source = (
         evaluation.transcript_version_id
         if transcription.stage_state == "reused"

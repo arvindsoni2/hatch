@@ -32,7 +32,11 @@ async def _wait_for_setup(client: httpx.AsyncClient, base_url: str, job_id: str)
 
 
 async def _live(client: httpx.AsyncClient, base_url: str, session_id: str) -> dict:
-    response = await client.get(f"{base_url}/api/coach/sessions/{session_id}/live")
+    for _ in range(30):
+        response = await client.get(f"{base_url}/api/coach/sessions/{session_id}/live")
+        if response.status_code != 409:
+            break
+        await asyncio.sleep(0.1)
     assert response.status_code == 200, response.text
     return response.json()
 

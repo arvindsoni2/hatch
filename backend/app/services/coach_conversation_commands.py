@@ -33,6 +33,7 @@ from ..repositories.conversational_session_repository import (
     ConversationalSessionRepository,
     FollowUpAdmissionClaim,
     SessionEventInput,
+    _independent_cleanup_stage_is_valid,
     _stage_immutable_diagnostics,
     canonical_request_hash,
 )
@@ -2176,6 +2177,39 @@ class ConversationCommandService:
         )
         if attempt is None or evaluation is None:
             raise ConversationCommandError("coach_attempt_stale_claim")
+        independent_cleanup = None
+        if (
+            attempt.recording_type == "audio"
+            and attempt.audio_retention_state
+            in {"delete_pending", "deleted", "delete_failed"}
+        ):
+            previous_evaluation = await self.db.scalar(
+                select(InterviewAttemptEvaluation).where(
+                    InterviewAttemptEvaluation.recording_id == attempt.id,
+                    InterviewAttemptEvaluation.version_number
+                    == evaluation.version_number - 1,
+                )
+            )
+            if previous_evaluation is not None:
+                independent_cleanup = await self.db.scalar(
+                    select(InterviewAttemptStage).where(
+                        InterviewAttemptStage.evaluation_version_id
+                        == previous_evaluation.id,
+                        InterviewAttemptStage.stage_name == "audio_cleanup",
+                    )
+                )
+            if (
+                previous_evaluation is None
+                or independent_cleanup is None
+                or not await _independent_cleanup_stage_is_valid(
+                    self.db,
+                    attempt=attempt,
+                    evaluation=previous_evaluation,
+                    cleanup=independent_cleanup,
+                    expected_generation=claim.processing_generation - 1,
+                )
+            ):
+                raise ConversationCommandError("coach_attempt_stale_claim")
         transcript_bound = {
             "content_evaluation",
             "evidence_grounding",
@@ -2196,6 +2230,36 @@ class ConversationCommandService:
                 claim.transcript_version_id is not None
                 and stage_name in {"audio_persist", "transcription", "speech_analysis"}
             )
+            if stage_name == "audio_cleanup" and independent_cleanup is not None:
+                self.db.add(
+                    InterviewAttemptStage(
+                        id=str(uuid.uuid4()),
+                        recording_id=claim.recording_id,
+                        evaluation_version_id=claim.evaluation_version_id,
+                        stage_name="audio_cleanup",
+                        stage_state=independent_cleanup.stage_state,
+                        job_id=independent_cleanup.job_id,
+                        claim_token=independent_cleanup.claim_token,
+                        expected_processing_generation=claim.processing_generation,
+                        source_transcript_version_id=None,
+                        job_deadline_at=independent_cleanup.job_deadline_at,
+                        started_at=independent_cleanup.started_at,
+                        completed_at=independent_cleanup.completed_at,
+                        attempt_count=independent_cleanup.attempt_count,
+                        repair_count=independent_cleanup.repair_count,
+                        last_error_code=independent_cleanup.last_error_code,
+                        diagnostics_json=_stage_immutable_diagnostics(
+                            stage_name="audio_cleanup",
+                            audio_content_hash=attempt.audio_content_hash,
+                            transcript_version_id=claim.transcript_version_id,
+                            transcript_content_hash=None,
+                            evaluation_contract_version=evaluation.evaluation_contract_version,
+                            evidence_contract_version=evaluation.evidence_contract_version,
+                            follow_up_contract_version=evaluation.follow_up_contract_version,
+                        ),
+                    )
+                )
+                continue
             self.db.add(
                 InterviewAttemptStage(
                     id=str(uuid.uuid4()),
