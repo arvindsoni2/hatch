@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+import hashlib
 import logging
 import json
 from pathlib import Path
@@ -158,9 +159,12 @@ class ConversationalEvaluationStage:
 
     name = "content_evaluation"
 
-    def __init__(self, evaluator, *, question: str) -> None:
+    def __init__(
+        self, evaluator, *, question: str, delivery_transcript: str | None = None
+    ) -> None:
         self._evaluator = evaluator
         self._question = question
+        self._delivery_transcript = delivery_transcript
 
     async def run(self, context: AttemptProcessingContext) -> StageResult:
         if (
@@ -185,6 +189,7 @@ class ConversationalEvaluationStage:
                 deadline_at=context.deadline_at,
                 recording_type=context.recording_type,
                 speech_metrics=context.speech_metrics,
+                delivery_transcript=self._delivery_transcript,
             )
         )
         if result.state == "unavailable":
@@ -1100,6 +1105,25 @@ async def _process_attempt_claim(
                     for row in evidence_rows
                 )
                 raw_metrics = attempt.speech_metrics or {}
+                delivery_transcript = None
+                if attempt.recording_type == "audio" and transcript.source == "candidate_edit":
+                    original_transcript = await db.scalar(
+                        select(InterviewTranscriptVersion).where(
+                            InterviewTranscriptVersion.recording_id == attempt.id,
+                            InterviewTranscriptVersion.version_number == 1,
+                            InterviewTranscriptVersion.source == "transcription",
+                        )
+                    )
+                    if (
+                        original_transcript is None
+                        or hashlib.sha256(
+                            original_transcript.transcript.encode("utf-8")
+                        ).hexdigest() != original_transcript.content_hash
+                    ):
+                        raise AttemptPipelineError(
+                            "coach_attempt_stage_dependency_missing", retryable=False
+                        )
+                    delivery_transcript = original_transcript.transcript
                 speech_metrics = None
                 if attempt.recording_type == "audio" and raw_metrics:
                     speech_metrics = SpeechMetricsSnapshot(
@@ -1141,7 +1165,9 @@ async def _process_attempt_claim(
                 from .coach_evidence_grounder import EvidenceGrounder
 
                 content_result = await ConversationalEvaluationStage(
-                    ConversationalEvaluator(model), question=question.text
+                    ConversationalEvaluator(model),
+                    question=question.text,
+                    delivery_transcript=delivery_transcript,
                 ).run(context)
                 content_result = replace(
                     content_result,
