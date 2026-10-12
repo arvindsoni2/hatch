@@ -802,9 +802,22 @@ async def _reconcile_processing_answer(
     if attempt.recording_type == "text" and transcript_id is None:
         return 0
     recovery_names = {stage.stage_name for stage in recovery_stages}
+    # A newly queued audio claim has no transcript yet, but its downstream
+    # stages are persisted as pending (not not_started). Only untouched pending
+    # rows may be recovered before transcription establishes their source.
     if transcript_id is None and any(
         stage.stage_name in TRANSCRIPT_BOUND_STAGES
-        and stage.stage_state != "not_started"
+        and not (
+            stage.stage_state == "not_started"
+            or (
+                stage.stage_state == "pending"
+                and stage.attempt_count == 0
+                and stage.repair_count == 0
+                and stage.started_at is None
+                and stage.completed_at is None
+                and stage.last_error_code is None
+            )
+        )
         for stage in recovery_stages
     ):
         return 0
