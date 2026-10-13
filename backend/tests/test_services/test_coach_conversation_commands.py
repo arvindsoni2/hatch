@@ -46,7 +46,7 @@ from app.repositories.conversational_session_repository import (
 )
 from app.services.coach_media_storage import CoachMediaError
 from app.services.coach_privacy import CoachPrivacyService, HardDeletionClaim
-from app.services.coach_live_view import CoachLiveViewService
+from app.services.coach_live_view import CoachLiveViewError, CoachLiveViewService
 from app.services.coach_reconciliation import (
     reconcile_conversational_session,
     reconcile_stale_coach_state,
@@ -827,6 +827,57 @@ async def test_request_hint_transfers_exact_order_to_new_attempt(
 
 
 @pytest.mark.asyncio
+async def test_audio_draft_has_no_retained_media_before_upload(db_session: AsyncSession) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    session.active_root_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    begun = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=0,
+            payload={"recording_type": "audio", "client_attempt_id": "audio-draft"},
+        ),
+    )
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    assert attempt.audio_retention_state is None
+    assert view.conversation_state == "listening"
+    assert view.active_attempt is not None
+    assert view.active_attempt.audio_retention_state is None
+    assert view.retention.current_audio_state is None
+    assert "finish_answer" in view.allowed_commands
+
+    # Existing drafts created before this repair used an internal "pending" marker.
+    await db_session.refresh(attempt)
+    attempt.audio_retention_state = "pending"
+    await db_session.commit()
+    legacy_view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+    assert legacy_view.active_attempt is not None
+    assert legacy_view.active_attempt.audio_retention_state is None
+    assert legacy_view.retention.current_audio_state is None
+
+    await db_session.refresh(attempt)
+    attempt.audio_content_hash = "a" * 64
+    await db_session.commit()
+    with pytest.raises(CoachLiveViewError):
+        await CoachLiveViewService(db_session).get_live_view(
+            user_id="local", session_id=session.id
+        )
+
+
+@pytest.mark.asyncio
 async def test_retention_changes_future_attempts_only(db_session: AsyncSession) -> None:
     session, questions = await seed_session(
         db_session, state="asking", status="active", version=0
@@ -879,7 +930,7 @@ async def test_retention_changes_future_attempts_only(db_session: AsyncSession) 
     assert old_attempt.attempt_state == "cancelled"
     assert old_attempt.audio_retention_policy == "delete_after_processing"
     assert old_attempt.audio_uri is None
-    assert old_attempt.audio_retention_state == "pending"
+    assert old_attempt.audio_retention_state is None
     assert new_attempt.audio_retention_policy == "retain_until_deleted"
     assert (session.retention_version, session.session_plan_amendment_version) == (1, 1)
     assert session.session_plan_json["retention"] == {

@@ -58,7 +58,7 @@ export default defineConfig({
       command: "npm run build && npm run start -- --hostname 127.0.0.1 --port 3133",
       cwd: __dirname,
       url: frontendUrl,
-      timeout: 120_000,
+      timeout: 180_000,
       reuseExistingServer: false,
       gracefulShutdown: { signal: "SIGTERM", timeout: 12_000 },
       env: { API_URL: backendUrl, NEXT_TELEMETRY_DISABLED: "1" },
