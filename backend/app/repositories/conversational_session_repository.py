@@ -3205,7 +3205,7 @@ class ConversationalSessionRepository:
                     processing_retry_limit=processing_retry_limit,
                     audio_retention_policy=audio_retention_policy,
                     audio_retention_state=(
-                        "not_applicable" if recording_type == "text" else "pending"
+                        "not_applicable" if recording_type == "text" else None
                     ),
                     client_attempt_id=client_attempt_id,
                     hint_count=pending_hint_count,

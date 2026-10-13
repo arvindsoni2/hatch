@@ -45,6 +45,22 @@ function currentRecorderState(recorder: MediaRecorder): RecordingState {
   return recorder.state;
 }
 
+function microphonePermissionGuidance(userAgent: string): string {
+  if (/Edg\/|EdgiOS\/|EdgA\//.test(userAgent)) {
+    return "In Microsoft Edge, allow this site's microphone in Site permissions, then retry.";
+  }
+  if (/Firefox\/|FxiOS\//.test(userAgent)) {
+    return "In Firefox, allow this site's microphone permission, then retry.";
+  }
+  if (/Chrome\/|CriOS\//.test(userAgent)) {
+    return "In Chrome, allow Microphone for this site in Site settings, then retry.";
+  }
+  if (/Safari\//.test(userAgent)) {
+    return "In Safari, allow this site's microphone in website settings, then retry.";
+  }
+  return "Allow this site's microphone in your browser's site permissions, then retry.";
+}
+
 function microphoneFailureMessage(error: unknown): string {
   const name = error instanceof DOMException ? error.name : "";
   if (name === "NotFoundError" || name === "DevicesNotFoundError") {
@@ -54,7 +70,7 @@ function microphoneFailureMessage(error: unknown): string {
     return "The microphone is unavailable or in use by another application. Close it there or answer in writing.";
   }
   if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Microphone access was not granted. Check this site's browser permissions or answer in writing.";
+    return `Microphone access was not granted. ${microphonePermissionGuidance(navigator.userAgent)} You can answer in writing.`;
   }
   return "This browser could not start audio capture. Check browser microphone support or answer in writing.";
 }

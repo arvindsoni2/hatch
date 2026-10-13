@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -68,11 +68,62 @@ async function sendCommand(
   return response.json();
 }
 
-async function submitTypedAnswer(page: import("@playwright/test").Page): Promise<void> {
+async function submitTypedAnswer(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Answer in writing" }).click();
   await page.getByRole("textbox", { name: "Your answer" }).fill(ANSWER);
   await page.getByRole("button", { name: "Submit written answer" }).click();
   await expect(page.getByRole("button", { name: "Accept attempt", exact: false }).first()).toBeVisible({ timeout: 30_000 });
+}
+
+async function installSyntheticBrowserAudio(page: Page): Promise<void> {
+  const fixture = readFileSync(join(__dirname, "fixtures/coach-synthetic-tone.webm.b64"), "utf8").trim();
+  await page.clock.install({ time: new Date("2026-08-09T10:00:00Z") });
+  await page.addInitScript((encodedAudio) => {
+    let analyserDb = -52;
+    Object.defineProperty(window, "__setCoachAnalyserDb", {
+      configurable: true,
+      value: (value: number) => { analyserDb = value; },
+    });
+    const stream = { getTracks: () => [{ stop: () => undefined }] };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: async () => stream },
+    });
+    class SyntheticMediaRecorder {
+      state: RecordingState = "inactive";
+      mimeType = "audio/webm";
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(_stream: unknown) {}
+      start() { this.state = "recording"; }
+      pause() { this.state = "paused"; }
+      resume() { this.state = "recording"; }
+      stop() {
+        if (this.state === "inactive") return;
+        this.state = "inactive";
+        const bytes = Uint8Array.from(atob(encodedAudio), (character) => character.charCodeAt(0));
+        this.ondataavailable?.({ data: new Blob([bytes], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: SyntheticMediaRecorder });
+    class SyntheticAudioContext {
+      state = "running";
+      createMediaStreamSource() {
+        return { connect: () => undefined, disconnect: () => undefined };
+      }
+      createAnalyser() {
+        return {
+          fftSize: 0,
+          disconnect: () => undefined,
+          getFloatTimeDomainData: (values: Float32Array) => values.fill(10 ** (analyserDb / 20)),
+        };
+      }
+      async close() { this.state = "closed"; }
+    }
+    Object.defineProperty(window, "AudioContext", { configurable: true, value: SyntheticAudioContext });
+  }, fixture);
 }
 
 test("Scenario A: real typed interview completes with a persisted named-level report", async ({ page, request }) => {
@@ -154,6 +205,75 @@ test("Scenario B backend: prerecorded audio is transcribed and default-owned med
   await expect.poll(() => existsSync(mediaRoot!)
     ? readdirSync(mediaRoot!, { recursive: true }).filter((name) => name.endsWith(".webm"))
     : [], { timeout: 10_000 }).toEqual([]);
+});
+
+test("Scenario B browser: silence is advisory, keep speaking, finish, and default deletion retain review", async ({ page, request }) => {
+  const sessionId = await createSession(request, ["text", "audio"]);
+  await installSyntheticBrowserAudio(page);
+  await bypassOnboarding(page);
+  await page.goto(`/coach/session/${sessionId}`);
+  await page.getByRole("button", { name: "Start interview" }).click();
+  await page.getByRole("button", { name: "Start audio answer" }).click();
+  await expect(page.getByText("Microphone recording")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause audio recording" })).toBeVisible();
+  await page.clock.runFor(500);
+  await page.evaluate(() => {
+    (window as unknown as { __setCoachAnalyserDb: (value: number) => void }).__setCoachAnalyserDb(-25);
+  });
+  await page.clock.runFor(1600);
+  await page.evaluate(() => {
+    (window as unknown as { __setCoachAnalyserDb: (value: number) => void }).__setCoachAnalyserDb(-55);
+  });
+  await page.clock.runFor(9000);
+  await expect(page.getByRole("region", { name: "Silence check" })).toBeVisible();
+  const beforeChoice = await (await request.get(`/api/coach/sessions/${sessionId}/live`)).json();
+  expect(beforeChoice.conversation_state).toBe("listening");
+  expect(beforeChoice.active_attempt.transcript_version).toBeNull();
+
+  await page.getByRole("button", { name: "Keep speaking and continue recording" }).click();
+  await expect(page.getByRole("region", { name: "Silence check" })).not.toBeVisible();
+  await expect(page.getByText("Microphone recording")).toBeVisible();
+  const afterKeepSpeaking = await (await request.get(`/api/coach/sessions/${sessionId}/live`)).json();
+  expect(afterKeepSpeaking.conversation_state).toBe("listening");
+  expect(afterKeepSpeaking.state_version).toBe(beforeChoice.state_version + 1);
+  await page.getByRole("button", { name: "Finish audio answer while recording" }).click();
+  await expect.poll(async () => {
+    const response = await request.get(`/api/coach/sessions/${sessionId}/live`);
+    if (!response.ok()) return `${response.status()}:${(await response.json()).error?.code}`;
+    const state = await response.json();
+    return `${state.conversation_state}:${state.active_attempt?.audio_retention_state}`;
+  }, { timeout: 30_000 }).toBe("awaiting_next_action:deleted");
+  const finalLive = await (await request.get(`/api/coach/sessions/${sessionId}/live`)).json();
+  expect(finalLive.active_attempt.transcript_version.transcript).toBe(ANSWER);
+  expect(finalLive.answer_review.evaluation_state).toBe("completed");
+  await expect(page.getByText("Audio has been deleted. Your transcript, answer review, and saved delivery observations remain available.")).toBeVisible();
+  const mediaRoot = process.env.HATCH_COACH_TEST_MEDIA_ROOT;
+  expect(mediaRoot).toBeTruthy();
+  await expect.poll(() => existsSync(mediaRoot!)
+    ? readdirSync(mediaRoot!, { recursive: true }).filter((name) => name.endsWith(".webm"))
+    : [], { timeout: 10_000 }).toEqual([]);
+});
+
+test("Scenario B browser: denied microphone leaves the written answer and question available", async ({ page, request }) => {
+  const sessionId = await createSession(request, ["text", "audio"]);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: async () => { throw new DOMException("Permission denied", "NotAllowedError"); } },
+    });
+  });
+  await bypassOnboarding(page);
+  await page.goto(`/coach/session/${sessionId}`);
+  await page.getByRole("button", { name: "Start interview" }).click();
+  await page.getByRole("button", { name: "Start audio answer" }).click();
+  await expect(page.getByRole("status")).toContainText(/Chrome.*microphone|microphone.*Chrome/i);
+  const afterDenial = await (await request.get(`/api/coach/sessions/${sessionId}/live`)).json();
+  expect(afterDenial.conversation_state).toBe("asking");
+  expect(afterDenial.active_attempt).toBeNull();
+  await submitTypedAnswer(page);
+  const finalLive = await (await request.get(`/api/coach/sessions/${sessionId}/live`)).json();
+  expect(finalLive.active_attempt.recording_type).toBe("text");
+  expect(finalLive.answer_review.evaluation_state).toBe("completed");
 });
 
 for (const selectedAttempt of [1, 2] as const) {
