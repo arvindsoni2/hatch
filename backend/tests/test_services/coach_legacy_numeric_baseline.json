@@ -1,0 +1,76 @@
+{
+  "baseline_commit": "52ded582babf684e90325f000233e811914f7710",
+  "report": {
+    "category_scores": {
+      "Behavioural": 8.0,
+      "Technical": 5.5
+    },
+    "coaching_points": [
+      "Practise the PREP method: Point, Reason, Example, Point — keep every sentence tied to the question.",
+      "For every outcome, add a number: %, £/$, time saved, scale. Practise 'so what?' follow-throughs."
+    ],
+    "diagnostic": null,
+    "executive_summary": "2 of 5 questions received a completed evaluation.",
+    "improvement_areas": [
+      "relevance",
+      "impact metrics"
+    ],
+    "overall_score": 6.8,
+    "practice_plan": [],
+    "question_count_evaluated": 2,
+    "question_count_skipped": 1,
+    "question_count_total": 5,
+    "question_count_unanswered": 1,
+    "question_count_unavailable": 1,
+    "question_evaluations": [
+      {
+        "category": "Behavioural",
+        "improvements": [
+          "impact metrics scored 7/10.",
+          "technical depth scored 7/10."
+        ],
+        "overall_score": 8.0,
+        "question_id": "synthetic-q-1",
+        "question_text": "Synthetic interview question 1",
+        "scores": {
+          "communication": 9,
+          "conciseness": 8,
+          "impact_metrics": 7,
+          "relevance": 9,
+          "star_structure": 8,
+          "technical_depth": 7
+        },
+        "strengths": [
+          "Synthetic migration handoff"
+        ]
+      },
+      {
+        "category": "Technical",
+        "improvements": [
+          "conciseness scored 5/10.",
+          "relevance scored 5/10."
+        ],
+        "overall_score": 5.5,
+        "question_id": "synthetic-q-2",
+        "question_text": "Synthetic interview question 2",
+        "scores": {
+          "communication": 6,
+          "conciseness": 5,
+          "impact_metrics": 6,
+          "relevance": 5,
+          "star_structure": 6,
+          "technical_depth": 5
+        },
+        "strengths": [
+          "Synthetic service recovery"
+        ]
+      }
+    ],
+    "report_state": "completed",
+    "session_id": "synthetic-legacy-parity",
+    "strengths": [
+      "Synthetic checkpoint count",
+      "Synthetic service recovery"
+    ]
+  }
+}
