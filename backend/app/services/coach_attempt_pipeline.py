@@ -1041,23 +1041,60 @@ async def _process_attempt_claim(
                 from .coach_retention import CoachRetentionService
 
                 retention = CoachRetentionService(db)
-                cleanup_claim = await retention.claim_default_cleanup(
-                    attempt.id, datetime.utcnow()
-                )
-                if cleanup_claim is not None:
-                    await db.commit()
-                    cleanup_result = await retention.delete_claimed_audio(cleanup_claim)
-                    if cleanup_result != "stale_claim":
-                        await retention.finalise_audio_cleanup(
-                            cleanup_claim, cleanup_result
-                        )
+                # The reconciler may be committing its claim while this worker
+                # reaches cleanup. Give that short handoff time to become visible,
+                # but never treat unclaimed, valid media as successfully deleted.
+                for cleanup_probe in range(6):
+                    cleanup_claim = await retention.claim_default_cleanup(
+                        claim.recording_id, datetime.utcnow()
+                    )
+                    if cleanup_claim is not None:
                         await db.commit()
-                else:
+                        cleanup_result = await retention.delete_claimed_audio(cleanup_claim)
+                        if cleanup_result != "stale_claim":
+                            await retention.finalise_audio_cleanup(
+                                cleanup_claim, cleanup_result
+                            )
+                            await db.commit()
+                        break
+                    # A losing compare-and-swap can roll back and expire every
+                    # ORM row. Reload the exact graph before trusting its owner.
+                    attempt = await db.get(
+                        SessionRecording, claim.recording_id, populate_existing=True
+                    )
+                    evaluation = await db.get(
+                        InterviewAttemptEvaluation,
+                        claim.evaluation_version_id,
+                        populate_existing=True,
+                    )
+                    stages = (await db.scalars(
+                        select(InterviewAttemptStage).where(
+                            InterviewAttemptStage.recording_id == claim.recording_id,
+                            InterviewAttemptStage.evaluation_version_id
+                            == claim.evaluation_version_id,
+                        ).execution_options(populate_existing=True)
+                    )).all()
+                    if attempt is None or evaluation is None:
+                        raise AttemptPipelineError(
+                            "coach_attempt_stale_claim", retryable=False
+                        )
+                    current_partition = await partition_current_processing_stages(
+                        db,
+                        attempt=attempt,
+                        evaluation=evaluation,
+                        stages=stages,
+                        processing_job_id=claim.job_id,
+                    )
+                    if current_partition is not None and current_partition[1] is not None:
+                        break
                     cleanup_result = await retention.classify_cleanup_preclaim(
                         attempt.id, reason="default_cleanup"
                     )
                     if cleanup_result is None:
                         await db.rollback()
+                        if cleanup_probe < 5:
+                            await asyncio.sleep(0.1)
+                            continue
                         raise AttemptPipelineError(
                             "coach_attempt_stale_claim", retryable=False
                         )
@@ -1072,6 +1109,18 @@ async def _process_attempt_claim(
                             "coach_attempt_stale_claim", retryable=False
                         )
                     await db.commit()
+                    break
+                await db.rollback()
+                attempt = await db.get(
+                    SessionRecording, claim.recording_id, populate_existing=True
+                )
+                stages = (await db.scalars(
+                    select(InterviewAttemptStage).where(
+                        InterviewAttemptStage.recording_id == claim.recording_id,
+                        InterviewAttemptStage.evaluation_version_id
+                        == claim.evaluation_version_id,
+                    ).execution_options(populate_existing=True)
+                )).all()
         review_result: dict[str, object] | None = None
         follow_up_proposal: dict[str, object] | None = None
         review_stage_results: dict[str, StageResult] = {}

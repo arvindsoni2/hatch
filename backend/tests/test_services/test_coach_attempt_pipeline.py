@@ -54,6 +54,7 @@ from app.config import settings
 from app.services.coach_command_projection import contextual_allowed_commands
 from app.services.coach_retention import CoachRetentionService
 from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 
 @pytest.fixture(autouse=True)
@@ -789,6 +790,131 @@ async def test_pipeline_default_cleanup_rejects_cancelled_terminal_failure_witho
         "delete_failed",
     )
     assert cleanup is not None and cleanup.stage_state == "failed_retryable"
+
+
+@pytest.mark.asyncio
+async def test_audio_worker_completes_when_reconciler_claims_cleanup_first(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    session, _, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "concurrent-default-cleanup"
+    )
+
+    class Transcriber:
+        def transcribe(self, _path):
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "I delivered",
+                "en",
+                [WordTimestamp("I", 0, 0.1), WordTimestamp("delivered", 0.2, 0.5)],
+            )
+
+    original_claim = CoachRetentionService.claim_default_cleanup
+    independent_factory = async_sessionmaker(
+        db_session.bind, expire_on_commit=False, autoflush=False
+    )
+    independent_claims = []
+
+    async def reconciler_wins_before_worker_claim(retention, recording_id, now):
+        async with independent_factory() as independent_db:
+            independent = await original_claim(
+                CoachRetentionService(independent_db), recording_id, now
+            )
+            assert independent is not None
+            independent_claims.append(independent)
+            await independent_db.commit()
+        rejected = await original_claim(retention, recording_id, now)
+        assert rejected is None
+        # A losing compare-and-swap also rolls back and expires worker rows.
+        await retention.db.rollback()
+        return rejected
+
+    monkeypatch.setattr(
+        CoachRetentionService,
+        "claim_default_cleanup",
+        reconciler_wins_before_worker_claim,
+    )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claim, session_factory=session_factory, transcriber_factory=Transcriber
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    cleanup = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == claim.evaluation_version_id,
+            InterviewAttemptStage.stage_name == "audio_cleanup",
+        )
+    )
+    processing_job = await db_session.get(AsyncJob, claim.job_id)
+    assert session.conversation_state == "awaiting_next_action"
+    assert processing_job is not None and processing_job.status == "done"
+    assert attempt.audio_retention_state == "delete_pending"
+    assert cleanup is not None and cleanup.stage_state == "running"
+    assert cleanup.claim_token == independent_claims[0].claim_token
+    claim_events = await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id)).where(
+            InterviewSessionEvent.recording_id == attempt.id,
+            InterviewSessionEvent.event_type == "audio_cleanup_claimed",
+        )
+    )
+    assert claim_events == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_worker_retries_transient_unclaimed_cleanup_before_failing(
+    db_session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    session, _, attempt, claim = await _ready_audio_claim(
+        db_session, monkeypatch, tmp_path, "transient-default-cleanup"
+    )
+    source = Path(attempt.audio_uri or "")
+
+    class Transcriber:
+        def transcribe(self, _path):
+            from app.services.transcriber import TranscriptionResult, WordTimestamp
+
+            return TranscriptionResult(
+                "I delivered",
+                "en",
+                [WordTimestamp("I", 0, 0.1), WordTimestamp("delivered", 0.2, 0.5)],
+            )
+
+    original_claim = CoachRetentionService.claim_default_cleanup
+    claim_attempts = 0
+
+    async def claim_after_transient_overlap(retention, recording_id, now):
+        nonlocal claim_attempts
+        claim_attempts += 1
+        if claim_attempts == 1:
+            await retention.db.rollback()
+            return None
+        return await original_claim(retention, recording_id, now)
+
+    monkeypatch.setattr(
+        CoachRetentionService,
+        "claim_default_cleanup",
+        claim_after_transient_overlap,
+    )
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db_session
+
+    await _process_attempt_claim(
+        claim, session_factory=session_factory, transcriber_factory=Transcriber
+    )
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert claim_attempts == 2
+    assert session.conversation_state == "awaiting_next_action"
+    assert attempt.audio_retention_state == "deleted"
+    assert not source.exists()
 
 
 @pytest.mark.asyncio

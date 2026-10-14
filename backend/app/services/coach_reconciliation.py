@@ -1741,7 +1741,7 @@ async def reconcile_conversational_session(
                 cleanup_query = select(
                     SessionRecording.id, SessionRecording.created_at
                 ).where(
-                    SessionRecording.session_id == session.id,
+                    SessionRecording.session_id == session_id,
                     SessionRecording.recording_type == "audio",
                     SessionRecording.audio_retention_policy
                     == "delete_after_processing",
@@ -1823,6 +1823,13 @@ async def reconcile_conversational_session(
                             await db.commit()
                     break
         if not changed:
+            # A losing cleanup claim can roll back this session, expiring the
+            # aggregate loaded before reconciliation entered the cleanup loop.
+            session = await db.get(
+                InterviewSession, session_id, populate_existing=True
+            )
+            if session is None or session.deletion_state != "not_requested":
+                return 0
             changed = await _reconcile_transient_state(db, session, now)
         if changed:
             await db.commit()
