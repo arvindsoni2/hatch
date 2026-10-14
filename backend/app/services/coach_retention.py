@@ -106,6 +106,7 @@ def _default_cleanup_is_due(
     )
     return bool(
         attempt.audio_retention_policy == "delete_after_processing"
+        and attempt.audio_retention_state != "delete_pending"
         and _default_cleanup_retention_state_is_eligible(attempt)
         and speech_terminal
         and (transcript_committed or failed_transcription_due)
@@ -450,7 +451,7 @@ class CoachRetentionService:
                         InterviewAttemptStage.recording_id == attempt.id,
                         InterviewAttemptStage.expected_processing_generation
                         == attempt.processing_generation,
-                    )
+                    ).execution_options(populate_existing=True)
                 )
             ).all()
         )
@@ -520,6 +521,7 @@ class CoachRetentionService:
             or attempt.audio_retention_policy
             not in {"delete_after_processing", "retain_until_deleted"}
             or not _general_cleanup_retention_state_is_eligible(attempt)
+            or attempt.audio_retention_state == "delete_pending"
         ):
             return None
         stage_rows = list(
@@ -529,7 +531,7 @@ class CoachRetentionService:
                         InterviewAttemptStage.recording_id == attempt.id,
                         InterviewAttemptStage.expected_processing_generation
                         == attempt.processing_generation,
-                    )
+                    ).execution_options(populate_existing=True)
                 )
             ).all()
         )
@@ -593,9 +595,8 @@ class CoachRetentionService:
                         == attempt.audio_content_hash,
                         SessionRecording.audio_retention_policy
                         == attempt.audio_retention_policy,
-                        SessionRecording.audio_retention_state.in_(
-                            ("temporary", "retained", "delete_failed", "delete_pending")
-                        ),
+                        SessionRecording.audio_retention_state
+                        == attempt.audio_retention_state,
                         or_(
                             SessionRecording.audio_retention_state
                             != "delete_failed",
@@ -612,17 +613,11 @@ class CoachRetentionService:
                         InterviewAttemptStage.evaluation_version_id == evaluation.id,
                         InterviewAttemptStage.expected_processing_generation
                         == attempt.processing_generation,
-                        InterviewAttemptStage.stage_state.in_(
-                            (
-                                "pending",
-                                "not_started",
-                                "not_applicable",
-                                "failed_retryable",
-                                "failed_terminal",
-                                "completed",
-                                "running",
-                            )
-                        ),
+                        InterviewAttemptStage.stage_state == cleanup.stage_state,
+                        InterviewAttemptStage.job_id == cleanup.job_id,
+                        InterviewAttemptStage.claim_token == cleanup.claim_token,
+                        InterviewAttemptStage.job_deadline_at
+                        == cleanup.job_deadline_at,
                     )
                     .values(
                         stage_state="running",
@@ -1263,19 +1258,11 @@ class CoachRetentionService:
             reason=reason,
             _deletion_lease=None,
         )
-        if owned_audio_path_is_missing(self.media_root, Path(claim.audio_uri)):
-            return await self.finalise_reconciled_audio_cleanup(claim, "deleted")
-        preclaim_result = await self.classify_cleanup_preclaim(
-            recording_id, reason=reason
-        )
-        if preclaim_result != "delete_failed":
+        cleanup_result = await self.delete_claimed_audio(claim)
+        if cleanup_result == "stale_claim":
             return False
-        return await self.record_cleanup_claim_failure(
-            recording_id,
-            now,
-            result="delete_failed",
-            reason=reason,
-            actor_type="reconciler",
+        return await self.finalise_reconciled_audio_cleanup(
+            claim, cleanup_result
         )
 
     async def record_cleanup_claim_failure(

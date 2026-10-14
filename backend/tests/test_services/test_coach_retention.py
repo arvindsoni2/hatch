@@ -1141,13 +1141,11 @@ async def test_reconciliation_fences_expired_claim_before_recording_media_failur
     await db_session.refresh(seeded.session)
     await db_session.refresh(seeded.cleanup_stage)
     prior_job = await db_session.get(AsyncJob, claim.job_id)
-    failure_job = await db_session.get(AsyncJob, seeded.cleanup_stage.job_id)
     assert seeded.path.read_bytes() == b"replacement-audio"
     assert seeded.attempt.audio_retention_state == "delete_failed"
     assert seeded.cleanup_stage.stage_state == "failed_retryable"
-    assert seeded.cleanup_stage.job_id != claim.job_id
+    assert seeded.cleanup_stage.job_id == claim.job_id
     assert prior_job is not None and prior_job.status == "failed"
-    assert failure_job is not None and failure_job.status == "failed"
     assert (
         seeded.attempt.attempt_version,
         seeded.session.state_version,
@@ -1752,6 +1750,173 @@ async def test_content_retry_rejects_active_independent_cleanup_without_budget(
     assert seeded.cleanup_stage.claim_token == cleanup_claim.claim_token
     if cleanup_claim._deletion_lease is not None:
         cleanup_claim._deletion_lease.close()
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_survives_losing_cleanup_claim_rollback(
+    db_session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "HATCH_COACH_MEDIA_ROOT", tmp_path / "coach-media")
+    seeded = await _seed_audio(db_session, tmp_path)
+    claim_calls = 0
+
+    async def losing_claim(retention, _recording_id, _now):
+        nonlocal claim_calls
+        claim_calls += 1
+        await retention.db.rollback()
+        return None
+
+    monkeypatch.setattr(CoachRetentionService, "claim_default_cleanup", losing_claim)
+
+    await reconcile_conversational_session(
+        db_session, seeded.session.id, datetime.utcnow()
+    )
+    await db_session.refresh(seeded.attempt)
+    assert claim_calls == 1
+    assert seeded.attempt.audio_retention_state == "temporary"
+    assert seeded.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_expired_cleanup_claim_is_recovered_not_reclaimed(
+    db_session, tmp_path: Path
+) -> None:
+    seeded = await _seed_audio(db_session, tmp_path)
+    retention = CoachRetentionService(db_session, media_root=tmp_path / "coach-media")
+    expired_at = datetime.utcnow() - timedelta(
+        seconds=settings.HATCH_COACH_TIMEOUT_AUDIO_CLEANUP_JOB_SECONDS + 1
+    )
+    first = await retention.claim_default_cleanup(seeded.attempt.id, expired_at)
+    assert first is not None
+    await db_session.commit()
+
+    assert not await retention.default_cleanup_is_due(
+        seeded.attempt.id, datetime.utcnow()
+    )
+    assert await retention.claim_default_cleanup(
+        seeded.attempt.id, datetime.utcnow()
+    ) is None
+    await db_session.refresh(seeded.cleanup_stage)
+    assert seeded.cleanup_stage.job_id == first.job_id
+    assert seeded.cleanup_stage.claim_token == first.claim_token
+    claim_events = await db_session.scalar(
+        select(func.count(InterviewSessionEvent.id)).where(
+            InterviewSessionEvent.recording_id == seeded.attempt.id,
+            InterviewSessionEvent.event_type == "audio_cleanup_claimed",
+        )
+    )
+    assert claim_events == 1
+    assert await retention.recover_expired_cleanup(
+        seeded.attempt.id, datetime.utcnow()
+    )
+    await db_session.commit()
+    await db_session.refresh(seeded.attempt)
+    await db_session.refresh(seeded.cleanup_stage)
+    assert seeded.attempt.audio_retention_state == "deleted"
+    assert seeded.cleanup_stage.job_id == first.job_id
+    assert not seeded.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_explicit_delete_cannot_replace_active_default_cleanup_claim(
+    db_session, tmp_path: Path
+) -> None:
+    seeded = await _seed_audio(db_session, tmp_path)
+    retention = CoachRetentionService(db_session, media_root=tmp_path / "coach-media")
+    first = await retention.claim_default_cleanup(
+        seeded.attempt.id, datetime.utcnow()
+    )
+    assert first is not None
+    await db_session.commit()
+
+    assert await retention.claim_explicit_cleanup(
+        seeded.attempt.id, datetime.utcnow()
+    ) is None
+    await db_session.refresh(seeded.cleanup_stage)
+    assert seeded.cleanup_stage.job_id == first.job_id
+    assert seeded.cleanup_stage.claim_token == first.claim_token
+    assert seeded.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_default_cleanup_claim_cannot_replace_active_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "cleanup-claim-race.sqlite3"
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{database}", connect_args={"timeout": 1}
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    media_root = tmp_path / "coach-media"
+    async with factory() as seed_db:
+        seeded = await _seed_audio(seed_db, tmp_path)
+        recording_id = seeded.attempt.id
+    second_ready = asyncio.Event()
+    first_committed = asyncio.Event()
+
+    try:
+        async with factory() as first_db, factory() as second_db:
+            original_flush = second_db.flush
+            gate_first_flush = True
+
+            async def gated_second_flush(*args, **kwargs) -> None:
+                nonlocal gate_first_flush
+                if gate_first_flush:
+                    gate_first_flush = False
+                    second_ready.set()
+                    await first_committed.wait()
+                await original_flush(*args, **kwargs)
+
+            monkeypatch.setattr(second_db, "flush", gated_second_flush)
+            first_retention = CoachRetentionService(first_db, media_root=media_root)
+            second_retention = CoachRetentionService(second_db, media_root=media_root)
+
+            async def first_claim():
+                await asyncio.wait_for(second_ready.wait(), timeout=3)
+                try:
+                    claim = await first_retention.claim_default_cleanup(
+                        recording_id, datetime.now(timezone.utc)
+                    )
+                    assert claim is not None
+                    await first_db.commit()
+                    return claim
+                finally:
+                    first_committed.set()
+
+            async def second_claim():
+                claim = await second_retention.claim_default_cleanup(
+                    recording_id, datetime.now(timezone.utc)
+                )
+                await second_db.commit()
+                return claim
+
+            first, second = await asyncio.wait_for(
+                asyncio.gather(first_claim(), second_claim()), timeout=5
+            )
+            assert second is None
+            async with factory() as verify_db:
+                cleanup_stage = await verify_db.get(InterviewAttemptStage, first.stage_id)
+                assert cleanup_stage is not None
+                assert cleanup_stage.stage_state == "running"
+                assert cleanup_stage.job_id == first.job_id
+                assert cleanup_stage.claim_token == first.claim_token
+                claim_events = await verify_db.scalar(
+                    select(func.count())
+                    .select_from(InterviewSessionEvent)
+                    .where(
+                        InterviewSessionEvent.session_id == first.session_id,
+                        InterviewSessionEvent.event_type == "audio_cleanup_claimed",
+                    )
+                )
+                assert claim_events == 1
+            if first._deletion_lease is not None:
+                first._deletion_lease.close()
+            if second is not None and second._deletion_lease is not None:
+                second._deletion_lease.close()
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
