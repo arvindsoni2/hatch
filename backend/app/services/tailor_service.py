@@ -423,6 +423,7 @@ class TailorService:
             skill_match=skill_match,
         )
 
+    @trace_workflow("cv_tailoring")
     async def generate_cv(
         self,
         application_id: str,
@@ -494,7 +495,6 @@ class TailorService:
             request_ref=request_ref, delivery_ref=delivery_ref, capture=_capture,
         )
 
-    @trace_workflow("cv_tailoring")
     async def _generate_cv_legacy(
         self,
         application_id: str,

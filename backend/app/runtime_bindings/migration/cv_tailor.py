@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.agents.tools import llm_factory
+from app.agents.tools.context_budgets import GENERIC
 from app.models.cv_publication import CVPublication
 from app.repositories.document_repository import DocumentRepository
 from app.runtime import RuntimeMode
@@ -100,7 +101,9 @@ class RoutedCVClient:
         self.last_json_attempt_count = 1
         self.model = "runtime-selected"
 
-    async def complete_json(self, system, user, max_tokens=4096, **kwargs):
+    async def complete_json(
+        self, system, user, max_tokens=GENERIC.max_output, **kwargs
+    ):
         return await self.workflow.model_call(self.stage, system, user, max_tokens)
 
 

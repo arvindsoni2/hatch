@@ -68,6 +68,34 @@ path without output and was interrupted; its temporary database was removed and 
 shared database was changed. Migration regression tests pass, but no CLI upgrade claim
 is made from this environment.
 
+### Post-implementation integration repair
+
+The first full backend run exposed four verification gaps in the completed R6 branch:
+the lease-renewal test used a scheduler-sensitive 20 ms/80 ms timing window, the
+migration-head tripwire still named the predecessor revision, `generate_cv` had lost its
+stable `cv_tailoring` workflow marker, and the runtime adapter repeated a literal token
+budget. The repair keeps each synthetic model wait longer than its initial lease while
+using a coverage-safe 100 ms/800 ms renewal window, updates the migration lineage
+assertion, restores the workflow decorator, and uses the shared `GENERIC.max_output`
+budget. The final review also moved workflow instrumentation off the private legacy
+helper so the public `generate_cv` boundary is the sole service-level workflow span.
+
+Verification after that repair:
+
+```text
+expanded R6/integration gate: 75 passed, 6 warnings in 36.65s
+full backend suite: 3746 passed, 2 skipped, 135 warnings in 503.51s
+coverage: 80.26% (required: 58%)
+ruff check [repair paths]: All checks passed
+git diff --check: exit 0
+alembic heads: a4b5c6d7e8f9 (head)
+```
+
+The pytest commands were run outside the filesystem sandbox after a minimal Python 3.14
+probe showed sandboxed `loop.call_soon_threadsafe(...)` callbacks did not wake an idle
+event loop, which could strand aiosqlite connection futures before test setup reached R6.
+No network or shared database was used by those test runs.
+
 ## Rollback and limitations
 
 Rollback is setting `HATCH_RUNTIME_CV_TAILOR_MODE=legacy` before a new request;

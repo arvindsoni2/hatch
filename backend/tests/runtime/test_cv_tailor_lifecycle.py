@@ -544,22 +544,26 @@ async def test_real_latency_renews_runtime_lease(cv_service, monkeypatch):
     from app.runtime_bindings.migration.cv_tailor import DurableCVTailorRuntime
 
     _, factory, state = cv_service
-    state.delay = 0.09
+    # Keep the model call longer than the initial lease while leaving enough
+    # scheduler headroom for coverage-instrumented full-suite runs.  The former
+    # 20 ms / 80 ms timing window could expire during ordinary SQLite or event
+    # loop contention, making this lifecycle assertion nondeterministic.
+    state.delay = 0.9
     original = DurableCVTailorRuntime.__init__
 
     def configure(self, *args, **kwargs):
-        original(self, *args, **kwargs, heartbeat_seconds=0.02)
+        original(self, *args, **kwargs, heartbeat_seconds=0.1)
 
     monkeypatch.setattr(DurableCVTailorRuntime, "__init__", configure)
     monkeypatch.setattr(
         "app.services.tailor_service.WorkflowKernel",
-        lambda factory: WorkflowKernel(factory, lease_duration=timedelta(seconds=0.08)),
+        lambda factory: WorkflowKernel(factory, lease_duration=timedelta(seconds=0.8)),
     )
     doc = await generate(cv_service)
     assert Path(doc.file_path).exists()
     async with factory.session_factory() as db:
         claim = await db.scalar(select(ExecutionClaimRecord))
-        assert (claim.lease_expires_at - claim.claimed_at).total_seconds() > 0.08
+        assert (claim.lease_expires_at - claim.claimed_at).total_seconds() > 0.8
 
 
 async def test_model_timeout_is_metadata_only_and_never_publishes(
