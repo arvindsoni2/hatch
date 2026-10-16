@@ -34,6 +34,17 @@ def test_ci_audits_all_runtime_requirement_groups() -> None:
         assert requirement_file in ci
 
 
+def test_backend_ci_installs_locked_docx_renderer_dependencies() -> None:
+    """Backend tests must provision the Node dependency used by CV rendering."""
+    ci = _read(".github/workflows/ci.yml")
+    backend_job = ci.split("  backend:\n", 1)[1].split("  frontend:\n", 1)[0]
+
+    assert "uses: actions/setup-node@" in backend_job
+    assert "cache-dependency-path: backend/app/templates/package-lock.json" in backend_job
+    assert "working-directory: backend/app/templates" in backend_job
+    assert "run: npm ci" in backend_job
+
+
 def test_frontend_dockerfile_uses_deterministic_cached_npm_ci() -> None:
     """Frontend builds should use the lockfile path without npm install fallback."""
     dockerfile = _read("frontend/Dockerfile")
