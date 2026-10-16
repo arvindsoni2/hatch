@@ -34,6 +34,10 @@ from .coach import (
     COACH_RUBRIC_OUTCOMES,
     COACH_STAGE_DURATION,
     COACH_STAGE_OUTCOMES,
+    COACH_CONVERSATION_OUTCOMES,
+    COACH_PROGRESS_OUTCOMES,
+    COACH_EXPORT_OUTCOMES,
+    COACH_PRIVACY_OUTCOMES,
     metric_stage_name,
 )
 from .logging import configure_log_correlation
@@ -194,6 +198,10 @@ class TelemetryRuntime:
             "rubric": self._counter(COACH_RUBRIC_OUTCOMES),
             "report": self._counter(COACH_REPORT_OUTCOMES),
             "async_job": self._counter(COACH_ASYNC_JOB_OUTCOMES),
+            "conversation": self._counter(COACH_CONVERSATION_OUTCOMES),
+            "progress": self._counter(COACH_PROGRESS_OUTCOMES),
+            "export": self._counter(COACH_EXPORT_OUTCOMES),
+            "privacy": self._counter(COACH_PRIVACY_OUTCOMES),
         }
 
     def _histogram(self, name: str) -> Any:
@@ -440,6 +448,26 @@ class TelemetryRuntime:
             instrument,
             1,
             {**dict(attributes or {}), COACH_OUTCOME: outcome},
+        )
+
+    def record_conversation_metric(
+        self,
+        name: str,
+        value: int,
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Record one bounded conversational outcome without metric cardinality leaks."""
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+            or name not in {"conversation", "progress", "export", "privacy"}
+        ):
+            return
+        self._add(
+            self._coach_outcome_instruments.get(name),
+            value,
+            dict(attributes or {}),
         )
 
     def record_coach_diagnostic(

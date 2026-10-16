@@ -160,6 +160,7 @@ class Settings(BaseSettings):
     HATCH_COACH_MAX_ATTEMPTS_PER_QUESTION: int = Field(default=5, ge=1, le=20)
     HATCH_COACH_MAX_PROCESSING_RETRIES_PER_ATTEMPT: int = Field(default=2, ge=0, le=5)
     HATCH_COACH_PROGRESS_MAX_GROUPS: int = Field(default=20, ge=1, le=100)
+    HATCH_COACH_DELETION_RECEIPT_DAYS: int = Field(default=30, ge=7, le=90)
     HATCH_COACH_MAX_FOLLOWUPS_PER_ROOT: int = 2
     HATCH_COACH_MAX_TRANSCRIPT_CHARACTERS: int = 30000
     HATCH_COACH_MAX_EVIDENCE_CLAIMS: int = 20

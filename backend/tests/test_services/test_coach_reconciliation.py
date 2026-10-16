@@ -41,6 +41,16 @@ from app.services.coach_attempt_pipeline import _process_attempt_claim
 from app.services.coach_service import CoachService
 
 
+@pytest.fixture(autouse=True)
+def isolate_review_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recovery tests exercise persisted state, never a developer's AI endpoint."""
+    class UnavailableModel:
+        async def complete_json(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic provider unavailable")
+
+    monkeypatch.setattr("app.services.llm_client.LLMClient", UnavailableModel)
+
+
 async def _session_with_question(db_session):
     session = InterviewSession(
         company_name="Example",
@@ -2335,6 +2345,73 @@ async def _pending_audio_claim_with_active_stage(
         transcript.processing_generation = attempt.processing_generation - 1
     await db_session.commit()
     return session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("downstream_attempts", "expected"), [(0, 1), (1, 0)]
+)
+async def test_expired_pretranscription_audio_graph_recovers_only_untouched_downstream(
+    db_session, downstream_attempts: int, expected: int
+) -> None:
+    """Real queued audio graphs have eight pending stages, not one synthetic row."""
+    now = datetime.utcnow()
+    session = await _pending_audio_claim_with_active_stage(
+        db_session, now=now, stage_name="transcription"
+    )
+    attempt = await db_session.get(SessionRecording, session.active_recording_id)
+    assert attempt is not None
+    evaluation = await db_session.scalar(
+        select(InterviewAttemptEvaluation).where(
+            InterviewAttemptEvaluation.recording_id == attempt.id,
+            InterviewAttemptEvaluation.async_job_id == attempt.async_job_id,
+        )
+    )
+    assert evaluation is not None
+    transcription = await db_session.scalar(
+        select(InterviewAttemptStage).where(
+            InterviewAttemptStage.evaluation_version_id == evaluation.id
+        )
+    )
+    assert transcription is not None
+    transcription.stage_state = "pending"
+    transcription.attempt_count = 0
+    for stage_name in (
+        "audio_persist",
+        "speech_analysis",
+        "content_evaluation",
+        "evidence_grounding",
+        "follow_up_decision",
+        "coaching_enrichment",
+        "audio_cleanup",
+    ):
+        db_session.add(
+            InterviewAttemptStage(
+                recording_id=attempt.id,
+                evaluation_version_id=evaluation.id,
+                stage_name=stage_name,
+                stage_state="pending",
+                attempt_count=(
+                    downstream_attempts if stage_name == "content_evaluation" else 0
+                ),
+                repair_count=0,
+                job_id=attempt.async_job_id,
+                claim_token=transcription.claim_token,
+                expected_processing_generation=attempt.processing_generation,
+                job_deadline_at=transcription.job_deadline_at,
+            )
+        )
+    await db_session.commit()
+
+    assert await reconcile_conversational_session(db_session, session.id, now) == expected
+    await db_session.refresh(session)
+    await db_session.refresh(attempt)
+    assert session.conversation_state == (
+        "recoverable_error" if expected else "processing_answer"
+    )
+    assert attempt.attempt_state == (
+        "recoverable_error" if expected else "pending_processing"
+    )
 
 
 @pytest.mark.asyncio

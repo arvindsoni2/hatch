@@ -6,7 +6,18 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import settings
-from app.schemas.coach_conversation import AttemptAudioUploadRead
+from app.schemas.coach_conversation import (
+    AttemptAudioUploadRead,
+    HardDeletionCommandRequest,
+    ReportExportRequest,
+)
+from app.services.coach_conversational_contracts import (
+    EXPORT_CONTRACT,
+    HARD_DELETE_CONTRACT,
+    PROGRESS_CONTRACT,
+    REPORT_CONTRACT,
+    error_contract,
+)
 
 
 Settings = type(settings)
@@ -92,3 +103,40 @@ def test_upload_read_rejects_invalid_hash_size_or_mime(
 
     with pytest.raises(ValidationError):
         AttemptAudioUploadRead(**payload)
+
+
+def test_pr4_contracts_are_strict_and_registry_derived() -> None:
+    assert REPORT_CONTRACT == "coach_conversational_report_v1"
+    assert PROGRESS_CONTRACT == "coach_conversational_progress_v2"
+    assert EXPORT_CONTRACT == "coach_report_export_v1"
+    assert HARD_DELETE_CONTRACT == "coach_session_hard_delete_v1"
+    assert error_contract("coach_progress_incompatible_session").http_status == 409
+    with pytest.raises(KeyError):
+        error_contract("coach_session_incompatible_for_progress")
+    assert settings.HATCH_COACH_DELETION_RECEIPT_DAYS == 30
+
+
+def test_pr4_export_and_deletion_requests_reject_unknown_fields() -> None:
+    export = ReportExportRequest(
+        format="json",
+        expected_activity_version=4,
+        expected_retention_version=2,
+        contract_version="coach_report_export_v1",
+    )
+    assert export.include_transcript is False
+
+    deletion = HardDeletionCommandRequest(
+        command_id="delete-1",
+        confirmation="DELETE",
+        contract_version="coach_session_hard_delete_v1",
+    )
+    assert deletion.confirmation == "DELETE"
+
+    with pytest.raises(ValidationError):
+        ReportExportRequest(
+            format="json",
+            expected_activity_version=4,
+            expected_retention_version=2,
+            contract_version="coach_report_export_v1",
+            transcript="not-a-supported-field",
+        )

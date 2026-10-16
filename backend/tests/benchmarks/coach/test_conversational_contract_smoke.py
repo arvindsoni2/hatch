@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -36,3 +37,21 @@ async def test_conversational_contract_smoke_exercises_every_scenario(
     assert {result.attempt.scenario_id for result in summary.results} == {
         path.stem for path in (CONVERSATIONAL_SUITE / "scenarios").glob("*.json")
     }
+
+
+@pytest.mark.asyncio
+async def test_conversational_artifacts_are_content_free(tmp_path: Path) -> None:
+    summary = await run_benchmark(
+        RunRequest(
+            suite_path=CONVERSATIONAL_SUITE,
+            output_root=tmp_path,
+            profile_name="contract-smoke",
+            model_ids=("deterministic-contract",),
+            command="pytest conversational privacy smoke",
+        )
+    )
+
+    serialized = json.dumps(summary.model_dump(mode="json"), sort_keys=True)
+    assert "I led a safe migration" not in serialized
+    assert "The transcript supports this named level." not in serialized
+    assert "Project Apollo improved delivery" not in serialized

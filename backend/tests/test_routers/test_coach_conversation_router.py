@@ -57,6 +57,96 @@ from app.services.coach_conversational_contracts import ERROR_REGISTRY
 COMMAND_CONTRACT = "coach_conversation_command_v1"
 
 
+@pytest.mark.parametrize("params", [
+    {}, {"compatibility_key": "key-a", "application_id": "app-a"},
+    {"session_id": "old-exact-selector"}, {"company_name": "Synthetic"},
+])
+async def test_progress_rejects_missing_conflicting_or_obsolete_selectors(client, params):
+    response = await client.get("/api/coach/conversational-progress", params=params)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "coach_progress_selector_conflict"
+
+
+async def test_progress_reads_completed_visible_exact_groups_with_and_filters(
+    client, db_session, monkeypatch
+):
+    from app.models.application import Application
+    from app.services.coach_conversational_report import (
+        AcceptedAnswer, ReportInputSnapshot, build_conversational_report,
+    )
+    from app.services.coach_conversational_contracts import CONTENT_DIMENSIONS
+
+    db_session.add(Application(id="progress-app"))
+    await db_session.flush()
+    for index, key, overrides in [
+        (1, "key-a", {}), (2, "key-z", {}),
+        (3, "key-hidden", {"deletion_state": "deleting"}),
+        (4, "key-invalid", {"report_state": "invalidated"}),
+        (5, "key-active", {"status": "active", "conversation_state": "reporting"}),
+        (6, "key-legacy", {"experience_version": "legacy_v1"}),
+        (7, "key-other-role", {"session_plan_json": {
+            "role": {"role_family": "data", "role_level": "senior"},
+            "interview": {"type": "behavioural"},
+        }}),
+        (8, "key-stale-report", {}),
+    ]:
+        session_id = f"progress-{index}"
+        report = build_conversational_report(ReportInputSnapshot(
+            session_id=session_id, activity_version=1, retention_version=0,
+            compatibility_key=key,
+            counts={
+                "planned_questions_total": 2, "planned_questions_answered": 2,
+                "planned_questions_skipped": 0, "follow_ups_asked": 0,
+                "follow_ups_answered": 0, "accepted_attempts": 2,
+                "retry_attempts": 0, "unavailable_attempts": 0, "hints_used": 0,
+            },
+            accepted_root_bundles=tuple((AcceptedAnswer(
+                f"answer-{index}-{root}", {d: "strong" for d in CONTENT_DIMENSIONS}
+            ), ()) for root in (1, 2)),
+        )).persisted_json()
+        if key == "key-stale-report":
+            report["activity_version"] = 0
+        values = dict(
+            id=session_id, company_name="Synthetic", role_title="Engineer",
+            application_id="progress-app", config={}, status="completed",
+            conversation_state="completed", experience_version="conversational_v1",
+            completed_at=datetime(2026, 1, 1), activity_version=1,
+            report_state="completed", report_json=report, compatibility_key=key,
+            session_plan_json={
+                "role": {"role_family": "software_engineering", "role_level": "senior"},
+                "interview": {"type": "behavioural"},
+            },
+        )
+        values.update(overrides)
+        db_session.add(InterviewSession(**values))
+    await db_session.commit()
+    monkeypatch.setattr(settings, "HATCH_COACH_PROGRESS_MAX_GROUPS", 1)
+    response = await client.get("/api/coach/conversational-progress", params={
+        "application_id": "progress-app", "role_family": "software_engineering",
+        "role_level": "senior", "interview_type": "behavioural",
+    })
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["group_limit"] == 1
+    assert result["total_groups"] == 2
+    assert result["returned_groups"] == 1
+    assert result["groups_truncated"] is True
+    group = result["groups"][0]
+    assert group["compatibility_key"] == "key-a"
+    assert group["context"]["role_level"] == "senior"
+    assert group["strongest_areas"][0]["dimension"] == "relevance"
+    assert group["current_levels"]["relevance"] == "strong"
+    assert group["previous_levels"]["relevance"] == "not_assessed"
+    assert group["trends"]["relevance"] == "not_enough_evidence"
+    assert response.headers["cache-control"] == "no-store"
+    exact = await client.get("/api/coach/conversational-progress", params={
+        "compatibility_key": "key-z",
+    })
+    assert exact.status_code == 200
+    assert [g["compatibility_key"] for g in exact.json()["groups"]] == ["key-z"]
+    assert exact.json()["groups_truncated"] is False
+
+
 @pytest_asyncio.fixture
 async def seeded_asking_session(db_session):
     """A real conversational row whose stale command must be rejected."""

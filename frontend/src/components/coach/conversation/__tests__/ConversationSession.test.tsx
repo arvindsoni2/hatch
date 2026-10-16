@@ -441,6 +441,62 @@ describe("ConversationSession server authority", () => {
     expect(screen.queryByRole("button", { name: /accept/i })).not.toBeInTheDocument();
   });
 
+  it("keeps polling through a transient 409 between processing and review", async () => {
+    const processing = live({
+      conversation_state: "processing_answer",
+      state_version: 4,
+      allowed_commands: [],
+      active_attempt: textAttempt("A persisted answer"),
+      processing: {
+        job_id: "job-1",
+        stage: "content_evaluation",
+        state: "running",
+        retryable: false,
+        retry_count: 0,
+        retry_limit: 2,
+        retries_remaining: 2,
+      },
+    });
+    const reviewed = live({
+      conversation_state: "awaiting_next_action",
+      state_version: 5,
+      active_attempt: textAttempt("A persisted answer"),
+      answer_review: answerReview(),
+      allowed_commands: ["accept_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(processing)
+      .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+        error: { code: "coach_conversation_invalid_state" },
+      }))
+      .mockResolvedValue(reviewed);
+
+    render(<ConversationSession sessionId="session-1" />);
+
+    expect(await screen.findByText("Reviewing answer")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Accept attempt 1" }, { timeout: 6000 })).toBeVisible();
+    expect(screen.queryByText("We could not refresh this interview. Try again.")).not.toBeInTheDocument();
+  });
+
+  it("stops retrying a persistently invalid processing view", async () => {
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(live({
+        conversation_state: "processing_answer",
+        state_version: 4,
+        allowed_commands: [],
+        active_attempt: textAttempt("A persisted answer"),
+      }))
+      .mockRejectedValue(new ApiError("Conflict", 409, {
+        error: { code: "coach_conversation_invalid_state" },
+      }));
+
+    render(<ConversationSession sessionId="session-1" />);
+
+    expect(await screen.findByText("Reviewing answer")).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Try refreshing interview" }, { timeout: 6500 })).toBeVisible();
+    expect(api.getCoachConversationLive).toHaveBeenCalledTimes(4);
+  }, 8500);
+
   it("renders controls only when the server advertises their commands", async () => {
     api.getCoachConversationLive.mockResolvedValue(live({
       conversation_state: "paused",
@@ -479,6 +535,48 @@ describe("ConversationSession server authority", () => {
       "An unsent local answer",
     );
     expect(screen.getByText("The interview changed on the server. Your unsent answer is still here.")).toBeVisible();
+  });
+
+  it("retries a transient live 409 after an accepted typed finish without resubmitting", async () => {
+    const listening = live({
+      conversation_state: "listening",
+      state_version: 4,
+      active_attempt: textAttempt(),
+      allowed_commands: ["finish_answer"],
+    });
+    const reviewed = live({
+      conversation_state: "awaiting_next_action",
+      state_version: 5,
+      active_attempt: textAttempt("A persisted answer"),
+      answer_review: answerReview(),
+      allowed_commands: ["accept_attempt"],
+    });
+    api.getCoachConversationLive
+      .mockResolvedValueOnce(listening)
+      .mockRejectedValueOnce(new ApiError("Conflict", 409, {
+        error: { code: "coach_conversation_invalid_state" },
+      }))
+      .mockResolvedValue(reviewed);
+    api.sendCoachConversationCommand.mockResolvedValue({
+      command_id: "finish-1",
+      result: "accepted_processing",
+      session_id: "session-1",
+      state: "processing_answer",
+      state_version: 5,
+      active_question_id: "question-1",
+      active_attempt_id: "attempt-1",
+      async_job_id: "job-1",
+      allowed_commands: [],
+      contract_version: "coach_conversation_command_result_v1",
+    });
+    const user = userEvent.setup();
+
+    render(<ConversationSession sessionId="session-1" />);
+    await user.type(await screen.findByRole("textbox", { name: "Your answer" }), "A persisted answer");
+    await user.click(screen.getByRole("button", { name: "Submit written answer" }));
+
+    expect(await screen.findByRole("button", { name: "Accept attempt 1" }, { timeout: 4000 })).toBeVisible();
+    expect(api.sendCoachConversationCommand).toHaveBeenCalledTimes(1);
   });
 
   it("hides stale controls when a 409 refresh fails and restores unsent text only after retry succeeds", async () => {

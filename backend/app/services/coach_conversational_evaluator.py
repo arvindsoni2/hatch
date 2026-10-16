@@ -39,6 +39,7 @@ class EvaluationRequest:
     deadline_at: datetime
     recording_type: Literal["text", "audio"] = "text"
     speech_metrics: SpeechMetricsSnapshot | None = None
+    delivery_transcript: str | None = None
 
 
 @dataclass(frozen=True)
@@ -251,7 +252,13 @@ class ConversationalEvaluator:
                 dimensions=dimensions,
                 answer_level=derive_answer_level(dimensions),
                 delivery=assess_delivery(
-                    request.recording_type, transcript, request.speech_metrics
+                    request.recording_type,
+                    (
+                        request.delivery_transcript
+                        if request.delivery_transcript is not None
+                        else transcript
+                    ),
+                    request.speech_metrics,
                 ),
                 repair_count=repair_count,
                 error_code=None,
@@ -268,7 +275,11 @@ class ConversationalEvaluator:
             answer_level="not_assessed",
             delivery=assess_delivery(
                 request.recording_type,
-                request.normalized_transcript,
+                (
+                    request.delivery_transcript
+                    if request.delivery_transcript is not None
+                    else request.normalized_transcript
+                ),
                 request.speech_metrics,
             ),
             repair_count=repair_count,

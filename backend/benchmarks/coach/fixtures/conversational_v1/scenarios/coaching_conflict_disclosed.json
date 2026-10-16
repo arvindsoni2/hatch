@@ -1,0 +1,10 @@
+{
+  "scenario_id": "coaching_conflict_disclosed",
+  "stage": "coaching",
+  "group": "coaching",
+  "description": "Synthetic coaching preserves an evidence conflict as a review item.",
+  "qualification_scope": "harness_contract",
+  "input": {"transcript": "I led a safe migration.", "evidence_ids": ["501c4cfa172d4d13a25f9359"], "evaluation": {"answer_level": "developing", "dimensions": {"impact": {"level": "developing", "rationale": "The result is relevant.", "improvement": "Review the conflicting source.", "evidence": [{"excerpt": "I led a safe migration."}]}}}, "case": "safe"},
+  "expected": {"outcome": "completed"},
+  "scoring": {}, "quality_dimensions": []
+}

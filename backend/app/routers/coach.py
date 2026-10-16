@@ -941,7 +941,10 @@ async def get_application_progress(
 
     result = await db.execute(
         select(InterviewSession)
-        .where(InterviewSession.application_id == application_id)
+        .where(
+            InterviewSession.application_id == application_id,
+            InterviewSession.deletion_state == "not_requested",
+        )
         .order_by(InterviewSession.created_at.desc())
     )
     rows = result.scalars().all()

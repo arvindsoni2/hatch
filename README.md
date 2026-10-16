@@ -98,7 +98,7 @@ Hatch combines job discovery, document tailoring, and application tracking in on
 | Applications | Kanban lifecycle, manual entries, follow-ups, outcomes, and interview hand-off |
 | Interview Prep | Company research, likely questions, Question Bank, model answers, voice practice, and optional advanced coaching |
 | AI choice | Start without AI, use bundled local `llama.cpp` services, or configure a supported cloud provider |
-| Privacy | Self-hosted data, local app lock, protected product APIs, and host-managed provider secrets |
+| Privacy | Self-hosted data, local app lock, protected product APIs, host-managed provider secrets, and explicit Coach deletion controls |
 
 ## Install Hatch
 
@@ -195,6 +195,13 @@ the local `observability` Compose profile. They are disabled in the default
 backend and never include prompt, response, CV, or job-description content.
 See [Local AI observability](docs/operations/OBSERVABILITY.md) for enablement,
 health states, inspection, and cleanup.
+
+Conversational Coach is an opt-in experience and remains disabled by default
+with `HATCH_COACH_CONVERSATIONAL_ENABLED=false`. It uses named interview levels
+instead of numeric conversational scores, supports transcript/audio deletion,
+content-free support diagnostics, deterministic report exports, and browser
+printing. Read the [Conversational Coach architecture guide](docs/architecture/COACH_CONVERSATIONAL.md)
+before enabling it.
 
 ## AI and capability choices
 

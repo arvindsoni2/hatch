@@ -96,6 +96,10 @@ def test_metric_instruments_use_stable_names() -> None:
         "hatch.coach.rubric.outcomes",
         "hatch.coach.report.outcomes",
         "hatch.coach.async_job.outcomes",
+        "hatch.coach.conversation.outcomes",
+        "hatch.coach.progress.outcomes",
+        "hatch.coach.export.outcomes",
+        "hatch.coach.privacy.outcomes",
     ]
 
 

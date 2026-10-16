@@ -201,6 +201,9 @@ describe("ConversationRecorder browser capture", () => {
   });
 
   it("reports microphone denial without removing the written-answer path", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(
+      "Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36",
+    );
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
@@ -239,7 +242,26 @@ describe("ConversationRecorder browser capture", () => {
     await user.click(screen.getByRole("button", { name: "Start audio answer" }));
 
     expect(await screen.findByText(/microphone access was not granted/i)).toBeVisible();
+    expect(screen.getByText(/Chrome.*microphone|microphone.*Chrome/i)).toBeVisible();
     expect(screen.getByRole("button", { name: "Answer in writing" })).toBeEnabled();
+  });
+
+  it.each([
+    { userAgent: "Mozilla/5.0 Edg/120.0 Chrome/120.0 Safari/537.36", browser: "Microsoft Edge" },
+    { userAgent: "Mozilla/5.0 Firefox/120.0", browser: "Firefox" },
+    { userAgent: "Mozilla/5.0 Safari/605.1.15", browser: "Safari" },
+  ])("gives $browser-specific microphone permission guidance", async ({ userAgent, browser }) => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(userAgent);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockRejectedValue(new DOMException("Permission denied", "NotAllowedError")) },
+    });
+    const user = userEvent.setup();
+    render(<ConversationRecorder {...props()} />);
+
+    await user.click(screen.getByRole("button", { name: "Start audio answer" }));
+
+    expect(await screen.findByText(new RegExp(browser))).toBeVisible();
   });
 
   it("distinguishes a missing microphone from permission denial", async () => {

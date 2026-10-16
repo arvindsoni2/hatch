@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import (
 from app.database import Base
 from app.config import settings
 from app.models.coach_session import (
+    CoachSessionDeletionResult,
     ConversationCommandResultRecord,
     InterviewAttemptEvaluation,
     InterviewAttemptStage,
@@ -32,13 +33,20 @@ from app.models.coach_session import (
     SessionRecording,
 )
 from app.models.async_job import AsyncJob
-from app.schemas.coach_conversation import ConversationCommandRequest
+from app.schemas.coach_conversation import (
+    ConversationCommandRequest,
+    HardDeletionCommandRequest,
+)
 from app.services.coach_conversation_commands import (
     ConversationCommandError,
     ConversationCommandService,
 )
+from app.repositories.conversational_session_repository import (
+    ConversationalSessionRepository,
+)
 from app.services.coach_media_storage import CoachMediaError
-from app.services.coach_live_view import CoachLiveViewService
+from app.services.coach_privacy import CoachPrivacyService, HardDeletionClaim
+from app.services.coach_live_view import CoachLiveViewError, CoachLiveViewService
 from app.services.coach_reconciliation import (
     reconcile_conversational_session,
     reconcile_stale_coach_state,
@@ -61,6 +69,10 @@ def disable_real_attempt_worker_dispatch(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         "app.services.coach_conversation_commands.queue_audio_cleanup",
         lambda _claim: None,
+    )
+    monkeypatch.setattr(
+        "app.services.coach_conversation_commands.queue_conversational_report",
+        lambda _job_id: None,
     )
     class UnavailableModel:
         async def complete_json(self, *_args, **_kwargs):
@@ -815,6 +827,57 @@ async def test_request_hint_transfers_exact_order_to_new_attempt(
 
 
 @pytest.mark.asyncio
+async def test_audio_draft_has_no_retained_media_before_upload(db_session: AsyncSession) -> None:
+    session, questions = await seed_session(
+        db_session, state="asking", status="active", version=0
+    )
+    session.active_question_id = questions[0].id
+    session.active_root_question_id = questions[0].id
+    questions[0].question_state = "asked"
+    await db_session.commit()
+    begun = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "begin_answer",
+            version=0,
+            payload={"recording_type": "audio", "client_attempt_id": "audio-draft"},
+        ),
+    )
+
+    view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+    attempt = await db_session.get(SessionRecording, begun.active_attempt_id)
+    assert attempt is not None
+    assert attempt.audio_retention_state is None
+    assert view.conversation_state == "listening"
+    assert view.active_attempt is not None
+    assert view.active_attempt.audio_retention_state is None
+    assert view.retention.current_audio_state is None
+    assert "finish_answer" in view.allowed_commands
+
+    # Existing drafts created before this repair used an internal "pending" marker.
+    await db_session.refresh(attempt)
+    attempt.audio_retention_state = "pending"
+    await db_session.commit()
+    legacy_view = await CoachLiveViewService(db_session).get_live_view(
+        user_id="local", session_id=session.id
+    )
+    assert legacy_view.active_attempt is not None
+    assert legacy_view.active_attempt.audio_retention_state is None
+    assert legacy_view.retention.current_audio_state is None
+
+    await db_session.refresh(attempt)
+    attempt.audio_content_hash = "a" * 64
+    await db_session.commit()
+    with pytest.raises(CoachLiveViewError):
+        await CoachLiveViewService(db_session).get_live_view(
+            user_id="local", session_id=session.id
+        )
+
+
+@pytest.mark.asyncio
 async def test_retention_changes_future_attempts_only(db_session: AsyncSession) -> None:
     session, questions = await seed_session(
         db_session, state="asking", status="active", version=0
@@ -867,7 +930,7 @@ async def test_retention_changes_future_attempts_only(db_session: AsyncSession) 
     assert old_attempt.attempt_state == "cancelled"
     assert old_attempt.audio_retention_policy == "delete_after_processing"
     assert old_attempt.audio_uri is None
-    assert old_attempt.audio_retention_state == "pending"
+    assert old_attempt.audio_retention_state is None
     assert new_attempt.audio_retention_policy == "retain_until_deleted"
     assert (session.retention_version, session.session_plan_amendment_version) == (1, 1)
     assert session.session_plan_json["retention"] == {
@@ -3076,7 +3139,7 @@ async def test_active_self_assessment_overwrites_without_changing_quality(
 
 
 @pytest.mark.asyncio
-async def test_completed_self_assessment_is_rejected_without_receipt(
+async def test_completed_self_assessment_requires_a_valid_attempt_without_receipt(
     db_session: AsyncSession,
 ) -> None:
     session, _ = await seed_session(
@@ -3099,12 +3162,148 @@ async def test_completed_self_assessment_is_rejected_without_receipt(
             user_id="local", session_id=session.id, request=request
         )
 
-    assert raised.value.code == "coach_conversation_invalid_state"
+    assert raised.value.code == "coach_attempt_not_active"
     assert await db_session.scalar(
         select(func.count(ConversationCommandResultRecord.id)).where(
             ConversationCommandResultRecord.command_id == request.command_id
         )
     ) == 0
+
+
+@pytest.mark.asyncio
+async def test_completed_self_assessment_claims_atomic_reflection_rebuild(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session, state="completed", status="completed", version=9, question_count=1
+    )
+    session.report_state = "completed"
+    session.report_json = {"session_level": "developing"}
+    attempt = SessionRecording(
+        id="completed-attempt-valid",
+        session_id=session.id,
+        question_id=questions[0].id,
+        recording_type="text",
+        attempt_number=1,
+        attempt_state="completed",
+        evaluation_state="completed",
+        attempt_version=0,
+    )
+    db_session.add(attempt)
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "record_self_assessment",
+            version=9,
+            command_id="completed-reflection-valid",
+            payload={
+                "attempt_id": attempt.id,
+                "comfort_level": "medium",
+                "felt_complete": True,
+                "note": "Keep the result specific.",
+            },
+        ),
+    )
+
+    await db_session.refresh(session)
+    job = await db_session.get(AsyncJob, result.async_job_id)
+    assert result.state == "completed"
+    assert session.conversation_state == "completed"
+    assert session.report_state == "building"
+    assert session.report_build_reason == "reflection_update_rebuild"
+    assert session.report_json is None
+    assert job is not None and job.type == "coach_conversational_report"
+
+
+@pytest.mark.asyncio
+async def test_delete_transcript_physically_clears_attempt_and_reopens_acceptance(
+    db_session: AsyncSession,
+) -> None:
+    session, questions = await seed_session(
+        db_session,
+        state="awaiting_next_action",
+        status="active",
+        version=9,
+        question_count=1,
+    )
+    question = questions[0]
+    question.question_state = "answered"
+    question.accepted_recording_id = "transcript-delete-attempt"
+    session.active_question_id = question.id
+    session.active_root_question_id = question.id
+    attempt = SessionRecording(
+        id="transcript-delete-attempt",
+        session_id=session.id,
+        question_id=question.id,
+        recording_type="text",
+        transcript="private transcript",
+        evaluation_json='{"answer_level":"developing"}',
+        evaluation_state="completed",
+        attempt_state="completed",
+        attempt_number=1,
+        attempt_version=2,
+        processing_generation=4,
+    )
+    db_session.add(attempt)
+    await db_session.commit()
+
+    result = await ConversationCommandService(db_session).execute(
+        user_id="local",
+        session_id=session.id,
+        request=command(
+            "delete_transcript",
+            version=9,
+            command_id="delete-transcript-valid",
+            payload={"attempt_id": attempt.id},
+        ),
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(question)
+    await db_session.refresh(attempt)
+    assert result.state == "asking"
+    assert session.activity_version == 1
+    assert session.state_version == 10
+    assert attempt.attempt_state == "deleted"
+    assert attempt.transcript is None
+    assert attempt.evaluation_json is None
+    assert attempt.processing_generation == 5
+    assert question.accepted_recording_id is None
+    assert question.question_state == "asked"
+    assert question.acceptance_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_hard_deletion_removes_session_and_retains_content_free_receipt(
+    db_session: AsyncSession,
+) -> None:
+    session, _ = await seed_session(
+        db_session, state="asking", status="active", version=0, question_count=1
+    )
+    request = HardDeletionCommandRequest(
+        command_id="hard-delete-1",
+        confirmation="DELETE",
+        contract_version="coach_session_hard_delete_v1",
+    )
+    privacy = CoachPrivacyService(ConversationalSessionRepository(db_session))
+
+    claim = await privacy.claim_hard_deletion(session.id, request, now=datetime.utcnow())
+    assert isinstance(claim, HardDeletionClaim)
+    result = await privacy.run_hard_deletion(claim, now=datetime.utcnow())
+
+    receipt = await db_session.scalar(
+        select(CoachSessionDeletionResult).where(
+            CoachSessionDeletionResult.command_id == request.command_id
+        )
+    )
+    assert result.result_state == "completed"
+    assert receipt is not None
+    assert receipt.result_state == "completed"
+    assert receipt.session_key_hash != session.id
+    assert await db_session.get(InterviewSession, session.id) is None
 
 
 async def _seed_review_attempt_for_acceptance(

@@ -4,11 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   getCoachConversationLive,
+  getSupportDiagnostics,
+  requestHardDeletion,
   sendCoachConversationCommand,
   type ConversationCommandRequest,
   type ConversationCommandResult,
   type ConversationCommandType,
   type ConversationLiveView,
+  type SupportDiagnosticsRead,
 } from "@/lib/api";
 import { ConversationControls } from "./ConversationControls";
 import { AnswerReview, type ReviewCommandHandler } from "./AnswerReview";
@@ -22,6 +25,8 @@ import {
 } from "./ConversationRecorder";
 import { RetentionStatus } from "./RetentionStatus";
 import { TranscriptEditor } from "./TranscriptEditor";
+import { PrivacyControls } from "./PrivacyControls";
+import { SupportDiagnostics } from "./SupportDiagnostics";
 
 const PROCESSING_LABELS: Record<NonNullable<ConversationLiveView["processing"]["stage"]>, string> = {
   audio_persist: "Uploading answer",
@@ -71,7 +76,7 @@ function isTransportFailure(error: unknown): error is TypeError {
 type LiveRefreshResult =
   | { kind: "accepted"; live: ConversationLiveView; readSequence: number }
   | { kind: "stale"; readSequence: number }
-  | { kind: "failed"; readSequence: number };
+  | { kind: "failed"; readSequence: number; conflict: boolean };
 
 type CommandExecutionResult = {
   post:
@@ -98,6 +103,10 @@ const ACCEPTED_COMMAND_RESULTS = new Set<ConversationCommandResult["result"]>([
 export function ConversationSession({ sessionId }: { sessionId: string }) {
   const [live, setLive] = useState<ConversationLiveView | null>(null);
   const [pending, setPending] = useState(false);
+  const [privacyPending, setPrivacyPending] = useState(false);
+  const [privacyStatus, setPrivacyStatus] = useState<string | null>(null);
+  const [privacyError, setPrivacyError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<SupportDiagnosticsRead | null>(null);
   const [textAnswer, setTextAnswer] = useState("");
   const [announcement, setAnnouncement] = useState("Loading interview");
   const [loadError, setLoadError] = useState(false);
@@ -106,6 +115,7 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
   const acceptedStateVersion = useRef(-1);
   const lastRecorderAuthority = useRef<ConversationLiveView | null>(null);
   const latestAuthority = useRef<ConversationLiveView | null>(null);
+  const transientLiveConflicts = useRef(0);
   const pendingAuthorityReads = useRef(new Map<number, Promise<LiveRefreshResult>>());
 
   const refreshLive = useCallback((announce = true): Promise<LiveRefreshResult> => {
@@ -126,20 +136,34 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
         acceptedStateVersion.current = current.state_version;
         lastRecorderAuthority.current = current;
         latestAuthority.current = current;
+        transientLiveConflicts.current = 0;
         setLive(current);
         setLoadError(false);
         if (announce) setAnnouncement(stateLabel(current));
         return { kind: "accepted", live: current, readSequence };
-      } catch {
+      } catch (error) {
         if (readSequence < nextReadSequence.current || readSequence < acceptedReadSequence.current) {
           return { kind: "stale", readSequence };
         }
+        const previous = latestAuthority.current;
+        if (
+          isConflict(error)
+          && previous !== null
+          && (previous.conversation_state === "processing_answer" || previous.conversation_state === "reporting")
+          && transientLiveConflicts.current < 2
+        ) {
+          // A transient 409 during processing may clear on the next poll.
+          // Keep only the last processing view so polling remains active.
+          transientLiveConflicts.current += 1;
+          return { kind: "failed", readSequence, conflict: true };
+        }
+        transientLiveConflicts.current = 0;
         acceptedReadSequence.current = readSequence;
         latestAuthority.current = null;
         setLive(null);
         setLoadError(true);
         setAnnouncement("We could not refresh this interview. Try again.");
-        return { kind: "failed", readSequence };
+        return { kind: "failed", readSequence, conflict: isConflict(error) };
       }
     })();
     pendingAuthorityReads.current.set(readSequence, read);
@@ -166,6 +190,14 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     void refreshLive();
   }, [refreshLive]);
+
+  useEffect(() => {
+    let active = true;
+    void getSupportDiagnostics(sessionId)
+      .then((value) => { if (active) setDiagnostics(value); })
+      .catch(() => { /* diagnostics are optional and never block the interview */ });
+    return () => { active = false; };
+  }, [sessionId]);
 
   useEffect(() => {
     const handleFocus = () => {
@@ -198,8 +230,15 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
         if (!isTransportFailure(error)) throw error;
         commandResult = await sendCoachConversationCommand(sessionId, request);
       }
-      const refreshed = await refreshLive();
+      let refreshed = await refreshLive();
       const accepted = ACCEPTED_COMMAND_RESULTS.has(commandResult.result);
+      if (accepted && (commandResult.state === "processing_answer" || commandResult.state === "reporting")) {
+        for (const delayMs of [250, 750]) {
+          if (refreshed.kind !== "failed" || !refreshed.conflict) break;
+          await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+          refreshed = await refreshLive();
+        }
+      }
       if (accepted && refreshed.kind === "accepted" && options.clearTextAfterRefresh) setTextAnswer("");
       return {
         post: accepted ? { kind: "accepted", result: commandResult } : { kind: "rejected" },
@@ -345,6 +384,31 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
       payload,
     } as ConversationCommandRequest);
   }, [execute, newEnvelope]);
+
+  const deleteTranscript = useCallback(() => {
+    const attemptId = live?.active_attempt?.id;
+    if (attemptId === undefined) return;
+    setPrivacyStatus(null);
+    setPrivacyError(null);
+    executeReviewCommand("delete_transcript", { attempt_id: attemptId });
+  }, [executeReviewCommand, live?.active_attempt?.id]);
+
+  const deleteSession = useCallback(() => {
+    setPrivacyPending(true);
+    setPrivacyStatus(null);
+    setPrivacyError(null);
+    void requestHardDeletion(sessionId, {
+      command_id: crypto.randomUUID(),
+      confirmation: "DELETE",
+      contract_version: "coach_session_hard_delete_v1",
+    })
+      .then((result) => {
+        setPrivacyStatus(result.result_state === "processing" ? "Deletion is processing." : "Deletion request recorded.");
+        void refreshLive(false);
+      })
+      .catch(() => setPrivacyError("Deletion could not be started. Try again."))
+      .finally(() => setPrivacyPending(false));
+  }, [refreshLive, sessionId]);
 
   const executeRecorderRequest = useCallback(async (
     authority: { state_version: number },
@@ -632,6 +696,16 @@ export function ConversationSession({ sessionId }: { sessionId: string }) {
               onUpdatePolicy={updateRetention}
               onDeleteAudio={deleteAudio}
             />
+            <PrivacyControls
+              canDeleteTranscript={live.allowed_commands.includes("delete_transcript") && live.active_attempt !== null}
+              canDeleteSession
+              pending={pending || privacyPending}
+              onDeleteTranscript={deleteTranscript}
+              onDeleteSession={deleteSession}
+              statusMessage={privacyStatus}
+              errorMessage={privacyError}
+            />
+            {diagnostics ? <SupportDiagnostics diagnostics={diagnostics} /> : null}
           </aside>
         </div>
       )}

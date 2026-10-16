@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta, timezone
 import threading
+import time
 
 import pytest
 from sqlalchemy import select
@@ -179,10 +180,9 @@ async def test_slow_synchronous_native_handler_does_not_block_deadline(
 ) -> None:
     """Would fail if a sync native call ran on and blocked the event-loop thread."""
     capability_id = "synthetic.sync_native"
-    release = threading.Event()
 
     def slow_native(_payload, _context):
-        release.wait(0.25)
+        time.sleep(0.25)
         return SyntheticOutput(result_ref="sync-native-result", count=7)
 
     gateway, _, _, claim, _ = await gateway_case(
@@ -190,7 +190,6 @@ async def test_slow_synchronous_native_handler_does_not_block_deadline(
         NativeCapabilityAdapter(slow_native),
         descriptor(capability_id, timeout=0.01),
     )
-    asyncio.get_running_loop().call_later(0.05, release.set)
     from execution_test_support import policy_for
 
     result = await gateway.invoke(
@@ -209,11 +208,10 @@ async def test_slow_synchronous_artifact_is_durable_outcome_unknown(
 ) -> None:
     """Would fail if executor work outlived timeout without ambiguous intent."""
     capability_id = "synthetic.sync_artifact"
-    release = threading.Event()
     effect_finished = threading.Event()
 
     def slow_artifact(_payload, _context):
-        release.wait(0.25)
+        time.sleep(0.25)
         effect_finished.set()
         return SyntheticOutput(result_ref="sync-artifact-result", count=7)
 
@@ -227,7 +225,6 @@ async def test_slow_synchronous_artifact_is_durable_outcome_unknown(
             timeout=0.01,
         ),
     )
-    asyncio.get_running_loop().call_later(0.05, release.set)
     from execution_test_support import policy_for
 
     result = await gateway.invoke(

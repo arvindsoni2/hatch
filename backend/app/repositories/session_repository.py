@@ -67,7 +67,10 @@ class SessionRepository:
             InterviewSession ORM object, or None if not found.
         """
         result = await self._session.execute(
-            select(InterviewSession).where(InterviewSession.id == session_id)
+            select(InterviewSession).where(
+                InterviewSession.id == session_id,
+                InterviewSession.deletion_state == "not_requested",
+            )
         )
         return result.scalar_one_or_none()
 
@@ -88,7 +91,12 @@ class SessionRepository:
         Returns:
             List of SessionListItem Pydantic schemas.
         """
-        query = select(InterviewSession).order_by(InterviewSession.created_at.desc()).limit(limit)
+        query = (
+            select(InterviewSession)
+            .where(InterviewSession.deletion_state == "not_requested")
+            .order_by(InterviewSession.created_at.desc())
+            .limit(limit)
+        )
         if status:
             query = query.where(InterviewSession.status == status)
         elif exclude_abandoned:
@@ -571,7 +579,10 @@ class SessionRepository:
         """
         # Load the starting session
         result = await self._session.execute(
-            select(InterviewSession).where(InterviewSession.id == session_id)
+            select(InterviewSession).where(
+                InterviewSession.id == session_id,
+                InterviewSession.deletion_state == "not_requested",
+            )
         )
         current = result.scalar_one_or_none()
         if not current:
@@ -583,7 +594,10 @@ class SessionRepository:
         while root.parent_session_id and root.parent_session_id not in visited:
             visited.add(root.parent_session_id)
             r2 = await self._session.execute(
-                select(InterviewSession).where(InterviewSession.id == root.parent_session_id)
+                select(InterviewSession).where(
+                    InterviewSession.id == root.parent_session_id,
+                    InterviewSession.deletion_state == "not_requested",
+                )
             )
             parent = r2.scalar_one_or_none()
             if not parent:
@@ -603,7 +617,8 @@ class SessionRepository:
             # Load children
             children_result = await self._session.execute(
                 select(InterviewSession).where(
-                    InterviewSession.parent_session_id == node.id
+                    InterviewSession.parent_session_id == node.id,
+                    InterviewSession.deletion_state == "not_requested",
                 ).order_by(InterviewSession.created_at)
             )
             children = list(children_result.scalars().all())

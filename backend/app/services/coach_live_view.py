@@ -26,6 +26,7 @@ from ..schemas.coach_conversation import (
     ConversationAnswerReviewRead,
     ConversationAttemptHistoryRead,
     ConversationCoachingReview,
+    ConversationCoachingStored,
     ConversationDeliveryObservation,
     ConversationDeliveryReview,
     ConversationEvidenceFinding,
@@ -137,11 +138,7 @@ class CoachLiveViewService:
                     audio_policy=(session.retention_policy_json or {}).get(
                         "audio", "delete_after_processing"
                     ),
-                    current_audio_state=(
-                        active_attempt.audio_retention_state
-                        if active_attempt is not None
-                        else None
-                    ),
+                    current_audio_state=self._project_audio_retention_state(active_attempt),
                     retryable_audio_cleanup_attempt_id=(
                         retryable_audio_cleanup_attempt_id
                     ),
@@ -349,11 +346,22 @@ class CoachLiveViewService:
                         candidate_action=claim["candidate_action"],
                     )
                 )
-            coaching = (
-                ConversationCoachingReview.model_validate(evaluation.coaching_json)
-                if evaluation.coaching_json is not None
-                else None
-            )
+            coaching = None
+            if evaluation.coaching_json is not None:
+                stored_coaching = ConversationCoachingStored.model_validate(
+                    evaluation.coaching_json
+                )
+                if stored_coaching.answer_level != evaluation.answer_level:
+                    raise CoachLiveViewError("coach_conversation_invalid_state")
+                coaching = ConversationCoachingReview.model_validate(
+                    stored_coaching.model_dump(
+                        exclude={
+                            "answer_level",
+                            "transcript_evidence",
+                            "evidence_review_items",
+                        }
+                    )
+                )
             return ConversationAnswerReviewRead(
                 evaluation_id=evaluation.id,
                 evaluation_state="completed",
@@ -697,6 +705,21 @@ class CoachLiveViewService:
             attempts_remaining=attempt_limit - question.attempts_created_count,
         )
 
+    @staticmethod
+    def _project_audio_retention_state(attempt: SessionRecording | None) -> str | None:
+        if attempt is None:
+            return None
+        if (
+            attempt.recording_type == "audio"
+            and attempt.attempt_state == "draft"
+            and attempt.audio_uri is None
+            and attempt.audio_content_hash is None
+            and attempt.audio_retention_state == "pending"
+        ):
+            # Older drafts used an internal marker that is not a V6 retention state.
+            return None
+        return attempt.audio_retention_state
+
     async def _project_attempt(
         self, attempt: SessionRecording | None
     ) -> InterviewAttemptRead | None:
@@ -771,7 +794,7 @@ class CoachLiveViewService:
             processing_retry_limit=retry_limit,
             processing_retries_remaining=retry_limit - retry_count,
             audio_retention_policy=attempt.audio_retention_policy,
-            audio_retention_state=attempt.audio_retention_state,
+            audio_retention_state=self._project_audio_retention_state(attempt),
             transcript_version=transcript_projection,
             self_assessment=self_assessment,
         )

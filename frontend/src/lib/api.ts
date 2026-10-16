@@ -1652,6 +1652,176 @@ export interface SessionFeedbackReport {
   question_evaluations: QuestionEvaluationSummary[];
 }
 
+export type ConversationalLevel =
+  | "needs_work"
+  | "developing"
+  | "interview_ready"
+  | "strong"
+  | "not_assessed";
+export type ConversationalTrend =
+  | "improving"
+  | "stable"
+  | "mixed"
+  | "declining"
+  | "not_enough_evidence";
+
+export interface ConversationalReportCounts {
+  planned_questions_total: number;
+  planned_questions_answered: number;
+  planned_questions_skipped: number;
+  follow_ups_asked: number;
+  follow_ups_answered: number;
+  accepted_attempts: number;
+  retry_attempts: number;
+  unavailable_attempts: number;
+  hints_used: number;
+}
+
+export interface ReportRetentionSummary {
+  attempts: Array<{
+    attempt_id: string;
+    audio_policy: "delete_after_processing" | "retain_until_deleted" | null;
+    audio_state: "not_applicable" | "temporary" | "retained" | "delete_pending" | "deleted" | "delete_failed" | null;
+    transcript_state: "retained" | "deleted" | "unavailable";
+    audio_cleanup_retryable: boolean;
+  }>;
+}
+
+export interface ConversationalReportRead {
+  session_id: string;
+  report_state: "completed" | "fallback";
+  activity_version: number;
+  retention_version: number;
+  session_level: ConversationalLevel;
+  dimensions: Record<string, ConversationalLevel>;
+  counts: ConversationalReportCounts;
+  strengths: ConversationalReportStrength[];
+  improvement_priorities: ConversationalReportPriority[];
+  unassessed_areas: ConversationalReportDimension[];
+  evidence_review_items: ConversationalReportEvidence[];
+  question_summaries: ConversationalReportQuestion[];
+  practice_suggestions: Array<Pick<ConversationalReportPriority, "dimension" | "next_action" | "contributor_attempt_ids">>;
+  candidate_reflection: Record<string, unknown> | null;
+  retention_summary: ReportRetentionSummary;
+  compatibility_key: string;
+  diagnostics: Record<string, unknown>;
+  contract_version: "coach_conversational_report_v1";
+}
+
+export type ConversationalReportDimension = "relevance" | "structure" | "specificity" | "impact" | "role_depth" | "clarity" | "conciseness";
+
+export interface ConversationalReportStrength {
+  dimension: ConversationalReportDimension;
+  level: ConversationalLevel;
+  assessed_bundle_count: number;
+  contributor_attempt_ids: string[];
+}
+
+export interface ConversationalReportPriority extends ConversationalReportStrength {
+  next_action: string;
+}
+
+export interface ConversationalReportEvidence {
+  attempt_id: string;
+  claim_id: string;
+  claim_text: string;
+  transcript_start: number;
+  transcript_end: number;
+  status: "supported" | "partially_supported" | "conflicting" | "not_found" | "not_verifiable";
+  evidence_ids: string[];
+  explanation: string;
+  candidate_action: string;
+}
+
+export interface ConversationalReportQuestion {
+  question_id: string;
+  root_question_id: string;
+  question_kind: "planned" | "adaptive_follow_up";
+  question_state: "pending" | "asked" | "answered" | "skipped";
+  question_text: string;
+  accepted_attempt_id: string | null;
+  answer_level: ConversationalLevel;
+}
+
+export interface ConversationalProgressGroup {
+  compatibility_key: string;
+  context: {
+    application_id: string | null;
+    company_name: string | null;
+    role_title: string | null;
+    role_family: string | null;
+    role_level: string | null;
+    interview_type: string | null;
+  };
+  current_levels: Record<ConversationalReportDimension, ConversationalLevel>;
+  previous_levels: Record<ConversationalReportDimension, ConversationalLevel>;
+  trends: Record<ConversationalReportDimension, ConversationalTrend>;
+  strongest_areas: ConversationalReportStrength[];
+  priority_areas: ConversationalReportPriority[];
+  evidence_review_items: ConversationalReportEvidence[];
+  sessions: Array<{
+    session_id: string;
+    activity_version: number;
+    completed_at: string;
+    session_level: ConversationalLevel;
+    dimensions: Record<string, ConversationalLevel>;
+  }>;
+}
+
+type ProgressBroadFilters = Partial<Record<"application_id" | "role_family" | "role_level" | "interview_type", string>>;
+export type ConversationalProgressSelector =
+  | ({ compatibility_key: string } & { [Key in keyof ProgressBroadFilters]?: never })
+  | ({ compatibility_key?: never } & ProgressBroadFilters & (
+    { application_id: string } | { role_family: string } | { role_level: string } | { interview_type: string }
+  ));
+
+export interface ConversationalProgressRead {
+  selector_mode: "exact" | "filtered";
+  applied_filters: Record<string, string>;
+  group_limit: number;
+  total_groups: number;
+  returned_groups: number;
+  groups_truncated: boolean;
+  groups: ConversationalProgressGroup[];
+  contract_version: "coach_conversational_progress_v2";
+}
+
+export interface ReportExportRequest {
+  format: "json" | "markdown";
+  expected_activity_version: number;
+  expected_retention_version: number;
+  include_transcript?: boolean;
+  include_evidence_details?: boolean;
+  include_attempt_history?: boolean;
+  include_candidate_reflection?: boolean;
+  contract_version: "coach_report_export_v1";
+}
+
+export interface HardDeletionCommandRequest {
+  command_id: string;
+  confirmation: "DELETE";
+  contract_version: "coach_session_hard_delete_v1";
+}
+
+export interface DeletionCommandResult {
+  command_id: string;
+  result_state: "processing" | "failed" | "completed";
+  error_code: string | null;
+  completed_at: string | null;
+  expires_at: string | null;
+  contract_version: "coach_session_hard_delete_v1";
+}
+
+export interface SupportDiagnosticsRead {
+  session_id: string;
+  status: string;
+  conversation_state: ConversationState;
+  report_state: string;
+  error_code: string | null;
+  retryable: boolean | null;
+  contract_version: "coach_support_diagnostics_v1";
+}
+
 export interface CompanyResearchResponse {
   company_name: string;
   sector: string | null;
@@ -1692,6 +1862,61 @@ export async function getCoachConversationLive(
 ): Promise<ConversationLiveView> {
   return apiFetch<ConversationLiveView>(
     `/api/coach/sessions/${sessionId}/live`,
+    { cache: "no-store" },
+  );
+}
+
+export async function getConversationalReport(
+  sessionId: string,
+): Promise<ConversationalReportRead> {
+  return apiFetch<ConversationalReportRead>(
+    `/api/coach/sessions/${sessionId}/report`,
+    { cache: "no-store" },
+  );
+}
+
+export async function getConversationalProgress(
+  filters: ConversationalProgressSelector,
+): Promise<ConversationalProgressRead> {
+  const params = buildQueryString(filters);
+  return apiFetch<ConversationalProgressRead>(
+    `/api/coach/conversational-progress${params}`,
+    { cache: "no-store" },
+  );
+}
+
+export async function exportConversationalReport(
+  sessionId: string,
+  request: ReportExportRequest,
+): Promise<Response> {
+  const response = await fetch(`${API_BASE}/api/coach/sessions/${sessionId}/exports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const raw = await response.text().catch(() => response.statusText);
+    throw new ApiError(raw || response.statusText, response.status, raw);
+  }
+  return response;
+}
+
+export async function requestHardDeletion(
+  sessionId: string,
+  request: HardDeletionCommandRequest,
+): Promise<DeletionCommandResult> {
+  return apiFetch<DeletionCommandResult>(
+    `/api/coach/sessions/${sessionId}/deletion-commands`,
+    { method: "POST", body: JSON.stringify(request) },
+  );
+}
+
+export async function getSupportDiagnostics(
+  sessionId: string,
+): Promise<SupportDiagnosticsRead> {
+  return apiFetch<SupportDiagnosticsRead>(
+    `/api/coach/sessions/${sessionId}/diagnostics`,
     { cache: "no-store" },
   );
 }
@@ -1846,6 +2071,8 @@ export interface PlanFollowUpResponse {
 export interface CoachCapabilities {
   face_analysis: boolean;
   tts: boolean;
+  conversational?: boolean;
+  conversational_interview?: boolean;
 }
 
 /** Plan a follow-up session targeting the weakest rubric dimensions. */

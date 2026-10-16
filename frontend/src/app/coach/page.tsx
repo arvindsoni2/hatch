@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { listSessions, SessionListItem, SessionResponse } from "@/lib/api";
+import { listSessions, getCoachCapabilities, getSession, getConversationalReport,
+  getConversationalProgress, type ConversationalProgressRead,
+  type SessionListItem, type SessionResponse } from "@/lib/api";
+import { ConversationalProgress } from "@/components/coach/conversation/ConversationalProgress";
 import { SessionLauncherDialog } from "@/components/coach/SessionLauncher";
 import { Brain, BookOpen, ChevronRight, Loader2, Plus } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -30,6 +33,15 @@ export default function CoachPage() {
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLauncher, setShowLauncher] = useState(false);
+  const [progressEnabled, setProgressEnabled] = useState(false);
+  const [progressSessionId, setProgressSessionId] = useState("");
+  const [comparison, setComparison] = useState<"format" | "application">("format");
+  const [progress, setProgress] = useState<ConversationalProgressRead | null>(null);
+  const [progressStatus, setProgressStatus] = useState<"idle" | "loading" | "error" | "unlinked">("idle");
+  const [progressRetry, setProgressRetry] = useState(0);
+  const eligible = sessions.filter((session) => session.experience_version === "conversational_v1"
+    && session.status === "completed" && session.conversation_state === "completed");
+  const selectedIsVisible = eligible.some((session) => session.id === progressSessionId);
 
   const fetchSessions = () =>
     listSessions(20)
@@ -40,6 +52,47 @@ export default function CoachPage() {
   useEffect(() => {
     fetchSessions();
   }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    getCoachCapabilities().then((capabilities) => {
+      if (!ignore) setProgressEnabled(capabilities.conversational_interview ?? capabilities.conversational ?? false);
+    }).catch(() => { /* Existing conversational history remains readable if capability discovery fails. */ });
+    return () => { ignore = true; };
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    setProgress(null);
+    if (!progressSessionId || !selectedIsVisible) {
+      setProgressStatus("idle");
+      return () => { ignore = true; };
+    }
+    setProgressStatus("loading");
+    async function loadProgress() {
+      try {
+        const [session, report] = await Promise.all([
+          getSession(progressSessionId), getConversationalReport(progressSessionId),
+        ]);
+        if (ignore) return;
+        if (comparison === "application" && !session.application_id) {
+          setProgressStatus("unlinked");
+          return;
+        }
+        const result = await getConversationalProgress(comparison === "application"
+          ? { application_id: session.application_id! }
+          : { compatibility_key: report.compatibility_key });
+        if (!ignore) {
+          setProgress(result);
+          setProgressStatus("idle");
+        }
+      } catch {
+        if (!ignore) setProgressStatus("error");
+      }
+    }
+    void loadProgress();
+    return () => { ignore = true; };
+  }, [progressSessionId, selectedIsVisible, comparison, progressRetry]);
 
   // Poll while any session is still generating so the list auto-updates
   useEffect(() => {
@@ -167,9 +220,13 @@ export default function CoachPage() {
                     <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-amber-500" />
                   )}
                   <div className="flex flex-col gap-0.5 min-w-0">
-                    <p className="font-medium text-[var(--text)] truncate">
+                    {isGenerating || isFailed ? <p className="font-medium text-[var(--text)] truncate">
                       {session.role_title} - {session.company_name}
-                    </p>
+                    </p> : <Link href={session.status === "completed" ? `/coach/report/${encodeURIComponent(session.id)}` : `/coach/session/${encodeURIComponent(session.id)}`}
+                      onClick={(event) => event.stopPropagation()}
+                      className="font-medium text-[var(--text)] truncate focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
+                      {session.role_title} - {session.company_name}
+                    </Link>}
                     <p className="text-xs text-[var(--text-muted)]">
                       {isGenerating
                         ? "Questions being generated — check the notification bell when ready"
@@ -185,7 +242,7 @@ export default function CoachPage() {
                   <StatusBadge tone={STATUS_TONES[session.status] ?? "neutral"}>
                     {STATUS_LABELS[session.status] ?? session.status}
                   </StatusBadge>
-                  {session.overall_score != null && (
+                  {session.experience_version !== "conversational_v1" && session.overall_score != null && (
                     <span className={`text-sm font-bold ${session.overall_score >= 8 ? "text-[var(--success)]" : session.overall_score >= 6 ? "text-[var(--warning)]" : "text-[var(--danger)]"}`}>
                       {session.overall_score.toFixed(1)}/10
                     </span>
@@ -199,6 +256,41 @@ export default function CoachPage() {
           })}
         </div>
       )}
+
+      {progressEnabled || eligible.length > 0 ? <section aria-labelledby="progress-context-title" className="mt-8 space-y-4 border-t border-[var(--border)] pt-6">
+        <h2 id="progress-context-title" className="text-xl font-semibold text-[var(--text)]">Conversational progress</h2>
+        {eligible.length === 0 ? <p className="text-sm text-[var(--text-muted)]">
+          Complete a conversational interview to select a progress context.
+        </p> : <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="space-y-2 text-sm text-[var(--text-dim)]">Progress interview
+              <select value={progressSessionId} onChange={(event) => setProgressSessionId(event.target.value)}
+                className="block min-h-11 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
+                <option value="">Select a completed interview</option>
+                {eligible.map((session) => <option key={session.id} value={session.id}>
+                  {session.role_title} — {session.company_name} ({session.created_at.slice(0, 10)})
+                </option>)}
+              </select>
+            </label>
+            <label className="space-y-2 text-sm text-[var(--text-dim)]">Compare interviews
+              <select value={comparison} onChange={(event) => setComparison(event.target.value as "format" | "application")}
+                disabled={!progressSessionId}
+                className="block min-h-11 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
+                <option value="format">This exact interview format</option>
+                <option value="application">This application, grouped by format</option>
+              </select>
+            </label>
+          </div>
+          {!progressSessionId ? <p className="text-sm text-[var(--text-muted)]">Select an interview to view compatible progress.</p> : null}
+          {progressStatus === "loading" ? <p role="status" className="text-sm text-[var(--text-muted)]">Loading progress…</p> : null}
+          {progressStatus === "error" ? <div className="space-y-3">
+            <p role="alert" className="text-sm text-[var(--danger)]">Progress could not be loaded. Retry or select another interview.</p>
+            <Button type="button" variant="outline" onClick={() => setProgressRetry((value) => value + 1)}>Retry progress</Button>
+          </div> : null}
+          {progressStatus === "unlinked" ? <p className="text-sm text-[var(--text-muted)]">This interview is not linked to an application. Compare its exact format instead.</p> : null}
+          {progress ? <ConversationalProgress progress={progress} /> : null}
+        </>}
+      </section> : null}
     </PageContainer>
   );
 }

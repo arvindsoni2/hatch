@@ -1440,9 +1440,20 @@ async def test_get_next_question_with_mock_service() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_session_report_with_mock_service(client) -> None:
+async def test_get_session_report_with_mock_service(client, db_session) -> None:
     """GET /api/coach/sessions/{id}/report returns 200 with a SessionFeedbackReport."""
-    with patch("app.routers.coach.CoachService") as MockSvc:
+    db_session.add(
+        InterviewSession(
+            id="session-uuid-001",
+            company_name="Synthetic Legacy Co",
+            role_title="Engineer",
+            config={},
+            status="completed",
+            experience_version="legacy_v1",
+        )
+    )
+    await db_session.commit()
+    with patch("app.routers.coach_conversation.CoachService") as MockSvc:
         instance = MockSvc.return_value
         instance.get_report = AsyncMock(return_value=SAMPLE_REPORT)
         response = await client.get("/api/coach/sessions/session-uuid-001/report")
@@ -1450,6 +1461,14 @@ async def test_get_session_report_with_mock_service(client) -> None:
     data = response.json()
     assert data["session_id"] == "session-uuid-001"
     assert data["overall_score"] == 7.5
+
+
+@pytest.mark.asyncio
+async def test_missing_legacy_report_session_keeps_not_found_response(client) -> None:
+    """The shared report URL preserves the legacy missing-session status."""
+    response = await client.get("/api/coach/sessions/missing-legacy-report/report")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Session not found"}
 
 
 @pytest.mark.asyncio
