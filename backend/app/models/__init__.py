@@ -4,6 +4,7 @@ from .job import JobPosting, ScrapeLog  # noqa: F401
 from .application import Application, InterviewRound, FollowUp  # noqa: F401
 from .activity import ActivityLog  # noqa: F401
 from .document import GeneratedDocument  # noqa: F401
+from .cv_publication import CVPublication  # noqa: F401
 from .document_asset import GeneratedDocumentAsset  # noqa: F401
 from .coach_session import (  # noqa: F401
     CoachSessionDeletionResult,

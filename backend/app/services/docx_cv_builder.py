@@ -6,10 +6,12 @@ import logging
 import os
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult
+from .generation_privacy import metadata_only
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,8 @@ class DocxCVBuilder:
                 cwd=str(_TEMPLATES_DIR),
             )
             if result.returncode != 0:
+                if metadata_only.get():
+                    raise RuntimeError("cv_render_failed")
                 logger.error("CV docx generation failed: %s", result.stderr)
                 raise RuntimeError(f"generate_cv_docx.js failed: {result.stderr[:500]}")
 
@@ -79,6 +83,73 @@ class DocxCVBuilder:
 
         finally:
             os.unlink(spec_path)
+
+    def build_staged(
+        self,
+        tailored_cv: TailoredCVResult,
+        jd_analysis: JDAnalysisResult,
+        personal: dict[str, Any],
+        application_id: str,
+        version: int,
+        variant_label: str = "A",
+        template_id: str | None = None,
+        design_settings: dict[str, Any] | None = None,
+        *,
+        attempt_id: str,
+    ) -> tuple[str, str, int]:
+        """Render to an immutable staging name; callers promote only after validation.
+
+        The legacy ``build`` method deliberately remains unchanged. Runtime NEW
+        callers receive a per-attempt staging path and an intended final path,
+        preventing partially rendered files or concurrent attempts from
+        clobbering the visible filename.
+        """
+        staged, final = map(Path, self.staging_paths(application_id, version, variant_label, attempt_id))
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        spec = _build_cv_spec(tailored_cv, jd_analysis, personal, template_id, design_settings)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
+            json.dump(spec, tf, indent=2)
+            spec_path = tf.name
+        try:
+            result = subprocess.run(
+                ["node", str(_CV_SCRIPT), spec_path, str(staged)], capture_output=True,
+                text=True, timeout=60, cwd=str(_TEMPLATES_DIR),
+            )
+            if result.returncode != 0:
+                staged.unlink(missing_ok=True)
+                raise RuntimeError("cv_render_failed")
+            return str(staged), str(final), staged.stat().st_size
+        except BaseException:
+            staged.unlink(missing_ok=True)
+            raise
+        finally:
+            os.unlink(spec_path)
+
+    @staticmethod
+    def staging_paths(application_id: str, version: int, variant: str, attempt_id: str) -> tuple[str, str]:
+        suffix = uuid.uuid5(uuid.NAMESPACE_URL, attempt_id).hex
+        out_dir = _OUTPUT_BASE / application_id
+        name = f"cv_v{version}_{variant}_{suffix}.docx"
+        staged, final = (out_dir / ".staging" / name).resolve(), (out_dir / name).resolve()
+        if not staged.is_relative_to(_OUTPUT_BASE.resolve()) or not final.is_relative_to(_OUTPUT_BASE.resolve()):
+            raise ValueError("cv_artifact_path_invalid")
+        return str(staged), str(final)
+
+    @staticmethod
+    def promote_staged(staged_path: str, final_path: str) -> None:
+        """Atomically publish a validated staged file without overwriting a peer."""
+        staged, final = Path(staged_path), Path(final_path)
+        if not staged.is_file() or final.exists():
+            raise RuntimeError("cv_artifact_promotion_conflict")
+        # link+unlink is atomic with respect to final-name creation and rejects
+        # an already-published peer unlike os.replace.
+        os.link(staged, final)
+        staged.unlink()
+
+    @staticmethod
+    def discard_staged(staged_path: str | None) -> None:
+        if staged_path:
+            Path(staged_path).unlink(missing_ok=True)
 
 
 def _build_cv_spec(

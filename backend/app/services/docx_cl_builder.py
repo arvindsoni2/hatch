@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..schemas.tailor import CoverLetterResult, JDAnalysisResult
+from .generation_privacy import metadata_only
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,8 @@ class DocxCLBuilder:
                 cwd=str(_TEMPLATES_DIR),
             )
             if result.returncode != 0:
+                if metadata_only.get():
+                    raise RuntimeError("cover_letter_render_failed")
                 logger.error("CL docx generation failed: %s", result.stderr)
                 raise RuntimeError(f"generate_cl_docx.js failed: {result.stderr[:500]}")
 

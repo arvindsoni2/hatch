@@ -228,6 +228,22 @@ class WorkflowKernel:
             outcome_unknown=outcome_unknown,
         )
 
+    async def acknowledge_execution_receipt(
+        self,
+        claim: ExecutionClaimRecord,
+        *,
+        receipt_ref: str,
+        verify_receipt: Callable[[Any], Awaitable[bool]],
+        now: datetime | None = None,
+    ) -> bool:
+        """Fence and close a staged side effect after its receipt is verified."""
+        return await self._repository.acknowledge_execution_receipt(
+            claim,
+            receipt_ref=receipt_ref,
+            verify_receipt=verify_receipt,
+            now=now or self._clock.now(),
+        )
+
     async def begin_execution_intent(
         self,
         claim: ExecutionClaimRecord,

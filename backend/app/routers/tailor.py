@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from typing import Optional
 
@@ -20,6 +22,8 @@ from ..schemas.tailor import (
 from ..services.async_job_service import AsyncJobService
 from ..services.master_cv_store import resolve_master_cv_path
 from ..services.tailor_service import TailorService
+from ..runtime import RuntimeMode
+from ..runtime.migration import resolve_runtime_mode
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +201,22 @@ def _require_master_cv() -> None:
         )
 
 
+def _delivery_refs(request: TailorRequest, job_id: str) -> dict[str, str]:
+    delivery = request.delivery_id or request.request_id or job_id
+    intent = request.request_id or delivery
+    return {"delivery_ref": "delivery:" + hashlib.sha256(delivery.encode()).hexdigest(),
+            "request_ref": "request:" + hashlib.sha256(intent.encode()).hexdigest()}
+
+
+def _package_result_json(result, mode: RuntimeMode) -> str:
+    if mode is RuntimeMode.LEGACY:
+        return result.model_dump_json()
+    return json.dumps({"application_id": result.application_id,
+        "cv_document_id": result.cv_document_id, "cl_document_id": result.cl_document_id,
+        "ats_score": {key: getattr(result.ats_score, key) for key in
+            ("overall_score", "attempts", "target_score", "passed_target")}, "review": result.review})
+
+
 @router.post("/generate-cv", status_code=202)
 async def generate_cv(
     request: TailorRequest,
@@ -211,21 +231,25 @@ async def generate_cv(
 
     async_job = await AsyncJobService.create(db, "tailor_generate_cv")
     await db.commit()
+    mode = resolve_runtime_mode("cv_tailor")
 
     async def _work() -> None:
+        from ..database import AsyncSessionLocal
         try:
-            result = await svc.generate_cv(
+            async with AsyncSessionLocal() as job_db:
+                result = await svc.generate_cv(
                 request.application_id,
                 request.variant,
                 jd_text,
-                db,
+                job_db,
                 request.custom_instructions,
                 request.design_settings.template_id if request.design_settings else request.template_id,
                 request.design_settings.model_dump() if request.design_settings else None,
+                _resolved_mode=mode, **_delivery_refs(request, async_job.id),
             )
             await AsyncJobService._finish(async_job.id, result.model_dump_json(), None)
-        except Exception as exc:
-            await AsyncJobService._finish(async_job.id, None, str(exc))
+        except BaseException:
+            await AsyncJobService._finish(async_job.id, None, "cv_tailor_failed")
 
     AsyncJobService.run(async_job.id, _work())
     return {"job_id": async_job.id, "status": "pending", "type": "tailor_generate_cv"}
@@ -272,6 +296,7 @@ async def generate_all(
     _require_master_cv()
     async_job = await AsyncJobService.create(db, "tailor_generate")
     await db.commit()
+    mode = resolve_runtime_mode("cv_tailor")
 
     async def _work() -> None:
         from ..database import AsyncSessionLocal  # noqa: PLC0415
@@ -295,6 +320,7 @@ async def generate_all(
                         custom_instructions=request.custom_instructions,
                         template_id=request.template_id,
                         design_settings=request.design_settings.model_dump() if request.design_settings else None,
+                        _resolved_mode=mode, **_delivery_refs(request, async_job.id),
                     ),
                     timeout=7200,  # 2-hour ceiling (7 jobs × 3 calls × 180s = 3780s queue wait)
                 )
@@ -305,11 +331,11 @@ async def generate_all(
                 async_job.id,
             )
             exc_str = "Pipeline timed out after 2 hours. Too many concurrent jobs in queue — try again when other jobs are done."
-        except Exception as exc:
-            logger.exception("generate_all failed for async job %s: %s", async_job.id, exc)
-            exc_str = str(exc)
+        except BaseException:
+            logger.warning("tailor_package_failed job_id=%s", async_job.id)
+            exc_str = "tailor_package_failed"
         # Call _finish AFTER the session is fully closed to avoid SQLite write-lock deadlock
-        await AsyncJobService._finish(async_job.id, result.model_dump_json() if result else None, exc_str)
+        await AsyncJobService._finish(async_job.id, _package_result_json(result, mode) if result else None, exc_str)
 
     AsyncJobService.run(async_job.id, _work())
     return {"job_id": async_job.id, "status": "pending", "type": "tailor_generate"}

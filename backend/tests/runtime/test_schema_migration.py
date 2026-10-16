@@ -94,10 +94,10 @@ def _table_sql(database: Path, table: str) -> str:
 
 def test_runtime_migration_has_one_head() -> None:
     scripts = _alembic_scripts()
-    assert scripts.get_heads() == ["z3a4b5c6d7e8"]
-    head = scripts.get_revision("z3a4b5c6d7e8")
+    assert scripts.get_heads() == ["a4b5c6d7e8f9"]
+    head = scripts.get_revision("a4b5c6d7e8f9")
     assert head is not None
-    assert head.down_revision == "y2z3a4b5c6d7"
+    assert head.down_revision == "z3a4b5c6d7e8"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:
