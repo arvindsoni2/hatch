@@ -45,7 +45,7 @@ TASK_TIERS: dict[Phase2Stage, Literal["T", "S"]] = {
 TASK_OUTPUT_CAPS = {"T": 512, "S": 600, "L": 600}
 TIER_MAX_DEADLINE_SECONDS = {"T": 60, "S": 180, "L": 300}
 INPUT_MAX_CHARS = {
-    "explain": 3_000,
+    "explain": 2_000,
     "brief_enhance": 3_600,
     "debrief_extract": 2_500,
     "competency_extract": 4_500,
@@ -54,6 +54,14 @@ INPUT_MAX_CHARS = {
 _FINGERPRINT = r"^sha256:[0-9a-f]{64}$"
 _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)?\b")
 _NAME = re.compile(r"\b[A-Z][a-zA-Z0-9'-]{1,}\b")
+_ALLOWED_NAME_WORDS = {
+    *{dimension.casefold() for dimension in Dimension.__args__},
+    "star",
+    "situation",
+    "task",
+    "action",
+    "result",
+}
 
 
 def _word_count(text: str) -> int:
@@ -70,7 +78,7 @@ class ExplainExcerpt(StrictModel):
 class ExplainInput(StrictModel):
     dimension: Dimension
     rubric_description: str = Field(min_length=1, max_length=500)
-    excerpts: list[ExplainExcerpt] = Field(min_length=1, max_length=3)
+    excerpts: list[ExplainExcerpt] = Field(min_length=1, max_length=2)
 
 
 class BriefHeader(StrictModel):
@@ -241,7 +249,9 @@ def _names(text: str) -> set[str]:
     return names
 
 
-def _text_violations(text: str, source: str, label: str) -> list[str]:
+def _text_violations(
+    text: str, source: str, label: str, allowed_words: set[str]
+) -> list[str]:
     violations: list[str] = []
     source_numbers = _numbers(source)
     for number in sorted(_numbers(text)):
@@ -249,12 +259,17 @@ def _text_violations(text: str, source: str, label: str) -> list[str]:
             violations.append(f"number_not_in_source:{label}:{number}")
     source_casefold = source.casefold()
     for name in sorted(_names(text)):
-        if name.casefold() not in source_casefold:
+        key = name.casefold()
+        if key not in allowed_words and key not in source_casefold:
             violations.append(f"name_not_in_source:{label}:{name}")
     return violations
 
 
-def _brief_violations(output: dict[str, Any], case: dict[str, Any]) -> list[str]:
+def _brief_violations(
+    output: dict[str, Any],
+    case: dict[str, Any],
+    allowed_words: set[str],
+) -> list[str]:
     violations: list[str] = []
     stories = {item["story_id"]: item["text"] for item in case["stories"]}
     watch_outs = {item["fingerprint"]: item["evidence"] for item in case["watch_outs"]}
@@ -268,6 +283,7 @@ def _brief_violations(output: dict[str, Any], case: dict[str, Any]) -> list[str]
                     str(point.get("text", "")),
                     stories[story_id],
                     f"story:{story_id}",
+                    allowed_words,
                 )
             )
     for watch_out in output.get("watch_outs", []):
@@ -280,13 +296,17 @@ def _brief_violations(output: dict[str, Any], case: dict[str, Any]) -> list[str]
                     str(watch_out.get("text", "")),
                     watch_outs[fingerprint],
                     f"watch_out:{fingerprint}",
+                    allowed_words,
                 )
             )
     return violations
 
 
 def grounding_violations(
-    stage: str, output: dict[str, Any], case: dict[str, Any]
+    stage: str,
+    output: dict[str, Any],
+    case: dict[str, Any],
+    instruction_text: str = "",
 ) -> tuple[str, ...]:
     """Return schema, citation, numeric and naming violations for one output."""
     try:
@@ -297,8 +317,13 @@ def grounding_violations(
             for error in exc.errors()
         )
 
+    allowed_words = set(_ALLOWED_NAME_WORDS)
+    allowed_words.update(
+        word.casefold()
+        for word in re.findall(r"[A-Za-z][A-Za-z'-]*", instruction_text)
+    )
     if stage == "brief_enhance":
-        return tuple(_brief_violations(valid.model_dump(), case))
+        return tuple(_brief_violations(valid.model_dump(), case, allowed_words))
     if stage == "explain":
         source = " ".join(
             [case["rubric_description"]]
@@ -314,5 +339,7 @@ def grounding_violations(
 
     violations: list[str] = []
     for text in texts:
-        violations.extend(_text_violations(text, source, stage))
+        violations.extend(
+            _text_violations(text, source, stage, allowed_words)
+        )
     return tuple(violations)

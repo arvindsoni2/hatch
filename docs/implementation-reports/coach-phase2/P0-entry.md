@@ -1,6 +1,6 @@
 # P0 evidence — handoff check, gate report, Phase 2 bench suite
 
-Task / spec sections / ACs: P0 rework after review. Spec §7.6, §9.1, §9.4, §10. No ACs are implemented by P0. Review findings 1–10 are addressed below.
+Task / spec sections / ACs: P0 rework after two reviews. Spec §7.6, §9.1, §9.4, §10. No ACs are implemented by P0. The first review's findings 1–10 and the re-review's findings 1–6 are addressed below.
 
 Baseline SHA → head SHA: `b7274a6` (plan baseline) → `412008b` (handoff pack) → `870696c` (main merged into the branch as `1a6f02e`) → head recorded in the commit that adds this report.
 
@@ -38,26 +38,56 @@ E   ModuleNotFoundError: No module named 'benchmarks.coach.phase2_adapter'
 
 After the module and checks existed, the new suite reached GREEN. The old stub `grounding_violations` returned `()` and could not satisfy the new unknown-id, absent-number, absent-name and over-limit assertions; the fixtures also failed the new 20 % size and §7.6/§10 limit assertions until resized.
 
+Re-review round (new tests written first):
+
+```text
+$ python -m pytest -q --no-cov tests/benchmarks/coach/test_phase2_suite.py
+FAILED test_grounding_allowlists_star_and_rubric_words
+FAILED test_explain_excerpts_are_capped_at_two
+FAILED test_phase2_bench_path_marks_bad_json_invalid
+FAILED test_phase2_bench_path_marks_ungrounded_output_invalid
+FAILED test_phase2_bench_path_times_out_instead_of_hanging
+FAILED test_phase2_bench_path_runs_all_four_stages_against_fake_server
+6 failed, 13 passed in 3.26s
+```
+
+The failure modes were: `STAR`/`Situation` were flagged as names; three excerpts were accepted; the fake server rejected requests without `stream_options.include_usage`; and the negative-path cases had no server mode yet.
+
 GREEN: commands, exit codes, counts:
 
 ```text
 cd backend
-python -m pytest -q --no-cov tests/benchmarks/coach/test_phase2_suite.py   # exit 0, 14 passed
-python -m pytest -q --no-cov tests/benchmarks/coach                       # exit 0, 149 passed
-/tmp/p0-py312/bin/python -m pytest -q --no-cov tests/benchmarks/coach     # exit 0, 149 passed (Python 3.12.16)
+python -m pytest -q --no-cov tests/benchmarks/coach/test_phase2_suite.py   # exit 0, 19 passed
+python -m pytest -q --no-cov tests/benchmarks/coach                       # exit 0, 154 passed
+/tmp/p0-py312/bin/python -m pytest -q --no-cov tests/benchmarks/coach     # exit 0, 154 passed (Python 3.12.16)
 ruff check benchmarks/coach/phase2_checks.py benchmarks/coach/phase2_adapter.py \
   benchmarks/coach/contracts.py benchmarks/coach/runner.py \
   tests/benchmarks/coach/test_phase2_suite.py                              # exit 0, All checks passed
 python -m benchmarks.coach validate --suite benchmarks/coach/fixtures/phase2_v1
   # exit 0, "Valid Coach suite coach_phase2_v1: 48 scenarios, 2 models"
-python scripts/check_docs.py                                               # exit 0, Documentation validation passed.
-python scripts/check_readme_contract.py                                    # exit 0, README contract passed.
 git diff --check                                                           # exit 0
 ```
 
+Docs checks (working tree vs clean export). The owner's untracked
+`docs/implementation-specs/active/hatch-coach-phase2-handoff/` makes the
+working-tree `python scripts/check_docs.py` fail with front-matter errors for
+that folder only. It was left exactly where it was. The tracked files were
+checked on a clean export:
+
+```text
+$ D=$(mktemp -d) && git ls-files -z | tar --null -T - -c | tar -x -C "$D" \
+    && (cd "$D" && python scripts/check_docs.py && python scripts/check_readme_contract.py); rm -rf "$D"
+Documentation validation passed.
+README contract passed.
+```
+
+Working-tree `python scripts/check_docs.py` output begins with
+`docs/implementation-specs/active/hatch-coach-phase2-handoff/HANDOFF.md: missing
+required YAML front matter`; no other path is reported.
+
 Python 3.12 environment: `uv venv --python 3.12 /tmp/p0-py312`, then `uv pip install -r requirements.txt -r requirements-test.txt`; `python --version` is 3.12.16. System Python is 3.14.8. Node is v22.23.2.
 
-Regressions run: the full `tests/benchmarks/coach` suite on Python 3.14 (149 passed) and Python 3.12 (149 passed), including profiles, suite loader, CLI, runner, adapters, scoring and the new fake-server bench run.
+Regressions run: the full `tests/benchmarks/coach` suite on Python 3.14 (154 passed) and Python 3.12 (154 passed), including profiles, suite loader, CLI, runner, adapters, scoring and the new fake-server bench run and failure cases.
 
 Model calls in tests: fake / live (live only in P3 bench): fake only. The bench path was exercised against an in-process loopback SSE server on `127.0.0.1`; no live model call was made.
 
@@ -66,11 +96,18 @@ Metrics capture (finding 1): `phase2_adapter.py` records per attempt:
 - `latency_ms` — wall clock from before the HTTP request to the last streamed chunk; includes queue time on `llm-primary`.
 - `ttft_ms` — time to the first streamed content delta.
 - `tokens_per_second` — llama.cpp `timings.predicted_per_second` when present, else completion tokens divided by the time from first token to last.
-- `peak_rss_bytes` — `/proc/<HATCH_BENCH_SERVER_PID>/status` `VmHWM`, the kernel's peak resident set for the llama-server process. The fake-server test sets the variable to the test process; P3 must set it to the `llama-server` PID. When unset or unreadable the value is `null`.
+- `peak_rss_bytes` — `/proc/<HATCH_BENCH_SERVER_PID>/status` `VmHWM`, the kernel's peak resident set for the llama-server process. The fake-server test sets the variable to the test process. When unset or unreadable the value is `null`.
 - `prompt_tokens`, `completion_tokens`, `output_chars`, `deadline_seconds`.
 - `schema_valid` and `grounding_violations` — the P3 gate inputs; a failed schema or any grounding violation also raises the blocking `coach_stage_failed` gate on the attempt.
 
 Per-tier enforcement (finding 6): the adapter applies `TIER_MAX_DEADLINE_SECONDS` (T 60 s, S 180 s, L 300 s) per case and `TASK_OUTPUT_CAPS` (T 512, S 600, L 600) to the request. The now-unused 300 s profile bound remains only as an outer runner guard.
+
+P3 notes — peak memory and token usage:
+
+- P3 sets `HATCH_BENCH_SERVER_PID` to the **host PID** of the Docker llama-server: `docker inspect -f '{{.State.Pid}}' <container>`.
+- `VmHWM` is cumulative since that process started. P3 must start a fresh llama-server per candidate, run the suite, and read the maximum; do not reuse a server across candidates.
+- `phase2_adapter.py` sends `"stream_options": {"include_usage": true}` so llama-server fills `prompt_tokens` and `completion_tokens`. The word-count fallback is used only when usage is absent.
+- The fake server rejects requests without `stream_options.include_usage`, so the full-run and failure tests enforce it.
 
 Review finding mapping:
 
@@ -83,7 +120,16 @@ Review finding mapping:
 7. Model — this rework ran on `opencode-go/deepseek-v4.1-flash`; the free-tier original run does not count toward P1 qualification.
 8. Loopback test — now checks both `phase2_v1/models.json` entries and that the loader rejects a copied suite whose endpoint is remote.
 9. Deviations — listed above.
-10. Python versions — 3.12.16 and 3.14.8, both 149 passed.
+10. Python versions — 3.12.16 and 3.14.8, both 154 passed.
+
+Re-review findings (cbbeed4):
+
+1. Process — the owner's untracked `docs/implementation-specs/active/hatch-coach-phase2-handoff/` was **not** moved, renamed or deleted. Docs checks were run on a clean export of tracked files (command and output above).
+2. Grounding names — `_ALLOWED_NAME_WORDS` covers the seven dimensions and STAR words (Situation, Task, Action, Result, STAR), and `grounding_violations(..., instruction_text=...)` also allows every word in the task's own bench instruction and the supplied rubric text (the rubric is already part of the explain source). `test_grounding_allowlists_star_and_rubric_words` uses the review's exact example; the existing `Northwind` negative test still fails.
+3. Bench failure paths — three fake-server tests run through `run_benchmark` with the `phase2` profile: bad JSON (`schema_valid` false + blocking `coach_stage_failed`), ungrounded output (`schema_valid` true, `grounding_violations` > 0 + blocking gate), and a stalled server with patched `TIER_MAX_DEADLINE_SECONDS` (case ends as `timeout`, no hang).
+4. Token usage — `stream_options.include_usage` is sent; the fake server rejects requests without it.
+5. Peak memory — documented under "P3 notes" above, including `docker inspect` for the host PID and the fresh-server/VmHWM maximum rule.
+6. Explain excerpts — capped at 2 in `ExplainInput`; `INPUT_MAX_CHARS["explain"]` is 2,000, the five long cases are ~1,800 characters, and `test_explain_excerpts_are_capped_at_two` covers the cap.
 
 Privacy / deletion / fencing evidence: all 48 cases are synthetic. The fixture test walks every JSON string for personal email, phone shapes, private markers, absolute paths and `data/` references; the loader's privacy scan also runs. No `data/`, `.env`, CV, transcript or recording was read. No privacy, deletion or fencing code changed. The bench stores model output as the validated task payload only; invalid output is not stored raw.
 
@@ -98,7 +144,7 @@ Gate report:
 | Python / Node | 3.12.16 and 3.14.8 / v22.23.2 |
 | R7 / R8 / R9 | No branches, merged commits or evidence reports; paused per D6 |
 | Handoff pack installed | Yes, including the revised 2 Nov spec, plan and agent files |
-| `check_docs.py` / `check_readme_contract.py` | exit 0 / exit 0 |
+| `check_docs.py` / `check_readme_contract.py` | exit 0 / exit 0 on a clean export of tracked files; working-tree `check_docs` fails only on the owner's untracked staging folder, which was left in place |
 | Wave 0 verdict | **GO** |
 | Wave 1 verdict | Pending the §3.2 readiness check, recorded at P4 |
 
@@ -109,6 +155,6 @@ Not run / known limits:
 - The Phase 2 profile uses a single model id per run; tier caps come from the task, not from the model spec.
 - `/models` and the Go privacy table were not verifiable from this session.
 - Only `tests/benchmarks/coach` was run; the full backend and frontend suites belong to the P4/P6/P9 gates.
-- An untracked duplicate handoff staging folder under `docs/implementation-specs/active/` was moved out of the repository (to `/tmp/opencode/hatch-coach-phase2-handoff-staging`) so `check_docs.py` could run; no tracked file was changed.
+- The owner's untracked `docs/implementation-specs/active/hatch-coach-phase2-handoff/` remains in the working tree, untouched; it is why the working-tree docs check fails and why the clean-export check is recorded instead.
 
-Ready for review: yes — all ten findings are addressed, the fake-server bench path passes on both Python versions, and no protected file changed.
+Ready for review: yes — all re-review findings are addressed, the fake-server success and failure paths pass on both Python versions, and no protected or untracked file was moved or changed.

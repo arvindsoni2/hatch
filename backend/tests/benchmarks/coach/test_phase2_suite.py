@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,7 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from benchmarks.coach import phase2_checks
+from benchmarks.coach import phase2_adapter, phase2_checks
 from benchmarks.coach.phase2_adapter import build_prompt
 from benchmarks.coach.runner import RunRequest, run_benchmark
 from benchmarks.coach.suite_loader import SuiteValidationError, load_suite
@@ -28,66 +29,114 @@ _PHONE = re.compile(
 _FORBIDDEN_MARKERS = ("arvind soni", "gmail", "outlook", "hotmail")
 
 
+def _ungrounded_output(task: str, payload: dict) -> dict:
+    if task == "explain":
+        return {"tips": ["Open with Zephyr and the 999 day result."]}
+    if task == "brief_enhance":
+        return {
+            "talking_points": [
+                {"story_id": "story-unknown", "text": "Open with the result."}
+            ],
+            "watch_outs": [],
+        }
+    if task == "debrief_extract":
+        return {"questions": ["What did Zephyr say about 999?"]}
+    return {"competencies": ["delivery at Zephyr"]}
+
+
 class _FakeLlamaHandler(BaseHTTPRequestHandler):
+    mode = "valid"
+    delay = 0.0
+
     def log_message(self, *args: object) -> None:
         del args
 
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0"))
         request = json.loads(self.rfile.read(length))
+        if request.get("stream_options", {}).get("include_usage") is not True:
+            self.send_response(400)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if self.delay:
+            time.sleep(self.delay)
         system = request["messages"][0]["content"]
         payload = json.loads(request["messages"][1]["content"])
         match = re.search(r"BENCH_TASK=([a-z_]+)", system)
         assert match is not None
         task = match.group(1)
-        if task == "explain":
-            output = {"tips": ["Use the same wording as the excerpts."]}
-        elif task == "brief_enhance":
-            output = {
-                "talking_points": [
-                    {
-                        "story_id": payload["stories"][0]["story_id"],
-                        "text": "Open with the result and the team count.",
-                    }
-                ],
-                "watch_outs": [],
-            }
-        elif task == "debrief_extract":
-            output = {"questions": ["What would you change next time?"]}
+        if self.mode == "bad_json":
+            content = "this is not json"
+        elif self.mode == "ungrounded":
+            content = json.dumps(_ungrounded_output(task, payload))
         else:
-            output = {"competencies": ["delivery leadership"]}
-        content = json.dumps(output)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.end_headers()
-        for start in range(0, len(content), 8):
-            event = {
-                "choices": [{"delta": {"content": content[start : start + 8]}}],
+            if task == "explain":
+                output = {"tips": ["Use the same wording as the excerpts."]}
+            elif task == "brief_enhance":
+                output = {
+                    "talking_points": [
+                        {
+                            "story_id": payload["stories"][0]["story_id"],
+                            "text": "Open with the result and the team count.",
+                        }
+                    ],
+                    "watch_outs": [],
+                }
+            elif task == "debrief_extract":
+                output = {"questions": ["What would you change next time?"]}
+            else:
+                output = {"competencies": ["delivery leadership"]}
+            content = json.dumps(output)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for start in range(0, len(content), 8):
+                event = {
+                    "choices": [{"delta": {"content": content[start : start + 8]}}],
+                }
+                self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+                self.wfile.flush()
+            final = {
+                "choices": [{"delta": {}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 18},
+                "timings": {"predicted_per_second": 40.0},
             }
-            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+            self.wfile.write(f"data: {json.dumps(final)}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
-        final = {
-            "choices": [{"delta": {}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 18},
-            "timings": {"predicted_per_second": 40.0},
-        }
-        self.wfile.write(f"data: {json.dumps(final)}\n\n".encode())
-        self.wfile.write(b"data: [DONE]\n\n")
-        self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 @pytest.fixture
-def fake_server(monkeypatch: pytest.MonkeyPatch):
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeLlamaHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+def fake_server_factory(monkeypatch: pytest.MonkeyPatch):
+    servers: list[tuple[ThreadingHTTPServer, threading.Thread]] = []
+
+    def start(mode: str = "valid", delay: float = 0.0) -> str:
+        handler = type(
+            "FakeLlamaHandler", (_FakeLlamaHandler,), {"mode": mode, "delay": delay}
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        servers.append((server, thread))
+        return f"http://127.0.0.1:{server.server_address[1]}"
+
     monkeypatch.setenv("HATCH_BENCH_SERVER_PID", str(os.getpid()))
     try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
+        yield start
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        for server, thread in servers:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+@pytest.fixture
+def fake_server(fake_server_factory):
+    return fake_server_factory("valid")
 
 
 def _strings(value: object) -> list[str]:
@@ -108,6 +157,45 @@ def _copy_suite(tmp_path: Path, endpoint: str) -> Path:
         model["endpoint"] = endpoint
     models_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return target
+
+
+_STAGE_PREFIX = {
+    "explain": "explain_",
+    "brief_enhance": "brief_enhance_",
+    "debrief_extract": "debrief_extract_",
+    "competency_extract": "competency_extract_",
+}
+
+
+def _single_case_suite(tmp_path: Path, endpoint: str, stage: str) -> Path:
+    target = _copy_suite(tmp_path, endpoint)
+    suite_path = target / "suite.json"
+    suite = json.loads(suite_path.read_text(encoding="utf-8"))
+    name = next(
+        item for item in suite["scenario_files"] if item.startswith(_STAGE_PREFIX[stage])
+    )
+    for item in suite["scenario_files"]:
+        if item != name:
+            (target / item).unlink()
+    scenario_id = json.loads((target / name).read_text(encoding="utf-8"))[
+        "scenario_id"
+    ]
+    suite["scenario_files"] = [name]
+    suite["split"] = {scenario_id: "tuning"}
+    suite_path.write_text(json.dumps(suite, indent=2) + "\n", encoding="utf-8")
+    return target
+
+
+async def _run_single_case(suite_path: Path, output_root: Path):
+    return await run_benchmark(
+        RunRequest(
+            suite_path=suite_path,
+            output_root=output_root,
+            profile_name="phase2",
+            model_ids=("phase2-tier-s",),
+            command="pytest",
+        )
+    )
 
 
 def _brief_case() -> dict:
@@ -295,6 +383,108 @@ def test_grounding_rejects_over_limit_text() -> None:
     )
 
     assert any(item.startswith("schema:") for item in violations)
+
+
+def test_grounding_allowlists_star_and_rubric_words() -> None:
+    case = {
+        "dimension": "structure",
+        "rubric_description": "Signals situation, task, action and result in order.",
+        "excerpts": [
+            {
+                "excerpt_id": "ex-1",
+                "text": "I named the system and the number.",
+                "session_date": "2026-09-01",
+                "difficulty": "realistic",
+            }
+        ],
+    }
+    output = {
+        "tips": [
+            "Open with the system you worked on, then give one number. "
+            "Use the STAR structure for the Situation."
+        ]
+    }
+
+    assert phase2_checks.grounding_violations("explain", output, case) == ()
+
+
+def test_explain_excerpts_are_capped_at_two() -> None:
+    excerpt = {
+        "excerpt_id": "ex-1",
+        "text": "I named the system and the number.",
+        "session_date": "2026-09-01",
+        "difficulty": "realistic",
+    }
+    with pytest.raises(ValidationError):
+        phase2_checks.validate_case_input(
+            "explain",
+            {
+                "dimension": "structure",
+                "rubric_description": "Signals situation, task, action and result.",
+                "excerpts": [excerpt, excerpt, excerpt],
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_phase2_bench_path_marks_bad_json_invalid(
+    tmp_path: Path, fake_server_factory
+) -> None:
+    suite_path = _single_case_suite(
+        tmp_path / "bad_json", fake_server_factory("bad_json"), "explain"
+    )
+
+    summary = await _run_single_case(suite_path, tmp_path / "bad_json_results")
+
+    result = summary.results[0]
+    assert result.status == "invalid"
+    assert result.metrics["schema_valid"] is False
+    assert any(
+        gate.code == "coach_stage_failed" and gate.blocking for gate in result.gates
+    )
+
+
+@pytest.mark.asyncio
+async def test_phase2_bench_path_marks_ungrounded_output_invalid(
+    tmp_path: Path, fake_server_factory
+) -> None:
+    suite_path = _single_case_suite(
+        tmp_path / "ungrounded", fake_server_factory("ungrounded"), "brief_enhance"
+    )
+
+    summary = await _run_single_case(suite_path, tmp_path / "ungrounded_results")
+
+    result = summary.results[0]
+    assert result.status == "invalid"
+    assert result.metrics["schema_valid"] is True
+    assert result.metrics["grounding_violations"] > 0
+    assert any(
+        gate.code == "coach_stage_failed" and gate.blocking for gate in result.gates
+    )
+
+
+@pytest.mark.asyncio
+async def test_phase2_bench_path_times_out_instead_of_hanging(
+    tmp_path: Path,
+    fake_server_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        phase2_adapter,
+        "TIER_MAX_DEADLINE_SECONDS",
+        {"T": 0.02, "S": 0.02, "L": 0.02},
+    )
+    suite_path = _single_case_suite(
+        tmp_path / "timeout",
+        fake_server_factory("valid", delay=0.2),
+        "debrief_extract",
+    )
+
+    summary = await _run_single_case(suite_path, tmp_path / "timeout_results")
+
+    result = summary.results[0]
+    assert result.status == "timeout"
+    assert result.timeout_stage in {"call", "model"}
 
 
 def test_output_contracts_enforce_task_limits() -> None:

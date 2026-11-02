@@ -88,6 +88,13 @@ def _parse_output(text: str) -> dict[str, Any]:
 
 
 def _peak_rss_bytes() -> int | None:
+    """Read the llama-server peak RSS from /proc VmHWM (host PID).
+
+    P3 must point HATCH_BENCH_SERVER_PID at the host PID of the Docker
+    llama-server (``docker inspect -f '{{.State.Pid}}' <container>``). VmHWM is
+    cumulative since that process started, so P3 starts a fresh server per
+    candidate and reads the maximum.
+    """
     raw_pid = os.environ.get(_PEAK_RSS_ENV)
     if not raw_pid:
         return None
@@ -167,7 +174,12 @@ class Phase2BenchAdapter:
             violations = ("schema_invalid",)
         else:
             schema_valid = True
-            violations = grounding_violations(scenario.stage, output, scenario.input)
+            violations = grounding_violations(
+                scenario.stage,
+                output,
+                scenario.input,
+                _TASK_INSTRUCTIONS[scenario.stage],
+            )
         if not schema_valid or violations:
             gate_codes.append("coach_stage_failed")
         metrics["schema_valid"] = schema_valid
@@ -211,6 +223,7 @@ class Phase2BenchAdapter:
                 {"role": "user", "content": user},
             ],
             "stream": True,
+            "stream_options": {"include_usage": True},
             "temperature": spec.temperature,
             "seed": seed,
             "max_tokens": max_tokens,
