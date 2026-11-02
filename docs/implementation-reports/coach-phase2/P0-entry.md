@@ -1,54 +1,91 @@
 # P0 evidence — handoff check, gate report, Phase 2 bench suite
 
-Task / spec sections / ACs: P0. Spec §3 (gates and repository facts), §9.4 (bench protocol, suite counts and split). No ACs are implemented by P0.
+Task / spec sections / ACs: P0 rework after review. Spec §7.6, §9.1, §9.4, §10. No ACs are implemented by P0. Review findings 1–10 are addressed below.
 
-Baseline SHA → head SHA: `b7274a6` (plan baseline) → `412008b` branch base (handoff pack) → head recorded in the commit that adds this report.
+Baseline SHA → head SHA: `b7274a6` (plan baseline) → `412008b` (handoff pack) → `870696c` (main merged into the branch as `1a6f02e`) → head recorded in the commit that adds this report.
 
-OpenCode version · model ID · effort · switches (with reasons): opencode `2.2.5`; provider `opencode`; model `deepseek-v4.1-flash-free`; effort not exposed to the agent; no model switch. The plan expects `opencode-go/deepseek-v4.1-flash`; this session is not on the Go plan and the agent cannot run `/models` or read the Go privacy table. The owner approved proceeding on the current model and recording the mismatch here. `/models` and the Go privacy table must be confirmed by the owner before the P1 qualification record.
+OpenCode version · model ID · effort · switches (with reasons): opencode `2.2.5`; model ID `opencode-go/deepseek-v4.1-flash`; effort not exposed to the agent; no model switch in this run. The original P0 run used `deepseek-v4.1-flash-free`, which plan §1.2 excludes; it does not count toward P1 qualification. `/models` and the Go privacy table are still owner checks.
 
-Claude Code RED commit (HA only) and untouched-tests check output: not applicable to P0 (non-HA). RED was produced by the implementer against the pre-change harness; see below.
+Claude Code RED commit (HA only) and untouched-tests check output: not applicable to P0 (non-HA). The implementer wrote the new tests first; no test from `PN-red.md` exists for P0.
 
 Files changed (one line each: responsibility):
 
-- `backend/benchmarks/coach/contracts.py` — add the four Phase 2 stage names and the `phase2` profile name.
-- `backend/benchmarks/coach/profiles.py` — add the bounded `phase2` profile (one repetition, 300 s call/model, 18,000 s run, no ranking).
-- `backend/benchmarks/coach/runner.py` — accept `phase2` in `RunRequest`.
-- `backend/benchmarks/coach/cli.py` — expose `phase2` on `run`.
-- `backend/benchmarks/coach/suite_loader.py` — accept `fixture_kind: phase2`, require a tuning/holdout split, allow the four Phase 2 input shapes, expose fixture kind and split on the loaded suite.
-- `backend/benchmarks/coach/phase2_checks.py` — typed input/output contracts for the four tasks, tier maxima, and the grounding stub that P6 replaces with `grounding.py`.
-- `backend/benchmarks/coach/fixtures/phase2_v1/` — manifest, two loopback model specs and 48 synthetic cases (15 explain, 15 brief-enhance, 10 debrief-extract, 8 competency-extract; 16 tuning / 32 holdout).
-- `backend/tests/benchmarks/coach/test_phase2_suite.py` — the named P0 tests plus output-limit checks.
+- `backend/benchmarks/coach/phase2_checks.py` — spec §7.6/§10 limits, Tier T budgets, real citation/number/name grounding checks, input-size helper.
+- `backend/benchmarks/coach/phase2_adapter.py` — new bench-only execution path: versioned prompt per task, streaming loopback llama-server call, per-case tier deadline and output cap, metrics.
+- `backend/benchmarks/coach/contracts.py` — `ScenarioResult.metrics` carries latency, TTFT, tokens/s, peak RSS and token counts.
+- `backend/benchmarks/coach/runner.py` — selects the Phase 2 adapter for the `phase2` profile and copies its metrics into the result.
+- `backend/benchmarks/coach/fixtures/phase2_v1/models.json` — Tier T context 2,048 (llama-triage 4,096 × 2 slots) and Tier S 16,384.
+- `backend/benchmarks/coach/fixtures/phase2_v1/*.json` — 48 cases stay 15/15/10/8 and 16 tuning / 32 holdout; at least a third per task is sized within 20 % of its input maximum.
+- `backend/tests/benchmarks/coach/test_phase2_suite.py` — resized-suite, token-budget, grounding, loopback and fake-server bench tests.
 - `docs/implementation-reports/coach-phase2/P0-entry.md` — this report.
+
+File deviations from the plan's P0 list (finding 9):
+
+- `backend/benchmarks/coach/suite_loader.py` (previous P0 commit) — needed to load a `phase2` fixture kind, its input-key allowlist and tuning/holdout split.
+- `backend/benchmarks/coach/cli.py` (previous P0 commit) — needed to offer `--profile phase2`.
+- `backend/benchmarks/coach/phase2_adapter.py` — the plan lets the implementer choose the bench-only path file. `production_adapter.py` was **not** edited.
 
 RED: test names and failure output (short):
 
-`python -m pytest -q --no-cov tests/benchmarks/coach/test_phase2_suite.py` with the harness changes stashed:
+The new tests were written before the implementation. First run:
 
 ```text
-FAILED test_suite_manifest_loads_48_cases_with_split
-FAILED test_every_case_validates_against_its_task_schema
-FAILED test_phase2_profile_schedules_every_case
-SuiteValidationError: invalid Coach suite manifest: ... fixture_kind Input should be 'legacy' or 'conversational' ... split Extra inputs are not permitted
-3 failed, 3 passed
+$ python -m pytest -q --no-cov tests/benchmarks/coach/test_phase2_suite.py
+ERROR collecting tests/benchmarks/coach/test_phase2_suite.py
+E   ModuleNotFoundError: No module named 'benchmarks.coach.phase2_adapter'
+1 error in 0.26s
 ```
 
-The other three tests passed before the change because they cover existing behaviour (loopback rejection, local-only fixture scan, output limits).
+After the module and checks existed, the new suite reached GREEN. The old stub `grounding_violations` returned `()` and could not satisfy the new unknown-id, absent-number, absent-name and over-limit assertions; the fixtures also failed the new 20 % size and §7.6/§10 limit assertions until resized.
 
 GREEN: commands, exit codes, counts:
 
 ```text
 cd backend
-python -m pytest -q --no-cov tests/benchmarks/coach/test_phase2_suite.py   # exit 0, 6 passed
-python -m pytest -q --no-cov tests/benchmarks/coach                       # exit 0, 141 passed
-ruff check benchmarks/coach/... tests/benchmarks/coach/test_phase2_suite.py  # exit 0, All checks passed
-python -m benchmarks.coach validate --suite benchmarks/coach/fixtures/phase2_v1  # exit 0, 48 scenarios, 2 models
+python -m pytest -q --no-cov tests/benchmarks/coach/test_phase2_suite.py   # exit 0, 14 passed
+python -m pytest -q --no-cov tests/benchmarks/coach                       # exit 0, 149 passed
+/tmp/p0-py312/bin/python -m pytest -q --no-cov tests/benchmarks/coach     # exit 0, 149 passed (Python 3.12.16)
+ruff check benchmarks/coach/phase2_checks.py benchmarks/coach/phase2_adapter.py \
+  benchmarks/coach/contracts.py benchmarks/coach/runner.py \
+  tests/benchmarks/coach/test_phase2_suite.py                              # exit 0, All checks passed
+python -m benchmarks.coach validate --suite benchmarks/coach/fixtures/phase2_v1
+  # exit 0, "Valid Coach suite coach_phase2_v1: 48 scenarios, 2 models"
+python scripts/check_docs.py                                               # exit 0, Documentation validation passed.
+python scripts/check_readme_contract.py                                    # exit 0, README contract passed.
+git diff --check                                                           # exit 0
 ```
 
-Regressions run: full `tests/benchmarks/coach` (141 passed), which includes profiles, suite loader, CLI, runner, adapters and scoring.
+Python 3.12 environment: `uv venv --python 3.12 /tmp/p0-py312`, then `uv pip install -r requirements.txt -r requirements-test.txt`; `python --version` is 3.12.16. System Python is 3.14.8. Node is v22.23.2.
 
-Model calls in tests: fake / live (live only in P3 bench): none. P0 makes no model calls.
+Regressions run: the full `tests/benchmarks/coach` suite on Python 3.14 (149 passed) and Python 3.12 (149 passed), including profiles, suite loader, CLI, runner, adapters, scoring and the new fake-server bench run.
 
-Privacy / deletion / fencing evidence: all 48 cases are synthetic. The named fixture test walks every JSON string and rejects personal email, phone shapes, private markers, absolute paths and `data/` references; the loader's existing privacy scan also runs on the suite. No `data/`, `.env`, CV, transcript or recording was read. No privacy, deletion or fencing code changed.
+Model calls in tests: fake / live (live only in P3 bench): fake only. The bench path was exercised against an in-process loopback SSE server on `127.0.0.1`; no live model call was made.
+
+Metrics capture (finding 1): `phase2_adapter.py` records per attempt:
+
+- `latency_ms` — wall clock from before the HTTP request to the last streamed chunk; includes queue time on `llm-primary`.
+- `ttft_ms` — time to the first streamed content delta.
+- `tokens_per_second` — llama.cpp `timings.predicted_per_second` when present, else completion tokens divided by the time from first token to last.
+- `peak_rss_bytes` — `/proc/<HATCH_BENCH_SERVER_PID>/status` `VmHWM`, the kernel's peak resident set for the llama-server process. The fake-server test sets the variable to the test process; P3 must set it to the `llama-server` PID. When unset or unreadable the value is `null`.
+- `prompt_tokens`, `completion_tokens`, `output_chars`, `deadline_seconds`.
+- `schema_valid` and `grounding_violations` — the P3 gate inputs; a failed schema or any grounding violation also raises the blocking `coach_stage_failed` gate on the attempt.
+
+Per-tier enforcement (finding 6): the adapter applies `TIER_MAX_DEADLINE_SECONDS` (T 60 s, S 180 s, L 300 s) per case and `TASK_OUTPUT_CAPS` (T 512, S 600, L 600) to the request. The now-unused 300 s profile bound remains only as an outer runner guard.
+
+Review finding mapping:
+
+1. Bench-only path — `phase2_adapter.py`, selected by `runner.py` for `phase2`; all four stages run in `test_phase2_bench_path_runs_all_four_stages_against_fake_server`.
+2. Real grounding — `grounding_violations` checks unknown story ids/fingerprints, numbers absent from the supplied source, capitalised names absent from the source, and schema/word/character limits; positive and negative tests cover each.
+3. Fixture size — 5/15 explain, 5/15 brief, 4/10 debrief and 3/8 competency cases are at least 80 % of `INPUT_MAX_CHARS`; enforced by `test_a_third_of_each_task_is_near_its_input_maximum`.
+4. Schema limits — debrief notes 2,500 chars; debrief output ≤ 12 × 120 chars; explain ≤ 40 words per tip and ≤ 120 total; competency input ≤ 4,500 chars (Tier T 1,200-token input budget, 4 chars/token); enforced by the schema tests and `test_tier_t_cases_fit_the_context_budget`.
+5. Context sizes — Tier T 2,048, Tier S 16,384 in `models.json`.
+6. Per-tier deadlines — adapter timeout per task tier (see above) and constants test.
+7. Model — this rework ran on `opencode-go/deepseek-v4.1-flash`; the free-tier original run does not count toward P1 qualification.
+8. Loopback test — now checks both `phase2_v1/models.json` entries and that the loader rejects a copied suite whose endpoint is remote.
+9. Deviations — listed above.
+10. Python versions — 3.12.16 and 3.14.8, both 149 passed.
+
+Privacy / deletion / fencing evidence: all 48 cases are synthetic. The fixture test walks every JSON string for personal email, phone shapes, private markers, absolute paths and `data/` references; the loader's privacy scan also runs. No `data/`, `.env`, CV, transcript or recording was read. No privacy, deletion or fencing code changed. The bench stores model output as the validated task payload only; invalid output is not stored raw.
 
 Migration: heads before/after, downgrade/upgrade result: before `a4b5c6d7e8f9 (head)`; after `a4b5c6d7e8f9 (head)`. No migration in P0; no downgrade/upgrade run.
 
@@ -56,23 +93,22 @@ Gate report:
 
 | Gate | Result |
 |---|---|
-| HEAD recorded | branch base `412008b` (handoff pack on `main`); implementation head in the commit |
+| Merged HEAD | `1a6f02e` (`main` `870696c` merged; no rebase) |
 | Migration head | `a4b5c6d7e8f9` |
-| Python / Node | 3.14.8 / v22.23.2 (system Python, not the spec's 3.12; bench tests pass) |
-| R7 / R8 / R9 | No branches, merged commits or evidence reports exist; paused per D6 |
-| Handoff pack installed | Yes: `AGENTS.md`, `CLAUDE.md`, `opencode.json`, `.claude/commands/`, spec, plan, screen designs, diagrams |
-| `python scripts/check_docs.py` | exit 0 (after removing superseded draft copies and installing the pack) |
-| `python scripts/check_readme_contract.py` | exit 0 |
+| Python / Node | 3.12.16 and 3.14.8 / v22.23.2 |
+| R7 / R8 / R9 | No branches, merged commits or evidence reports; paused per D6 |
+| Handoff pack installed | Yes, including the revised 2 Nov spec, plan and agent files |
+| `check_docs.py` / `check_readme_contract.py` | exit 0 / exit 0 |
 | Wave 0 verdict | **GO** |
 | Wave 1 verdict | Pending the §3.2 readiness check, recorded at P4 |
 
 Not run / known limits:
 
-- The Phase 2 profile validates and schedules all 48 cases, but the production adapter has no `_execute_explain`, `_execute_brief_enhance`, `_execute_debrief_extract` or `_execute_competency_extract` handlers. P3's live bench cannot run until the P6 TaskSpecs/adapter exist (or P3 adds a bench-only adapter). This is a plan-order/interface mismatch: P3 precedes P6 but the bench needs an execution path. Reported for the reviewer/owner; not redesigned in P0.
-- Latency, TTFT, tokens/s and peak-RSS capture are not wired into the runner for Phase 2. The existing adapters report tokens/s; `phase2_checks.py` exposes schema and grounding checks only. Wiring follows the execution path above.
-- The profile uses the Tier L maximum (300 s) as its call bound. Per-tier maxima live in `phase2_checks.TIER_MAX_DEADLINE_SECONDS` and are not enforced per case yet.
-- No holdout bench was run; P3 is owner-run on the reference laptop with the pinned llama.cpp build.
+- No live model call and no P3 bench run. The fake server proves wiring, metrics and validation only.
+- `peak_rss_bytes` is `null` unless `HATCH_BENCH_SERVER_PID` names the llama-server process; P3 must set it and report the PID source.
+- The Phase 2 profile uses a single model id per run; tier caps come from the task, not from the model spec.
 - `/models` and the Go privacy table were not verifiable from this session.
-- Five unrelated untracked documents remain in the working tree (the 26 Sep readiness review and four completed-specification files: three Markdown, one PDF). They were not part of the pack and were left untouched; they do not affect the doc gate.
+- Only `tests/benchmarks/coach` was run; the full backend and frontend suites belong to the P4/P6/P9 gates.
+- An untracked duplicate handoff staging folder under `docs/implementation-specs/active/` was moved out of the repository (to `/tmp/opencode/hatch-coach-phase2-handoff-staging`) so `check_docs.py` could run; no tracked file was changed.
 
-Ready for review: yes — suite, profile and checks are green; execution-path wiring is the known P3/P6 dependency above.
+Ready for review: yes — all ten findings are addressed, the fake-server bench path passes on both Python versions, and no protected file changed.

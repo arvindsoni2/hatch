@@ -1,7 +1,7 @@
 {
   "scenario_id": "explain_13_clarity",
   "stage": "explain",
-  "description": "Synthetic clarity pattern with two stored excerpts.",
+  "description": "Synthetic clarity pattern with stored excerpts.",
   "qualification_scope": "model_capability",
   "input": {
     "dimension": "clarity",

@@ -5,7 +5,7 @@
   "qualification_scope": "model_capability",
   "input": {
     "debrief_id": "debrief-07",
-    "notes": "Two interviewers, mixed format. One asked for a time I missed a deadline. I used the roadmap reset and explained the trade-off. The other asked how I communicate bad news. I used the incident recovery example. They asked what I would do differently and I said bring support in earlier."
+    "notes": "The first ten minutes covered my current role and the size of the team. Then four behavioural questions in a row. I kept each answer to about two minutes, used the migration and incident stories, and left room for one follow-up on each. The interviewer asked for the numbers twice, which suggests I should lead with the result."
   },
   "expected": {
     "outcome": "completed"

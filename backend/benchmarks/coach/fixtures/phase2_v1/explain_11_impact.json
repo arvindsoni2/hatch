@@ -1,7 +1,7 @@
 {
   "scenario_id": "explain_11_impact",
   "stage": "explain",
-  "description": "Synthetic impact pattern with two stored excerpts.",
+  "description": "Synthetic impact pattern with stored excerpts.",
   "qualification_scope": "model_capability",
   "input": {
     "dimension": "impact",

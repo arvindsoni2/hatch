@@ -5,7 +5,7 @@
   "qualification_scope": "model_capability",
   "input": {
     "debrief_id": "debrief-05",
-    "notes": "Hiring manager conversation. Asked why this role, what I want to improve and how I run a weekly review. I talked about coaching the new lead and the roadmap reset. She asked about a difficult stakeholder and I used the billing migration. I should have asked more about the team structure."
+    "notes": "Final conversation with the director. We covered strategy, hiring and how I measure a healthy team. I used the coaching story and the roadmap reset. She asked how I would recover a team that missed two commitments; I described a short recovery plan, a weekly review and a named owner for each dependency. I did not ask about the budget."
   },
   "expected": {
     "outcome": "completed"

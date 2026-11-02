@@ -5,7 +5,7 @@
   "qualification_scope": "model_capability",
   "input": {
     "debrief_id": "debrief-08",
-    "notes": "Role-specific verbal round. Asked me to walk through a service migration as if briefing an executive. I used the migration story and kept it short. Follow-up on risk: I named the rollback test and the staged cutover. They asked for the cost of delay and I did not have it."
+    "notes": "A short technical screen: two questions on rollback design and one on how I set service objectives. I used the migration story, named the staged cutover and the tested rollback, and said which measure I watched during the first night. They asked about the trade-off between speed and safety and I used the risk partner conversation."
   },
   "expected": {
     "outcome": "completed"

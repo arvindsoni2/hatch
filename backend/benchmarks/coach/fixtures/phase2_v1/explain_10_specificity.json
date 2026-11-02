@@ -1,7 +1,7 @@
 {
   "scenario_id": "explain_10_specificity",
   "stage": "explain",
-  "description": "Synthetic specificity pattern with two stored excerpts.",
+  "description": "Synthetic specificity pattern with stored excerpts.",
   "qualification_scope": "model_capability",
   "input": {
     "dimension": "specificity",

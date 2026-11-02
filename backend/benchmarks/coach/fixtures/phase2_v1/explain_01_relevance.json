@@ -1,7 +1,7 @@
 {
   "scenario_id": "explain_01_relevance",
   "stage": "explain",
-  "description": "Synthetic relevance pattern with two stored excerpts.",
+  "description": "Synthetic relevance pattern with stored excerpts.",
   "qualification_scope": "model_capability",
   "input": {
     "dimension": "relevance",
@@ -9,15 +9,21 @@
     "excerpts": [
       {
         "excerpt_id": "ex-01-a",
-        "text": "I described the migration but never named the service, the volume or the date.",
+        "text": "In the September practice session on delivery leadership, I walked through a billing migration that had slipped twice before I took it over. I named the service, the four dependent teams and the weekly release volume, then explained the staged cutover, the tested rollback and the point where I stopped the change. The answer covered the customer impact, the person who owned the final decision and the evidence I used to show that the new sequence reduced lead time from nine days to four. I described the trade-off between speed and safety, the escalation I chose when the error rate crossed the threshold, and the review I wrote the following morning. Next time I would open with the result, then give the two decisions that produced it, and finish with the risk I would watch in the first month. The practice report recorded the same gap in two places, so the excerpt is long enough to show how the answer actually sounded.",
         "session_date": "2026-08-18",
         "difficulty": "supportive"
       },
       {
         "excerpt_id": "ex-01-b",
-        "text": "The answer had a clear situation and action but stopped before the result.",
+        "text": "In the August session on stakeholder management, I explained how I recovered a roadmap review that had stalled between product and operations. I described the trade-off between speed and safety, the escalation I chose when the error rate crossed the threshold, and the review I wrote the following morning. I said what I personally owned, what the platform team owned and how I checked that the saving did not depend on removing a control the auditors expected. The result included the change in first-time fix rate, the two releases that needed no rollback and the feedback from the shift managers who used the new checklist. I would also say which part of the story I would repeat in a real interview and which detail I would leave out to keep the answer inside two minutes. The practice report recorded the same gap in two places, so the excerpt is long enough to show how the answer actually sounded.",
         "session_date": "2026-09-02",
         "difficulty": "realistic"
+      },
+      {
+        "excerpt_id": "ex-01-c",
+        "text": "In the October session on incident response, I described the first thirty minutes of a payment outage and the decisions I made before the incident bridge opened. The result included the change in first-time fix rate, the two releases that needed no rollback and the feedback from the shift managers who used the new checklist. Looking back, the setup took too long and the measurable result arrived late in the answer, so the interviewer had to ask for it. I named the service, the four dependent teams and the weekly release volume, then explained the staged cutover, the tested rollback and the point where I stopped the change. The follow-up question was about the person who disagreed with the plan, and I answered with the specific conversation, the concession I made and the point I held. The practice report recorded the same gap in two places, so the excerpt is long enough to show how the answer actually sounded.",
+        "session_date": "2026-09-19",
+        "difficulty": "challenging"
       }
     ]
   },

@@ -15,7 +15,7 @@
       {
         "story_id": "story-incident",
         "title": "Incident recovery",
-        "text": "I coordinated a payment incident across support and engineering, restored service in 38 minutes and wrote the follow-up review.",
+        "text": "In the first week I found two hidden consumers, added them to the plan and moved the customer communication earlier so nobody learned about the change from an incident. The staged release ran over nine days; the first stage carried a tenth of the volume, the second carried half and the final stage moved the remainder after a clean overnight observation. Lead time fell from nine days to four, change failure rate stayed flat and the support team ran the rollback drill without escalation. The hardest part was holding the line when a senior stakeholder asked to skip the final observation window; I showed the stop rule, the open risk and the cost of a second failure. I would repeat the staged cutover and the written stop rule, and I would bring the customer communication forward by one week. The evidence I keep is the before-and-after lead time, the rollback drill record, the dependency map and the review note signed by the risk partner. A panel follow-up is usually about the person who disagreed, so I describe the conversation, the concession I made on timing and the decision I did not move. The situation was a shared service with four.",
         "competencies": [
           "incident response",
           "communication"
@@ -25,12 +25,22 @@
       {
         "story_id": "story-coaching",
         "title": "Coaching a new lead",
-        "text": "I coached a new team lead through two release cycles, using a weekly review and a shared checklist.",
+        "text": "The staged release ran over nine days; the first stage carried a tenth of the volume, the second carried half and the final stage moved the remainder after a clean overnight observation. Lead time fell from nine days to four, change failure rate stayed flat and the support team ran the rollback drill without escalation. The hardest part was holding the line when a senior stakeholder asked to skip the final observation window; I showed the stop rule, the open risk and the cost of a second failure. I would repeat the staged cutover and the written stop rule, and I would bring the customer communication forward by one week. The evidence I keep is the before-and-after lead time, the rollback drill record, the dependency map and the review note signed by the risk partner. A panel follow-up is usually about the person who disagreed, so I describe the conversation, the concession I made on timing and the decision I did not move. The situation was a shared service with four dependent teams, a release train that had slipped twice and a customer commitment that could not move again. My task was to land the change without a second failed.",
         "competencies": [
           "people leadership",
           "role depth"
         ],
         "score": 0.68
+      },
+      {
+        "story_id": "story-cost",
+        "title": "Cost reduction without outages",
+        "text": "Lead time fell from nine days to four, change failure rate stayed flat and the support team ran the rollback drill without escalation. The hardest part was holding the line when a senior stakeholder asked to skip the final observation window; I showed the stop rule, the open risk and the cost of a second failure. I would repeat the staged cutover and the written stop rule, and I would bring the customer communication forward by one week. The evidence I keep is the before-and-after lead time, the rollback drill record, the dependency map and the review note signed by the risk partner. A panel follow-up is usually about the person who disagreed, so I describe the conversation, the concession I made on timing and the decision I did not move. The situation was a shared service with four dependent teams, a release train that had slipped twice and a customer commitment that could not move again. My task was to land the change without a second failed release, keep the audit evidence intact and give the support team a rollback they could run without me. I mapped the dependencies with the four tech leads, split the cutover into three.",
+        "competencies": [
+          "commercial judgement",
+          "delivery"
+        ],
+        "score": 0.61
       }
     ],
     "watch_outs": [

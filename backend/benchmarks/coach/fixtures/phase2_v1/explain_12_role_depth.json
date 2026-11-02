@@ -1,7 +1,7 @@
 {
   "scenario_id": "explain_12_role_depth",
   "stage": "explain",
-  "description": "Synthetic role_depth pattern with two stored excerpts.",
+  "description": "Synthetic role_depth pattern with stored excerpts.",
   "qualification_scope": "model_capability",
   "input": {
     "dimension": "role_depth",

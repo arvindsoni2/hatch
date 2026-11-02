@@ -5,7 +5,7 @@
   "qualification_scope": "model_capability",
   "input": {
     "debrief_id": "debrief-06",
-    "notes": "First question was a warm-up about my current scope. Then a conflict question, a delivery question and a question about commercial judgement. I used the cost story for commercial judgement but the numbers were approximate. They asked how I validate savings; I mentioned the finance review but not the method."
+    "notes": "Mostly a conversation about judgement. The interviewer asked about a time I changed my mind, a time I held a decision under pressure and a time I was wrong. I used the roadmap reset, the migration stop rule and the incident review. The weakest answer was the one where I was wrong; I focused on the fix and not enough on what I missed at the start."
   },
   "expected": {
     "outcome": "completed"

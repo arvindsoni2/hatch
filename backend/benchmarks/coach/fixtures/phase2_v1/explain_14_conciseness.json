@@ -1,7 +1,7 @@
 {
   "scenario_id": "explain_14_conciseness",
   "stage": "explain",
-  "description": "Synthetic conciseness pattern with two stored excerpts.",
+  "description": "Synthetic conciseness pattern with stored excerpts.",
   "qualification_scope": "model_capability",
   "input": {
     "dimension": "conciseness",

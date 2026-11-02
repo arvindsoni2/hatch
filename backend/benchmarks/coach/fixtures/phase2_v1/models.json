@@ -5,14 +5,14 @@
       "runtime": "llamacpp",
       "model": "synthetic-tier-t",
       "endpoint": "http://127.0.0.1:8081",
-      "context_size": 32768
+      "context_size": 2048
     },
     {
       "id": "phase2-tier-s",
       "runtime": "llamacpp",
       "model": "synthetic-tier-s",
       "endpoint": "http://127.0.0.1:8080",
-      "context_size": 32768
+      "context_size": 16384
     }
   ]
 }
