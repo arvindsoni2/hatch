@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_01_relevance",
+  "stage": "explain",
+  "description": "Synthetic relevance pattern with two stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "relevance",
+    "rubric_description": "Answers the question asked and keeps the role requirements in view.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-01-a",
+        "text": "I described the migration but never named the service, the volume or the date.",
+        "session_date": "2026-08-18",
+        "difficulty": "supportive"
+      },
+      {
+        "excerpt_id": "ex-01-b",
+        "text": "The answer had a clear situation and action but stopped before the result.",
+        "session_date": "2026-09-02",
+        "difficulty": "realistic"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

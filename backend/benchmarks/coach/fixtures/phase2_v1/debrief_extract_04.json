@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_04",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-04",
+    "notes": "Technical round for a platform role. Questions on rollback design, incident review quality and how I set service objectives. I used the incident story and the migration story. They asked what I measured after the migration; I said lead time and change failure rate. They asked about on-call load and I did not have a number ready."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

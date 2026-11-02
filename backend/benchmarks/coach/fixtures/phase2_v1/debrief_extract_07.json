@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_07",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-07",
+    "notes": "Two interviewers, mixed format. One asked for a time I missed a deadline. I used the roadmap reset and explained the trade-off. The other asked how I communicate bad news. I used the incident recovery example. They asked what I would do differently and I said bring support in earlier."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

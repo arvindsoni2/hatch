@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_05",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-05",
+    "notes": "Hiring manager conversation. Asked why this role, what I want to improve and how I run a weekly review. I talked about coaching the new lead and the roadmap reset. She asked about a difficult stakeholder and I used the billing migration. I should have asked more about the team structure."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

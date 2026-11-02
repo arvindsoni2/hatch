@@ -1,0 +1,49 @@
+{
+  "scenario_id": "brief_enhance_11",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-11",
+    "input_fingerprint": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+    "header": {
+      "company": "Northwind Freight",
+      "role": "Delivery Lead",
+      "round_type": "behavioural"
+    },
+    "stories": [
+      {
+        "story_id": "story-migration",
+        "title": "Safe service migration",
+        "text": "I led a four-team migration of the billing service with a staged cutover and a tested rollback. Lead time fell from nine days to four.",
+        "competencies": [
+          "delivery",
+          "stakeholder management"
+        ],
+        "score": 0.82
+      },
+      {
+        "story_id": "story-incident",
+        "title": "Incident recovery",
+        "text": "I coordinated a payment incident across support and engineering, restored service in 38 minutes and wrote the follow-up review.",
+        "competencies": [
+          "incident response",
+          "communication"
+        ],
+        "score": 0.74
+      }
+    ],
+    "watch_outs": [
+      {
+        "fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "dimension": "structure",
+        "evidence": "The result arrived after a long setup in the latest session."
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

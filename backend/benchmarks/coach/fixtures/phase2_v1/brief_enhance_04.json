@@ -1,0 +1,33 @@
+{
+  "scenario_id": "brief_enhance_04",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-04",
+    "input_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+    "header": {
+      "company": "Atlas Retail",
+      "role": "Engineering Manager",
+      "round_type": "behavioural"
+    },
+    "stories": [
+      {
+        "story_id": "story-cost",
+        "title": "Cost reduction without outages",
+        "text": "I reduced cloud spend by 22 percent over one quarter by removing idle environments and adding budget alerts.",
+        "competencies": [
+          "commercial judgement",
+          "delivery"
+        ],
+        "score": 0.61
+      }
+    ],
+    "watch_outs": []
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

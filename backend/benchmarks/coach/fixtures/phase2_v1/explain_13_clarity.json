@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_13_clarity",
+  "stage": "explain",
+  "description": "Synthetic clarity pattern with two stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "clarity",
+    "rubric_description": "Uses short sentences and plain words without filler.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-13-a",
+        "text": "I used three acronyms the interviewer had to ask about.",
+        "session_date": "2026-09-19",
+        "difficulty": "supportive"
+      },
+      {
+        "excerpt_id": "ex-13-b",
+        "text": "The story repeated the same point in the action and the result.",
+        "session_date": "2026-10-04",
+        "difficulty": "realistic"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

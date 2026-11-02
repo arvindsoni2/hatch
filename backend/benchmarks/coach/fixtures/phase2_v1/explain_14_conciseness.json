@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_14_conciseness",
+  "stage": "explain",
+  "description": "Synthetic conciseness pattern with two stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "conciseness",
+    "rubric_description": "Stays inside the time box and drops repeated setup.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-14-a",
+        "text": "The story repeated the same point in the action and the result.",
+        "session_date": "2026-10-04",
+        "difficulty": "realistic"
+      },
+      {
+        "excerpt_id": "ex-14-b",
+        "text": "I explained the trade-off and said which option I chose and why.",
+        "session_date": "2026-10-21",
+        "difficulty": "challenging"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

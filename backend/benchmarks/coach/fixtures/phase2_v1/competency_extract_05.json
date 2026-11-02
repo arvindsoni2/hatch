@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_05",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-05",
+    "job_description": "Platform lead for a financial services firm. You will set service objectives, own the internal developer platform and guide cloud cost controls. The role needs practical experience with incident command, rollback design and audit evidence."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

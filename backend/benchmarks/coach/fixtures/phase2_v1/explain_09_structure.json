@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_09_structure",
+  "stage": "explain",
+  "description": "Synthetic structure pattern with two stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "structure",
+    "rubric_description": "Signals situation, task, action and result in a clear order.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-09-a",
+        "text": "I described the migration but never named the service, the volume or the date.",
+        "session_date": "2026-10-04",
+        "difficulty": "challenging"
+      },
+      {
+        "excerpt_id": "ex-09-b",
+        "text": "The answer had a clear situation and action but stopped before the result.",
+        "session_date": "2026-10-21",
+        "difficulty": "supportive"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

@@ -1,0 +1,49 @@
+{
+  "scenario_id": "brief_enhance_05",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-05",
+    "input_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+    "header": {
+      "company": "Harbor Finance",
+      "role": "Platform Lead",
+      "round_type": "mixed"
+    },
+    "stories": [
+      {
+        "story_id": "story-roadmap",
+        "title": "Roadmap reset",
+        "text": "I reset a stalled roadmap with three customers, cutting two low-value items and shipping the remaining four.",
+        "competencies": [
+          "prioritisation",
+          "stakeholder management"
+        ],
+        "score": 0.57
+      },
+      {
+        "story_id": "story-migration",
+        "title": "Safe service migration",
+        "text": "I led a four-team migration of the billing service with a staged cutover and a tested rollback. Lead time fell from nine days to four.",
+        "competencies": [
+          "delivery",
+          "stakeholder management"
+        ],
+        "score": 0.82
+      }
+    ],
+    "watch_outs": [
+      {
+        "fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "dimension": "structure",
+        "evidence": "The result arrived after a long setup in the latest session."
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

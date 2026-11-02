@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_02",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-02",
+    "notes": "Panel of two. First asked about a failed release, so I used the incident story and mentioned the 38 minute recovery. They pushed on what I would change; I said earlier customer messaging. Second asked how I coach leads. I gave the new lead example and the weekly review. No questions on cloud cost."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

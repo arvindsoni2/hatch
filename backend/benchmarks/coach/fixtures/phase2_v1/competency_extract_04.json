@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_04",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-04",
+    "job_description": "Programme manager for a health services transformation. The programme spans clinical operations, data migration and staff training. You will manage a multi-year plan, a risk register and vendor delivery. Experience with patient-facing change and benefits tracking is required."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

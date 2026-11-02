@@ -24,6 +24,10 @@ CoachStage = Literal[
     "coaching",
     "prohibited_inference",
     "conversational_end_to_end",
+    "explain",
+    "brief_enhance",
+    "debrief_extract",
+    "competency_extract",
 ]
 ConversationalGroup = Literal[
     "rubric",
@@ -165,7 +169,9 @@ class CoachSuite(StrictModel):
 
 
 class CoachProfile(StrictModel):
-    name: Literal["contract-smoke", "acceptance-smoke", "standard", "extended"]
+    name: Literal[
+        "contract-smoke", "acceptance-smoke", "standard", "extended", "phase2"
+    ]
     repetitions: int = Field(ge=1, le=3)
     scenario_ids: tuple[str, ...] | None
     call_timeout_seconds: int = Field(gt=0)

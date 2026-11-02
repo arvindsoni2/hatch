@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_06",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-06",
+    "job_description": "Senior product operations manager for a media company. You will run planning cadences, improve research-to-roadmap flow and measure delivery predictability. The role works across editorial, design and engineering leadership."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

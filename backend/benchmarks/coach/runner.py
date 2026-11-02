@@ -68,7 +68,9 @@ from .validators import validate_execution
 class RunRequest(StrictModel):
     suite_path: Path
     output_root: Path
-    profile_name: Literal["contract-smoke", "acceptance-smoke", "standard", "extended"]
+    profile_name: Literal[
+        "contract-smoke", "acceptance-smoke", "standard", "extended", "phase2"
+    ]
     model_ids: tuple[str, ...] = Field(min_length=1)
     command: str = Field(min_length=1)
     call_timeout_seconds: float | None = Field(default=None, gt=0)

@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_09",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-09",
+    "notes": "Behavioural interview with four questions. Team conflict, prioritisation, failure and influence. I reused the roadmap reset twice, which felt repetitive. The failure answer was the incident story. They asked what I learned about escalation; I said to write the decision down."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

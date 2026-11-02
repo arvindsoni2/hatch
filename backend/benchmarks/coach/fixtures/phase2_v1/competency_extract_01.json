@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_01",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-01",
+    "job_description": "We are hiring a delivery lead for a payments platform. You will own a portfolio of four teams, run quarterly planning, and keep dependencies visible across engineering, risk and operations. Experience with regulated releases, incident reviews and measurable service objectives is essential."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

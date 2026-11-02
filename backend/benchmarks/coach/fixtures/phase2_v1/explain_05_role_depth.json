@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_05_role_depth",
+  "stage": "explain",
+  "description": "Synthetic role_depth pattern with two stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "role_depth",
+    "rubric_description": "Shows the judgement expected at the target role level.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-05-a",
+        "text": "I used three acronyms the interviewer had to ask about.",
+        "session_date": "2026-10-21",
+        "difficulty": "realistic"
+      },
+      {
+        "excerpt_id": "ex-05-b",
+        "text": "The story repeated the same point in the action and the result.",
+        "session_date": "2026-08-18",
+        "difficulty": "challenging"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

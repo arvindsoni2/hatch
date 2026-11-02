@@ -1,0 +1,49 @@
+{
+  "scenario_id": "brief_enhance_08",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-08",
+    "input_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+    "header": {
+      "company": "Bluebird Energy",
+      "role": "Operations Lead",
+      "round_type": "role_specific_verbal"
+    },
+    "stories": [
+      {
+        "story_id": "story-coaching",
+        "title": "Coaching a new lead",
+        "text": "I coached a new team lead through two release cycles, using a weekly review and a shared checklist.",
+        "competencies": [
+          "people leadership",
+          "role depth"
+        ],
+        "score": 0.68
+      },
+      {
+        "story_id": "story-cost",
+        "title": "Cost reduction without outages",
+        "text": "I reduced cloud spend by 22 percent over one quarter by removing idle environments and adding budget alerts.",
+        "competencies": [
+          "commercial judgement",
+          "delivery"
+        ],
+        "score": 0.61
+      }
+    ],
+    "watch_outs": [
+      {
+        "fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "dimension": "structure",
+        "evidence": "The result arrived after a long setup in the latest session."
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

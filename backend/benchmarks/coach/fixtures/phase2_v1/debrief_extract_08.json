@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_08",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-08",
+    "notes": "Role-specific verbal round. Asked me to walk through a service migration as if briefing an executive. I used the migration story and kept it short. Follow-up on risk: I named the rollback test and the staged cutover. They asked for the cost of delay and I did not have it."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

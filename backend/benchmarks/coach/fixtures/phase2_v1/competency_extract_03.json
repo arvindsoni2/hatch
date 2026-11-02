@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_03",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-03",
+    "job_description": "Engineering manager for a retail commerce team. You will lead eight engineers, own the checkout roadmap and partner with product and design. We expect evidence of hiring, coaching and running a reliable on-call rotation."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

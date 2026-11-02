@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_11_impact",
+  "stage": "explain",
+  "description": "Synthetic impact pattern with two stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "impact",
+    "rubric_description": "States the measurable result and who benefited from it.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-11-a",
+        "text": "I gave two outcomes, and only one of them had a number attached.",
+        "session_date": "2026-08-18",
+        "difficulty": "realistic"
+      },
+      {
+        "excerpt_id": "ex-11-b",
+        "text": "The example showed good judgement under pressure, but the setup took half the answer.",
+        "session_date": "2026-09-02",
+        "difficulty": "challenging"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

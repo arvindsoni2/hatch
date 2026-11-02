@@ -12,7 +12,7 @@ from .reporting import write_report
 from .runner import RunRequest, resume_benchmark, run_benchmark
 from .suite_loader import SuiteValidationError, load_suite
 
-_PROFILES = ("contract-smoke", "acceptance-smoke", "standard", "extended")
+_PROFILES = ("contract-smoke", "acceptance-smoke", "standard", "extended", "phase2")
 
 
 def build_parser() -> argparse.ArgumentParser:

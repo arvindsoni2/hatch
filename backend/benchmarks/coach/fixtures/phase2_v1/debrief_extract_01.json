@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_01",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-01",
+    "notes": "Started with the migration story. They asked how I handled the rollback and who signed it off. I said the platform lead approved it, but I could not remember the exact date. Second question was about a disagreement with product; I used the roadmap reset example. They wrote a lot during the cost answer."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

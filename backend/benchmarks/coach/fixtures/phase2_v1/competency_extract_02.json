@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_02",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-02",
+    "job_description": "Operations lead for a regional energy provider. The role owns scheduling, field coordination and supplier performance. You will improve first-time fix rates, reduce missed appointments and report monthly on cost and service. Stakeholder management across unions and contractors matters."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

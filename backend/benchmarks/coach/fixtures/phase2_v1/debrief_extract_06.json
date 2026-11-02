@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_06",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-06",
+    "notes": "First question was a warm-up about my current scope. Then a conflict question, a delivery question and a question about commercial judgement. I used the cost story for commercial judgement but the numbers were approximate. They asked how I validate savings; I mentioned the finance review but not the method."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_10",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-10",
+    "notes": "Final round with the director. Asked about strategy, hiring and how I measure a healthy team. I used the coaching story and the cost work. She asked how I would handle a team missing its commitments; I described a weekly review and a short recovery plan. I did not ask about the budget."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

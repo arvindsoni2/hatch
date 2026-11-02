@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_03",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-03",
+    "notes": "Mostly behavioural. Asked about influence without authority, prioritisation and a time I changed my mind. I used the roadmap reset, the cost work and the migration. The interviewer asked follow-ups on the metrics for each. I forgot to mention the customer name on the last answer."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}
