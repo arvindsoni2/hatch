@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Sole Phase 1 authority: `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`, SHA-256 `626381be8963340972711bdfa5e47df0c82d521bb4e22ad75f3f873022c19ae8` when this plan was written.
+- Sole Phase 1 authority: `docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`, SHA-256 `626381be8963340972711bdfa5e47df0c82d521bb4e22ad75f3f873022c19ae8` when this plan was written.
 - Approved delivery design: `docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md`, SHA-256 `992f9693d82b5146770e5e002f6f8d7f2485d34716e89d0d6a775662c134ece6`; it adds gates but cannot amend V6.
 - Create `phase1/pr1-conversational-foundation` from the fetched integration head after the four plans and two repository-local skills are committed and pushed; target `feature/coach-phase1-phase2`, never `main`.
 - PR1 must merge before PR2. Do not base PR2 on an unmerged PR1 branch.
@@ -43,9 +43,9 @@ git pull --ff-only origin feature/coach-phase1-phase2
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/feature/coach-phase1-phase2)"
 git merge-base --is-ancestor 3985da09 HEAD
 git status --short
-git ls-files --error-unmatch docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
-git check-ignore -v docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md; test $? -eq 1
-sha256sum docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
+git ls-files --error-unmatch docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
+git check-ignore -v docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md; test $? -eq 1
+sha256sum docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
 python --version
 node --version
 npm --version

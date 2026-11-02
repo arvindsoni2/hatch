@@ -77,11 +77,14 @@ a{color:var(--text)}a:hover{color:var(--accent)}
                 <p style="margin: 0; font-size: 13px; line-height: 20px; color: var(--text-dim)">Tick the ones from your brief, then add any others. Rating and story are optional.</p>
               </div>
               <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; border-top: 1px solid var(--border)">
-                <sc-for list="{{questions}}" as="q" hint-placeholder-count="5">
+                <sc-for list="{{questions}}" as="q" hint-placeholder-count="6">
                   <li style="display: flex; flex-direction: column; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border)">
                     <div style="display: flex; align-items: center; gap: 12px">
                       <input type="checkbox" id="{{q.id}}" checked="{{q.asked}}" onChange="{{q.toggle}}" style="width: 20px; height: 20px; margin: 0; accent-color: var(--accent); flex-shrink: 0">
                       <label for="{{q.id}}" style="font-size: 14px; font-weight: 500; flex: 1; min-width: 0">{{q.text}}</label>
+                      <sc-if value="{{q.custom}}" hint-placeholder-val="{{no}}">
+                        <span style="flex-shrink: 0; font-size: 12px; color: var(--text-dim)">Added by you</span>
+                      </sc-if>
                     </div>
                     <sc-if value="{{q.asked}}" hint-placeholder-val="{{no}}">
                       <div style="margin-left: 32px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; padding: 12px; border-radius: 8px; background: var(--surface-2)">
@@ -152,7 +155,7 @@ a{color:var(--text)}a:hover{color:var(--accent)}
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--surface-2)">
                   <span style="font-size: 14px; font-weight: 600">Add 1 new question to your Question Bank</span>
-                  <span style="font-size: 13px; color: var(--text-dim)">“What would you do in your first month here?” is not in your bank yet.</span>
+                  <span style="font-size: 13px; color: var(--text-dim)">“How do you prioritise competing delivery requests?” is not in your bank yet.</span>
                   <div style="display: flex; gap: 8px; flex-wrap: wrap">
                     <x-import component-from-global-scope="Hatch.Button" size="sm">Add to Question Bank</x-import>
                     <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="sm">Not now</x-import>
@@ -191,7 +194,7 @@ a{color:var(--text)}a:hover{color:var(--accent)}
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    this.state = { overall: 4, expect: 'unsure', asked: { q1: true, q2: true, q3: false, q4: true, q5: false }, rates: { q1: 4, q2: 2, q4: 2 }, saved: null };
+    this.state = { overall: 4, expect: 'unsure', asked: { q1: true, q2: true, q3: false, q4: true, q5: false, q6: true }, rates: { q1: 4, q2: 2, q4: 2, q6: 3 }, saved: null };
   }
   renderVals() {
     const s = this.state;
@@ -209,9 +212,10 @@ class Component extends DCLogic {
       q3: 'Describe a time you changed how a team works.',
       q4: 'How have you managed a budget under pressure?',
       q5: 'What would you do in your first month here?',
+      q6: 'How do you prioritise competing delivery requests?',
     };
     const questions = Object.keys(texts).map((id) => ({
-      id: 'dq-' + id, storyId: 'story-' + id, noteId: 'note-' + id, text: texts[id], asked: !!s.asked[id], firstStory: id === 'q2',
+      id: 'dq-' + id, storyId: 'story-' + id, noteId: 'note-' + id, text: texts[id], asked: !!s.asked[id], firstStory: id === 'q2', custom: id === 'q6',
       toggle: () => this.setState({ asked: { ...s.asked, [id]: !s.asked[id] } }),
       rates: [1, 2, 3, 4, 5].map((n) => ({ n: String(n), pressed: s.rates[id] === n ? 'true' : 'false', style: small(s.rates[id] === n), pick: () => this.setState({ rates: { ...s.rates, [id]: n } }) })),
     }));
@@ -219,7 +223,7 @@ class Component extends DCLogic {
       theme: this.props.theme ?? 'dark', overall, expect, questions,
       overallLabel: s.overall ? labels[s.overall] : 'Pick 1 to 5',
       saved, draft: !saved,
-      saveNote: saved ? 'Saved. 3 questions added to this round.' : '',
+      saveNote: saved ? 'Saved. 4 questions added to this round.' : '',
       save: (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ saved: true }); },
       s13: 13, s14: 14, s16: 16, yes: true, no: false,
     };

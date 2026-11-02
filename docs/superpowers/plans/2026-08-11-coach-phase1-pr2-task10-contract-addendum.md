@@ -23,7 +23,7 @@
 ### Task 1: Bind the approved contracts in V6
 
 **Files:**
-- Modify: `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`
+- Modify: `docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`
 - Modify: `docs/superpowers/plans/2026-07-25-coach-phase1-pr2-capture-processing-retention.md`
 - Modify if it contains the tracked canonical digest: the existing documentation ledger identified by `rg`.
 

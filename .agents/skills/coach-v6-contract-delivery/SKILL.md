@@ -7,7 +7,7 @@ description: Use when planning, implementing, reviewing, or preparing evidence f
 
 ## Authority
 
-Treat `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md` as the sole Phase 1 technical authority. Read it completely before each PR. Do not use older specs, the PDF, or Phase 2 documents to amend V6.
+Treat `docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md` as the sole Phase 1 technical authority. Read it completely before each PR. Do not use older specs, the PDF, or Phase 2 documents to amend V6.
 
 **Phase 2 is forbidden in every Phase 1 PR without exception.** Do not add Candidate Intelligence entities, findings, confidence bands, governance gateways, or mentor personas. A proposed “scope amendment” does not override this boundary.
 

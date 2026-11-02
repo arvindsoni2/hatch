@@ -13,7 +13,9 @@ Review Coach Phase 2 task **$ARGUMENTS**. Read the code and run the checks yours
 
 ## 2. Run
 
-- HA tasks (P2, P6, P9): `git diff --name-only <red-sha>..HEAD -- <paths in task-red.md>` must print nothing. Anything printed is a Critical finding.
+- Protected files (every task): `git diff --name-only <merge-base>..HEAD -- docs/implementation-specs/active/2026-10-22-coach-phase2-readiness-loop.md docs/implementation-notes/2026-10-22-coach-phase2-readiness-loop-plan.md AGENTS.md CLAUDE.md opencode.json .claude/ docs/visual-evidence/coach-phase2-design/` must print nothing. Anything printed is a Critical finding.
+- HA tasks (P2, P6, P9): `git diff --name-only <red-sha>..HEAD -- <paths in task-red.md>` must print nothing. Anything printed is a Critical finding. Check that the implementation uses the **Assumed interfaces** in `<task id>-red.md` as the owner approved them.
+- History: `git log --oneline <merge-base>..HEAD` shows no rewritten RED commit (its SHA is still an ancestor of HEAD).
 - The task's focused tests and listed regressions, `ruff check` on changed backend files, `npm run type-check` and the task's Vitest files if the frontend changed, `python scripts/check_docs.py`, `git diff --check`.
 - If there is a migration: `alembic heads` shows one head; upgrade, downgrade and upgrade again on a disposable database.
 - Compare what you ran with the evidence report. A claimed result you cannot reproduce is a High finding.
@@ -29,7 +31,8 @@ Review Coach Phase 2 task **$ARGUMENTS**. Read the code and run the checks yours
 ## 4. Check quality and security
 
 - Privacy: deletion cascades and fences as spec §7.8, §10 and §11 require; no derived text survives source deletion; no raw candidate text in runtime records, events, traces or logs; no DB transaction spans a model call.
-- Boundaries: Phase 2 code writes other domains (Question Bank, Stories, interview rounds) only through their services or repositories.
+- Boundaries: Phase 2 code writes other domains (Question Bank, Stories, interview rounds) only through their services or repositories. No existing domain imports `coach_readiness` (spec §5.1; AC36); existing domains reach Phase 2 only through `services/source_events.py`. No Phase 2 change to `routers/interviews.py` or `routers/applications.py`.
+- Time: round times are treated as UTC and shown in the display timezone (spec §7.5).
 - Tests: no mocking of the unit under test, no weakened or skipped assertions, synthetic data only, real database reload for integration tests.
 - AI off: every feature still renders deterministic content.
 - Code: small and readable, no new dependency the task does not name, no dead code.
