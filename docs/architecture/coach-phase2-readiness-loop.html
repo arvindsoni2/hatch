@@ -118,7 +118,7 @@ html{scroll-behavior:smooth}
 
 <main>
 <header class="top">
-  <div class="eyebrow"><span>Hatch · Coach Phase 2</span><span>Final for implementation · 2 Nov 2026</span><span>Baseline b7274a6</span></div>
+  <div class="eyebrow"><span>Hatch · Coach Phase 2</span><span>Final for implementation · 2 Nov 2026 · revised after review</span><span>Baseline b7274a6</span></div>
   <h1>Interview Readiness Loop</h1>
   <p class="lede">Phase 1 records and evaluates practice. Phase 2 turns that evidence into <em>a one-page brief before each real interview</em>, and learns back from a two-minute debrief afterwards. Everything works with AI switched off; local models only add short wording.</p>
   <p class="lede" style="font-size:.95rem;color:var(--muted)">This page illustrates the specification <code>2026-10-22-coach-phase2-readiness-loop.md</code>. Where they differ, the Markdown spec wins.</p>
@@ -193,14 +193,14 @@ html{scroll-behavior:smooth}
     <li><strong>Derive, don't store</strong>Patterns are computed on read. Only user decisions, user-authored content and cached model text are stored.</li>
     <li><strong>Separate evidence kinds</strong>Practice levels, real-interview self-ratings and story coverage are never merged into one score.</li>
     <li><strong>Calibrated approval</strong>Observations appear immediately and can be dismissed. Writes into Question Bank or Stories need explicit acceptance.</li>
-    <li><strong>CPU-first budgets</strong>Outputs ≤ 600 tokens, thinking off or low, deadlines measured on the owner's laptop.</li>
+    <li><strong>CPU-first budgets</strong>Outputs ≤ 600 tokens, thinking off, deadlines measured on the owner's laptop including queue time.</li>
     <li><strong>No new infrastructure</strong>Same FastAPI, SQLite, runtime and llama.cpp image. No owner key; Phase 1 has none.</li>
   </ul>
 </section>
 
 <section id="architecture">
   <div class="sec-head"><h2>Architecture</h2><span class="ref">spec §5</span></div>
-  <p>A new <code>services/coach_readiness/</code> package owns the logic. It reads existing domains through their public seams and calls models only through the shared runtime.</p>
+  <p>A new <code>services/coach_readiness/</code> package owns the logic and <code>routers/coach_readiness.py</code> serves every Phase 2 route. It reads existing domains through their public seams and calls models only through the shared runtime. Existing domains never import it: they report edits and deletions through the neutral <code>services/source_events.py</code> hook, whose listener is registered at start-up.</p>
   <div class="well">
 <pre class="mermaid">
 flowchart LR
@@ -211,14 +211,15 @@ flowchart LR
     STORIES[Stories]
     PRIV[What Hatch remembers]
   end
+  RR[routers/coach_readiness]
   subgraph DOMAIN[services/coach_readiness]
-    PAT[patterns]
+    PAT[patterns + signals]
     FOC[focus + plan]
-    COV[coverage]
-    BRF[brief]
+    COV[coverage + questions]
+    BRF[brief + scheduler]
     DBF[debrief]
     EXP[explain]
-    PRV[privacy]
+    PRV[privacy listener]
   end
   subgraph SOURCES[Existing domains]
     P1[(Phase 1 reports)]
@@ -236,8 +237,13 @@ flowchart LR
     PRI[Tier S :8080]
     DEEP[Tier L :8082 optional]
   end
-  UI --> DOMAIN
+  UI --> RR --> DOMAIN
   DOMAIN --> SOURCES
+  SE[services/source_events]
+  P1 --> SE
+  ST --> SE
+  QB --> SE
+  SE -.-> PRV
   DOMAIN --> STORE[(New tables)]
   EXP --> BIND
   BRF --> BIND
@@ -249,11 +255,11 @@ flowchart LR
     <thead><tr><th>Table</th><th>Holds</th><th>Deleted when</th></tr></thead>
     <tbody>
       <tr><td><code>coach_pattern_dismissals</code></td><td>Fingerprints only</td><td>Privacy page</td></tr>
-      <tr><td><code>coach_focus_areas</code></td><td>Up to 3 active focus areas</td><td>Privacy page</td></tr>
+      <tr><td><code>coach_focus_areas</code></td><td>Up to 3 active focus areas (DB slot 1–3)</td><td>Privacy page</td></tr>
       <tr><td><code>coach_practice_plans</code></td><td>Plans and items; one active</td><td>Privacy page</td></tr>
-      <tr><td><code>coach_interview_briefs</code></td><td>Status and input fingerprint; skeleton not stored</td><td>Round or application deleted</td></tr>
-      <tr><td><code>coach_interview_debriefs</code></td><td>User-authored debrief</td><td>Round or application deleted, privacy page</td></tr>
-      <tr><td><code>coach_derived_text</code> + <code>_sources</code></td><td>All model text with its source ids</td><td>Any source session, story or QB item deleted</td></tr>
+      <tr><td><code>coach_interview_briefs</code></td><td>Enhancement state and fingerprint; skeleton never stored</td><td>Round or application deleted</td></tr>
+      <tr><td><code>coach_interview_debriefs</code></td><td>User-authored debrief, including saved rough notes</td><td>Round or application deleted, privacy page</td></tr>
+      <tr><td><code>coach_derived_text</code> + <code>_sources</code></td><td>All model text with its source ids</td><td>Any source session, story or QB item edited, archived or deleted</td></tr>
       <tr><td><code>coach_competency_overrides</code></td><td>Renamed or hidden competencies</td><td>Application deleted</td></tr>
     </tbody>
   </table>
@@ -272,7 +278,7 @@ sequenceDiagram
   participant FOC as focus + plan
   U->>P1: completes assessed session
   U->>PAT: opens Readiness
-  PAT->>P1: load snapshots by group
+  PAT->>P1: load_learning_snapshots
   PAT-->>U: patterns minus dismissed
   U->>FOC: Work on this
   U->>FOC: Plan my week
@@ -291,13 +297,15 @@ sequenceDiagram
   participant RT as Tier S
   participant DBF as debrief
   U->>APP: adds interview date
-  APP->>BRF: inputs changed
-  BRF-->>U: skeleton brief, instantly
-  BRF->>RT: optional talking points
+  U->>BRF: opens brief, or scheduler runs
+  BRF-->>U: skeleton from current data, instantly
+  BRF->>RT: talking points if none current
   RT-->>BRF: grounding check, keep or drop
+  Note over BRF: fingerprint changes, tips re-queued
   U->>APP: interview happens
-  APP->>DBF: How did it go?
+  U->>DBF: How did it go? from Today
   U->>DBF: questions, ratings, stories
+  DBF->>APP: mirror questions, mark completed
   DBF-->>U: QB and story proposals
 </pre>
     </div>
@@ -320,18 +328,18 @@ stateDiagram-v2
   strength --> mixed
   mixed --> focus: latest 3 weak
   mixed --> strength: latest 3 strong
-  focus --> stale: over 90 days
+  focus --> stale: newest of latest 3 over 90 days
   strength --> stale
   mixed --> stale
   stale --> mixed: fresh session
 </pre>
-      <p class="note">Dismissed is an overlay stored as a fingerprint. New evidence changes the fingerprint and the pattern reappears.</p>
+      <p class="note">Dismissed is an overlay stored as a fingerprint. New evidence changes the fingerprint and the pattern reappears. Trends are labelled against difficulty: Improving or Changed at an easier difficulty; Getting weaker or Lower at a harder difficulty.</p>
     </div>
     <div class="well">
       <h3>Focus area <small>stored</small></h3>
 <pre class="mermaid">
 stateDiagram-v2
-  [*] --> active: create, max 3
+  [*] --> active: create, takes slot 1-3
   active --> paused
   paused --> active
   active --> achieved: candidate marks
@@ -355,19 +363,22 @@ stateDiagram-v2
       <p class="note">Items: todo → done or skipped. Practice-session items tick themselves when a matching session completes.</p>
     </div>
     <div class="well">
-      <h3>Brief <small>row stored, skeleton derived</small></h3>
+      <h3>Brief <small>skeleton always fresh; row tracks tips</small></h3>
 <pre class="mermaid">
 stateDiagram-v2
-  [*] --> ready: skeleton assembled
-  ready --> enhancing: AI on
-  enhancing --> enhanced: grounding passes
-  enhancing --> ready: failed or AI off
-  ready --> stale: inputs changed
-  enhanced --> stale
-  stale --> ready: opened
-  ready --> archived: interview over
-  enhanced --> archived
+  [*] --> active: round scheduled
+  state active {
+    [*] --> none
+    none --> enhancing: opened or scheduler
+    enhancing --> current: grounding passes
+    enhancing --> unavailable: failed or fenced
+    unavailable --> enhancing: Try again
+    current --> outdated: fingerprint changed
+    outdated --> enhancing: re-queued
+  }
+  active --> archived: over, completed or cancelled
 </pre>
+      <p class="note">UI: Ready · Adding tips · Ready, tips added · Tips out of date · Tips unavailable · Archived. No Refresh button.</p>
     </div>
     <div class="well">
       <h3>Debrief <small>stored, user-authored</small></h3>
@@ -380,7 +391,7 @@ stateDiagram-v2
   draft --> saved
   saved --> saved: edit
 </pre>
-      <p class="note">Saved debriefs carry proposals (add to Question Bank, record story use) that are accepted or dismissed one by one.</p>
+      <p class="note">Cancelled rounds never make a debrief due; a debrief already saved is kept. Saved debriefs carry proposals (add to Question Bank, record story use) that are accepted or dismissed one by one.</p>
     </div>
     <div class="well">
       <h3>Model generation <small>per request</small></h3>
@@ -394,18 +405,18 @@ stateDiagram-v2
   repairing --> validating
   validating --> degraded: second failure
   running --> degraded: deadline
-  running --> fenced: source changed or deleted
+  running --> fenced: source re-check fails
 </pre>
     </div>
     <div class="well">
-      <h3>Local model qualification <small>config + bench report</small></h3>
+      <h3>Local model qualification <small>catalogue status + bench report</small></h3>
 <pre class="mermaid">
 stateDiagram-v2
-  [*] --> candidate: pinned revision + sha256
+  [*] --> candidate: pinned revision, sha256, licence
   candidate --> benching
-  benching --> qualified: gate passed twice
+  benching --> qualified: tier gate passed twice
   benching --> rejected
-  qualified --> promoted: owner picks tier default
+  qualified --> promoted: route regression bench passes too
   promoted --> qualified: replaced
   qualified --> retired: regression on new build
 </pre>
@@ -415,14 +426,14 @@ stateDiagram-v2
 
 <section id="models">
   <div class="sec-head"><h2>Local model tiers</h2><span class="ref">spec §9</span></div>
-  <p>Candidates are benched on synthetic Coach fixtures. Only promoted models enter <code>model_tiers.json</code>. If none pass, the current model stays.</p>
+  <p>Candidates are benched on synthetic Coach fixtures. Tiers T and S share the existing routes, so a model is promoted only if it passes the Phase 2 gate <em>and</em> the route's existing regression bench (Phase 1 <code>acceptance-smoke</code> for S, job-scoring triage checks for T). Only promoted models enter <code>model_tiers.json</code>. If none pass, the current model stays.</p>
   <div class="well" style="padding:0">
   <table>
     <thead><tr><th>Tier</th><th>Route</th><th>Used for</th><th>Output cap</th><th>Candidates</th></tr></thead>
     <tbody>
-      <tr><td><b>T</b> tiny</td><td><code>:8081</code></td><td>Debrief note extraction, JD competencies</td><td>256 tokens</td><td>MiniCPM-V-4.7-1B (text), MiniCPM5-2B, Qwen3.5-0.8B (current)</td></tr>
-      <tr><td><b>S</b> small</td><td><code>:8080</code></td><td>Tips, brief talking points, plan wording</td><td>600 tokens</td><td>Spark-X2.6-4B (thinking off, then low), Qwen3.5-4B (current), MiniCPM5-2B, phi4-mini</td></tr>
-      <tr><td><b>L</b> large, optional</td><td><code>:8082</code></td><td>Richer wording when opted in</td><td>600 tokens</td><td>MiniCPM-V-4.7-35B-A3B (MoE, ~3B active), gemma4:12b</td></tr>
+      <tr><td><b>T</b> tiny</td><td><code>:8081</code> shared with job triage</td><td>Debrief note extraction, JD competencies (input ≤ 1,200 tokens)</td><td>512 tokens</td><td>MiniCPM-V-4.7-1B (text), MiniCPM5-2B, Qwen3.5-0.8B (current)</td></tr>
+      <tr><td><b>S</b> small</td><td><code>:8080</code> shared with Phase 1</td><td>Tips, brief talking points, plan wording</td><td>600 tokens</td><td>Spark-X2.6-4B (thinking off), Qwen3.5-4B (current), MiniCPM5-2B, phi4-mini</td></tr>
+      <tr><td><b>L</b> large, optional</td><td><code>:8082</code></td><td>Richer wording when opted in</td><td>600 tokens</td><td>MiniCPM-V-4.7-35B-A3B (MoE, ~3B active); gemma4:12b only if its licence is approved</td></tr>
     </tbody>
   </table>
   </div>
@@ -439,7 +450,7 @@ stateDiagram-v2
   </table>
   </div>
   <ul>
-    <li>Spark needs llama.cpp <code>b10828</code> or later; P3 pins a build by tag and digest and reruns the Phase 1 smoke bench on it.</li>
+    <li>Spark needs llama.cpp <code>b10828</code> or later; P3 pins a build by tag and digest, checks whether a per-request thinking switch works, and reruns the Phase 1 smoke bench on it.</li>
     <li>The discovery policy gains publishers <code>xhtoken</code> and <code>openbmb</code>; today it would reject both (unapproved publisher, and no "instruct" in the repo name).</li>
     <li>Tier L stays hidden below 24 GB RAM and always falls back to Tier S.</li>
   </ul>
@@ -463,15 +474,15 @@ stateDiagram-v2
     <div class="wave-label">Wave 0 · can start now <span class="chip go">GO</span></div>
     <div class="pr"><span class="id">P0</span><span class="what">Check handoff pack, gate report, bench suite<small>48 synthetic cases, phase2 harness profile</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
     <div class="pr"><span class="id">P1</span><span class="what">Story coverage map<small>Qualifies Flash for standard work</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
-    <div class="pr"><span class="id">P2</span><span class="what">Debrief capture<small>Migration + FK cascade; qualifies Flash for high-assurance work</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
-    <div class="pr"><span class="id">P3</span><span class="what">Model catalogue, pinned llama.cpp, tier map, bench runs<small>Runs on the owner's laptop</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P2</span><span class="what">Debrief capture<small>Migration + FK cascade, readiness next-actions, display timezone; qualifies Flash for high-assurance work</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
+    <div class="pr"><span class="id">P3</span><span class="what">Model catalogue, pinned llama.cpp, tier map, bench runs<small>Runs on the owner's laptop; dual gate</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
     <div class="gate">Gate: Wave 1 readiness check — Phase 1 and runtime suites green, no conflicting branches, P3 bench accepted. Foundation R7–R9 are paused.</div>
     <div class="wave-label">Wave 1 · after the readiness check <span class="chip wait">NEXT</span></div>
-    <div class="pr"><span class="id">P4</span><span class="what">Patterns<small>Adds rubric version and difficulty to ProgressSnapshot</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P4</span><span class="what">Patterns<small>Adds load_learning_snapshots and two snapshot fields</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
     <div class="pr"><span class="id">P5</span><span class="what">Focus areas and practice plan</span><span class="tags"><span class="chip go">Flash</span></span></div>
-    <div class="pr"><span class="id">P6</span><span class="what">Runtime bindings, fencing, cascade, Explain<small>Content canary tests</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
-    <div class="pr"><span class="id">P7</span><span class="what">Pre-interview brief and Today actions</span><span class="tags"><span class="chip go">Flash</span></span></div>
-    <div class="pr"><span class="id">P8</span><span class="what">Debrief extraction and proposals</span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P6</span><span class="what">Source events, runtime bindings, fencing, cascade, Explain<small>Hooks in session, story and QB code; content canary tests</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
+    <div class="pr"><span class="id">P7</span><span class="what">Pre-interview brief, scheduler and brief actions</span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P8</span><span class="what">Real-interview signals, extraction and proposals</span><span class="tags"><span class="chip go">Flash</span></span></div>
     <div class="pr"><span class="id">P9</span><span class="what">What Hatch remembers, journey test, rollout<small>Full suite, owner flips flags</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
   </div>
 </section>
@@ -487,6 +498,12 @@ stateDiagram-v2
       <tr><td><span class="chip confirm">D9</span></td><td>Delivery patterns</td><td>Deferred</td></tr>
       <tr><td><span class="chip confirm">D10</span></td><td>Reviewer</td><td>Claude Code replaces Codex; writes RED tests for P2, P6, P9</td></tr>
       <tr><td><span class="chip confirm">D11</span></td><td>Screen designs</td><td>Approved; in <code>docs/visual-evidence/coach-phase2-design/</code></td></tr>
+      <tr><td><span class="chip confirm">D12</span></td><td>Soft-deleted stories, archived QB items</td><td>Treated as deleted: derived text purged, generation fenced</td></tr>
+      <tr><td><span class="chip confirm">D13</span></td><td>Brief freshness</td><td>Skeleton always fresh; out-of-date tips re-queue automatically</td></tr>
+      <tr><td><span class="chip confirm">D14</span></td><td>Model routes</td><td>T and S share :8081 and :8080; promotion needs both gates</td></tr>
+      <tr><td><span class="chip confirm">D15</span></td><td>Interview times</td><td>Stored as UTC; shown in the Hatch display timezone, default the browser's</td></tr>
+      <tr><td><span class="chip confirm">D16</span></td><td>Boundaries</td><td><code>source_events</code> hook; all routes in the readiness router; Today merges in the frontend</td></tr>
+      <tr><td><span class="chip confirm">D17</span></td><td>Real-interview signals</td><td>Derived on read from debriefs; ship in P8</td></tr>
     </tbody>
   </table>
 </section>

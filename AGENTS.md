@@ -23,10 +23,14 @@ Roles: **OpenCode implements**, one task per PR. **Claude Code reviews** every P
 
 ## Hard rules
 
-- Never edit: the spec, the plan, `AGENTS.md`, `CLAUDE.md`, `opencode.json`, anything in `.claude/` or `docs/visual-evidence/coach-phase2-design/`, or any test file listed in `docs/implementation-reports/coach-phase2/PN-red.md`. If one of these is wrong, stop and report.
+- Never edit, by any tool or shell command: the spec, the plan, `AGENTS.md`, `CLAUDE.md`, `opencode.json`, anything in `.claude/` or `docs/visual-evidence/coach-phase2-design/`, or any test file listed in `docs/implementation-reports/coach-phase2/PN-red.md`. The reviewer diffs these on every PR. If one of these is wrong, stop and report.
+- For HA tasks, implement the **Assumed interfaces** in `PN-red.md` exactly as listed.
 - Never read or paste the contents of `data/`, `.env*`, real CVs, transcripts or recordings into a prompt, test or fixture. All fixtures are synthetic.
 - Never weaken, skip or delete an existing test to make a change pass. Never mock the unit under test.
-- Never merge, force-push, rewrite history, turn a feature flag on, or promote a model in `model_tiers.json` without the owner.
+- Never merge, force-push, rebase, amend, reset, delete a branch, turn a feature flag on, or promote a model in `model_tiers.json` without the owner. Bring a branch up to date with `git merge main`.
+- Dependency direction (spec §5.1): `coach_readiness` → existing domains → `services/source_events.py`. No existing module imports `coach_readiness`; existing domains report changes only through `source_events.notify`.
+- Every Phase 2 route lives in `backend/app/routers/coach_readiness.py` (spec §12). Do not change `routers/interviews.py` or `routers/applications.py`; Today merges readiness actions in the frontend.
+- Interview round times are UTC in storage and the API; show them in the display timezone (spec §7.5).
 - Model output is a proposal. Every feature must still render useful deterministic content with AI mode set to None.
 - No raw candidate text in runtime records, events, traces, logs or metric labels. No database write transaction may span a model call.
 - UI: use the components and tokens named in the screens README; copy comes from the screenshots and spec §13.4. Both themes, 390 px width and keyboard must work.
