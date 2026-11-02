@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hatch sidebar</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hatch/tokens.css">
+<link rel="stylesheet" href="ds/hatch/components/bundle.css">
+<script src="ds/hatch/components/bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+</style>
+</helmet>
+<aside aria-label="Main navigation" style="width: 248px; min-height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; padding: 20px 14px; background: var(--bg); border-right: 1px solid var(--border); font-family: var(--font-sans); color: var(--text)">
+  <div style="display: flex; align-items: center; gap: 10px; padding: 0 8px 20px">
+    <span style="width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center; flex-shrink: 0">
+      <x-import component-from-global-scope="Hatch.Icon" name="layers" size="{{s15}}"></x-import>
+    </span>
+    <span style="font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--text)">Hatch</span>
+  </div>
+  <nav style="display: flex; flex-direction: column; gap: 2px">
+    <sc-for list="{{items}}" as="item" hint-placeholder-count="5">
+      <a href="#" aria-current="{{item.current}}" style="{{item.style}}">
+        <x-import component-from-global-scope="Hatch.Icon" name="{{item.icon}}" size="{{s16}}"></x-import>
+        <span>{{item.label}}</span>
+      </a>
+    </sc-for>
+  </nav>
+  <div style="margin-top: 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: center; gap: 8px">
+      <span style="width: 7px; height: 7px; border-radius: 999px; background: var(--text-muted)"></span>
+      <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.02em; color: var(--text)">Your agents</span>
+    </div>
+    <sc-for list="{{agents}}" as="a" hint-placeholder-count="4">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <span style="{{a.tile}}">
+          <x-import component-from-global-scope="Hatch.Icon" name="{{a.icon}}" size="{{s11}}" stroke-width="{{w22}}"></x-import>
+        </span>
+        <span style="font-size: 12px; font-weight: 600; color: var(--text)">{{a.name}}</span>
+        <span style="font-size: 11px; color: var(--text-muted)">{{a.role}}</span>
+      </div>
+    </sc-for>
+  </div>
+</aside>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"active":{"editor":"enum","options":["today","pipeline","applications","cv","prep"],"default":"prep"},"$preview":{"width":248,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const active = this.props.active ?? 'prep';
+    const base = 'display: flex; align-items: center; gap: 10px; min-height: 44px; box-sizing: border-box; padding: 10px 12px; font-size: 13.5px; font-weight: 500; border-radius: 10px; text-decoration: none; ';
+    const items = [
+      { key: 'today', label: 'Today', icon: 'home' },
+      { key: 'pipeline', label: 'Pipeline', icon: 'layers' },
+      { key: 'applications', label: 'Applications', icon: 'briefcase' },
+      { key: 'cv', label: 'CV Studio', icon: 'fileText' },
+      { key: 'prep', label: 'Interview Prep', icon: 'mic' },
+    ].map((it) => ({
+      ...it,
+      current: it.key === active ? 'page' : undefined,
+      style: base + (it.key === active ? 'color: var(--accent); background: var(--accent-soft);' : 'color: var(--text-dim); background: transparent;'),
+    }));
+    const tile = (c) => `width: 22px; height: 22px; border-radius: 6.6px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; background: var(--agent-${c}-soft); color: var(--agent-${c})`;
+    const agents = [
+      { name: 'Scout', role: 'Finds roles', icon: 'compass', tile: tile('scout') },
+      { name: 'Scorer', role: 'Ranks matches', icon: 'target', tile: tile('scorer') },
+      { name: 'Tailor', role: 'Writes your CV', icon: 'fileText', tile: tile('tailor') },
+      { name: 'Coach', role: 'Preps interviews', icon: 'mic', tile: tile('coach') },
+    ];
+    return { items, agents, s11: 11, s15: 15, s16: 16, w22: 2.2 };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Interview debrief</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hatch/tokens.css">
+<link rel="stylesheet" href="ds/hatch/components/bundle.css">
+<script src="ds/hatch/components/bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--text)}a:hover{color:var(--accent)}
+.hx-field{box-sizing:border-box;width:100%;min-height:40px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:8px 12px;font:inherit;font-size:14px}
+.hx-field::placeholder{color:var(--text-muted)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" style="display: flex; flex-wrap: wrap; min-height: 100vh; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 14px; line-height: 1.5">
+  <div style="flex: 0 0 248px; display: flex">
+    <dc-import name="Sidebar" active="applications" hint-size="248px,900px"></dc-import>
+  </div>
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 24px var(--page-gutter) 64px">
+    <div style="max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px">
+
+      <nav aria-label="Breadcrumb" style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-dim); flex-wrap: wrap">
+        <a href="#" style="color: var(--text-dim); text-decoration: none">Applications</a>
+        <x-import component-from-global-scope="Hatch.Icon" name="chevronR" size="{{s14}}"></x-import>
+        <a href="#" style="color: var(--text-dim); text-decoration: none">Northwind Energy · Senior Delivery Lead</a>
+        <x-import component-from-global-scope="Hatch.Icon" name="chevronR" size="{{s14}}"></x-import>
+        <span style="color: var(--text)">Round 2</span>
+      </nav>
+
+      <header style="display: flex; flex-direction: column; gap: 16px">
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <h1 style="margin: 0; font-size: 28px; line-height: 32px; font-weight: 600; letter-spacing: -0.025em">How did it go?</h1>
+          <p style="margin: 0; font-size: 14px; line-height: 20px; color: var(--text-dim); max-width: 65ch">Behavioural interview with Northwind Energy, Tue 3 Nov. About two minutes. Only the overall rating is needed to save.</p>
+        </div>
+        <nav aria-label="Round" style="display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap">
+          <a href="Brief.dc.html" style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 14px; font-weight: 500; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent">Brief</a>
+          <a href="#" aria-current="page" style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none; border-bottom: 2px solid var(--accent)">Debrief</a>
+        </nav>
+      </header>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+
+        <form style="flex: 3 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 24px" onSubmit="{{save}}">
+
+          <x-import component-from-global-scope="Hatch.SectionCard">
+            <div style="display: flex; flex-direction: column; gap: 20px">
+              <fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+                <legend style="padding: 0; font-size: 16px; line-height: 24px; font-weight: 600">Overall, how did it go? <span aria-hidden="true" style="color: var(--danger)">*</span></legend>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+                  <sc-for list="{{overall}}" as="o" hint-placeholder-count="5">
+                    <button type="button" aria-pressed="{{o.pressed}}" onClick="{{o.pick}}" style="{{o.style}}">{{o.n}}</button>
+                  </sc-for>
+                  <span style="font-size: 13px; color: var(--text-dim)">{{overallLabel}}</span>
+                </div>
+              </fieldset>
+              <fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+                <legend style="padding: 0; font-size: 14px; line-height: 20px; font-weight: 500">Do you expect to move to the next round?</legend>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                  <sc-for list="{{expect}}" as="e" hint-placeholder-count="3">
+                    <button type="button" aria-pressed="{{e.pressed}}" onClick="{{e.pick}}" style="{{e.style}}">{{e.label}}</button>
+                  </sc-for>
+                </div>
+              </fieldset>
+            </div>
+          </x-import>
+
+          <x-import component-from-global-scope="Hatch.SectionCard">
+            <div style="display: flex; flex-direction: column; gap: 14px">
+              <div style="display: flex; flex-direction: column; gap: 4px">
+                <h2 style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600">Questions you were asked</h2>
+                <p style="margin: 0; font-size: 13px; line-height: 20px; color: var(--text-dim)">Tick the ones from your brief, then add any others. Rating and story are optional.</p>
+              </div>
+              <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; border-top: 1px solid var(--border)">
+                <sc-for list="{{questions}}" as="q" hint-placeholder-count="5">
+                  <li style="display: flex; flex-direction: column; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border)">
+                    <div style="display: flex; align-items: center; gap: 12px">
+                      <input type="checkbox" id="{{q.id}}" checked="{{q.asked}}" onChange="{{q.toggle}}" style="width: 20px; height: 20px; margin: 0; accent-color: var(--accent); flex-shrink: 0">
+                      <label for="{{q.id}}" style="font-size: 14px; font-weight: 500; flex: 1; min-width: 0">{{q.text}}</label>
+                    </div>
+                    <sc-if value="{{q.asked}}" hint-placeholder-val="{{no}}">
+                      <div style="margin-left: 32px; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; padding: 12px; border-radius: 8px; background: var(--surface-2)">
+                        <div style="display: flex; flex-direction: column; gap: 6px">
+                          <span style="font-size: 13px; font-weight: 500">How did you answer?</span>
+                          <div role="group" aria-label="Your rating" style="display: flex; gap: 4px">
+                            <sc-for list="{{q.rates}}" as="r" hint-placeholder-count="5">
+                              <button type="button" aria-pressed="{{r.pressed}}" onClick="{{r.pick}}" style="{{r.style}}">{{r.n}}</button>
+                            </sc-for>
+                          </div>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 6px">
+                          <label for="{{q.storyId}}" style="font-size: 13px; font-weight: 500">Story you used</label>
+                          <select id="{{q.storyId}}" class="hx-field">
+                            <option>None</option>
+                            <option selected="{{q.firstStory}}">Grid outage recovery programme</option>
+                            <option>Mobile work-order platform</option>
+                            <option>Agile reset in a product team</option>
+                          </select>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 6px">
+                          <label for="{{q.noteId}}" style="font-size: 13px; font-weight: 500">Note</label>
+                          <input id="{{q.noteId}}" class="hx-field" placeholder="One line, optional">
+                        </div>
+                      </div>
+                    </sc-if>
+                  </li>
+                </sc-for>
+              </ul>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end">
+                <div style="flex: 1 1 280px; display: flex; flex-direction: column; gap: 6px">
+                  <label for="add-q" style="font-size: 14px; font-weight: 500">Another question</label>
+                  <input id="add-q" class="hx-field" style="min-height: 44px" placeholder="Type a question you were asked">
+                </div>
+                <x-import component-from-global-scope="Hatch.Button" variant="outline"><x-import component-from-global-scope="Hatch.Icon" name="plus" size="{{s16}}"></x-import>Add</x-import>
+              </div>
+              <a href="#" style="align-self: flex-start; font-size: 13px; font-weight: 500; text-underline-offset: 3px; min-height: 44px; display: flex; align-items: center">Paste rough notes instead</a>
+            </div>
+          </x-import>
+
+          <x-import component-from-global-scope="Hatch.SectionCard">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 16px">
+              <div style="display: flex; flex-direction: column; gap: 6px">
+                <label for="went-well" style="font-size: 14px; font-weight: 500">What went well</label>
+                <textarea id="went-well" class="hx-field" rows="4" placeholder="Optional"></textarea>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px">
+                <label for="differently" style="font-size: 14px; font-weight: 500">What you would do differently</label>
+                <textarea id="differently" class="hx-field" rows="4" placeholder="Optional"></textarea>
+              </div>
+            </div>
+          </x-import>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+            <x-import component-from-global-scope="Hatch.Button" type="submit">Save debrief</x-import>
+            <x-import component-from-global-scope="Hatch.Button" variant="ghost" type="button">Skip this one</x-import>
+            <span role="status" aria-live="polite" style="font-size: 13px; color: var(--text-dim)">{{saveNote}}</span>
+          </div>
+        </form>
+
+        <aside style="flex: 2 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 24px">
+          <sc-if value="{{saved}}" hint-placeholder-val="{{no}}">
+            <x-import component-from-global-scope="Hatch.SectionCard">
+              <div style="display: flex; flex-direction: column; gap: 16px">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap">
+                  <h2 style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600">Suggestions from this debrief</h2>
+                  <x-import component-from-global-scope="Hatch.StatusBadge" tone="success"><x-import component-from-global-scope="Hatch.Icon" name="checkCircle" size="{{s13}}"></x-import>Saved</x-import>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--surface-2)">
+                  <span style="font-size: 14px; font-weight: 600">Add 1 new question to your Question Bank</span>
+                  <span style="font-size: 13px; color: var(--text-dim)">“What would you do in your first month here?” is not in your bank yet.</span>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                    <x-import component-from-global-scope="Hatch.Button" size="sm">Add to Question Bank</x-import>
+                    <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="sm">Not now</x-import>
+                  </div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--surface-2)">
+                  <span style="font-size: 14px; font-weight: 600">Record that you used “Grid outage recovery programme”</span>
+                  <span style="font-size: 13px; color: var(--text-dim)">Helps Hatch rank your stories for the next brief.</span>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                    <x-import component-from-global-scope="Hatch.Button" variant="outline" size="sm">Record use</x-import>
+                    <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="sm">Not now</x-import>
+                  </div>
+                </div>
+              </div>
+            </x-import>
+          </sc-if>
+          <sc-if value="{{draft}}" hint-placeholder-val="{{yes}}">
+            <x-import component-from-global-scope="Hatch.SectionCard">
+              <div style="display: flex; flex-direction: column; gap: 12px">
+                <h2 style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600">When you save</h2>
+                <ul style="margin: 0; padding-left: 18px; list-style: disc; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--text-dim)">
+                  <li>The questions you ticked are added to this interview round.</li>
+                  <li>Hatch suggests new Question Bank entries and records the stories you used. You choose what to keep.</li>
+                  <li>Your practice patterns do not change. Real-interview results are shown separately on Readiness.</li>
+                </ul>
+              </div>
+            </x-import>
+          </sc-if>
+        </aside>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"state":{"editor":"enum","options":["draft","saved"],"default":"draft"},"$preview":{"width":1440,"height":1900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { overall: 4, expect: 'unsure', asked: { q1: true, q2: true, q3: false, q4: true, q5: false }, rates: { q1: 4, q2: 2, q4: 2 }, saved: null };
+  }
+  renderVals() {
+    const s = this.state;
+    const saved = s.saved ?? ((this.props.state ?? 'draft') === 'saved');
+    const pill = (on) => 'min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; ' +
+      (on ? 'background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent);' : 'background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);');
+    const small = (on) => 'width: 36px; height: 36px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; ' +
+      (on ? 'background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent);' : 'background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);');
+    const labels = { 1: 'Poor', 2: 'Weak', 3: 'Okay', 4: 'Good', 5: 'Great' };
+    const overall = [1, 2, 3, 4, 5].map((n) => ({ n: String(n), pressed: s.overall === n ? 'true' : 'false', style: pill(s.overall === n), pick: () => this.setState({ overall: n }) }));
+    const expect = [['yes', 'Yes'], ['unsure', 'Not sure'], ['no', 'No']].map(([k, label]) => ({ label, pressed: s.expect === k ? 'true' : 'false', style: pill(s.expect === k), pick: () => this.setState({ expect: k }) }));
+    const texts = {
+      q1: 'Tell me about a delivery that slipped and what you did.',
+      q2: 'How do you handle a stakeholder who disagrees with the plan?',
+      q3: 'Describe a time you changed how a team works.',
+      q4: 'How have you managed a budget under pressure?',
+      q5: 'What would you do in your first month here?',
+    };
+    const questions = Object.keys(texts).map((id) => ({
+      id: 'dq-' + id, storyId: 'story-' + id, noteId: 'note-' + id, text: texts[id], asked: !!s.asked[id], firstStory: id === 'q2',
+      toggle: () => this.setState({ asked: { ...s.asked, [id]: !s.asked[id] } }),
+      rates: [1, 2, 3, 4, 5].map((n) => ({ n: String(n), pressed: s.rates[id] === n ? 'true' : 'false', style: small(s.rates[id] === n), pick: () => this.setState({ rates: { ...s.rates, [id]: n } }) })),
+    }));
+    return {
+      theme: this.props.theme ?? 'dark', overall, expect, questions,
+      overallLabel: s.overall ? labels[s.overall] : 'Pick 1 to 5',
+      saved, draft: !saved,
+      saveNote: saved ? 'Saved. 3 questions added to this round.' : '',
+      save: (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ saved: true }); },
+      s13: 13, s14: 14, s16: 16, yes: true, no: false,
+    };
+  }
+}
+</script>
+</body>
+</html>

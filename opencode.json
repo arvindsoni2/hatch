@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "permission": {
+    "edit": {
+      "*": "allow",
+      ".env*": "deny",
+      "data/*": "deny",
+      "AGENTS.md": "deny",
+      "CLAUDE.md": "deny",
+      "opencode.json": "deny",
+      ".claude/*": "deny",
+      "docs/implementation-specs/*": "deny",
+      "docs/implementation-notes/2026-10-22-coach-phase2-readiness-loop-plan.md": "deny",
+      "docs/visual-evidence/coach-phase2-design/*": "deny"
+    },
+    "bash": {
+      "*": "allow",
+      "git push*": "ask",
+      "git push --force*": "deny",
+      "git push -f*": "deny",
+      "git merge*": "ask",
+      "git reset --hard*": "deny",
+      "git clean*": "deny",
+      "gh pr create*": "ask",
+      "gh pr merge*": "deny",
+      "rm -rf*": "ask",
+      "docker compose down*": "ask"
+    }
+  },
+  "agent": {
+    "argon": {
+      "model": "opencode-go/gemini-4-argon",
+      "mode": "primary",
+      "description": "Escalation: after two failed repair cycles or an unfixed Critical/High review finding"
+    },
+    "consult": {
+      "model": "opencode-go/kimi-k3.1-pro",
+      "mode": "primary",
+      "description": "Short consult on one stuck problem; do not implement whole tasks"
+    },
+    "fallback": {
+      "model": "opencode-go/glm-5.3-flash",
+      "mode": "primary",
+      "description": "Use when the default model is unavailable or out of allowance"
+    }
+  }
+}

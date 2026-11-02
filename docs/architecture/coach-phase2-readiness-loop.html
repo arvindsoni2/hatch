@@ -1,0 +1,496 @@
+<title>Interview Readiness Loop</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: technical spec sheet — sticky section index on wide screens, single reading column, diagrams in scroll wells */
+:root{
+  --paper:#f4f6f8; --sheet:#ffffff; --ink:#15202b; --muted:#56636f; --rule:#d7dde3;
+  --accent:#2f43b8; --accent-soft:#e7eafb; --mark:#f3d36b; --mark-ink:#4a3a00;
+  --ok:#1f7a4d; --ok-soft:#e3f3ea; --warn:#9a5b00; --warn-soft:#fbefd9; --stop:#a3263a; --stop-soft:#f9e3e7;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0f151b; --sheet:#151d25; --ink:#e3e9ef; --muted:#9aa7b3; --rule:#2a3540;
+  --accent:#8f9ef2; --accent-soft:#1f2747; --mark:#d9b54a; --mark-ink:#1b1500;
+  --ok:#5fc490; --ok-soft:#132a1f; --warn:#e5a84a; --warn-soft:#2c2112; --stop:#ef7f92; --stop-soft:#33171d;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0f151b; --sheet:#151d25; --ink:#e3e9ef; --muted:#9aa7b3; --rule:#2a3540;
+  --accent:#8f9ef2; --accent-soft:#1f2747; --mark:#d9b54a; --mark-ink:#1b1500;
+  --ok:#5fc490; --ok-soft:#132a1f; --warn:#e5a84a; --warn-soft:#2c2112; --stop:#ef7f92; --stop-soft:#33171d;
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--f-body);font-size:15.5px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px;padding-block:40px 80px}
+nav.index{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:13.5px}
+nav.index p{font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+nav.index ol{list-style:none;margin:0;padding:0;display:grid;gap:4px;counter-reset:s}
+nav.index a{color:var(--muted);text-decoration:none;display:block;padding:3px 0 3px 10px;border-left:2px solid var(--rule)}
+nav.index a:hover,nav.index a:focus-visible{color:var(--accent);border-left-color:var(--accent);outline:none}
+main{min-width:0;display:grid;gap:56px}
+header.top{display:grid;gap:14px;border-bottom:1px solid var(--rule);padding-bottom:28px}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 18px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.1}
+h1{font-size:clamp(2.2rem,5vw,3.4rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.75rem;font-weight:600}
+h3{font-size:1.15rem;font-weight:600}
+.lede{max-width:65ch;font-size:1.08rem;color:var(--ink);margin:0}
+.lede em{font-style:normal;background:linear-gradient(transparent 58%,var(--mark) 58%);color:inherit;padding:0 2px}
+section{display:grid;gap:18px}
+section > p,section > ul{max-width:68ch;margin:0}
+.sec-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.sec-head .ref{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.well{background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:18px;overflow-x:auto;min-width:0}
+.well pre.mermaid{margin:0;background:transparent;min-width:520px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.grid2 .well{display:grid;gap:10px;align-content:start}
+.well h3 small{font-family:var(--f-mono);font-weight:400;font-size:11.5px;color:var(--muted);margin-left:6px}
+.well .note{font-size:13.5px;color:var(--muted);margin:0}
+.loop{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-family:var(--f-mono);font-size:13px}
+.loop span.step{background:var(--sheet);border:1px solid var(--rule);border-radius:4px;padding:6px 10px}
+.loop span.step.real{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.loop .arr{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;vertical-align:top;padding:9px 10px;border-bottom:1px solid var(--rule)}
+th{font-family:var(--f-mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td code,p code,li code{font-family:var(--f-mono);font-size:12.5px;background:var(--accent-soft);color:var(--ink);padding:1px 5px;border-radius:3px}
+.chip{display:inline-block;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;padding:2px 7px;border-radius:3px;white-space:nowrap;font-weight:500}
+.chip.must{background:var(--accent-soft);color:var(--accent)}
+.chip.should{background:var(--warn-soft);color:var(--warn)}
+.chip.wont{background:var(--stop-soft);color:var(--stop)}
+.chip.ha{background:var(--stop-soft);color:var(--stop)}
+.chip.go{background:var(--ok-soft);color:var(--ok)}
+.chip.wait{background:var(--warn-soft);color:var(--warn)}
+.chip.confirm{background:var(--mark);color:var(--mark-ink)}
+.scope{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.scope .col{background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:16px;display:grid;gap:10px;align-content:start}
+.scope ul{margin:0;padding:0;list-style:none;display:grid;gap:8px;font-size:14px}
+.scope li{display:grid;grid-template-columns:34px 1fr;gap:6px}
+.scope li b{font-family:var(--f-mono);font-weight:500;font-size:12px;color:var(--muted);padding-top:2px}
+.scope .col.wont li{grid-template-columns:1fr;color:var(--muted)}
+.waves{display:grid;gap:10px}
+.wave-label{font-family:var(--f-mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);display:flex;gap:10px;align-items:center;margin-top:6px}
+.wave-label::after{content:"";flex:1;height:1px;background:var(--rule)}
+.gate{font-family:var(--f-mono);font-size:12.5px;padding:10px 12px;border:1px dashed var(--warn);color:var(--warn);background:var(--warn-soft);border-radius:4px}
+.pr{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:baseline;background:var(--sheet);border:1px solid var(--rule);border-radius:6px;padding:10px 14px}
+.pr .id{font-family:var(--f-mono);font-weight:500;color:var(--accent)}
+.pr .what{min-width:0}
+.pr .what small{display:block;color:var(--muted);font-size:13px}
+.pr .tags{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.principles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 24px;margin:0;padding:0;list-style:none}
+.principles li{border-top:1px solid var(--rule);padding-top:10px;font-size:14.5px}
+.principles li strong{display:block;font-family:var(--f-display);font-weight:600;font-size:1.02rem}
+footer{border-top:1px solid var(--rule);padding-top:18px;color:var(--muted);font-size:13px}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:900px){
+  .wrap{grid-template-columns:minmax(0,1fr);gap:24px;padding-block:24px 60px}
+  nav.index{position:static}
+  nav.index ol{display:flex;flex-wrap:wrap;gap:6px}
+  nav.index a{border-left:none;border:1px solid var(--rule);border-radius:4px;padding:3px 8px}
+  .grid2,.scope,.principles{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:520px){ .pr{grid-template-columns:36px minmax(0,1fr)} .pr .tags{grid-column:2;justify-content:flex-start} }
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+<div class="wrap">
+<nav class="index" aria-label="Sections">
+  <p>Coach Phase 2</p>
+  <ol>
+    <li><a href="#loop">The loop</a></li>
+    <li><a href="#scope">Scope</a></li>
+    <li><a href="#principles">Principles</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#dataflow">Dataflow</a></li>
+    <li><a href="#statuses">Status models</a></li>
+    <li><a href="#models">Local model tiers</a></li>
+    <li><a href="#delivery">Delivery</a></li>
+    <li><a href="#confirm">Decisions</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow"><span>Hatch · Coach Phase 2</span><span>Final for implementation · 2 Nov 2026</span><span>Baseline b7274a6</span></div>
+  <h1>Interview Readiness Loop</h1>
+  <p class="lede">Phase 1 records and evaluates practice. Phase 2 turns that evidence into <em>a one-page brief before each real interview</em>, and learns back from a two-minute debrief afterwards. Everything works with AI switched off; local models only add short wording.</p>
+  <p class="lede" style="font-size:.95rem;color:var(--muted)">This page illustrates the specification <code>2026-10-22-coach-phase2-readiness-loop.md</code>. Where they differ, the Markdown spec wins.</p>
+</header>
+
+<section id="loop">
+  <div class="sec-head"><h2>The loop</h2><span class="ref">spec §1</span></div>
+  <div class="loop" aria-label="Readiness loop">
+    <span class="step">practice</span><span class="arr">→</span>
+    <span class="step">patterns</span><span class="arr">→</span>
+    <span class="step">focus</span><span class="arr">→</span>
+    <span class="step">plan</span><span class="arr">→</span>
+    <span class="step">brief</span><span class="arr">→</span>
+    <span class="step real">real interview</span><span class="arr">→</span>
+    <span class="step">debrief</span><span class="arr">↺</span>
+  </div>
+  <table>
+    <thead><tr><th>Success measure (first 30 days)</th><th>Target</th></tr></thead>
+    <tbody>
+      <tr><td>Brief ready before a scheduled interview</td><td>≥ 24 h ahead, every round dated ≥ 24 h out</td></tr>
+      <tr><td>Debrief captured</td><td>Within 72 h for ≥ 80 % of completed rounds</td></tr>
+      <tr><td>First useful pattern</td><td>After the 2nd assessed session in a group</td></tr>
+      <tr><td>Works with AI off</td><td>Every Must feature shows useful content</td></tr>
+      <tr><td>Local latency</td><td>Every model action returns or degrades within its tier deadline</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="scope">
+  <div class="sec-head"><h2>Scope</h2><span class="ref">spec §2</span></div>
+  <div class="scope">
+    <div class="col">
+      <span class="chip must">MUST</span>
+      <ul>
+        <li><b>M1</b><span>Patterns, derived on read from Phase 1 reports</span></li>
+        <li><b>M2</b><span>Focus areas, max 3, template criteria</span></li>
+        <li><b>M3</b><span>Practice plan, deterministic and interview-aware</span></li>
+        <li><b>M4</b><span>Story coverage map, job competencies vs Story Bank</span></li>
+        <li><b>M5</b><span>Pre-interview brief per interview round</span></li>
+        <li><b>M6</b><span>Real-interview debrief</span></li>
+        <li><b>M7</b><span>Explain: single-turn tips on a pattern</span></li>
+        <li><b>M8</b><span>Bench-gated local model tiers</span></li>
+        <li><b>M9</b><span>What Hatch remembers + deletion cascade</span></li>
+      </ul>
+    </div>
+    <div class="col">
+      <span class="chip should">SHOULD</span>
+      <ul>
+        <li><b>S2</b><span>Debrief → Question Bank and story-use proposals</span></li>
+        <li><b>S3</b><span>One-page print layout for the brief</span></li>
+      </ul>
+    </div>
+    <div class="col wont">
+      <span class="chip wont">WON'T</span>
+      <ul>
+        <li>Delivery patterns for voice sessions (deferred)</li>
+        <li>Persistent Mentor threads</li>
+        <li>OpenRouter, Laya/Clef advisors, spend ledger</li>
+        <li>Global cross-role findings</li>
+        <li>Automatic plan adaptation</li>
+        <li>Retry-and-compare</li>
+        <li>New services, vector stores or agent frameworks</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="sec-head"><h2>Principles</h2><span class="ref">spec §4</span></div>
+  <ul class="principles">
+    <li><strong>Deterministic skeleton, model garnish</strong>Every feature is complete without a model. Models only rewrite supplied content into short text.</li>
+    <li><strong>Derive, don't store</strong>Patterns are computed on read. Only user decisions, user-authored content and cached model text are stored.</li>
+    <li><strong>Separate evidence kinds</strong>Practice levels, real-interview self-ratings and story coverage are never merged into one score.</li>
+    <li><strong>Calibrated approval</strong>Observations appear immediately and can be dismissed. Writes into Question Bank or Stories need explicit acceptance.</li>
+    <li><strong>CPU-first budgets</strong>Outputs ≤ 600 tokens, thinking off or low, deadlines measured on the owner's laptop.</li>
+    <li><strong>No new infrastructure</strong>Same FastAPI, SQLite, runtime and llama.cpp image. No owner key; Phase 1 has none.</li>
+  </ul>
+</section>
+
+<section id="architecture">
+  <div class="sec-head"><h2>Architecture</h2><span class="ref">spec §5</span></div>
+  <p>A new <code>services/coach_readiness/</code> package owns the logic. It reads existing domains through their public seams and calls models only through the shared runtime.</p>
+  <div class="well">
+<pre class="mermaid">
+flowchart LR
+  subgraph UI[Next.js]
+    TODAY[Today next actions]
+    APPV[Interview round view]
+    COACH[Coach Readiness]
+    STORIES[Stories]
+    PRIV[What Hatch remembers]
+  end
+  subgraph DOMAIN[services/coach_readiness]
+    PAT[patterns]
+    FOC[focus + plan]
+    COV[coverage]
+    BRF[brief]
+    DBF[debrief]
+    EXP[explain]
+    PRV[privacy]
+  end
+  subgraph SOURCES[Existing domains]
+    P1[(Phase 1 reports)]
+    ST[(Stories)]
+    QB[(Question Bank)]
+    JOB[(Job + JobScore)]
+    APP[(Application + Round)]
+  end
+  subgraph RT[Shared runtime]
+    BIND[coach_readiness TaskSpecs]
+    GW[router + gateway]
+  end
+  subgraph LLM[Local llama.cpp]
+    TRI[Tier T :8081]
+    PRI[Tier S :8080]
+    DEEP[Tier L :8082 optional]
+  end
+  UI --> DOMAIN
+  DOMAIN --> SOURCES
+  DOMAIN --> STORE[(New tables)]
+  EXP --> BIND
+  BRF --> BIND
+  DBF --> BIND
+  BIND --> GW --> LLM
+</pre>
+  </div>
+  <table>
+    <thead><tr><th>Table</th><th>Holds</th><th>Deleted when</th></tr></thead>
+    <tbody>
+      <tr><td><code>coach_pattern_dismissals</code></td><td>Fingerprints only</td><td>Privacy page</td></tr>
+      <tr><td><code>coach_focus_areas</code></td><td>Up to 3 active focus areas</td><td>Privacy page</td></tr>
+      <tr><td><code>coach_practice_plans</code></td><td>Plans and items; one active</td><td>Privacy page</td></tr>
+      <tr><td><code>coach_interview_briefs</code></td><td>Status and input fingerprint; skeleton not stored</td><td>Round or application deleted</td></tr>
+      <tr><td><code>coach_interview_debriefs</code></td><td>User-authored debrief</td><td>Round or application deleted, privacy page</td></tr>
+      <tr><td><code>coach_derived_text</code> + <code>_sources</code></td><td>All model text with its source ids</td><td>Any source session, story or QB item deleted</td></tr>
+      <tr><td><code>coach_competency_overrides</code></td><td>Renamed or hidden competencies</td><td>Application deleted</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="dataflow">
+  <div class="sec-head"><h2>Dataflow</h2><span class="ref">spec §6</span></div>
+  <div class="grid2">
+    <div class="well">
+      <h3>Practice to plan</h3>
+<pre class="mermaid">
+sequenceDiagram
+  participant U as Candidate
+  participant P1 as Phase 1 reports
+  participant PAT as patterns
+  participant FOC as focus + plan
+  U->>P1: completes assessed session
+  U->>PAT: opens Readiness
+  PAT->>P1: load snapshots by group
+  PAT-->>U: patterns minus dismissed
+  U->>FOC: Work on this
+  U->>FOC: Plan my week
+  FOC-->>U: draft plan
+  U->>FOC: Start
+  P1-->>FOC: matching session ticks item
+</pre>
+    </div>
+    <div class="well">
+      <h3>Round to debrief</h3>
+<pre class="mermaid">
+sequenceDiagram
+  participant U as Candidate
+  participant APP as Round
+  participant BRF as brief
+  participant RT as Tier S
+  participant DBF as debrief
+  U->>APP: adds interview date
+  APP->>BRF: inputs changed
+  BRF-->>U: skeleton brief, instantly
+  BRF->>RT: optional talking points
+  RT-->>BRF: grounding check, keep or drop
+  U->>APP: interview happens
+  APP->>DBF: How did it go?
+  U->>DBF: questions, ratings, stories
+  DBF-->>U: QB and story proposals
+</pre>
+    </div>
+  </div>
+</section>
+
+<section id="statuses">
+  <div class="sec-head"><h2>Status models</h2><span class="ref">spec §8</span></div>
+  <p>These are the only legal statuses. Any transition not drawn returns <code>invalid_state</code> (409).</p>
+  <div class="grid2">
+    <div class="well">
+      <h3>Pattern <small>derived, not stored</small></h3>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> forming: 1 session
+  forming --> focus: 2 weak
+  forming --> strength: 2 strong
+  forming --> mixed: one of each
+  focus --> mixed
+  strength --> mixed
+  mixed --> focus: latest 3 weak
+  mixed --> strength: latest 3 strong
+  focus --> stale: over 90 days
+  strength --> stale
+  mixed --> stale
+  stale --> mixed: fresh session
+</pre>
+      <p class="note">Dismissed is an overlay stored as a fingerprint. New evidence changes the fingerprint and the pattern reappears.</p>
+    </div>
+    <div class="well">
+      <h3>Focus area <small>stored</small></h3>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> active: create, max 3
+  active --> paused
+  paused --> active
+  active --> achieved: candidate marks
+  achieved --> active: reopen
+  active --> archived
+  paused --> archived
+</pre>
+      <p class="note">Achieved is suggested when every criterion is met, but only the candidate sets it.</p>
+    </div>
+    <div class="well">
+      <h3>Practice plan <small>stored</small></h3>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> draft
+  draft --> active: Start
+  draft --> discarded
+  active --> completed: all items done or skipped
+  active --> superseded: another plan started
+  active --> expired: 14 days or round passed
+</pre>
+      <p class="note">Items: todo → done or skipped. Practice-session items tick themselves when a matching session completes.</p>
+    </div>
+    <div class="well">
+      <h3>Brief <small>row stored, skeleton derived</small></h3>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> ready: skeleton assembled
+  ready --> enhancing: AI on
+  enhancing --> enhanced: grounding passes
+  enhancing --> ready: failed or AI off
+  ready --> stale: inputs changed
+  enhanced --> stale
+  stale --> ready: opened
+  ready --> archived: interview over
+  enhanced --> archived
+</pre>
+    </div>
+    <div class="well">
+      <h3>Debrief <small>stored, user-authored</small></h3>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> due: round completed or time passed
+  due --> draft
+  due --> skipped
+  skipped --> draft: later
+  draft --> saved
+  saved --> saved: edit
+</pre>
+      <p class="note">Saved debriefs carry proposals (add to Question Bank, record story use) that are accepted or dismissed one by one.</p>
+    </div>
+    <div class="well">
+      <h3>Model generation <small>per request</small></h3>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> queued: dedupe by fingerprint
+  queued --> running
+  running --> validating
+  validating --> succeeded
+  validating --> repairing: first failure
+  repairing --> validating
+  validating --> degraded: second failure
+  running --> degraded: deadline
+  running --> fenced: source changed or deleted
+</pre>
+    </div>
+    <div class="well">
+      <h3>Local model qualification <small>config + bench report</small></h3>
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> candidate: pinned revision + sha256
+  candidate --> benching
+  benching --> qualified: gate passed twice
+  benching --> rejected
+  qualified --> promoted: owner picks tier default
+  promoted --> qualified: replaced
+  qualified --> retired: regression on new build
+</pre>
+    </div>
+  </div>
+</section>
+
+<section id="models">
+  <div class="sec-head"><h2>Local model tiers</h2><span class="ref">spec §9</span></div>
+  <p>Candidates are benched on synthetic Coach fixtures. Only promoted models enter <code>model_tiers.json</code>. If none pass, the current model stays.</p>
+  <div class="well" style="padding:0">
+  <table>
+    <thead><tr><th>Tier</th><th>Route</th><th>Used for</th><th>Output cap</th><th>Candidates</th></tr></thead>
+    <tbody>
+      <tr><td><b>T</b> tiny</td><td><code>:8081</code></td><td>Debrief note extraction, JD competencies</td><td>256 tokens</td><td>MiniCPM-V-4.7-1B (text), MiniCPM5-2B, Qwen3.5-0.8B (current)</td></tr>
+      <tr><td><b>S</b> small</td><td><code>:8080</code></td><td>Tips, brief talking points, plan wording</td><td>600 tokens</td><td>Spark-X2.6-4B (thinking off, then low), Qwen3.5-4B (current), MiniCPM5-2B, phi4-mini</td></tr>
+      <tr><td><b>L</b> large, optional</td><td><code>:8082</code></td><td>Richer wording when opted in</td><td>600 tokens</td><td>MiniCPM-V-4.7-35B-A3B (MoE, ~3B active), gemma4:12b</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="well" style="padding:0">
+  <table>
+    <thead><tr><th>Promotion gate (holdout, two runs)</th><th>T</th><th>S</th><th>L</th></tr></thead>
+    <tbody>
+      <tr><td>Schema-valid</td><td>≥ 98 %</td><td>≥ 95 %</td><td>≥ 95 %</td></tr>
+      <tr><td>Grounding violations</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>p95 latency, CPU only</td><td>≤ 30 s</td><td>≤ 90 s</td><td>≤ 180 s</td></tr>
+      <tr><td>Peak memory</td><td>≤ 3 GB</td><td>≤ 6 GB</td><td>≤ 20 GB</td></tr>
+      <tr><td>Owner blind rating</td><td>≥ 3.5</td><td>≥ 3.5</td><td>≥ 3.8</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul>
+    <li>Spark needs llama.cpp <code>b10828</code> or later; P3 pins a build by tag and digest and reruns the Phase 1 smoke bench on it.</li>
+    <li>The discovery policy gains publishers <code>xhtoken</code> and <code>openbmb</code>; today it would reject both (unapproved publisher, and no "instruct" in the repo name).</li>
+    <li>Tier L stays hidden below 24 GB RAM and always falls back to Tier S.</li>
+  </ul>
+</section>
+
+<section id="delivery">
+  <div class="sec-head"><h2>Delivery</h2><span class="ref">plan §2</span></div>
+  <p>OpenCode implements on the Go plan with <code>deepseek-v4.1-flash</code>, escalating to <code>gemini-4-argon</code> after two failed repair cycles. Claude Code reviews every PR (Sonnet for standard tasks, Opus for P2, P6 and P9) and writes the failing tests first for high-assurance work, which OpenCode may not edit.</p>
+  <div class="well" style="padding:0">
+  <table>
+    <thead><tr><th>OpenCode Go role</th><th>Model</th><th>≈ requests / 5 h</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>Default</td><td><code>deepseek-v4.1-flash</code></td><td>43,330</td><td>First attempt on every task</td></tr>
+      <tr><td>Escalation</td><td><code>gemini-4-argon</code></td><td>440</td><td>After two failed repair cycles</td></tr>
+      <tr><td>Consult</td><td><code>kimi-k3.1-pro</code></td><td>147</td><td>One stuck problem, short session</td></tr>
+      <tr><td>Fallback</td><td><code>glm-5.3-flash</code></td><td>6,320</td><td>Outage or quota</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="waves">
+    <div class="wave-label">Wave 0 · can start now <span class="chip go">GO</span></div>
+    <div class="pr"><span class="id">P0</span><span class="what">Check handoff pack, gate report, bench suite<small>48 synthetic cases, phase2 harness profile</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P1</span><span class="what">Story coverage map<small>Qualifies Flash for standard work</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P2</span><span class="what">Debrief capture<small>Migration + FK cascade; qualifies Flash for high-assurance work</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
+    <div class="pr"><span class="id">P3</span><span class="what">Model catalogue, pinned llama.cpp, tier map, bench runs<small>Runs on the owner's laptop</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="gate">Gate: Wave 1 readiness check — Phase 1 and runtime suites green, no conflicting branches, P3 bench accepted. Foundation R7–R9 are paused.</div>
+    <div class="wave-label">Wave 1 · after the readiness check <span class="chip wait">NEXT</span></div>
+    <div class="pr"><span class="id">P4</span><span class="what">Patterns<small>Adds rubric version and difficulty to ProgressSnapshot</small></span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P5</span><span class="what">Focus areas and practice plan</span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P6</span><span class="what">Runtime bindings, fencing, cascade, Explain<small>Content canary tests</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
+    <div class="pr"><span class="id">P7</span><span class="what">Pre-interview brief and Today actions</span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P8</span><span class="what">Debrief extraction and proposals</span><span class="tags"><span class="chip go">Flash</span></span></div>
+    <div class="pr"><span class="id">P9</span><span class="what">What Hatch remembers, journey test, rollout<small>Full suite, owner flips flags</small></span><span class="tags"><span class="chip ha">HA</span><span class="chip go">Flash → Argon</span></span></div>
+  </div>
+</section>
+
+<section id="confirm">
+  <div class="sec-head"><h2>Decisions</h2><span class="ref">spec §0</span></div>
+  <table>
+    <thead><tr><th></th><th>Decision</th><th>Outcome</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip confirm">D6</span></td><td>Wave 0 now; R7–R9 paused</td><td>Wave 1 waits on a readiness check instead of the R9 report</td></tr>
+      <tr><td><span class="chip confirm">D7</span></td><td>Pattern window and plan expiry</td><td>90 days; 14 days</td></tr>
+      <tr><td><span class="chip confirm">D8</span></td><td>When a brief archives</td><td>At interview start + duration; 60 min if unset</td></tr>
+      <tr><td><span class="chip confirm">D9</span></td><td>Delivery patterns</td><td>Deferred</td></tr>
+      <tr><td><span class="chip confirm">D10</span></td><td>Reviewer</td><td>Claude Code replaces Codex; writes RED tests for P2, P6, P9</td></tr>
+      <tr><td><span class="chip confirm">D11</span></td><td>Screen designs</td><td>Approved; in <code>docs/visual-evidence/coach-phase2-design/</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>Companion to the Hatch Coach Phase 2 spec and plan dated 22 October 2026. Diagrams are illustrative; the Markdown spec is normative.</footer>
+</main>
+</div>

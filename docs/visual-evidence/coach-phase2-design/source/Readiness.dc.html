@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Interview readiness</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/hatch/tokens.css">
+<link rel="stylesheet" href="ds/hatch/components/bundle.css">
+<script src="ds/hatch/components/bundle.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--accent)}a:hover{color:var(--accent-hover)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" style="display: flex; flex-wrap: wrap; min-height: 100vh; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 14px; line-height: 1.5">
+  <div style="flex: 0 0 248px; display: flex">
+    <dc-import name="Sidebar" active="prep" hint-size="248px,900px"></dc-import>
+  </div>
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 32px var(--page-gutter) 64px">
+    <div style="max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px">
+
+      <div style="display: flex; flex-direction: column; gap: 16px">
+        <x-import component-from-global-scope="Hatch.PageHeader" title="Interview readiness" description="Your next interview, what to work on, and this week's practice. Built from your own sessions and stories." style="margin-bottom: 0"></x-import>
+        <nav aria-label="Interview Coach" style="display: flex; gap: 4px; border-bottom: 1px solid var(--border); flex-wrap: wrap">
+          <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 14px; font-weight: 500; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent">Sessions</a>
+          <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 14px; font-weight: 500; color: var(--text-dim); text-decoration: none; border-bottom: 2px solid transparent">Stories</a>
+          <a href="#" aria-current="page" style="display: flex; align-items: center; min-height: 44px; padding: 0 14px; font-size: 14px; font-weight: 600; color: var(--text); text-decoration: none; border-bottom: 2px solid var(--accent)">Readiness</a>
+        </nav>
+      </div>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start">
+
+        <div style="flex: 2 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 24px">
+
+          <x-import component-from-global-scope="Hatch.Card">
+            <div style="padding: 24px; display: flex; flex-direction: column; gap: 16px">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                <span style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--text-dim)">
+                  <x-import component-from-global-scope="Hatch.Icon" name="calendar" size="{{s16}}"></x-import>
+                  Next interview · in 3 days
+                </span>
+                <x-import component-from-global-scope="Hatch.StatusBadge" tone="success"><x-import component-from-global-scope="Hatch.Icon" name="checkCircle" size="{{s13}}"></x-import>Brief ready</x-import>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px">
+                <h2 style="margin: 0; font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.02em">Senior Delivery Lead · Northwind Energy</h2>
+                <p style="margin: 0; font-size: 14px; color: var(--text-dim)">Behavioural round · Tue 3 Nov, 10:00 · 60 min · Video call with Priya Shah</p>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px">
+                <x-import component-from-global-scope="Hatch.StatusBadge" tone="success">4 ready stories</x-import>
+                <x-import component-from-global-scope="Hatch.StatusBadge" tone="neutral">1 could be stronger</x-import>
+                <x-import component-from-global-scope="Hatch.StatusBadge" tone="warning"><x-import component-from-global-scope="Hatch.Icon" name="target" size="{{s13}}"></x-import>2 with no story yet</x-import>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px">
+                <x-import component-from-global-scope="Hatch.Button"><x-import component-from-global-scope="Hatch.Icon" name="fileText" size="{{s16}}"></x-import>Open brief</x-import>
+                <x-import component-from-global-scope="Hatch.Button" variant="outline">Plan my week</x-import>
+              </div>
+            </div>
+          </x-import>
+
+          <x-import component-from-global-scope="Hatch.SectionCard">
+            <div style="display: flex; flex-direction: column; gap: 16px">
+              <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                  <h2 style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600">This week's plan</h2>
+                  <p style="margin: 0; font-size: 14px; line-height: 20px; color: var(--text-dim)">30 of 30 minutes planned · finish before Tue 3 Nov, 08:00</p>
+                </div>
+                <x-import component-from-global-scope="Hatch.StatusBadge" tone="info">1 of 3 done</x-import>
+              </div>
+              <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border)">
+                <li style="display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap">
+                  <span style="color: var(--success); display: flex"><x-import component-from-global-scope="Hatch.Icon" name="checkCircle" size="{{s20}}" label="Done"></x-import></span>
+                  <div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+                    <span style="font-size: 14px; font-weight: 500; color: var(--text-dim); text-decoration: line-through">Practise a behavioural session · Delivery Lead · Realistic</span>
+                    <span style="font-size: 12px; color: var(--text-dim)">Ticked automatically when you finished a session on Wed 21 Oct</span>
+                  </div>
+                  <span style="font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; color: var(--text-dim)">15 min</span>
+                </li>
+                <li style="display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap">
+                  <input type="checkbox" id="plan-2" aria-label="Mark done" style="width: 20px; height: 20px; accent-color: var(--accent); margin: 0">
+                  <div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+                    <label for="plan-2" style="font-size: 14px; font-weight: 500; color: var(--text)">Draft a story for budget ownership</label>
+                    <span style="font-size: 12px; color: var(--text-dim)">Story work · this competency has no story yet</span>
+                  </div>
+                  <span style="font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; color: var(--text-dim)">10 min</span>
+                  <x-import component-from-global-scope="Hatch.Button" variant="outline" size="sm">Draft a story</x-import>
+                </li>
+                <li style="display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap">
+                  <input type="checkbox" id="plan-3" aria-label="Mark done" style="width: 20px; height: 20px; accent-color: var(--accent); margin: 0">
+                  <div style="flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+                    <label for="plan-3" style="font-size: 14px; font-weight: 500; color: var(--text)">Re-read your answer to “Tell me about a delivery that slipped”</label>
+                    <span style="font-size: 12px; color: var(--text-dim)">Review an answer · likely question for this interview</span>
+                  </div>
+                  <span style="font-family: var(--font-mono); font-size: 12.5px; font-weight: 500; color: var(--text-dim)">5 min</span>
+                  <x-import component-from-global-scope="Hatch.Button" variant="outline" size="sm">Open answer</x-import>
+                </li>
+              </ul>
+            </div>
+          </x-import>
+
+          <x-import component-from-global-scope="Hatch.SectionCard">
+            <div style="display: flex; flex-direction: column; gap: 20px">
+              <div style="display: flex; flex-direction: column; gap: 4px">
+                <h2 style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600">Patterns</h2>
+                <p style="margin: 0; font-size: 14px; line-height: 20px; color: var(--text-dim); max-width: 65ch">From your practice in the last 90 days, grouped by role and interview type. Dismiss anything that looks wrong.</p>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                  <h3 style="margin: 0; font-size: 14px; font-weight: 600; color: var(--text)">Delivery Lead · Behavioural</h3>
+                  <span style="font-size: 12px; color: var(--text-dim)">3 assessed sessions</span>
+                </div>
+
+                <div style="border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); padding: 16px; display: flex; flex-direction: column; gap: 14px">
+                  <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                    <div style="display: flex; flex-direction: column; gap: 6px; min-width: 0">
+                      <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+                        <span style="font-size: 15px; font-weight: 600">Specificity</span>
+                        <x-import component-from-global-scope="Hatch.StatusBadge" tone="warning"><x-import component-from-global-scope="Hatch.Icon" name="target" size="{{s13}}"></x-import>Focus area suggestion</x-import>
+                      </div>
+                      <span style="font-size: 13px; color: var(--text-dim)">Developing, then Needs work · 2 of the last 3 sessions · getting weaker</span>
+                    </div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap">
+                      <x-import component-from-global-scope="Hatch.Button" variant="outline" size="sm">Work on this</x-import>
+                      <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="icon" aria-label="Dismiss this pattern"><x-import component-from-global-scope="Hatch.Icon" name="x" size="{{s16}}"></x-import></x-import>
+                    </div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px">
+                    <div style="display: flex; flex-direction: column; gap: 8px">
+                      <span style="font-size: 12px; font-weight: 600; color: var(--text-dim)">Why?</span>
+                      <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-dim)">
+                        <li style="display: flex; justify-content: space-between; gap: 8px"><span>Mon 12 Oct · Realistic</span><span style="color: var(--text)">Developing</span></li>
+                        <li style="display: flex; justify-content: space-between; gap: 8px"><span>Fri 16 Oct · Realistic</span><span style="color: var(--text)">Interview ready</span></li>
+                        <li style="display: flex; justify-content: space-between; gap: 8px"><span>Wed 21 Oct · Challenging</span><span style="color: var(--text)">Needs work</span></li>
+                      </ul>
+                      <blockquote style="margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--surface); font-size: 13px; color: var(--text-dim)">From your 21 Oct report: “Name what you did yourself, not what the team did, and give one figure.”</blockquote>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px">
+                      <span style="font-size: 12px; font-weight: 600; color: var(--text-dim)">Tips</span>
+                      <p role="status" aria-live="polite" style="margin: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim)">
+                        <x-import component-from-global-scope="Hatch.Icon" name="clock" size="{{s14}}"></x-import>Adding tips from your local model…
+                      </p>
+                      <x-import component-from-global-scope="Hatch.Skeleton" style="height: 12px; width: 92%"></x-import>
+                      <x-import component-from-global-scope="Hatch.Skeleton" style="height: 12px; width: 78%"></x-import>
+                      <x-import component-from-global-scope="Hatch.Skeleton" style="height: 12px; width: 84%"></x-import>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                  <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+                      <span style="font-size: 15px; font-weight: 600">Structure</span>
+                      <x-import component-from-global-scope="Hatch.StatusBadge" tone="success"><x-import component-from-global-scope="Hatch.Icon" name="checkCircle" size="{{s13}}"></x-import>Strength</x-import>
+                    </div>
+                    <span style="font-size: 13px; color: var(--text-dim)">Interview ready or Strong in 3 of 3 sessions</span>
+                  </div>
+                  <div style="display: flex; gap: 6px">
+                    <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="sm">Why?</x-import>
+                    <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="icon" aria-label="Dismiss this pattern"><x-import component-from-global-scope="Hatch.Icon" name="x" size="{{s16}}"></x-import></x-import>
+                  </div>
+                </div>
+
+                <div style="border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                  <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+                      <span style="font-size: 15px; font-weight: 600">Impact</span>
+                      <x-import component-from-global-scope="Hatch.StatusBadge" tone="neutral">Mixed results</x-import>
+                      <x-import component-from-global-scope="Hatch.StatusBadge" tone="info"><x-import component-from-global-scope="Hatch.Icon" name="trending" size="{{s13}}"></x-import>Improving</x-import>
+                    </div>
+                    <span style="font-size: 13px; color: var(--text-dim)">Needs work, Developing, then Interview ready · same or harder difficulty each time</span>
+                  </div>
+                  <div style="display: flex; gap: 6px">
+                    <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="sm">Why?</x-import>
+                    <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="icon" aria-label="Dismiss this pattern"><x-import component-from-global-scope="Hatch.Icon" name="x" size="{{s16}}"></x-import></x-import>
+                  </div>
+                </div>
+
+                <div style="border: 1px dashed var(--border-strong); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                  <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                    <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap">
+                      <span style="font-size: 15px; font-weight: 600">Role depth</span>
+                      <x-import component-from-global-scope="Hatch.StatusBadge" tone="neutral">Needs more practice</x-import>
+                    </div>
+                    <span style="font-size: 13px; color: var(--text-dim)">1 of 2 sessions so far. Practise once more to see a pattern.</span>
+                  </div>
+                </div>
+
+                <a href="#" style="align-self: flex-start; min-height: 44px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; text-decoration: none; color: var(--text-dim)">
+                  <x-import component-from-global-scope="Hatch.Icon" name="chevronR" size="{{s14}}"></x-import>Older patterns (1)
+                </a>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 16px">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+                  <h3 style="margin: 0; font-size: 14px; font-weight: 600; color: var(--text)">Programme Manager · Mixed</h3>
+                  <span style="font-size: 12px; color: var(--text-dim)">1 assessed session</span>
+                </div>
+                <p style="margin: 0; font-size: 13px; color: var(--text-dim)">Patterns appear after your second session here.</p>
+                <div>
+                  <x-import component-from-global-scope="Hatch.Button" variant="outline" size="sm">Practise this role</x-import>
+                </div>
+              </div>
+            </div>
+          </x-import>
+        </div>
+
+        <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 24px">
+
+          <x-import component-from-global-scope="Hatch.SectionCard">
+            <div style="display: flex; flex-direction: column; gap: 16px">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+                <div style="display: flex; flex-direction: column; gap: 2px">
+                  <h2 style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600">Focus areas</h2>
+                  <span style="font-size: 13px; color: var(--text-dim)">2 of 3 in use</span>
+                </div>
+                <x-import component-from-global-scope="Hatch.Button" variant="outline" size="sm"><x-import component-from-global-scope="Hatch.Icon" name="plus" size="{{s16}}"></x-import>Add</x-import>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--surface-2)">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px">
+                  <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                    <span style="font-size: 14px; font-weight: 600">Make answers specific</span>
+                    <span style="font-size: 12px; color: var(--text-dim)">Specificity · Delivery Lead · Behavioural</span>
+                  </div>
+                  <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="icon" aria-label="Focus area options"><x-import component-from-global-scope="Hatch.Icon" name="sliders" size="{{s16}}"></x-import></x-import>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px">
+                    <span style="color: var(--text-dim)">Reach Interview ready in 2 practice sessions</span>
+                    <span style="font-family: var(--font-mono); font-size: 12.5px; font-weight: 500">0 of 2</span>
+                  </div>
+                  <div role="progressbar" aria-label="Level criterion" aria-valuemin="0" aria-valuemax="2" aria-valuenow="0" style="height: 6px; border-radius: 999px; background: var(--surface-3)"></div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px">
+                    <span style="color: var(--text-dim)">Finish 3 plan items</span>
+                    <span style="font-family: var(--font-mono); font-size: 12.5px; font-weight: 500">1 of 3</span>
+                  </div>
+                  <div role="progressbar" aria-label="Practice criterion" aria-valuemin="0" aria-valuemax="3" aria-valuenow="1" style="height: 6px; border-radius: 999px; background: var(--surface-3); display: flex">
+                    <span style="width: 33%; border-radius: 999px; background: var(--accent)"></span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--surface-2)">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px">
+                  <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0">
+                    <span style="font-size: 14px; font-weight: 600">Keep answers concise</span>
+                    <span style="font-size: 12px; color: var(--text-dim)">Conciseness · any role</span>
+                  </div>
+                  <x-import component-from-global-scope="Hatch.Button" variant="ghost" size="icon" aria-label="Focus area options"><x-import component-from-global-scope="Hatch.Icon" name="sliders" size="{{s16}}"></x-import></x-import>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px">
+                  <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px">
+                    <span style="color: var(--text-dim)">Reach Interview ready in 2 practice sessions</span>
+                    <span style="font-family: var(--font-mono); font-size: 12.5px; font-weight: 500">2 of 2</span>
+                  </div>
+                  <div role="progressbar" aria-label="Level criterion" aria-valuemin="0" aria-valuemax="2" aria-valuenow="2" style="height: 6px; border-radius: 999px; background: var(--surface-3); display: flex">
+                    <span style="width: 100%; border-radius: 999px; background: var(--success)"></span>
+                  </div>
+                </div>
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap">
+                  <span style="font-size: 13px; color: var(--text-dim)">Every criterion is met.</span>
+                  <x-import component-from-global-scope="Hatch.Button" variant="success" size="sm">Mark achieved</x-import>
+                </div>
+              </div>
+            </div>
+          </x-import>
+
+          <x-import component-from-global-scope="Hatch.SectionCard">
+            <div style="display: flex; flex-direction: column; gap: 14px">
+              <div style="display: flex; flex-direction: column; gap: 4px">
+                <h2 style="margin: 0; font-size: 16px; line-height: 24px; font-weight: 600">From your real interviews</h2>
+                <p style="margin: 0; font-size: 13px; line-height: 20px; color: var(--text-dim)">Based on 3 debriefs. Kept separate from practice results.</p>
+              </div>
+              <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px">
+                <li style="display: flex; gap: 10px; align-items: flex-start">
+                  <span style="color: var(--text-dim); display: flex; padding-top: 2px"><x-import component-from-global-scope="Hatch.Icon" name="mic" size="{{s16}}"></x-import></span>
+                  <div style="display: flex; flex-direction: column; gap: 2px">
+                    <span style="font-size: 14px; font-weight: 500">Stakeholder conflict</span>
+                    <span style="font-size: 13px; color: var(--text-dim)">Asked in 2 real interviews</span>
+                  </div>
+                </li>
+                <li style="display: flex; gap: 10px; align-items: flex-start">
+                  <span style="color: var(--warning); display: flex; padding-top: 2px"><x-import component-from-global-scope="Hatch.Icon" name="target" size="{{s16}}"></x-import></span>
+                  <div style="display: flex; flex-direction: column; gap: 2px">
+                    <span style="font-size: 14px; font-weight: 500">Budget ownership</span>
+                    <span style="font-size: 13px; color: var(--text-dim)">You rated yourself 2 of 5 on it in 2 debriefs</span>
+                    <a href="#" style="font-size: 13px; font-weight: 500; color: var(--text); text-underline-offset: 3px; min-height: 32px; display: inline-flex; align-items: center">Draft a story</a>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </x-import>
+
+          <p style="margin: 0; font-size: 13px; color: var(--text-dim)">Hatch keeps patterns, plans, briefs and debriefs on this machine. <a href="#" style="color: var(--text); text-underline-offset: 3px">What Hatch remembers</a></p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"$preview":{"width":1440,"height":1640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { theme: this.props.theme ?? 'dark', s13: 13, s14: 14, s16: 16, s20: 20 };
+  }
+}
+</script>
+</body>
+</html>
