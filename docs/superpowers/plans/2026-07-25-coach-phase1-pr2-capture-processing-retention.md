@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Authority is `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`; earlier Phase 1 specs, the PDF, and Phase 2 documents do not amend it.
+- Authority is `docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`; earlier Phase 1 specs, the PDF, and Phase 2 documents do not amend it.
 - Work on `phase1/pr2-capture-processing-retention`, created from `feature/coach-phase1-phase2` only after PR1 is merged; target that integration branch, never `main` or an unmerged PR1 branch.
 - PR1 must already provide the V6 state/command/event, question/attempt, transcript/evaluation/stage, repository, live-read, reconciliation, compatibility, and disabled feature-flag contracts. Stop on a material mismatch; do not recreate PR1 inside PR2.
 - `SessionRecording` remains the physical answer-attempt aggregate; do not add an `InterviewAttempt` table or bypass `session_repository.py`.
@@ -158,8 +158,8 @@ git switch feature/coach-phase1-phase2
 git pull --ff-only
 git log -1 --format='%H %s'
 git status --short
-git ls-files --error-unmatch docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
-sha256sum docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
+git ls-files --error-unmatch docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
+sha256sum docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
 ```
 
 Expected: integration is current, status is empty, and both authority documents are tracked/hashable.

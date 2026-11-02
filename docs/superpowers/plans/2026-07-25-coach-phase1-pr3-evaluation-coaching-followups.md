@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- V6 at `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md` is the sole Phase 1 technical authority; its SHA-256 when this plan was written is `626381be8963340972711bdfa5e47df0c82d521bb4e22ad75f3f873022c19ae8`.
+- V6 at `docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md` is the sole Phase 1 technical authority; its SHA-256 when this plan was written is `626381be8963340972711bdfa5e47df0c82d521bb4e22ad75f3f873022c19ae8`.
 - Approved integration design SHA-256 is `992f9693d82b5146770e5e002f6f8d7f2485d34716e89d0d6a775662c134ece6`; it adds delivery gates but cannot amend V6 contracts.
 - Branch from `feature/coach-phase1-phase2` only after PR1 and PR2 are merged; use head `phase1/pr3-evaluation-coaching-followups` and target `feature/coach-phase1-phase2`. Never base PR3 on an unmerged sibling.
 - Preserve `SessionRecording` as the physical attempt aggregate. Do not create an `InterviewAttempt` table or replace existing async-job, repository, reconciliation, provider-routing, or observability patterns.
@@ -116,8 +116,8 @@ git log --merges --oneline --decorate -10
 git status --short
 git switch -c phase1/pr3-evaluation-coaching-followups
 git merge-base --is-ancestor 3985da09 HEAD
-git ls-files --error-unmatch docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
-sha256sum docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
+git ls-files --error-unmatch docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
+sha256sum docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
 python scripts/check_docs.py
 ```
 

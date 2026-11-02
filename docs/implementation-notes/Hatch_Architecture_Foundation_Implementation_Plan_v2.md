@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.x, FastAPI, Pydantic 2.13.4, async SQLAlchemy 2.0.50, Alembic 1.18.4, SQLite/WAL with PostgreSQL-compatible store semantics, OpenTelemetry, pytest/pytest-asyncio, existing LangChain provider adapters, existing Next.js frontend only if status or migration controls need it.
 
-**Spec:** `docs/implementation-specs/active/Hatch_Architecture_Foundation_Implementation_Spec_v2.md` (approved SHA-256: `578d6f9d0050014bde074e1ef72588733e305f46acad017f90bfb6ac95aa65a0`)
+**Spec:** `docs/implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md` (approved SHA-256: `578d6f9d0050014bde074e1ef72588733e305f46acad017f90bfb6ac95aa65a0`)
 
 ## Global Constraints
 
@@ -128,7 +128,7 @@ runtime
 
 **Files:**
 - Modify: `docs/README.md:13`
-- Modify/track: `docs/implementation-specs/active/Hatch_Architecture_Foundation_Implementation_Spec_v2.md`
+- Modify/track: `docs/implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md`
 - Obtain/track: `docs/architecture/Hatch_Runtime_Architecture_Pre_Coach_Phase2_v8_FINAL.md`
 - Delete if present and untracked: `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Spec_v1.md`
 - Track: `docs/implementation-notes/Hatch_Architecture_Foundation_Implementation_Plan_v2.md`
@@ -155,7 +155,7 @@ git switch main
 git pull --ff-only origin main
 git rev-parse HEAD
 git status --short
-sha256sum docs/implementation-specs/active/Hatch_Architecture_Foundation_Implementation_Spec_v2.md docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
+sha256sum docs/implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
 python scripts/check_docs.py; printf 'docs_baseline_exit=%s
 ' "$?"
 cd backend
@@ -215,7 +215,7 @@ Expected: exit 0.
 Add this item under `Active Implementation Work`:
 
 ```markdown
-- [Architecture Foundation implementation specification v2](implementation-specs/active/Hatch_Architecture_Foundation_Implementation_Spec_v2.md)
+- [Architecture Foundation implementation specification v2](implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md)
 ```
 
 Fixture records use invented candidate/job/session data and stable IDs such as `synthetic-job-001`; no copied CV, transcript, or real applicant data.
@@ -255,7 +255,7 @@ Expected: characterization passes or each pre-existing failure is reproduced, is
 - [ ] **Step 6: Commit R0**
 
 ```bash
-git add docs/README.md docs/architecture/Hatch_Runtime_Architecture_Pre_Coach_Phase2_v8_FINAL.md docs/implementation-specs/active/Hatch_Architecture_Foundation_Implementation_Spec_v2.md docs/implementation-notes/Hatch_Architecture_Foundation_Implementation_Plan_v2.md docs/implementation-reports/runtime/R0-evidence.md backend/tests/runtime
+git add docs/README.md docs/architecture/Hatch_Runtime_Architecture_Pre_Coach_Phase2_v8_FINAL.md docs/implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md docs/implementation-notes/Hatch_Architecture_Foundation_Implementation_Plan_v2.md docs/implementation-reports/runtime/R0-evidence.md backend/tests/runtime
 git commit -m "test(runtime): characterize architecture migration baseline"
 ```
 
@@ -1243,7 +1243,7 @@ PR base: `main`. Do not start this branch until the predecessor PR has merged.
 ```bash
 git rev-parse HEAD
 git log --oneline --decorate -20
-sha256sum docs/implementation-specs/active/Hatch_Architecture_Foundation_Implementation_Spec_v2.md docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
+sha256sum docs/implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
 cd backend && alembic heads && alembic current --check-heads
 ```
 

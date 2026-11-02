@@ -4,7 +4,7 @@ Use this matrix after identifying the changed trust boundaries. V6 is the sole P
 
 ## Authority
 
-- `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`
+- `docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`
 - `docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md`
 - Relevant V6 sections: 9, 19, 21, 24, 29–31, 35–38, and 42–46.
 

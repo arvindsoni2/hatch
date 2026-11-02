@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Sole Phase 1 authority: `docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`, SHA-256 `626381be8963340972711bdfa5e47df0c82d521bb4e22ad75f3f873022c19ae8` when this plan was written.
+- Sole Phase 1 authority: `docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md`, SHA-256 `626381be8963340972711bdfa5e47df0c82d521bb4e22ad75f3f873022c19ae8` when this plan was written.
 - Approved delivery design: `docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md`, SHA-256 `992f9693d82b5146770e5e002f6f8d7f2485d34716e89d0d6a775662c134ece6`; it adds gates but cannot amend V6.
 - Create `phase1/pr4-report-privacy-hardening` from `feature/coach-phase1-phase2` only after PR1, PR2, and PR3 are merged in order; target the integration branch, never `main` or an unmerged sibling.
 - Stop if a predecessor interface below is absent or materially different. Record the mismatch and impact; do not recreate or reinterpret PR1–PR3 in PR4.
@@ -171,8 +171,8 @@ git switch feature/coach-phase1-phase2
 git pull --ff-only
 git log -1 --format='%H %s'
 git status --short
-git ls-files --error-unmatch docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
-sha256sum docs/implementation-specs/active/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
+git ls-files --error-unmatch docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md
+sha256sum docs/implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md docs/superpowers/specs/2026-07-24-coach-phase1-phase2-integration-design.md
 ```
 
 Expected: clean status; both files tracked; hashes match Global Constraints or the changed hashes are reviewed against V6/design before continuing.
