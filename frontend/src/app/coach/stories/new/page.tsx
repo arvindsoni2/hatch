@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createStory, StoryCreate } from "@/lib/api";
 import { StoryEditor } from "@/components/coach/StoryEditor";
 import { ArrowLeft, BookOpen } from "lucide-react";
 
-export default function NewStoryPage() {
+function NewStoryContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const competency = searchParams.get("competency")?.trim() ?? "";
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -41,11 +43,24 @@ export default function NewStoryPage() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <StoryEditor
+          initialData={
+            competency
+              ? { title: competency, tags: [competency], skills: [competency] }
+              : undefined
+          }
           onSave={handleSave}
           onCancel={() => router.back()}
           saving={saving}
         />
       </div>
     </div>
+  );
+}
+
+export default function NewStoryPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-3xl px-4 py-8 text-sm text-slate-500">Loading…</div>}>
+      <NewStoryContent />
+    </Suspense>
   );
 }

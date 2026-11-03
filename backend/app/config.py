@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     HATCH_COACH_EVIDENCE_GROUNDING_ENABLED: bool = True
     HATCH_COACH_CONVERSATIONAL_PROGRESS_ENABLED: bool = True
 
+    # Phase 2 story coverage map (P1).
+    HATCH_COACH_STORY_COVERAGE_ENABLED: bool = False
+    HATCH_COACH_COVERAGE_COVERED_MIN: float = Field(default=0.67, ge=0, le=1)
+    HATCH_COACH_COVERAGE_THIN_MIN: float = Field(default=0.34, ge=0, le=1)
+
     # Conversational Coach browser and processing policy.
     HATCH_COACH_MEDIA_ROOT: Path = Path("./data/coach-media")
     HATCH_COACH_SILENCE_WARNING_MS: int = Field(default=4000, ge=1000, le=30000)

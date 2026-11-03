@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { listStories, StoryListItem } from "@/lib/api";
+import { fetchCoverageOverview, type CoverageOverview } from "@/lib/coachReadinessApi";
+import { CoverageStrip } from "@/components/coach/readiness/CoverageStrip";
 import { StoryBankGrid } from "@/components/coach/StoryBankGrid";
 import { StoryFilters } from "@/components/coach/StoryFilters";
 import { Brain, BookOpen, Plus } from "lucide-react";
@@ -14,6 +16,7 @@ export default function StoryBankPage() {
   const [stories, setStories] = useState<StoryListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [coverage, setCoverage] = useState<CoverageOverview | null>(null);
 
   const [archetype, setArchetype] = useState("");
   const [tag, setTag] = useState("");
@@ -36,6 +39,12 @@ export default function StoryBankPage() {
   };
 
   useEffect(load, [archetype, tag, minStrength]);
+
+  useEffect(() => {
+    fetchCoverageOverview()
+      .then(setCoverage)
+      .catch(() => setCoverage(null));
+  }, []);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
@@ -70,6 +79,8 @@ export default function StoryBankPage() {
           <BookOpen className="h-3.5 w-3.5" /> Story Bank
         </span>
       </div>
+
+      {coverage ? <CoverageStrip overview={coverage} /> : null}
 
       <div className="mb-5">
         <StoryFilters
