@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_10",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-10",
+    "notes": "A panel of three: one behavioural, one role-specific and one about commercial judgement. I reused the cost story twice and the second version was stronger because I led with the 22 percent saving. They asked what I would do differently in the first month; I said meet the shift managers before changing the checklist."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

@@ -49,6 +49,15 @@ _PROFILES = {
         run_timeout_seconds=108000,
         allow_ranking=True,
     ),
+    "phase2": CoachProfile(
+        name="phase2",
+        repetitions=1,
+        scenario_ids=None,
+        call_timeout_seconds=300,
+        model_timeout_seconds=300,
+        run_timeout_seconds=18000,
+        allow_ranking=False,
+    ),
 }
 
 

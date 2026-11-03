@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_02_structure",
+  "stage": "explain",
+  "description": "Synthetic structure pattern with stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "structure",
+    "rubric_description": "Signals situation, task, action and result in a clear order.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-02-a",
+        "text": "In the July session on commercial judgement, I set out how I reduced cloud spend without moving the reliability target. I named the service, the four dependent teams and the weekly release volume, then explained the staged cutover, the tested rollback and the point where I stopped the change. The answer covered the customer impact, the person who owned the final decision and the evidence I used to show that the new sequence reduced lead time from nine days to four. I described the trade-off between speed and safety, the escalation I chose when the error rate crossed the threshold, and the review I wrote the following morning. I ended with the evidence I would bring to a panel: the before-and-after measure, the review document and the name of the person who signed off the change. The practice report recorded the same gap in two places, so the excerpt is long enough to show how the answer actually sounded.",
+        "session_date": "2026-09-02",
+        "difficulty": "realistic"
+      },
+      {
+        "excerpt_id": "ex-02-b",
+        "text": "In the June session on coaching, I described the first eight weeks of supporting a new team lead through two releases. I described the trade-off between speed and safety, the escalation I chose when the error rate crossed the threshold, and the review I wrote the following morning. I said what I personally owned, what the platform team owned and how I checked that the saving did not depend on removing a control the auditors expected. The result included the change in first-time fix rate, the two releases that needed no rollback and the feedback from the shift managers who used the new checklist. The weakest part was the number I could not verify, so I would check the source before using that story again. The practice report recorded the same gap in two places, so the excerpt is long enough to show how the answer actually sounded.",
+        "session_date": "2026-09-19",
+        "difficulty": "challenging"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

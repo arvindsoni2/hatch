@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_04",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-04",
+    "notes": "Technical round for a platform role. Questions on rollback design, incident review quality and how I set service objectives. I used the incident story and the migration story. They asked what I measured after the migration; I said lead time and change failure rate. They asked about on-call load and I did not have a number ready. The final question was about a time I missed a commitment. I used the first migration date and explained the two hidden consumers we found during discovery. I said I told the customer before the date passed, moved the commitment once and added a dependency check to the next plan. They asked what I would do first next time; I said map the consumers before setting the date. The panel asked a follow-up about the customer communication in the migration answer. I said I would have sent the first note a week earlier and offered a named contact for each affected team. They asked who owned the final call and I named the risk partner, not the platform lead. I was not sure about the exact date of the rollback drill, so I said the week before the first stage and offered to check. They also asked how I measure whether a weekly review is working. I said I look at whether decisions are written down, whether the same blocker returns and whether the team lead can run the review without me. I gave the example of the new lead who took over the agenda after six weeks. I forgot to mention the shared checklist until the follow-up. They also asked how I measure whether a weekly review is working. I said I look at whether decisions are written down, whether the same blocker returns and whether the team lead can run the review without me. I gave the example of the new lead who took over the agenda after six weeks. I forgot to mention the shared checklist until the follow-up. They also asked how I measure whether a weekly review is working. I said I look at whether decisions are written down, whether the same blocker returns and whether the team lead can run the review without me. I gave the example of the new lead who took over the agenda after six weeks. I forgot to mention the shared checklist until the follow-up."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

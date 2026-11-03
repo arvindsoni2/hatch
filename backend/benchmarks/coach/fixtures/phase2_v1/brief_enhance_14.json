@@ -1,0 +1,49 @@
+{
+  "scenario_id": "brief_enhance_14",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-14",
+    "input_fingerprint": "sha256:000000000000000000000000000000000000000000000000000000000000000e",
+    "header": {
+      "company": "Atlas Retail",
+      "role": "Engineering Manager",
+      "round_type": "behavioural"
+    },
+    "stories": [
+      {
+        "story_id": "story-cost",
+        "title": "Cost reduction without outages",
+        "text": "I reduced cloud spend by 22 percent over one quarter by removing idle environments and adding budget alerts.",
+        "competencies": [
+          "commercial judgement",
+          "delivery"
+        ],
+        "score": 0.61
+      },
+      {
+        "story_id": "story-roadmap",
+        "title": "Roadmap reset",
+        "text": "I reset a stalled roadmap with three customers, cutting two low-value items and shipping the remaining four.",
+        "competencies": [
+          "prioritisation",
+          "stakeholder management"
+        ],
+        "score": 0.57
+      }
+    ],
+    "watch_outs": [
+      {
+        "fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "dimension": "structure",
+        "evidence": "The result arrived after a long setup in the latest session."
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

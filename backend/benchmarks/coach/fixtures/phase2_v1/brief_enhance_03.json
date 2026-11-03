@@ -1,0 +1,64 @@
+{
+  "scenario_id": "brief_enhance_03",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-03",
+    "input_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+    "header": {
+      "company": "Bluebird Energy",
+      "role": "Operations Lead",
+      "round_type": "role_specific_verbal"
+    },
+    "stories": [
+      {
+        "story_id": "story-coaching",
+        "title": "Coaching a new lead",
+        "text": "The hardest part was holding the line when a senior stakeholder asked to skip the final observation window; I showed the stop rule, the open risk and the cost of a second failure. I would repeat the staged cutover and the written stop rule, and I would bring the customer communication forward by one week. The evidence I keep is the before-and-after lead time, the rollback drill record, the dependency map and the review note signed by the risk partner. A panel follow-up is usually about the person who disagreed, so I describe the conversation, the concession I made on timing and the decision I did not move. The situation was a shared service with four dependent teams, a release train that had slipped twice and a customer commitment that could not move again. My task was to land the change without a second failed release, keep the audit evidence intact and give the support team a rollback they could run without me. I mapped the dependencies with the four tech leads, split the cutover into three stages, wrote the rollback test with the platform engineer and agreed a stop rule with the risk partner. In the first week I found two hidden.",
+        "competencies": [
+          "people leadership",
+          "role depth"
+        ],
+        "score": 0.68
+      },
+      {
+        "story_id": "story-cost",
+        "title": "Cost reduction without outages",
+        "text": "I would repeat the staged cutover and the written stop rule, and I would bring the customer communication forward by one week. The evidence I keep is the before-and-after lead time, the rollback drill record, the dependency map and the review note signed by the risk partner. A panel follow-up is usually about the person who disagreed, so I describe the conversation, the concession I made on timing and the decision I did not move. The situation was a shared service with four dependent teams, a release train that had slipped twice and a customer commitment that could not move again. My task was to land the change without a second failed release, keep the audit evidence intact and give the support team a rollback they could run without me. I mapped the dependencies with the four tech leads, split the cutover into three stages, wrote the rollback test with the platform engineer and agreed a stop rule with the risk partner. In the first week I found two hidden consumers, added them to the plan and moved the customer communication earlier so nobody learned about the change from an incident. The staged release ran over nine days; the.",
+        "competencies": [
+          "commercial judgement",
+          "delivery"
+        ],
+        "score": 0.61
+      },
+      {
+        "story_id": "story-roadmap",
+        "title": "Roadmap reset",
+        "text": "The evidence I keep is the before-and-after lead time, the rollback drill record, the dependency map and the review note signed by the risk partner. A panel follow-up is usually about the person who disagreed, so I describe the conversation, the concession I made on timing and the decision I did not move. The situation was a shared service with four dependent teams, a release train that had slipped twice and a customer commitment that could not move again. My task was to land the change without a second failed release, keep the audit evidence intact and give the support team a rollback they could run without me. I mapped the dependencies with the four tech leads, split the cutover into three stages, wrote the rollback test with the platform engineer and agreed a stop rule with the risk partner. In the first week I found two hidden consumers, added them to the plan and moved the customer communication earlier so nobody learned about the change from an incident. The staged release ran over nine days; the first stage carried a tenth of the volume, the second carried half and the final stage moved the remainder after a clean overnight.",
+        "competencies": [
+          "prioritisation",
+          "stakeholder management"
+        ],
+        "score": 0.57
+      }
+    ],
+    "watch_outs": [
+      {
+        "fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "dimension": "impact",
+        "evidence": "The outcome was described without a measurable change."
+      },
+      {
+        "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dimension": "specificity",
+        "evidence": "Two sessions lacked a named system or a number."
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

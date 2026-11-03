@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_09",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-09",
+    "notes": "The hiring manager asked about a difficult stakeholder, how I run a weekly review and what I want to improve. I used the roadmap reset for the stakeholder answer, the coaching story for the review and the cost story for the improvement. I should have asked how the team sets priorities before the quarterly plan."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

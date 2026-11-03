@@ -58,6 +58,7 @@ from .production_adapter import (
     HarnessFailureClient,
     ScenarioContext,
 )
+from .phase2_adapter import Phase2BenchAdapter
 from .profiles import profile_for
 from .reporting import write_report
 from .scoring import classify_model, rank_models, score_execution
@@ -68,7 +69,9 @@ from .validators import validate_execution
 class RunRequest(StrictModel):
     suite_path: Path
     output_root: Path
-    profile_name: Literal["contract-smoke", "acceptance-smoke", "standard", "extended"]
+    profile_name: Literal[
+        "contract-smoke", "acceptance-smoke", "standard", "extended", "phase2"
+    ]
     model_ids: tuple[str, ...] = Field(min_length=1)
     command: str = Field(min_length=1)
     call_timeout_seconds: float | None = Field(default=None, gt=0)
@@ -91,8 +94,12 @@ class RunnerDependencies:
     production_adapter: Any = None
     monotonic: Callable[[], float] = time.monotonic
 
-    def adapter(self) -> Any:
-        return self.production_adapter or CoachProductionAdapter()
+    def adapter(self, profile_name: str | None = None) -> Any:
+        if self.production_adapter is not None:
+            return self.production_adapter
+        if profile_name == "phase2":
+            return Phase2BenchAdapter()
+        return CoachProductionAdapter()
 
 
 def build_schedule(
@@ -374,6 +381,7 @@ def _scenario_result(
             for name, value in score.dimensions.items()
         },
         quality_score=score.quality_score,
+        metrics=getattr(stage_execution, "metrics", {}),
         calibration_in_range=calibration_in_range,
         calibration_applicable=calibration_applicable,
         calibration_error=calibration_error,
@@ -590,7 +598,7 @@ async def _execute_run(
     completed = {item.attempt.attempt_id for item in results}
     models = {item.id: item for item in suite.models}
     context = ScenarioContext.from_suite(suite)
-    adapter = dependencies.adapter()
+    adapter = dependencies.adapter(profile.name)
     started = dependencies.monotonic()
     call_limit, model_limit, run_limit = _timeout_limits(request, profile)
     deadline = False

@@ -1,0 +1,33 @@
+{
+  "scenario_id": "brief_enhance_10",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-10",
+    "input_fingerprint": "sha256:000000000000000000000000000000000000000000000000000000000000000a",
+    "header": {
+      "company": "Harbor Finance",
+      "role": "Platform Lead",
+      "round_type": "mixed"
+    },
+    "stories": [
+      {
+        "story_id": "story-roadmap",
+        "title": "Roadmap reset",
+        "text": "I reset a stalled roadmap with three customers, cutting two low-value items and shipping the remaining four.",
+        "competencies": [
+          "prioritisation",
+          "stakeholder management"
+        ],
+        "score": 0.57
+      }
+    ],
+    "watch_outs": []
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

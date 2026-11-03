@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_07",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-07",
+    "job_description": "Head of operations for a logistics business. You will own three distribution sites, improve safety and throughput, and lead a team of shift managers. Experience with lean process change and supplier negotiations is expected."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

@@ -86,6 +86,16 @@ _STAGE_INPUT_FIELDS = {
     "coaching": {"transcript", "evidence_ids", "evaluation", "case"},
     "prohibited_inference": {"question", "transcript", "case"},
     "conversational_end_to_end": {"question", "transcript", "evidence_ids", "case"},
+    "explain": {"dimension", "rubric_description", "excerpts"},
+    "brief_enhance": {
+        "brief_id",
+        "input_fingerprint",
+        "header",
+        "stories",
+        "watch_outs",
+    },
+    "debrief_extract": {"debrief_id", "notes"},
+    "competency_extract": {"job_id", "job_description"},
 }
 
 
@@ -101,7 +111,7 @@ class _SuiteManifest(StrictModel):
     suite_id: str = Field(min_length=1)
     version: str = Field(min_length=1)
     seeds: tuple[int, ...] = Field(min_length=2)
-    fixture_kind: Literal["legacy", "conversational"] = "legacy"
+    fixture_kind: Literal["legacy", "conversational", "phase2"] = "legacy"
     models_file: str = "models.json"
     candidate_evidence_file: str | None = "candidate_evidence.json"
     evidence_file: str | None = None
@@ -110,6 +120,7 @@ class _SuiteManifest(StrictModel):
     company_research_sources_file: str | None = "company_research_sources.json"
     stopwords_file: str = "../stopwords_en.txt"
     scenario_files: tuple[str, ...] = Field(min_length=1)
+    split: dict[str, Literal["tuning", "holdout"]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def unique_seeds_and_scenarios(self) -> "_SuiteManifest":
@@ -120,6 +131,13 @@ class _SuiteManifest(StrictModel):
         return self
 
     def file_names(self) -> tuple[str, ...]:
+        if self.fixture_kind == "phase2":
+            return (
+                "suite.json",
+                self.models_file,
+                self.stopwords_file,
+                *self.scenario_files,
+            )
         if self.fixture_kind == "conversational":
             if self.evidence_file is None:
                 raise ValueError("conversational suites require evidence_file")
@@ -162,6 +180,8 @@ class _ModelsFile(StrictModel):
 class LoadedCoachSuite:
     suite_id: str
     version: str
+    fixture_kind: str
+    split: dict[str, str]
     seeds: tuple[int, ...]
     models: tuple[ModelSpec, ...]
     scenarios: dict[str, CoachScenario]
@@ -324,66 +344,83 @@ def load_suite(path: Path | str) -> LoadedCoachSuite:
                 f"{scenario_id} must declare a harness_contract forced failure"
             )
 
-    candidate_file = (
-        manifest.evidence_file
-        if manifest.fixture_kind == "conversational"
-        else manifest.candidate_evidence_file
-    )
-    if candidate_file is None:
-        raise SuiteValidationError("Coach suite is missing evidence fixture authority")
-    candidate = raw_values[candidate_file]
-    research = (
-        raw_values[manifest.company_research_file]
-        if manifest.company_research_file is not None
-        and manifest.company_research_file in raw_values
-        else {}
-    )
-    research_sources = (
-        raw_values[manifest.company_research_sources_file]
-        if manifest.company_research_sources_file is not None
-        and manifest.company_research_sources_file in raw_values
-        else {}
-    )
-    if not all(
-        isinstance(item, dict) for item in (candidate, research, research_sources)
-    ):
-        raise SuiteValidationError(
-            "Coach evidence and research fixtures must be objects"
+    if manifest.fixture_kind == "phase2":
+        if not manifest.split:
+            raise SuiteValidationError("phase2 suites require a tuning/holdout split")
+        if set(manifest.split) != set(scenarios):
+            raise SuiteValidationError(
+                "phase2 split must cover exactly the suite scenarios"
+            )
+        candidate: dict[str, Any] = {}
+        research: dict[str, Any] = {}
+        research_sources: dict[str, Any] = {}
+    else:
+        candidate_file = (
+            manifest.evidence_file
+            if manifest.fixture_kind == "conversational"
+            else manifest.candidate_evidence_file
         )
-    evidence = candidate.get("evidence")
-    if not isinstance(evidence, list) or not evidence:
-        raise SuiteValidationError("candidate evidence must contain evidence items")
-    for item in evidence:
-        if not isinstance(item, dict) or not all(
-            isinstance(item.get(field), str)
-            for field in ("evidence_id", "source_path", "text")
+        if candidate_file is None:
+            raise SuiteValidationError(
+                "Coach suite is missing evidence fixture authority"
+            )
+        candidate = raw_values[candidate_file]
+        research = (
+            raw_values[manifest.company_research_file]
+            if manifest.company_research_file is not None
+            and manifest.company_research_file in raw_values
+            else {}
+        )
+        research_sources = (
+            raw_values[manifest.company_research_sources_file]
+            if manifest.company_research_sources_file is not None
+            and manifest.company_research_sources_file in raw_values
+            else {}
+        )
+        if not all(
+            isinstance(item, dict) for item in (candidate, research, research_sources)
         ):
             raise SuiteValidationError(
-                "candidate evidence items require stable evidence fields"
+                "Coach evidence and research fixtures must be objects"
             )
-        if item["evidence_id"] != stable_evidence_id(item["source_path"], item["text"]):
-            raise SuiteValidationError(
-                "candidate evidence item has an invalid stable evidence id"
+        evidence = candidate.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            raise SuiteValidationError("candidate evidence must contain evidence items")
+        for item in evidence:
+            if not isinstance(item, dict) or not all(
+                isinstance(item.get(field), str)
+                for field in ("evidence_id", "source_path", "text")
+            ):
+                raise SuiteValidationError(
+                    "candidate evidence items require stable evidence fields"
+                )
+            if item["evidence_id"] != stable_evidence_id(
+                item["source_path"], item["text"]
+            ):
+                raise SuiteValidationError(
+                    "candidate evidence item has an invalid stable evidence id"
+                )
+        evidence_ids = {item["evidence_id"] for item in evidence}
+        for scenario in parsed_scenarios:
+            references = (
+                scenario.expected.allowed_evidence_ids
+                + scenario.expected.required_evidence_ids
             )
-    evidence_ids = {item["evidence_id"] for item in evidence}
-    for scenario in parsed_scenarios:
-        references = (
-            scenario.expected.allowed_evidence_ids
-            + scenario.expected.required_evidence_ids
-        )
-        for field in ("evidence_ids", "model_answer_evidence_ids"):
-            value = scenario.input.get(field, [])
-            if isinstance(value, list):
-                references.extend(item for item in value if isinstance(item, str))
-        unknown = set(references) - evidence_ids
-        if unknown:
-            raise SuiteValidationError(
-                f"{scenario.scenario_id} references an unknown evidence id"
-            )
+            for field in ("evidence_ids", "model_answer_evidence_ids"):
+                value = scenario.input.get(field, [])
+                if isinstance(value, list):
+                    references.extend(item for item in value if isinstance(item, str))
+            unknown = set(references) - evidence_ids
+            if unknown:
+                raise SuiteValidationError(
+                    f"{scenario.scenario_id} references an unknown evidence id"
+                )
 
     return LoadedCoachSuite(
         suite_id=manifest.suite_id,
         version=manifest.version,
+        fixture_kind=manifest.fixture_kind,
+        split=dict(manifest.split),
         seeds=manifest.seeds,
         models=tuple(models_file.models),
         scenarios=scenarios,

@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_12_role_depth",
+  "stage": "explain",
+  "description": "Synthetic role_depth pattern with stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "role_depth",
+    "rubric_description": "Shows the judgement expected at the target role level.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-12-a",
+        "text": "The example showed good judgement under pressure, but the setup took half the answer.",
+        "session_date": "2026-09-02",
+        "difficulty": "challenging"
+      },
+      {
+        "excerpt_id": "ex-12-b",
+        "text": "I used three acronyms the interviewer had to ask about.",
+        "session_date": "2026-09-19",
+        "difficulty": "supportive"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

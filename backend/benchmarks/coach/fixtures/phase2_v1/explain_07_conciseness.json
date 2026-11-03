@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_07_conciseness",
+  "stage": "explain",
+  "description": "Synthetic conciseness pattern with stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "conciseness",
+    "rubric_description": "Stays inside the time box and drops repeated setup.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-07-a",
+        "text": "I explained the trade-off and said which option I chose and why.",
+        "session_date": "2026-09-02",
+        "difficulty": "supportive"
+      },
+      {
+        "excerpt_id": "ex-07-b",
+        "text": "The example credited the team but did not say what I personally owned.",
+        "session_date": "2026-09-19",
+        "difficulty": "realistic"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

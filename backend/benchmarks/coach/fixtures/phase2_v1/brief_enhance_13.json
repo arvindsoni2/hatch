@@ -1,0 +1,33 @@
+{
+  "scenario_id": "brief_enhance_13",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-13",
+    "input_fingerprint": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+    "header": {
+      "company": "Bluebird Energy",
+      "role": "Operations Lead",
+      "round_type": "role_specific_verbal"
+    },
+    "stories": [
+      {
+        "story_id": "story-coaching",
+        "title": "Coaching a new lead",
+        "text": "I coached a new team lead through two release cycles, using a weekly review and a shared checklist.",
+        "competencies": [
+          "people leadership",
+          "role depth"
+        ],
+        "score": 0.68
+      }
+    ],
+    "watch_outs": []
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

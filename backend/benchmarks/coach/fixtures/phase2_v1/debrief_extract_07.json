@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_07",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-07",
+    "notes": "The first ten minutes covered my current role and the size of the team. Then four behavioural questions in a row. I kept each answer to about two minutes, used the migration and incident stories, and left room for one follow-up on each. The interviewer asked for the numbers twice, which suggests I should lead with the result."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

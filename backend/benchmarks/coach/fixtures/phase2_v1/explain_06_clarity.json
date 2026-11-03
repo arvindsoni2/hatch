@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_06_clarity",
+  "stage": "explain",
+  "description": "Synthetic clarity pattern with stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "clarity",
+    "rubric_description": "Uses short sentences and plain words without filler.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-06-a",
+        "text": "The story repeated the same point in the action and the result.",
+        "session_date": "2026-08-18",
+        "difficulty": "challenging"
+      },
+      {
+        "excerpt_id": "ex-06-b",
+        "text": "I explained the trade-off and said which option I chose and why.",
+        "session_date": "2026-09-02",
+        "difficulty": "supportive"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

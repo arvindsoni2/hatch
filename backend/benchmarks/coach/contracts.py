@@ -24,6 +24,10 @@ CoachStage = Literal[
     "coaching",
     "prohibited_inference",
     "conversational_end_to_end",
+    "explain",
+    "brief_enhance",
+    "debrief_extract",
+    "competency_extract",
 ]
 ConversationalGroup = Literal[
     "rubric",
@@ -165,7 +169,9 @@ class CoachSuite(StrictModel):
 
 
 class CoachProfile(StrictModel):
-    name: Literal["contract-smoke", "acceptance-smoke", "standard", "extended"]
+    name: Literal[
+        "contract-smoke", "acceptance-smoke", "standard", "extended", "phase2"
+    ]
     repetitions: int = Field(ge=1, le=3)
     scenario_ids: tuple[str, ...] | None
     call_timeout_seconds: int = Field(gt=0)
@@ -226,6 +232,7 @@ class ScenarioResult(StrictModel):
     gates: list[GateFinding] = Field(default_factory=list)
     dimensions: dict[str, DimensionResult] = Field(default_factory=dict)
     quality_score: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
     calibration_in_range: int | None = Field(default=None, ge=0)
     calibration_applicable: int | None = Field(default=None, ge=0)
     calibration_error: str | None = None

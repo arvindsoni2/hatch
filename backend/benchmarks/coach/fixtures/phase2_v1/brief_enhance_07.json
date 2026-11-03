@@ -1,0 +1,33 @@
+{
+  "scenario_id": "brief_enhance_07",
+  "stage": "brief_enhance",
+  "description": "Synthetic pre-interview brief with grounded talking points.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "brief_id": "brief-07",
+    "input_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+    "header": {
+      "company": "Cedar Health",
+      "role": "Programme Manager",
+      "round_type": "mixed"
+    },
+    "stories": [
+      {
+        "story_id": "story-incident",
+        "title": "Incident recovery",
+        "text": "I coordinated a payment incident across support and engineering, restored service in 38 minutes and wrote the follow-up review.",
+        "competencies": [
+          "incident response",
+          "communication"
+        ],
+        "score": 0.74
+      }
+    ],
+    "watch_outs": []
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

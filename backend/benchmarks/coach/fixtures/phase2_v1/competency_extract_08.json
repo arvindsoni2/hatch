@@ -1,0 +1,15 @@
+{
+  "scenario_id": "competency_extract_08",
+  "stage": "competency_extract",
+  "description": "Synthetic job description for competency extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "job_id": "job-08",
+    "job_description": "Data programme lead for a public sector body. You will coordinate a records migration, manage privacy reviews and report to a steering group. The role requires vendor management, benefits tracking and clear written updates for non-technical readers."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

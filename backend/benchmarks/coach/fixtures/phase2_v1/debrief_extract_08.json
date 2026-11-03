@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_08",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-08",
+    "notes": "A short technical screen: two questions on rollback design and one on how I set service objectives. I used the migration story, named the staged cutover and the tested rollback, and said which measure I watched during the first night. They asked about the trade-off between speed and safety and I used the risk partner conversation."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

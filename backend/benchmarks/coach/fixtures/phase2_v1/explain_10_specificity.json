@@ -1,0 +1,29 @@
+{
+  "scenario_id": "explain_10_specificity",
+  "stage": "explain",
+  "description": "Synthetic specificity pattern with stored excerpts.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "dimension": "specificity",
+    "rubric_description": "Names the system, the people and the numbers that make the story checkable.",
+    "excerpts": [
+      {
+        "excerpt_id": "ex-10-a",
+        "text": "The answer had a clear situation and action but stopped before the result.",
+        "session_date": "2026-10-21",
+        "difficulty": "supportive"
+      },
+      {
+        "excerpt_id": "ex-10-b",
+        "text": "I gave two outcomes, and only one of them had a number attached.",
+        "session_date": "2026-08-18",
+        "difficulty": "realistic"
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}

@@ -1,0 +1,15 @@
+{
+  "scenario_id": "debrief_extract_06",
+  "stage": "debrief_extract",
+  "description": "Synthetic rough interview notes for question extraction.",
+  "qualification_scope": "model_capability",
+  "input": {
+    "debrief_id": "debrief-06",
+    "notes": "Mostly a conversation about judgement. The interviewer asked about a time I changed my mind, a time I held a decision under pressure and a time I was wrong. I used the roadmap reset, the migration stop rule and the incident review. The weakest answer was the one where I was wrong; I focused on the fix and not enough on what I missed at the start."
+  },
+  "expected": {
+    "outcome": "completed"
+  },
+  "scoring": {},
+  "quality_dimensions": []
+}
