@@ -39,6 +39,7 @@ from .routers.interviews_ical import router as interviews_ical_router
 from .routers.jobs import health_router, router as jobs_router
 from .routers.coach import router as coach_router
 from .routers.coach_conversation import router as coach_conversation_router
+from .routers.coach_readiness import router as coach_readiness_router
 from .routers.settings import router as settings_router
 from .routers.system import router as system_router
 from .routers.tailor import router as tailor_router
@@ -742,6 +743,7 @@ def create_app() -> FastAPI:
     app.include_router(tailor_router)
     # The version-aware report reader must win the shared legacy/conversational URL.
     app.include_router(coach_conversation_router)
+    app.include_router(coach_readiness_router)
     app.include_router(coach_router)
     app.include_router(digest_router)
     app.include_router(emails_router)

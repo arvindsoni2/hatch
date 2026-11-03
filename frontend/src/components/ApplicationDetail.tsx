@@ -11,6 +11,8 @@ import { InterviewTimeline } from "./InterviewTimeline";
 import { FollowUpList } from "./FollowUpList";
 import { ActivityFeed } from "./ActivityFeed";
 import { RecruiterContact } from "./RecruiterContact";
+import { CoverageMap } from "./coach/readiness/CoverageMap";
+import { fetchCoverage, type CoverageMap as CoverageMapData } from "@/lib/coachReadinessApi";
 import {
   Sheet,
   SheetContent,
@@ -78,6 +80,7 @@ export function ApplicationDetail({
   const [newInterviewDate, setNewInterviewDate] = useState("");
   const [addingInterview, setAddingInterview] = useState(false);
   const [documents, setDocuments] = useState<GeneratedDocument[]>([]);
+  const [coverage, setCoverage] = useState<CoverageMapData | null>(null);
   const [documentDownloadNotice, setDocumentDownloadNotice] = useState<string | null>(null);
   const [acknowledgementDocumentId, setAcknowledgementDocumentId] = useState<string | null>(null);
 
@@ -86,9 +89,12 @@ export function ApplicationDetail({
       setLoading(true);
       const data = await fetchApplication(applicationId);
       setApp(data);
-      // Load generated documents in parallel
-      const docs = await getDocumentHistory(applicationId).catch(() => []);
+      const [docs, coverageResult] = await Promise.all([
+        getDocumentHistory(applicationId).catch(() => []),
+        data.job_id ? fetchCoverage(data.id).catch(() => null) : Promise.resolve(null),
+      ]);
       setDocuments(docs);
+      setCoverage(coverageResult);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load application");
     } finally {
@@ -283,6 +289,8 @@ export function ApplicationDetail({
                       </div>
                     </div>
                   )}
+
+                  {coverage ? <CoverageMap coverage={coverage} /> : null}
 
                   <div className="flex justify-end">
                     <Link

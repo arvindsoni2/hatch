@@ -1,0 +1,162 @@
+[
+  {
+    "pair_id": "pair-01",
+    "keyword_misses": ["Budget ownership"],
+    "keyword_matches": ["Stakeholder management"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-01-story",
+        "tags": ["budget", "ownership", "stakeholder"],
+        "skills": [],
+        "result": "Cut spend by 18 percent.",
+        "metrics": {"saving": 18}
+      }
+    ],
+    "expected_statuses": ["covered", "thin"]
+  },
+  {
+    "pair_id": "pair-02",
+    "keyword_misses": ["Python"],
+    "keyword_matches": ["Incident response"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-02-story",
+        "tags": ["python"],
+        "skills": [],
+        "result": "Built a service.",
+        "metrics": {}
+      }
+    ],
+    "expected_statuses": ["covered", "gap"]
+  },
+  {
+    "pair_id": "pair-03",
+    "keyword_misses": ["Data migration"],
+    "keyword_matches": ["Vendor management"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-03-story",
+        "tags": ["data", "migration", "vendor"],
+        "skills": [],
+        "result": null,
+        "metrics": null
+      }
+    ],
+    "expected_statuses": ["thin", "thin"]
+  },
+  {
+    "pair_id": "pair-04",
+    "keyword_misses": ["Contract negotiation"],
+    "keyword_matches": ["Team coaching"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-04-story",
+        "tags": ["team", "coaching"],
+        "skills": [],
+        "result": "Two leads ran their own reviews.",
+        "metrics": {}
+      }
+    ],
+    "expected_statuses": ["gap", "covered"]
+  },
+  {
+    "pair_id": "pair-05",
+    "keyword_misses": ["Roadmap prioritisation"],
+    "keyword_matches": ["Executive communication"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-05-story",
+        "tags": ["roadmap", "prioritisation", "executive", "communication"],
+        "skills": [],
+        "result": "Shipped four items.",
+        "metrics": {"items": 4}
+      }
+    ],
+    "expected_statuses": ["covered", "covered"]
+  },
+  {
+    "pair_id": "pair-06",
+    "keyword_misses": ["Cloud cost"],
+    "keyword_matches": ["Incident command"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-06-story",
+        "tags": ["cloud", "cost"],
+        "skills": [],
+        "result": "Reduced spend.",
+        "metrics": {}
+      }
+    ],
+    "expected_statuses": ["covered", "gap"]
+  },
+  {
+    "pair_id": "pair-07",
+    "keyword_misses": ["Stakeholder management delivery"],
+    "keyword_matches": ["Python"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-07-story",
+        "tags": ["stakeholder", "management", "delivery"],
+        "skills": [],
+        "result": "Ran a joint review.",
+        "metrics": {}
+      }
+    ],
+    "expected_statuses": ["covered", "gap"]
+  },
+  {
+    "pair_id": "pair-08",
+    "keyword_misses": ["Budget ownership"],
+    "keyword_matches": ["Python"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-08-story",
+        "tags": ["budget"],
+        "skills": [],
+        "result": null,
+        "metrics": {}
+      }
+    ],
+    "expected_statuses": ["thin", "gap"]
+  },
+  {
+    "pair_id": "pair-09",
+    "keyword_misses": ["Risk register"],
+    "keyword_matches": ["Supplier performance"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-09-story",
+        "tags": ["risk", "supplier", "performance"],
+        "skills": [],
+        "result": "Closed three findings.",
+        "metrics": {"findings": 3}
+      }
+    ],
+    "expected_statuses": ["thin", "covered"]
+  },
+  {
+    "pair_id": "pair-10",
+    "keyword_misses": ["Service objectives"],
+    "keyword_matches": ["Rollback design"],
+    "skills": [],
+    "stories": [
+      {
+        "story_id": "pair-10-story",
+        "tags": ["service", "objectives", "rollback", "design"],
+        "skills": [],
+        "result": "Service met its objective.",
+        "metrics": {"slo": 99.9}
+      }
+    ],
+    "expected_statuses": ["covered", "covered"]
+  }
+]
