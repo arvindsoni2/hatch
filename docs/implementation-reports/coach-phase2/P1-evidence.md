@@ -23,6 +23,7 @@ Files changed (one line each: responsibility):
 - `backend/app/models/__init__.py` — register the new ORM model for Alembic.
 - `backend/tests/test_services/test_coach_coverage.py` — the named service tests and the hand-labelled calibration check.
 - `backend/tests/test_routers/test_coach_coverage_router.py` — route shapes, overview and flag-off read/write behaviour.
+- `backend/tests/runtime/test_schema_migration.py` — one-head check now reads the head from Alembic instead of pinning a revision id.
 - `backend/tests/fixtures/coach_coverage/pairs.json` — 10 synthetic JD/story pairs, 20 labelled competency outcomes.
 - `frontend/src/lib/coachReadinessApi.ts` — typed coverage client.
 - `frontend/src/components/coach/readiness/CoverageMap.tsx` — three statuses with icon + text, story links, draft link.
@@ -38,6 +39,7 @@ File deviations:
 
 - `backend/app/models/__init__.py` is outside the plan's P1 list but is required so `alembic env.py` sees the new model and autogenerate/revision metadata stays complete.
 - `frontend/src/app/coach/stories/new/page.tsx` is outside the plan's P1 list. The owner-approved call is to allow the minimal `?competency=` read in P1, because the plan's named test requires the draft link to be prefilled rather than blank.
+- `backend/tests/runtime/test_schema_migration.py` is outside the plan's P1 list. The owner approved the narrow fix because the pinned head `a4b5c6d7e8f9` broke CI as soon as P1 added `9a0421e6f32b`; P2, P6 and P9 add migrations too, so the test now reads the head from the Alembic script directory.
 
 RED: test names and failure output (short):
 
@@ -61,6 +63,9 @@ E   AssertionError: assert () == (CoverageGap(competency='Budget ownership', app
 
 $ npx vitest run src/app/coach/stories/new/__tests__/page.test.tsx
 FAILED prefill: expected "Data migration", received "blank"
+
+$ python -m pytest -q --no-cov tests/runtime/test_schema_migration.py::test_runtime_migration_has_one_head
+FAILED AssertionError: At index 0 diff: '9a0421e6f32b' != 'a4b5c6d7e8f9'
 ```
 
 GREEN: commands, exit codes, counts:
@@ -71,6 +76,8 @@ python -m pytest -q --no-cov tests/test_services/test_coach_coverage.py \
   tests/test_routers/test_coach_coverage_router.py                         # exit 0, 16 passed
 python -m pytest -q --no-cov tests/test_services                            # exit 0, 1333 passed
 python -m pytest -q --no-cov tests/test_routers                             # exit 0, 531 passed
+python -m pytest -q --no-cov tests/runtime                                  # exit 0, 472 passed
+/tmp/p0-py312/bin/python -m pytest -q --no-cov tests/runtime/test_schema_migration.py::test_runtime_migration_has_one_head  # exit 0, 1 passed
 /tmp/p0-py312/bin/python -m pytest -q --no-cov tests/test_services/test_coach_coverage.py \
   tests/test_routers/test_coach_coverage_router.py                         # exit 0, 16 passed (Python 3.12.16)
 /tmp/p0-py312/bin/python -m pytest -q --no-cov tests/test_services           # exit 0, 1333 passed
@@ -90,12 +97,13 @@ npm run build                                                               # ex
 
 The plan's listed regressions `tests/test_services/test_story*` and `tests/test_routers/test_stories*` do not exist in this repository; the full service and router suites above replace them. `tests/test_routers/test_applications_router.py` and `tests/test_routers/test_coach_router.py` (80 tests) also pass.
 
-Regressions run: full backend service (1333) and router (531) suites on Python 3.14.8 and 3.12.16; full frontend Vitest suite (667) and Next build.
+Regressions run: full backend service (1333), router (531) and runtime (472) suites on Python 3.14.8; full service/router suites and the focused migration test on 3.12.16; full frontend Vitest suite (667) and Next build.
 
 Review fixes:
 
 - `coverage_overview` now loads each application's overrides and passes them to the shared `build_coverage`, so a hidden competency no longer counts as a shared gap. Covered by `test_overview_excludes_hidden_shared_gap`.
 - `frontend/src/app/coach/stories/new/page.tsx` now reads `?competency=` inside a Suspense boundary and supplies it as the editor's initial title, tags and skills. Covered by `page.test.tsx`; the link itself remains covered by `CoverageMap.test.tsx`.
+- `tests/runtime/test_schema_migration.py` no longer pins `a4b5c6d7e8f9`; it asserts exactly one head and reads that head from the Alembic script directory, so P2/P6/P9 migrations do not break CI. `tests/runtime` passes (472).
 
 Model calls in tests: fake / live: none. P1 is deterministic; no model is called.
 
