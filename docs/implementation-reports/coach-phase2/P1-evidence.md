@@ -29,10 +29,15 @@ Files changed (one line each: responsibility):
 - `frontend/src/components/coach/readiness/CoverageStrip.tsx` — Stories strip summary.
 - `frontend/src/components/coach/readiness/__tests__/CoverageMap.test.tsx` — status rendering, prefilled draft link, keyboard focus.
 - `frontend/src/app/coach/stories/page.tsx` — render the coverage strip.
+- `frontend/src/app/coach/stories/new/page.tsx` — read `?competency=` and pass it to `StoryEditor` as initial tags, skills and title.
 - `frontend/src/components/ApplicationDetail.tsx` — load and render the application coverage panel.
+- `frontend/src/app/coach/stories/new/__tests__/page.test.tsx` — proves the draft link actually prefills the editor.
 - `docs/implementation-reports/coach-phase2/P1-evidence.md` — this report.
 
-File deviation: `backend/app/models/__init__.py` is outside the plan's P1 list but is required so `alembic env.py` sees the new model and autogenerate/revision metadata stays complete.
+File deviations:
+
+- `backend/app/models/__init__.py` is outside the plan's P1 list but is required so `alembic env.py` sees the new model and autogenerate/revision metadata stays complete.
+- `frontend/src/app/coach/stories/new/page.tsx` is outside the plan's P1 list. The owner-approved call is to allow the minimal `?competency=` read in P1, because the plan's named test requires the draft link to be prefilled rather than blank.
 
 RED: test names and failure output (short):
 
@@ -47,17 +52,28 @@ E   ModuleNotFoundError: No module named 'app.models.coach_readiness'
 
 The same first failure applies to `app.services.coach_readiness.coverage`; both modules and the routes did not exist at the baseline.
 
+Review-fix REDs:
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_coach_coverage.py::test_overview_excludes_hidden_shared_gap
+FAILED test_overview_excludes_hidden_shared_gap
+E   AssertionError: assert () == (CoverageGap(competency='Budget ownership', application_count=2),)
+
+$ npx vitest run src/app/coach/stories/new/__tests__/page.test.tsx
+FAILED prefill: expected "Data migration", received "blank"
+```
+
 GREEN: commands, exit codes, counts:
 
 ```text
 cd backend
 python -m pytest -q --no-cov tests/test_services/test_coach_coverage.py \
-  tests/test_routers/test_coach_coverage_router.py                         # exit 0, 15 passed
-python -m pytest -q --no-cov tests/test_services                            # exit 0, 1332 passed
+  tests/test_routers/test_coach_coverage_router.py                         # exit 0, 16 passed
+python -m pytest -q --no-cov tests/test_services                            # exit 0, 1333 passed
 python -m pytest -q --no-cov tests/test_routers                             # exit 0, 531 passed
 /tmp/p0-py312/bin/python -m pytest -q --no-cov tests/test_services/test_coach_coverage.py \
-  tests/test_routers/test_coach_coverage_router.py                         # exit 0, 15 passed (Python 3.12.16)
-/tmp/p0-py312/bin/python -m pytest -q --no-cov tests/test_services           # exit 0, 1332 passed
+  tests/test_routers/test_coach_coverage_router.py                         # exit 0, 16 passed (Python 3.12.16)
+/tmp/p0-py312/bin/python -m pytest -q --no-cov tests/test_services           # exit 0, 1333 passed
 /tmp/p0-py312/bin/python -m pytest -q --no-cov tests/test_routers            # exit 0, 531 passed
 ruff check app/services/coach_readiness app/models/coach_readiness.py \
   app/schemas/coach_readiness.py app/routers/coach_readiness.py app/config.py \
@@ -65,7 +81,8 @@ ruff check app/services/coach_readiness app/models/coach_readiness.py \
   tests/test_routers/test_coach_coverage_router.py \
   alembic/versions/20261103_1238_9a0421e6f32b_add_coach_competency_overrides.py  # exit 0, All checks passed
 cd ../frontend
-npx vitest run                                                              # exit 0, 103 files, 666 tests passed
+npx vitest run                                                              # exit 0, 104 files, 667 tests passed
+npx vitest run src/app/coach/stories/new/__tests__/page.test.tsx             # exit 0, 1 passed
 npx vitest run src/components/coach/readiness/__tests__/CoverageMap.test.tsx  # exit 0, 2 passed
 npm run type-check                                                          # exit 0
 npm run build                                                               # exit 0
@@ -73,7 +90,12 @@ npm run build                                                               # ex
 
 The plan's listed regressions `tests/test_services/test_story*` and `tests/test_routers/test_stories*` do not exist in this repository; the full service and router suites above replace them. `tests/test_routers/test_applications_router.py` and `tests/test_routers/test_coach_router.py` (80 tests) also pass.
 
-Regressions run: full backend service (1332) and router (531) suites on Python 3.14.8 and 3.12.16; full frontend Vitest suite (666) and Next build.
+Regressions run: full backend service (1333) and router (531) suites on Python 3.14.8 and 3.12.16; full frontend Vitest suite (667) and Next build.
+
+Review fixes:
+
+- `coverage_overview` now loads each application's overrides and passes them to the shared `build_coverage`, so a hidden competency no longer counts as a shared gap. Covered by `test_overview_excludes_hidden_shared_gap`.
+- `frontend/src/app/coach/stories/new/page.tsx` now reads `?competency=` inside a Suspense boundary and supplies it as the editor's initial title, tags and skills. Covered by `page.test.tsx`; the link itself remains covered by `CoverageMap.test.tsx`.
 
 Model calls in tests: fake / live: none. P1 is deterministic; no model is called.
 
@@ -94,7 +116,6 @@ Not run / known limits:
 
 - The repository's full migration chain from an empty database still fails at the pre-existing `c30577e861e2` revision (`NoSuchTableError: applications`); this is unrelated to P1 and existed before this branch. The new revision was verified with the disposable stamp method above.
 - The plan's named story regression tests do not exist; broader suites were run instead.
-- `coverage_overview` counts gaps by original competency and does not apply per-application renames/hides; §7.4 only defines the overview across applications.
 - Docs checks must run on a clean export of tracked files because the owner's untracked `docs/implementation-specs/active/hatch-coach-phase2-handoff/` remains in the working tree and is not ours to move.
 
 Ready for review: yes — named tests green on Python 3.12 and 3.14, frontend green, one migration head, and no protected file changed.

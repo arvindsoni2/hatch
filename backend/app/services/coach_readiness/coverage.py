@@ -147,6 +147,19 @@ def _override_map(rows: Sequence[CoachCompetencyOverride]) -> dict[str, Coverage
     }
 
 
+async def _overrides_for_application(
+    db: AsyncSession, application_id: str
+) -> dict[str, CoverageOverride]:
+    rows = (
+        await db.execute(
+            select(CoachCompetencyOverride).where(
+                CoachCompetencyOverride.application_id == application_id
+            )
+        )
+    ).scalars().all()
+    return _override_map(rows)
+
+
 async def _competencies_for_application(
     db: AsyncSession, application: Application
 ) -> tuple[Competency, ...]:
@@ -182,19 +195,12 @@ async def coverage_for_application(
     ).scalar_one_or_none()
     if application is None:
         return None
-    overrides = (
-        await db.execute(
-            select(CoachCompetencyOverride).where(
-                CoachCompetencyOverride.application_id == application_id
-            )
-        )
-    ).scalars().all()
     stories = await StoryRepository(db).list_all_active_orm()
     return build_coverage(
         application_id=application_id,
         competencies=await _competencies_for_application(db, application),
         stories=stories,
-        overrides=_override_map(overrides),
+        overrides=await _overrides_for_application(db, application_id),
         covered_min=(
             settings.HATCH_COACH_COVERAGE_COVERED_MIN
             if covered_min is None
@@ -228,7 +234,7 @@ async def coverage_overview(
             application_id=application.id,
             competencies=await _competencies_for_application(db, application),
             stories=stories,
-            overrides={},
+            overrides=await _overrides_for_application(db, application.id),
             covered_min=(
                 settings.HATCH_COACH_COVERAGE_COVERED_MIN
                 if covered_min is None

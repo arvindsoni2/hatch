@@ -251,6 +251,30 @@ async def test_overrides_rename_and_hide(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_overview_excludes_hidden_shared_gap(
+    db_session: AsyncSession,
+) -> None:
+    await _seed_application(
+        db_session, app_id="app-1", job_id="job-1", misses=["Budget ownership"]
+    )
+    await _seed_application(
+        db_session, app_id="app-2", job_id="job-2", misses=["Budget ownership"]
+    )
+    db_session.add(
+        CoachCompetencyOverride(
+            application_id="app-1",
+            original="Budget ownership",
+            hidden=True,
+        )
+    )
+    await db_session.flush()
+
+    overview = await coverage.coverage_overview(db_session)
+
+    assert overview.gaps == ()
+
+
+@pytest.mark.asyncio
 async def test_overview_counts_gaps_across_interview_applications(
     db_session: AsyncSession,
 ) -> None:
