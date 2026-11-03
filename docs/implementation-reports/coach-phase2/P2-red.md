@@ -51,6 +51,16 @@ Every failure is the missing behaviour (module, contract names or revision), not
 4. **Carry-over from P1 review (Medium).** `backend/tests/runtime/test_schema_migration.py` lost its `down_revision == "z3a4b5c6d7e8"` assertion. OpenCode should restore it as a check on the fixed revision `a4b5c6d7e8f9` in P2. The file is outside P2's list, so it needs owner approval.
 5. **Spec drift, no P2 action.** Spec §11 lists `coach_competency_overrides` columns `match_key`, `display_text`, but P1 shipped `original`. Fix in the spec or a later task.
 
+## Owner decisions (3 Nov 2026)
+
+1. Approved: readiness reads (`get_or_due`, next actions, overview) ignore rounds whose application has `is_active = false`. OpenCode adds a test for this in its own test file.
+2. Approved: add `InterviewRepository.get` to `backend/app/repositories/interview_repository.py` (additive only).
+3. Accepted: no stored `draft` transition in P2; "start later" is `save` from `skipped`.
+4. Approved: restore the parent assertion in `backend/tests/runtime/test_schema_migration.py` as `scripts.get_revision("a4b5c6d7e8f9").down_revision == "z3a4b5c6d7e8"`, keeping the dynamic one-head check.
+5. Noted: the §11 override-column drift needs no P2 action.
+
+The Assumed interfaces below are approved and binding.
+
 ## Assumed interfaces (binding once the owner approves)
 
 Beyond spec §10.1 and names already in the codebase:
