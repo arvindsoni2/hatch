@@ -13,6 +13,7 @@ import { ActivityFeed } from "./ActivityFeed";
 import { RecruiterContact } from "./RecruiterContact";
 import { CoverageMap } from "./coach/readiness/CoverageMap";
 import { fetchCoverage, type CoverageMap as CoverageMapData } from "@/lib/coachReadinessApi";
+import { localDateTimeToUtcIso } from "@/lib/formatInterviewTime";
 import {
   Sheet,
   SheetContent,
@@ -157,7 +158,9 @@ export function ApplicationDetail({
         application_id: app.id,
         type: newInterviewType,
         round_number: (app.interviews?.length ?? 0) + 1,
-        scheduled_at: newInterviewDate || undefined,
+        scheduled_at: newInterviewDate
+          ? localDateTimeToUtcIso(newInterviewDate)
+          : undefined,
       });
       setNewInterviewDate("");
       await loadApp();

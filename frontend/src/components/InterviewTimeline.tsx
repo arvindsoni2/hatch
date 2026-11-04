@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { Phone, Code2, Users, Presentation, CheckCircle2, Clock, CalendarPlus, Loader2 } from "lucide-react";
-import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { downloadInterviewIcs } from "@/lib/api";
+import { formatInterviewTime } from "@/lib/formatInterviewTime";
+import { DebriefForm } from "@/components/coach/readiness/DebriefForm";
 import type { InterviewRound } from "@/lib/api";
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -113,7 +114,7 @@ export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
               {round.scheduled_at && (
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-xs text-slate-500">
-                    {format(new Date(round.scheduled_at), "EEE d MMM yyyy 'at' HH:mm")}
+                    {formatInterviewTime(round.scheduled_at)}
                     {round.duration_minutes != null && ` · ${round.duration_minutes} min`}
                     {round.location && ` · ${round.location}`}
                   </p>
@@ -134,6 +135,10 @@ export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
                   <strong>Feedback:</strong> {round.feedback}
                 </div>
               )}
+
+              <div className="mt-3">
+                <DebriefForm roundId={round.id} />
+              </div>
             </div>
           </div>
         ))}

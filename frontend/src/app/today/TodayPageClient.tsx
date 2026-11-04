@@ -9,6 +9,7 @@ import { AiSetupReminder } from "@/components/hatch/AiSetupReminder";
 import { approveJob, rejectApplication, markApplied, revertApplication, getAsyncJob, getApplicationPackage } from "@/lib/api";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 import type { ApplicationPackage, AgentPerformance } from "@/lib/api";
+import type { ReadinessNextAction } from "@/lib/coachReadinessApi";
 import { PRODUCT_ROUTES } from "@/lib/product-routes";
 
 interface UpcomingInterview {
@@ -25,6 +26,7 @@ interface TodayPageClientProps {
   transit?: { scout_to_scorer: number; scorer_to_tailor: number; tailor_to_coach: number };
   profileName?: string;
   followUpCount?: number;
+  readinessActions?: ReadinessNextAction[];
   agentPerf?: AgentPerformance | null;
   upcomingInterview?: UpcomingInterview | null;
   aiSetupIncomplete?: boolean;
@@ -38,6 +40,7 @@ export function TodayPageClient({
   transit,
   profileName,
   followUpCount,
+  readinessActions = [],
   agentPerf,
   upcomingInterview,
   aiSetupIncomplete = false,
@@ -217,6 +220,7 @@ export function TodayPageClient({
             transit={transit}
             profileName={profileName ?? "there"}
             followUpCount={followUpCount}
+            readinessActions={readinessActions}
             upcomingInterview={upcomingInterview ?? null}
             onReview={(ids) => {
               const q = localJobs.filter((j) => ids.includes(j.id));

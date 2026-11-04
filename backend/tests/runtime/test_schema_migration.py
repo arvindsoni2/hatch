@@ -98,6 +98,8 @@ def test_runtime_migration_has_one_head() -> None:
     assert len(heads) == 1
     head = scripts.get_revision(heads[0])
     assert head is not None
+    legacy = scripts.get_revision("a4b5c6d7e8f9")
+    assert legacy is not None and legacy.down_revision == "z3a4b5c6d7e8"
 
 
 def test_registered_metadata_contains_complete_runtime_schema() -> None:

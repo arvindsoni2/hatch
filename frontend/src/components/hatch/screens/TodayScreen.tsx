@@ -11,6 +11,7 @@ import { ScorePill } from '../ScorePill';
 import { UserAvatar } from '../UserAvatar';
 import { AGENT_DEFS, PIPELINE } from '../agents';
 import { TimeGreeting } from '@/components/TimeGreeting';
+import type { ReadinessNextAction } from '@/lib/coachReadinessApi';
 
 export interface HatchJob {
   id: string;
@@ -56,6 +57,7 @@ interface TodayScreenProps {
   transit?: TransitCounts;
   profileName: string;
   followUpCount?: number;
+  readinessActions?: ReadinessNextAction[];
   upcomingInterview?: UpcomingInterview | null;
   onReview?: (ids: string[]) => void;
   onMarkApplied?: (id: string) => void;
@@ -96,7 +98,7 @@ function FunnelArrow({ count }: { count: number }) {
   );
 }
 
-export function TodayScreen({ jobs, watchedCompanyJobs = [], funnel, transit, profileName, followUpCount = 2, upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep, onOpenCvStudio }: TodayScreenProps) {
+export function TodayScreen({ jobs, watchedCompanyJobs = [], funnel, transit, profileName, followUpCount = 2, readinessActions = [], upcomingInterview, onReview, onMarkApplied, onRevert, onOpenPrep, onOpenCvStudio }: TodayScreenProps) {
   const ready = jobs.filter((j) => j.state === 'ready');
   const readyToApply = jobs.filter((j) => j.state === 'ready_to_apply');
   const isFirstUse =
@@ -200,6 +202,25 @@ export function TodayScreen({ jobs, watchedCompanyJobs = [], funnel, transit, pr
             </Btn>
           )}
         </Card>
+
+        {readinessActions.length > 0 && (
+          <Card style={{ padding: 16 }}>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Coach</h2>
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {readinessActions.map((action) => (
+                <Link
+                  key={`${action.kind}-${action.round_id}`}
+                  href={`/applications/${action.application_id}`}
+                  className="hatch-interactive"
+                  style={{ display: 'flex', justifyContent: 'space-between', gap: 12, color: 'var(--text)', textDecoration: 'none', fontSize: 14 }}
+                >
+                  <span>{action.action}</span>
+                  <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{action.reason}</span>
+                </Link>
+              ))}
+            </div>
+          </Card>
+        )}
 
         {watchedCompanyJobs.length > 0 && (
           <Card accent style={{ padding: 16 }}>

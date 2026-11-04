@@ -42,6 +42,16 @@ export interface CompetencyOverride {
   hidden: boolean;
 }
 
+export class CoachReadinessError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "CoachReadinessError";
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -56,7 +66,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Keep the plain-text response.
     }
-    throw new Error(detail);
+    throw new CoachReadinessError(detail, response.status);
   }
   return (await response.json()) as T;
 }
@@ -79,4 +89,84 @@ export function updateCoverageOverrides(
     `/api/coach/readiness/coverage/${encodeURIComponent(applicationId)}/overrides`,
     { method: "PUT", body: JSON.stringify({ overrides }) },
   );
+}
+
+export type DebriefStatus = "due" | "draft" | "saved" | "skipped";
+
+export interface DebriefQuestion {
+  id: string;
+  text: string;
+  source_ref: { kind: "question_bank_item"; id: string } | null;
+  asked: boolean;
+  rating: number | null;
+  story_id: string | null;
+  note: string | null;
+}
+
+export interface DebriefRead {
+  round_id: string;
+  application_id: string;
+  round_status: string | null;
+  scheduled_at: string | null;
+  duration_minutes: number | null;
+  status: DebriefStatus;
+  version: number;
+  overall: number | null;
+  expectation: "yes" | "unsure" | "no" | null;
+  questions: DebriefQuestion[];
+  went_well: string | null;
+  do_differently: string | null;
+  notes_text: string | null;
+}
+
+export interface SaveDebriefInput {
+  expected_version: number;
+  overall: number;
+  expectation?: "yes" | "unsure" | "no" | null;
+  questions?: DebriefQuestion[];
+  went_well?: string | null;
+  do_differently?: string | null;
+  notes_text?: string | null;
+}
+
+export interface ReadinessNextAction {
+  application_id: string;
+  round_id: string;
+  action: string;
+  reason: string;
+  urgency: string;
+  kind: string;
+}
+
+export function fetchDebrief(roundId: string): Promise<DebriefRead> {
+  return request<DebriefRead>(
+    `/api/coach/readiness/rounds/${encodeURIComponent(roundId)}/debrief`,
+  );
+}
+
+export function saveDebrief(
+  roundId: string,
+  input: SaveDebriefInput,
+): Promise<DebriefRead> {
+  return request<DebriefRead>(
+    `/api/coach/readiness/rounds/${encodeURIComponent(roundId)}/debrief`,
+    { method: "PUT", body: JSON.stringify(input) },
+  );
+}
+
+export function skipDebrief(
+  roundId: string,
+  expectedVersion: number,
+): Promise<DebriefRead> {
+  return request<DebriefRead>(
+    `/api/coach/readiness/rounds/${encodeURIComponent(roundId)}/debrief/skip`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expected_version: expectedVersion }),
+    },
+  );
+}
+
+export function fetchReadinessNextActions(): Promise<ReadinessNextAction[]> {
+  return request<ReadinessNextAction[]>("/api/coach/readiness/next-actions");
 }

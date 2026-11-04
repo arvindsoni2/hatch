@@ -39,6 +39,14 @@ class InterviewRepository:
         await self._session.refresh(db_obj)
         return InterviewRoundRead.model_validate(db_obj)
 
+    async def get(self, interview_id: str) -> InterviewRoundRead | None:
+        """Return one interview round by id, or None."""
+        result = await self._session.execute(
+            select(InterviewRound).where(InterviewRound.id == interview_id)
+        )
+        row = result.scalar_one_or_none()
+        return InterviewRoundRead.model_validate(row) if row else None
+
     async def update(
         self, interview_id: str, data: InterviewRoundUpdate
     ) -> InterviewRoundRead | None:
