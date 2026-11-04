@@ -2,19 +2,43 @@
  * Display and submit real-interview times in UTC storage + display timezone.
  */
 
-export function resolveDisplayTimeZone(): string {
-  const configured =
-    process.env.NEXT_PUBLIC_HATCH_DISPLAY_TIMEZONE ||
-    process.env.HATCH_DISPLAY_TIMEZONE;
-  if (configured) {
-    try {
-      new Intl.DateTimeFormat("en-GB", { timeZone: configured }).format();
-      return configured;
-    } catch {
-      // Fall through to the browser zone.
-    }
-  }
+const OFFSET_SUFFIX = /(?:[zZ]|[+-]\d{2}:?\d{2})$/;
+
+export function browserTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+/** Parse an API time; offset-less strings are UTC (spec §7.5). */
+export function parseInterviewTime(value: string | Date): Date {
+  if (value instanceof Date) return value;
+  const normalized = OFFSET_SUFFIX.test(value) ? value : `${value}Z`;
+  return new Date(normalized);
+}
+
+export function formatInterviewTime(value: string | Date, timeZone: string): string {
+  const date = parseInterviewTime(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
+}
+
+export function formatInterviewClock(value: string | Date, timeZone: string): string {
+  const date = parseInterviewTime(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
 }
 
 /** Convert a datetime-local value (browser local) to an ISO UTC string. */
@@ -24,20 +48,4 @@ export function localDateTimeToUtcIso(value: string): string {
     throw new Error("invalid local datetime");
   }
   return date.toISOString();
-}
-
-/** Show a stored UTC time in the display timezone, including its abbreviation. */
-export function formatInterviewTime(value: string | Date): string {
-  const date = typeof value === "string" ? new Date(value) : value;
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: resolveDisplayTimeZone(),
-    weekday: "short",
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  }).format(date);
 }

@@ -84,13 +84,13 @@ describe("DebriefForm", () => {
     const user = userEvent.setup();
     render(<DebriefForm roundId="round-1" />);
 
-    const wentWell = await screen.findByLabelText("Went well");
+    const wentWell = await screen.findByLabelText("What went well");
     await user.type(wentWell, "Clear opening");
     await user.click(screen.getByRole("button", { name: "4 Good" }));
     await user.click(screen.getByRole("button", { name: "Save debrief" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("status")).toHaveTextContent("Your draft is kept");
+      expect(screen.getByRole("status")).toHaveTextContent("Reload and re-apply");
     });
     expect(wentWell).toHaveValue("Clear opening");
   });
@@ -98,8 +98,56 @@ describe("DebriefForm", () => {
   it("labels the quick-add and free-text inputs", async () => {
     render(<DebriefForm roundId="round-1" />);
 
-    expect(await screen.findByLabelText("Quick-add question")).toBeVisible();
-    expect(screen.getByLabelText("Went well")).toBeVisible();
-    expect(screen.getByLabelText("Do differently")).toBeVisible();
+    expect(await screen.findByLabelText("Another question")).toBeVisible();
+    expect(screen.getByLabelText("What went well")).toBeVisible();
+    expect(screen.getByLabelText("What you would do differently")).toBeVisible();
+  });
+
+  it("shows per-question controls and the exact debrief copy", async () => {
+    const user = userEvent.setup();
+    render(<DebriefForm roundId="round-1" />);
+
+    await user.click(await screen.findByRole("checkbox", { name: /Tell me about a budget/ }));
+    expect(screen.getAllByText("How did it go?").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Story you used")).toBeVisible();
+    expect(screen.getByLabelText("Note")).toHaveAttribute(
+      "placeholder",
+      "One line, optional",
+    );
+    expect(screen.getByText("Overall, how did it go?")).toBeVisible();
+    expect(screen.getByText("Do you expect to move to the next round?")).toBeVisible();
+
+    const another = screen.getByLabelText("Another question");
+    expect(another).toHaveAttribute("placeholder", "Type a question you were asked");
+    await user.type(another, "What would you change?");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    expect(screen.getByText("Added by you")).toBeVisible();
+  });
+
+  it("reloads on 409, keeps the draft and saves with the new version", async () => {
+    vi.mocked(fetchDebrief)
+      .mockResolvedValueOnce(due)
+      .mockResolvedValueOnce({ ...due, version: 1 });
+    vi.mocked(saveDebrief)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("version_conflict"), { status: 409 }),
+      )
+      .mockResolvedValueOnce({ ...due, version: 2, status: "saved", overall: 4 });
+    const user = userEvent.setup();
+    render(<DebriefForm roundId="round-1" />);
+
+    const wentWell = await screen.findByLabelText("What went well");
+    await user.type(wentWell, "Kept the draft");
+    await user.click(screen.getByRole("button", { name: "4 Good" }));
+    await user.click(screen.getByRole("button", { name: "Save debrief" }));
+    await screen.findByRole("button", { name: "Reload and re-apply" });
+    await user.click(screen.getByRole("button", { name: "Reload and re-apply" }));
+    await user.click(screen.getByRole("button", { name: "Save debrief" }));
+
+    expect(wentWell).toHaveValue("Kept the draft");
+    expect(saveDebrief).toHaveBeenLastCalledWith(
+      "round-1",
+      expect.objectContaining({ expected_version: 1, overall: 4 }),
+    );
   });
 });

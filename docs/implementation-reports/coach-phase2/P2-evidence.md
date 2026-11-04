@@ -49,6 +49,16 @@ Approved extra files / deviations:
 - `backend/app/repositories/interview_repository.py` — owner-approved additive `get` only; no other change.
 - `backend/tests/runtime/test_schema_migration.py` — owner-approved parent assertion restoration; dynamic head check retained.
 - `frontend/src/app/today/page.tsx`, `TodayPageClient.tsx` and `TodayScreen.tsx` are the existing Today merge surface required by §7.5; no new route was added.
+- `frontend/src/components/CalendarView.tsx` — D1, uses `parseInterviewTime`/display zone for interview dates and times.
+- `frontend/src/app/today/page.tsx` — D1, `daysUntil` uses `parseInterviewTime`; L2 adds `.catch(() => [])` on the readiness actions fetch only.
+- `GET /api/coach/readiness/display-timezone` — D2, read-only and readable whatever the debrief flag.
+- `frontend/src/lib/useDisplayTimeZone.ts` — D2 hook; `formatInterviewTime.ts` and the cached `fetchDisplayTimeZone` loader hold the runtime value without any `NEXT_PUBLIC_` variable.
+
+Owner decisions (4 Nov 2026):
+
+- D1 (M1) Approved extra files: `frontend/src/components/CalendarView.tsx` and `frontend/src/app/today/page.tsx` (daysUntil) use the shared UTC parsing and display helper.
+- D2 (M2) The backend serves the display timezone at runtime. New read-only route `GET /api/coach/readiness/display-timezone` → `{"display_timezone": "<IANA name>" | null}` (owner-approved addition to spec §12). No `NEXT_PUBLIC_` variable.
+- D3 (L1) The debrief save MERGES asked questions into `InterviewRound.questions_asked`; it never replaces them.
 
 RED → GREEN:
 
@@ -69,7 +79,7 @@ $ /tmp/p2-py312/bin/python -m pytest -q --no-cov \
     tests/test_services/test_coach_debrief_rules.py \
     tests/test_services/test_coach_questions.py \
     tests/test_routers/test_coach_debrief_router.py
-7 passed
+11 passed
 ```
 
 GREEN: commands, exit codes, counts:
@@ -78,13 +88,14 @@ GREEN: commands, exit codes, counts:
 cd backend
 /tmp/p2-py312/bin/python -m pytest -q --no-cov tests/runtime                # exit 0, 471 passed, 1 skipped
 /tmp/p2-py312/bin/python -m pytest -q --no-cov tests/test_routers tests/test_services \
-  tests/integration/test_coach_debrief_cascade.py                          # exit 0, 1879 passed
+  tests/integration                                                          # exit 0, 1980 passed
 ruff check <changed backend files>                                          # exit 0, All checks passed
 /tmp/p2-py312/bin/alembic heads                                             # exit 0, f57c6504bbca (head)
 cd ../frontend
 npx vitest run src/components/coach/readiness/__tests__/DebriefForm.test.tsx \
-  src/lib/__tests__/formatInterviewTime.test.ts                             # exit 0, 6 passed
-npx vitest run                                                              # exit 0, 673 passed
+  src/lib/__tests__/formatInterviewTime.test.ts \
+  src/lib/__tests__/useDisplayTimeZone.test.ts                              # exit 0, 11 passed
+npx vitest run                                                              # exit 0, 678 passed
 npm run type-check                                                          # exit 0
 npm run build                                                               # exit 0
 ```
@@ -98,7 +109,20 @@ alembic downgrade -1         -> downgrade f57c6504bbca -> 9a0421e6f32b
 alembic upgrade head         -> upgrade 9a0421e6f32b -> f57c6504bbca
 ```
 
-Timezone finding: `ApplicationDetail` sent `datetime-local` values to `createInterview` unchanged, i.e. browser-local text without an offset. The fix is in the frontend form only: `localDateTimeToUtcIso` converts before sending (Vitest covers the conversion). No stored rows or existing routers changed.
+Timezone finding: `ApplicationDetail` sent `datetime-local` values to `createInterview` unchanged, i.e. browser-local text without an offset. The fix is in the frontend form only: `localDateTimeToUtcIso` converts before sending (Vitest covers the conversion). The interviews API returns stored UTC strings without an offset; `parseInterviewTime` now appends `Z` when no offset is present, and `CalendarView`/Today use it. No stored rows or existing routers changed.
+
+Repair cycle 1:
+
+- H1 flag gating — `get_debrief` returns 404 for a due-but-unstored debrief when the flag is off, `next-actions` returns `[]` when off, stored saved/skipped rows remain readable, and PUT/skip remain 403. Extended `test_flag_off_blocks_writes_but_allows_reads`.
+- H2 offset-less times — `parseInterviewTime` treats strings without `Z`/offset as UTC; `formatInterviewTime` uses it. `formatInterviewTime.test.ts` covers `2026-11-20T04:30:00` in `Asia/Kolkata` → `10:00` and the `GMT+5:30`/`IST` abbreviation.
+- M1 (D1) — `CalendarView` parses and displays with the shared helper/hook; Today `daysUntil` uses `parseInterviewTime`.
+- M2 (D2) — added read-only `GET /api/coach/readiness/display-timezone`, the cached `fetchDisplayTimeZone` loader, and `useDisplayTimeZone`; `formatInterviewTime` takes an explicit zone. Tests cover configured, null/browser fallback, and abbreviation.
+- M3 — DebriefForm now uses the exact copy and order required: checklist first, per-ticked-question 36 px rating buttons, Story select over active stories with None, 200-char note with the specified placeholder, 44 px overall/expectation controls, “Another question”, “Added by you”, the two renamed free-text fields, status words, and the post-save polite line.
+- M4 — on 409 the form keeps every field, shows “Reload and re-apply”, re-fetches only the version, and the next save sends the new `expected_version` (`DebriefForm.test.tsx`).
+- M5 — edits use `UPDATE … WHERE id = :id AND version = :expected` and zero rows raises `version_conflict`; first insert/skip catches `IntegrityError` inside `begin_nested` and raises `version_conflict`. Covered by stale-edit and concurrent-first-save tests.
+- L1 (D3) — save merges asked texts into the existing round questions, case-insensitive with collapsed whitespace, never removes unticked questions, and skips the patch when nothing new is added. Covered in `test_save_merges_asked_questions_into_round`.
+- L2 — only the Today readiness fetch gets `.catch(() => [])`.
+- L3 — covered by the M2 tests and the display-timezone route test.
 
 Model calls in tests: fake / live: none. P2 is deterministic and makes no model call.
 
@@ -121,4 +145,4 @@ Not run / known limits:
 - Tests were run on Python 3.12.16 using `/tmp/p2-py312` because the previous 3.14 interpreter was removed from the environment.
 - The owner’s untracked `docs/implementation-specs/active/hatch-coach-phase2-handoff/` stays in place; docs checks run on a clean export.
 
-Ready for review: yes — protected tests untouched and green, own tests green, runtime and full service/router suites green, one migration head, frontend green.
+Ready for review: yes — repair cycle 1 addresses H1, H2, M1–M5 and L1–L3; protected tests untouched and green, own tests green, runtime and full service/router/integration suites green, one migration head, frontend green.

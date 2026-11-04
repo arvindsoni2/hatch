@@ -1,35 +1,40 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  browserTimeZone,
   formatInterviewTime,
   localDateTimeToUtcIso,
-  resolveDisplayTimeZone,
+  parseInterviewTime,
 } from "../formatInterviewTime";
 
-const OLD_TIMEZONE = process.env.HATCH_DISPLAY_TIMEZONE;
-
 describe("formatInterviewTime", () => {
-  afterEach(() => {
-    if (OLD_TIMEZONE === undefined) {
-      delete process.env.HATCH_DISPLAY_TIMEZONE;
-    } else {
-      process.env.HATCH_DISPLAY_TIMEZONE = OLD_TIMEZONE;
-    }
-  });
-
   it("uses the configured display timezone and shows its abbreviation", () => {
-    process.env.HATCH_DISPLAY_TIMEZONE = "Europe/London";
+    const formatted = formatInterviewTime("2026-11-10T12:00:00Z", "Europe/London");
 
-    const formatted = formatInterviewTime("2026-11-10T12:00:00Z");
-
-    expect(resolveDisplayTimeZone()).toBe("Europe/London");
     expect(formatted).toContain("12:00");
     expect(formatted).toMatch(/GMT|UTC/);
   });
 
-  it("falls back to the browser timezone when no display timezone is set", () => {
-    delete process.env.HATCH_DISPLAY_TIMEZONE;
+  it("falls back to the browser timezone when the configured zone is null", () => {
+    const zone = browserTimeZone();
+    const formatted = formatInterviewTime("2026-11-10T12:00:00Z", zone);
+    const abbreviation = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      timeZoneName: "short",
+    })
+      .formatToParts(new Date("2026-11-10T12:00:00Z"))
+      .find((part) => part.type === "timeZoneName")?.value;
 
-    expect(formatInterviewTime("2026-11-10T12:00:00Z")).toContain("2026");
+    expect(abbreviation).toBeTruthy();
+    expect(formatted).toContain(abbreviation!);
+  });
+
+  it("treats an offset-less API time as UTC", () => {
+    expect(parseInterviewTime("2026-11-20T04:30:00").toISOString()).toBe(
+      "2026-11-20T04:30:00.000Z",
+    );
+    const formatted = formatInterviewTime("2026-11-20T04:30:00", "Asia/Kolkata");
+    expect(formatted).toContain("10:00");
+    expect(formatted).toMatch(/GMT\+5:30|IST/);
   });
 
   it("converts a datetime-local value to a UTC ISO string", () => {

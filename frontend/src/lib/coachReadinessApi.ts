@@ -170,3 +170,16 @@ export function skipDebrief(
 export function fetchReadinessNextActions(): Promise<ReadinessNextAction[]> {
   return request<ReadinessNextAction[]>("/api/coach/readiness/next-actions");
 }
+
+let displayTimeZonePromise: Promise<string | null> | null = null;
+
+export function fetchDisplayTimeZone(): Promise<string | null> {
+  if (displayTimeZonePromise === null) {
+    displayTimeZonePromise = request<{ display_timezone: string | null }>(
+      "/api/coach/readiness/display-timezone",
+    )
+      .then((response) => response.display_timezone)
+      .catch(() => null);
+  }
+  return displayTimeZonePromise;
+}

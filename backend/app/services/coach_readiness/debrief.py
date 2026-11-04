@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
@@ -182,49 +183,77 @@ class DebriefService:
         if row is None:
             if not _due(round_row, now):
                 raise ReadinessError("invalid_state")
-            current_version = 0
-        else:
-            if row.status not in {"draft", "saved", "skipped"}:
-                raise ReadinessError("invalid_state")
-            current_version = row.version
-        if command.expected_version != current_version:
-            raise ReadinessError("version_conflict")
+            if command.expected_version != 0:
+                raise ReadinessError("version_conflict")
+        elif row.status not in {"draft", "saved", "skipped"}:
+            raise ReadinessError("invalid_state")
         self._validate(command)
 
         moment = _naive_utc(now)
+        values = {
+            "status": "saved",
+            "overall": command.overall,
+            "expectation": command.expectation,
+            "questions_json": [
+                _serialize_question(question) for question in command.questions
+            ],
+            "went_well": command.went_well,
+            "do_differently": command.do_differently,
+            "notes_text": command.notes_text,
+            "updated_at": moment,
+        }
         if row is None:
             row = CoachInterviewDebrief(
                 interview_round_id=round_id,
                 version=1,
-                status="saved",
+                proposals_json=[],
                 created_at=moment,
-                updated_at=moment,
+                **values,
             )
-            self._session.add(row)
+            try:
+                async with self._session.begin_nested():
+                    self._session.add(row)
+                    await self._session.flush()
+            except IntegrityError as exc:
+                raise ReadinessError("version_conflict") from exc
         else:
-            row.version += 1
-            row.updated_at = moment
-        row.status = "saved"
-        row.overall = command.overall
-        row.expectation = command.expectation
-        row.questions_json = [
-            _serialize_question(question) for question in command.questions
-        ]
-        row.went_well = command.went_well
-        row.do_differently = command.do_differently
-        row.notes_text = command.notes_text
-        row.proposals_json = row.proposals_json or []
-        await self._session.flush()
+            result = await self._session.execute(
+                update(CoachInterviewDebrief)
+                .where(
+                    CoachInterviewDebrief.id == row.id,
+                    CoachInterviewDebrief.version == command.expected_version,
+                )
+                .values(version=command.expected_version + 1, **values)
+            )
+            if (result.rowcount or 0) == 0:
+                raise ReadinessError("version_conflict")
+            await self._session.flush()
+            row = await self._row(round_id)
+            if row is None:
+                raise ReadinessError("version_conflict")
 
         asked = [
             question.text.strip()
             for question in command.questions
             if question.asked
         ]
-        patch = InterviewRoundUpdate(questions_asked=asked)
-        if round_row.status in {"scheduled", "rescheduled"}:
-            patch.status = "completed"
-        await self._repo.update(round_id, patch)
+        existing = list(round_row.questions_asked or [])
+        seen = {" ".join(str(value).casefold().split()) for value in existing}
+        new_asked = []
+        for text in asked:
+            key = " ".join(text.casefold().split())
+            if key in seen:
+                continue
+            seen.add(key)
+            new_asked.append(text)
+        completes = round_row.status in {"scheduled", "rescheduled"}
+        if new_asked or completes:
+            patch = InterviewRoundUpdate()
+            if new_asked:
+                patch.questions_asked = [*existing, *new_asked]
+            if completes:
+                patch.status = "completed"
+            await self._repo.update(round_id, patch)
         return self._read(round_row, row)
 
     async def skip(
@@ -254,6 +283,10 @@ class DebriefService:
             created_at=moment,
             updated_at=moment,
         )
-        self._session.add(row)
-        await self._session.flush()
+        try:
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush()
+        except IntegrityError as exc:
+            raise ReadinessError("version_conflict") from exc
         return self._read(round_row, row)

@@ -178,7 +178,9 @@ async def get_debrief(
     db: AsyncSession = Depends(get_db),
 ) -> DebriefReadResponse:
     result = await DebriefService(db).get_or_due(round_id, datetime.now(UTC))
-    if result is None:
+    if result is None or (
+        not settings.HATCH_COACH_DEBRIEF_ENABLED and result.status == "due"
+    ):
         raise HTTPException(status_code=404, detail="not_found")
     return _debrief_read(result)
 
@@ -252,7 +254,14 @@ async def skip_debrief(
 async def get_readiness_next_actions(
     db: AsyncSession = Depends(get_db),
 ) -> list[ReadinessNextActionRead]:
+    if not settings.HATCH_COACH_DEBRIEF_ENABLED:
+        return []
     return [
         ReadinessNextActionRead(**item)
         for item in await debrief_next_actions(db, datetime.now(UTC))
     ]
+
+
+@router.get("/display-timezone")
+async def get_display_timezone() -> dict[str, str | None]:
+    return {"display_timezone": settings.HATCH_DISPLAY_TIMEZONE}

@@ -144,6 +144,104 @@ async def test_questions_json_item_shape(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_save_merges_asked_questions_into_round(
+    db_session: AsyncSession,
+) -> None:
+    await _seed(db_session)
+    round_row = await db_session.get(InterviewRound, "round-1")
+    round_row.questions_asked = ["Existing question"]
+    await db_session.flush()
+
+    service = DebriefService(db_session)
+    due = await service.get_or_due("round-1", NOW)
+    assert due is not None
+    saved = await service.save(
+        "round-1",
+        SaveDebriefCommand(
+            expected_version=due.version,
+            overall=4,
+            questions=[
+                _question(0, "A"),
+                _question(2, "existing  QUESTION"),
+            ],
+        ),
+        NOW,
+    )
+    await db_session.flush()
+    db_session.expire_all()
+    round_row = await db_session.get(InterviewRound, "round-1")
+
+    assert round_row.questions_asked == ["Existing question", "A"]
+
+    await service.save(
+        "round-1",
+        SaveDebriefCommand(
+            expected_version=saved.version,
+            overall=4,
+            questions=[],
+        ),
+        NOW,
+    )
+    await db_session.flush()
+    db_session.expire_all()
+    round_row = await db_session.get(InterviewRound, "round-1")
+
+    assert round_row.questions_asked == ["Existing question", "A"]
+
+
+@pytest.mark.asyncio
+async def test_stale_edit_is_a_version_conflict(db_session: AsyncSession) -> None:
+    await _seed(db_session)
+    service = DebriefService(db_session)
+    due = await service.get_or_due("round-1", NOW)
+    assert due is not None
+    await service.save(
+        "round-1",
+        SaveDebriefCommand(expected_version=due.version, overall=4),
+        NOW,
+    )
+    await db_session.flush()
+
+    with pytest.raises(ReadinessError) as conflict:
+        await service.save(
+            "round-1",
+            SaveDebriefCommand(expected_version=due.version, overall=5),
+            NOW,
+        )
+
+    assert conflict.value.code == "version_conflict"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_save_is_a_version_conflict(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(db_session)
+    service = DebriefService(db_session)
+    due = await service.get_or_due("round-1", NOW)
+    assert due is not None
+    await service.save(
+        "round-1",
+        SaveDebriefCommand(expected_version=due.version, overall=4),
+        NOW,
+    )
+    await db_session.flush()
+
+    async def no_row(_round_id: str):
+        return None
+
+    monkeypatch.setattr(service, "_row", no_row)
+    with pytest.raises(ReadinessError) as conflict:
+        await service.save(
+            "round-1",
+            SaveDebriefCommand(expected_version=0, overall=5),
+            NOW,
+        )
+
+    assert conflict.value.code == "version_conflict"
+
+
+@pytest.mark.asyncio
 async def test_soft_deleted_application_never_due(db_session: AsyncSession) -> None:
     await _seed(db_session, active=False)
 

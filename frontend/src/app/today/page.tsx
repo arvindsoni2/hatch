@@ -11,6 +11,7 @@ import type {
 } from "@/lib/api";
 import { serverApiFetch } from "@/lib/server-api";
 import type { ReadinessNextAction } from "@/lib/coachReadinessApi";
+import { parseInterviewTime } from "@/lib/formatInterviewTime";
 import { TodayPageClient } from "./TodayPageClient";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 
@@ -86,7 +87,7 @@ export default async function TodayPage() {
     serverApiFetch<FollowUp[]>("/api/interviews/follow-ups/overdue"),
     serverApiFetch<AgentPerformance>("/api/analytics/agent-performance"),
     serverApiFetch<InterviewRound[]>("/api/interviews/upcoming?days=14"),
-    serverApiFetch<ReadinessNextAction[]>("/api/coach/readiness/next-actions"),
+    serverApiFetch<ReadinessNextAction[]>("/api/coach/readiness/next-actions").catch(() => []),
   ]);
 
   let setupStatus: SetupStatus | null = null;
@@ -101,7 +102,7 @@ export default async function TodayPage() {
   const next = upcomingInterviews[0] ?? null;
   if (next?.scheduled_at) {
     const daysUntil = Math.ceil(
-      (new Date(next.scheduled_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      (parseInterviewTime(next.scheduled_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
     );
     if (daysUntil >= 0) {
       let title = "Interview";

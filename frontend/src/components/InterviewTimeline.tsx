@@ -5,6 +5,7 @@ import { Phone, Code2, Users, Presentation, CheckCircle2, Clock, CalendarPlus, L
 import { cn } from "@/lib/utils";
 import { downloadInterviewIcs } from "@/lib/api";
 import { formatInterviewTime } from "@/lib/formatInterviewTime";
+import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
 import { DebriefForm } from "@/components/coach/readiness/DebriefForm";
 import type { InterviewRound } from "@/lib/api";
 
@@ -64,6 +65,7 @@ function IcsButton({ interviewId }: { interviewId: string }) {
 }
 
 export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
+  const timeZone = useDisplayTimeZone();
   if (interviews.length === 0) {
     return (
       <p className="text-sm text-slate-400 py-4 text-center">
@@ -114,7 +116,7 @@ export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
               {round.scheduled_at && (
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-xs text-slate-500">
-                    {formatInterviewTime(round.scheduled_at)}
+                    {formatInterviewTime(round.scheduled_at, timeZone)}
                     {round.duration_minutes != null && ` · ${round.duration_minutes} min`}
                     {round.location && ` · ${round.location}`}
                   </p>
