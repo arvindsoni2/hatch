@@ -122,7 +122,7 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
       setVersion(saved.version);
       setQuestions(saved.questions);
       setSavedAck(
-        `Saved. ${questions.filter((item) => item.asked).length} questions added to this round.`,
+        `Saved. ${saved.questions_added} questions added to this round.`,
       );
     } catch (failure) {
       const status = (failure as { status?: number }).status;
@@ -205,7 +205,7 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
                   {question.asked ? (
                     <div className="ml-6 mt-2 space-y-2">
                       <div>
-                        <span className="mr-2 text-xs text-[var(--text-dim)]">How did it go?</span>
+                        <span className="mr-2 text-xs text-[var(--text-dim)]">How did you answer?</span>
                         {[1, 2, 3, 4, 5].map((value) => (
                           <button
                             key={value}

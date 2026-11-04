@@ -52,6 +52,7 @@ const due: DebriefRead = {
   went_well: null,
   do_differently: null,
   notes_text: null,
+  questions_added: 0,
 };
 
 describe("DebriefForm", () => {
@@ -108,7 +109,7 @@ describe("DebriefForm", () => {
     render(<DebriefForm roundId="round-1" />);
 
     await user.click(await screen.findByRole("checkbox", { name: /Tell me about a budget/ }));
-    expect(screen.getAllByText("How did it go?").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("How did you answer?").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Story you used")).toBeVisible();
     expect(screen.getByLabelText("Note")).toHaveAttribute(
       "placeholder",

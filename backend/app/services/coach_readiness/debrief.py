@@ -1,6 +1,7 @@
 """Commands and reads for real-interview debriefs (P2)."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -211,9 +212,8 @@ class DebriefService:
                 **values,
             )
             try:
-                async with self._session.begin_nested():
-                    self._session.add(row)
-                    await self._session.flush()
+                self._session.add(row)
+                await self._session.flush()
             except IntegrityError as exc:
                 raise ReadinessError("version_conflict") from exc
         else:
@@ -254,7 +254,7 @@ class DebriefService:
             if completes:
                 patch.status = "completed"
             await self._repo.update(round_id, patch)
-        return self._read(round_row, row)
+        return replace(self._read(round_row, row), questions_added=len(new_asked))
 
     async def skip(
         self,
@@ -284,9 +284,8 @@ class DebriefService:
             updated_at=moment,
         )
         try:
-            async with self._session.begin_nested():
-                self._session.add(row)
-                await self._session.flush()
+            self._session.add(row)
+            await self._session.flush()
         except IntegrityError as exc:
             raise ReadinessError("version_conflict") from exc
         return self._read(round_row, row)

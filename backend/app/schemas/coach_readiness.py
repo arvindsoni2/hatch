@@ -115,6 +115,7 @@ class DebriefReadResponse(BaseModel):
     went_well: str | None = None
     do_differently: str | None = None
     notes_text: str | None = None
+    questions_added: int = 0
 
 
 class ReadinessNextActionRead(BaseModel):

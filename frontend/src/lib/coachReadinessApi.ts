@@ -117,6 +117,7 @@ export interface DebriefRead {
   went_well: string | null;
   do_differently: string | null;
   notes_text: string | null;
+  questions_added: number;
 }
 
 export interface SaveDebriefInput {

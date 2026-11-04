@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import settings
+from app.database import Base, create_sqlite_engine
 from app.models.application import Application, InterviewRound
 from app.models.coach_readiness import CoachInterviewDebrief
 from app.services.coach_readiness.contracts import (
@@ -170,7 +171,7 @@ async def test_save_merges_asked_questions_into_round(
     await db_session.flush()
     db_session.expire_all()
     round_row = await db_session.get(InterviewRound, "round-1")
-
+    assert saved.questions_added == 1
     assert round_row.questions_asked == ["Existing question", "A"]
 
     await service.save(
@@ -212,33 +213,94 @@ async def test_stale_edit_is_a_version_conflict(db_session: AsyncSession) -> Non
     assert conflict.value.code == "version_conflict"
 
 
+async def _file_factory(tmp_path):
+    engine = create_sqlite_engine(f"sqlite+aiosqlite:///{tmp_path / 'debrief.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    return engine, async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def _seed_committed(factory) -> None:
+    async with factory() as session:
+        await _seed(session)
+        await session.commit()
+
+
 @pytest.mark.asyncio
-async def test_concurrent_first_save_is_a_version_conflict(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    await _seed(db_session)
-    service = DebriefService(db_session)
-    due = await service.get_or_due("round-1", NOW)
-    assert due is not None
-    await service.save(
-        "round-1",
-        SaveDebriefCommand(expected_version=due.version, overall=4),
-        NOW,
-    )
-    await db_session.flush()
+async def test_concurrent_first_save_is_a_version_conflict(tmp_path) -> None:
+    engine, factory = await _file_factory(tmp_path)
+    try:
+        await _seed_committed(factory)
+        async with factory() as first, factory() as second:
+            due = await DebriefService(first).get_or_due("round-1", NOW)
+            assert due is not None
+            assert await DebriefService(second).get_or_due("round-1", NOW) is not None
+            await DebriefService(first).save(
+                "round-1",
+                SaveDebriefCommand(expected_version=due.version, overall=4),
+                NOW,
+            )
+            await first.commit()
 
-    async def no_row(_round_id: str):
-        return None
+            with pytest.raises(ReadinessError) as conflict:
+                await DebriefService(second).save(
+                    "round-1",
+                    SaveDebriefCommand(expected_version=0, overall=5),
+                    NOW,
+                )
+            assert conflict.value.code == "version_conflict"
+    finally:
+        await engine.dispose()
 
-    monkeypatch.setattr(service, "_row", no_row)
-    with pytest.raises(ReadinessError) as conflict:
-        await service.save(
-            "round-1",
-            SaveDebriefCommand(expected_version=0, overall=5),
-            NOW,
-        )
 
-    assert conflict.value.code == "version_conflict"
+@pytest.mark.asyncio
+async def test_save_rolls_back_debrief_and_round_mirror(tmp_path) -> None:
+    engine, factory = await _file_factory(tmp_path)
+    try:
+        await _seed_committed(factory)
+        async with factory() as session:
+            service = DebriefService(session)
+            due = await service.get_or_due("round-1", NOW)
+            assert due is not None
+            await service.save(
+                "round-1",
+                SaveDebriefCommand(
+                    expected_version=due.version,
+                    overall=4,
+                    questions=[_question(0, "A")],
+                ),
+                NOW,
+            )
+            await session.rollback()
+
+        async with factory() as fresh:
+            count = await fresh.scalar(text("SELECT count(*) FROM coach_interview_debriefs"))
+            round_row = await fresh.get(InterviewRound, "round-1")
+            assert count == 0
+            assert round_row is not None
+            assert round_row.status == "scheduled"
+            assert round_row.questions_asked in (None, [])
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_skip_rolls_back(tmp_path) -> None:
+    engine, factory = await _file_factory(tmp_path)
+    try:
+        await _seed_committed(factory)
+        async with factory() as session:
+            service = DebriefService(session)
+            due = await service.get_or_due("round-1", NOW)
+            assert due is not None
+            await service.skip("round-1", due.version, NOW)
+            await session.rollback()
+
+        async with factory() as fresh:
+            count = await fresh.scalar(text("SELECT count(*) FROM coach_interview_debriefs"))
+            assert count == 0
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio

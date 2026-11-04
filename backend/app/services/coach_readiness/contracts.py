@@ -107,6 +107,7 @@ class DebriefRead:
     round_status: str | None = None
     scheduled_at: datetime | None = None
     duration_minutes: int | None = None
+    questions_added: int = 0
 
 
 class ReadinessError(Exception):

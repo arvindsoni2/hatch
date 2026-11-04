@@ -97,6 +97,7 @@ def _debrief_read(result: DebriefRead) -> DebriefReadResponse:
         went_well=result.went_well,
         do_differently=result.do_differently,
         notes_text=result.notes_text,
+        questions_added=result.questions_added,
     )
 
 

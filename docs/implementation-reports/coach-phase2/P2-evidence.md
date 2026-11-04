@@ -56,9 +56,14 @@ Approved extra files / deviations:
 
 Owner decisions (4 Nov 2026):
 
-- D1 (M1) Approved extra files: `frontend/src/components/CalendarView.tsx` and `frontend/src/app/today/page.tsx` (daysUntil) use the shared UTC parsing and display helper.
-- D2 (M2) The backend serves the display timezone at runtime. New read-only route `GET /api/coach/readiness/display-timezone` → `{"display_timezone": "<IANA name>" | null}` (owner-approved addition to spec §12). No `NEXT_PUBLIC_` variable.
-- D3 (L1) The debrief save MERGES asked questions into `InterviewRound.questions_asked`; it never replaces them.
+```text
+D1 (M1) Approved extra files: frontend/src/components/CalendarView.tsx and frontend/src/app/today/page.tsx
+    (daysUntil) use the shared UTC parsing and display helper.
+D2 (M2) The backend serves the display timezone at runtime. New read-only route
+    GET /api/coach/readiness/display-timezone -> {"display_timezone": "<IANA name>" | null}
+    (owner-approved addition to spec §12). No NEXT_PUBLIC_ variable.
+D3 (L1) The debrief save MERGES asked questions into InterviewRound.questions_asked; it never replaces them.
+```
 
 RED → GREEN:
 
@@ -123,6 +128,28 @@ Repair cycle 1:
 - L1 (D3) — save merges asked texts into the existing round questions, case-insensitive with collapsed whitespace, never removes unticked questions, and skips the patch when nothing new is added. Covered in `test_save_merges_asked_questions_into_round`.
 - L2 — only the Today readiness fetch gets `.catch(() => [])`.
 - L3 — covered by the M2 tests and the display-timezone route test.
+
+Repair cycle 2:
+
+- H3 — removed `begin_nested` from the first save and skip paths; they now add/flush and convert `IntegrityError` to `version_conflict`. Added file-backed rollback tests proving the debrief row and round mirror both disappear after rollback (`test_save_rolls_back_debrief_and_round_mirror`, `test_skip_rolls_back`).
+- L4 — replaced the monkeypatched concurrency test with two independent sessions on a file-backed engine: both read version 0, the first saves and commits, the second saves with version 0 and gets `version_conflict` (`test_concurrent_first_save_is_a_version_conflict`).
+- L5 — the per-question label is “How did you answer?”.
+- L6 — the backend returns `questions_added` from the merge, and the saved line uses it.
+- L7 — owner decisions D1–D3 are quoted verbatim above.
+
+Repair-cycle verification:
+
+```text
+P2 protected + own tests                 # 22 passed
+tests/runtime                            # 471 passed, 1 skipped
+tests/test_routers tests/test_services tests/integration  # 1982 passed
+ruff check <changed backend files>       # All checks passed
+alembic heads                            # f57c6504bbca (head)
+Vitest P2 files                          # 11 passed
+Vitest full                              # 678 passed
+npm run type-check                       # exit 0
+npm run build                            # exit 0
+```
 
 Model calls in tests: fake / live: none. P2 is deterministic and makes no model call.
 
