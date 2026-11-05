@@ -10,6 +10,8 @@ import type {
   Application,
 } from "@/lib/api";
 import { serverApiFetch } from "@/lib/server-api";
+import type { ReadinessNextAction } from "@/lib/coachReadinessApi";
+import { parseInterviewTime } from "@/lib/formatInterviewTime";
 import { TodayPageClient } from "./TodayPageClient";
 import type { HatchJob } from "@/components/hatch/screens/TodayScreen";
 
@@ -76,7 +78,7 @@ function watchedCompanyToHatchJob(a: ApplicationListItem): HatchJob {
 }
 
 export default async function TodayPage() {
-  const [approvals, readyToApplyPage, discoveredPage, pipeline, profile, overdueFollowUps, agentPerf, upcomingInterviews] = await Promise.all([
+  const [approvals, readyToApplyPage, discoveredPage, pipeline, profile, overdueFollowUps, agentPerf, upcomingInterviews, readinessActions] = await Promise.all([
     serverApiFetch<PendingApproval[]>("/api/agents/approvals/pending"),
     serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=ready_to_apply&skip=0&limit=20"),
     serverApiFetch<PaginatedResponse<ApplicationListItem>>("/api/applications?status=discovered&skip=0&limit=50"),
@@ -85,6 +87,7 @@ export default async function TodayPage() {
     serverApiFetch<FollowUp[]>("/api/interviews/follow-ups/overdue"),
     serverApiFetch<AgentPerformance>("/api/analytics/agent-performance"),
     serverApiFetch<InterviewRound[]>("/api/interviews/upcoming?days=14"),
+    serverApiFetch<ReadinessNextAction[]>("/api/coach/readiness/next-actions").catch(() => []),
   ]);
 
   let setupStatus: SetupStatus | null = null;
@@ -99,7 +102,7 @@ export default async function TodayPage() {
   const next = upcomingInterviews[0] ?? null;
   if (next?.scheduled_at) {
     const daysUntil = Math.ceil(
-      (new Date(next.scheduled_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      (parseInterviewTime(next.scheduled_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
     );
     if (daysUntil >= 0) {
       let title = "Interview";
@@ -146,6 +149,7 @@ export default async function TodayPage() {
       transit={transit}
       profileName={profile?.candidate_name}
       followUpCount={overdueFollowUps.length}
+      readinessActions={readinessActions}
       agentPerf={agentPerf}
       upcomingInterview={upcomingInterview}
       aiSetupIncomplete={setupStatus?.ai ? !setupStatus.ai.healthy : false}

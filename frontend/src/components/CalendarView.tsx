@@ -16,6 +16,8 @@ import {
 import { ChevronLeft, ChevronRight, CalendarPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { downloadInterviewIcs } from "@/lib/api";
+import { formatInterviewClock, parseInterviewTime } from "@/lib/formatInterviewTime";
+import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
 import type { InterviewRound, FollowUp } from "@/lib/api";
 
 interface CalendarViewProps {
@@ -24,6 +26,7 @@ interface CalendarViewProps {
 }
 
 export function CalendarView({ interviews, followUps }: CalendarViewProps) {
+  const timeZone = useDisplayTimeZone();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
@@ -38,7 +41,7 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
 
   const getInterviewsForDay = (day: Date) =>
     interviews.filter(
-      (i) => i.scheduled_at && isSameDay(new Date(i.scheduled_at), day),
+      (i) => i.scheduled_at && isSameDay(parseInterviewTime(i.scheduled_at), day),
     );
 
   const getFollowUpsForDay = (day: Date) =>
@@ -160,7 +163,7 @@ export function CalendarView({ interviews, followUps }: CalendarViewProps) {
                 </span>
                 {i.scheduled_at && (
                   <span className="text-[var(--text-muted)]">
-                    {format(new Date(i.scheduled_at), "HH:mm")}
+                    {formatInterviewClock(i.scheduled_at, timeZone)}
                   </span>
                 )}
                 <button

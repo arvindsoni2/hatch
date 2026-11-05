@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -90,6 +91,17 @@ class Settings(BaseSettings):
     HATCH_RUNTIME_COACH_MODE: RuntimeMode = RuntimeMode.LEGACY
     HATCH_RUNTIME_CAPTURE_POLICY: CapturePolicy = CapturePolicy.METADATA_ONLY
 
+    @field_validator("HATCH_DISPLAY_TIMEZONE")
+    @classmethod
+    def validate_display_timezone(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("HATCH_DISPLAY_TIMEZONE must be a valid IANA name") from exc
+        return value
+
     @field_validator("HATCH_RUNTIME_CAPTURE_POLICY")
     @classmethod
     def _runtime_capture_policy_is_normal_deployment_safe(
@@ -153,6 +165,10 @@ class Settings(BaseSettings):
     HATCH_COACH_STORY_COVERAGE_ENABLED: bool = False
     HATCH_COACH_COVERAGE_COVERED_MIN: float = Field(default=0.67, ge=0, le=1)
     HATCH_COACH_COVERAGE_THIN_MIN: float = Field(default=0.34, ge=0, le=1)
+
+    # Phase 2 real-interview debrief (P2).
+    HATCH_COACH_DEBRIEF_ENABLED: bool = False
+    HATCH_DISPLAY_TIMEZONE: str | None = None
 
     # Conversational Coach browser and processing policy.
     HATCH_COACH_MEDIA_ROOT: Path = Path("./data/coach-media")
