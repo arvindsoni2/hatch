@@ -99,3 +99,62 @@ Not run / known limits:
 - Full migration chain from empty SQLite remains blocked by the pre-existing `c30577e861e2` revision (P2 note); P3 adds no migration.
 
 Ready for review: yes — code, catalogue, policy, tier map, compose pin and Settings surface are complete; the owner runs the bench and fills the measured cells before the P3 merge decision.
+
+## D18 follow-up (5 Nov 2026)
+
+Merged `main` at `1d8c583` (no rebase) before this work, so the spec's D18 candidate families and the plan's
+revised P3 tests are the basis. The spec, plan and HTML page were not edited.
+
+Changes on top of the first P3 commit:
+
+- `backend/app/config/model_discovery_policy.json` — publishers `prism-ml`, `LiquidAI`, `google`, `Qwen` (matched
+  case-insensitively); families `bonsai`, `lfm2`, `gemma-4`, `qwen3.8`; `lfm1.0` approved; `bonsai_quantizations`
+  holds `Q2_0`, `Q1_0`.
+- `backend/app/services/model_discovery.py` — publisher allowlist compared lower-case; family match prefers the
+  longest family (`qwen3.8` no longer collapses to `qwen3`); `_license` honours `cardData.license_name` (Liquid AI
+  cards say `license: other` + `license_name: lfm1.0`); quantisation matching is whole-token, and only the
+  `bonsai` family adds `Q1_0`/`Q2_0`, so fork-only `PQ2_0`/`PTQ1_0` never match.
+- `backend/app/config/model_catalog.json` — 12 new `candidate` entries (T: Gemma 4 E2B, Bonsai 1.7B, LFM2.5
+  1.2B; S: Gemma 4 E4B, Bonsai 4B, Bonsai 8B, LFM2.5 8B-A1B; L: Gemma 4 26B-A4B, Gemma 4 12B,
+  Ternary-Bonsai-2 27B Q2_0, LFM2 24B-A2B, Qwen3.8 27B), each with the real revision and file sha256 read from
+  the Hugging Face tree API. Incumbents stay `promoted`; `model_tiers.json` is unchanged.
+- Licence findings: Gemma 4 cards link to Google's licence page, whose canonical URL is
+  `https://ai.google.dev/gemma/apache_2` and whose body is the Apache License 2.0 text — accepted. Liquid AI
+  cards use `lfm1.0` — accepted. Bonsai/Qwen3.8 are Apache-2.0. No licence skip.
+- Skipped: Bonsai `PQ2_0`/`PTQ1_0` (PrismML fork only, K3); the upstream `Q2_0` file is catalogued. No §9.1 name
+  lacked a GGUF.
+- Pinned build `server-b12124` is ≥ `b11555` (the Ternary-Bonsai-2 `Q2_0` floor) as well as ≥ `b10828` (Spark).
+
+Tests added or extended:
+
+- `test_policy_accepts_spark_and_minicpm_families_only_from_allowlisted_publishers` — now also asserts the D18
+  families from `prism-ml`, `LiquidAI`, `google` and `Qwen`, with a non-allowlisted publisher rejected.
+- `test_bonsai_accepts_upstream_1_and_2_bit_quants_only` — `Q1_0`/`Q2_0` accepted for Bonsai; `PQ2_0`/`PTQ1_0`
+  refused; `Q1_0` refused for a non-Bonsai family.
+- `test_unapproved_licence_rejected` — `cc-by-nc-4.0` refused, `lfm1.0` accepted.
+- `test_catalog_entries_have_revision_sha_tiers_and_status` — asserts all 12 D18 entries, their tiers, status and
+  approved licences.
+
+Follow-up gates:
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_model_discovery.py \
+    tests/test_services/test_model_tiers.py tests/test_services/test_ai_setup.py
+22 passed
+
+$ python -m pytest -q --no-cov tests/test_services tests/test_routers
+1894 passed, 15 warnings in 267.70s
+
+$ python -m pytest -q --no-cov tests/runtime
+471 passed, 1 skipped in 132.40s
+
+$ npx vitest run src/components/settings/__tests__/ModelTierTable.test.tsx \
+    src/__tests__/components/SettingsAIPage.test.tsx
+4 passed (2 files)
+
+$ ruff check app tests
+All checks passed
+
+$ npm run type-check
+exit 0
+```

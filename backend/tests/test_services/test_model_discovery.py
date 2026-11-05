@@ -102,12 +102,22 @@ def _discovery_client(listing: list[dict], details: dict[str, dict]) -> httpx.As
     return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://huggingface.co")
 
 
-def _repo(repo_id: str, license_name: str, pipeline_tag: str, files: list[str]) -> dict:
+def _repo(
+    repo_id: str,
+    license_name: str,
+    pipeline_tag: str,
+    files: list[str],
+    *,
+    licence_key: str | None = None,
+) -> dict:
+    card = {"license": licence_key or license_name}
+    if licence_key:
+        card["license_name"] = license_name
     return {
         "id": repo_id,
         "sha": "a" * 40,
         "pipeline_tag": pipeline_tag,
-        "cardData": {"license": license_name},
+        "cardData": card,
         "siblings": [
             {"rfilename": name, "size": 1_000_000_000, "lfs": {"sha256": "b" * 64}}
             for name in files
@@ -130,9 +140,25 @@ async def test_policy_accepts_spark_and_minicpm_families_only_from_allowlisted_p
             "openbmb/MiniCPM5-2B-GGUF", "apache-2.0", "text-generation",
             ["MiniCPM5-2B-Q4_K_M.gguf"],
         ),
-        "evilcorp/Spark-X2.6-4B-GGUF": _repo(
-            "evilcorp/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
-            ["Spark-X2.6-4B-Q4_K_M.gguf"],
+        "prism-ml/Bonsai-1.7B-gguf": _repo(
+            "prism-ml/Bonsai-1.7B-gguf", "apache-2.0", "text-generation",
+            ["Bonsai-1.7B-Q1_0.gguf"],
+        ),
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF": _repo(
+            "LiquidAI/LFM2.5-1.2B-Instruct-GGUF", "lfm1.0", "text-generation",
+            ["LFM2.5-1.2B-Instruct-Q4_K_M.gguf"], licence_key="other",
+        ),
+        "google/gemma-4-E2B-it-GGUF": _repo(
+            "google/gemma-4-E2B-it-GGUF", "apache-2.0", "image-text-to-text",
+            ["gemma-4-E2B-it-Q4_K_M.gguf"],
+        ),
+        "Qwen/Qwen3.8-4B-GGUF": _repo(
+            "Qwen/Qwen3.8-4B-GGUF", "apache-2.0", "text-generation",
+            ["Qwen3.8-4B-Q4_K_M.gguf"],
+        ),
+        "evilcorp/Bonsai-1.7B-gguf": _repo(
+            "evilcorp/Bonsai-1.7B-gguf", "apache-2.0", "text-generation",
+            ["Bonsai-1.7B-Q1_0.gguf"],
         ),
     }
 
@@ -143,6 +169,10 @@ async def test_policy_accepts_spark_and_minicpm_families_only_from_allowlisted_p
     assert {item.repo_id for item in result.models} == {
         "XHToken/Spark-X2.6-4B-GGUF",
         "openbmb/MiniCPM5-2B-GGUF",
+        "prism-ml/Bonsai-1.7B-gguf",
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
+        "google/gemma-4-E2B-it-GGUF",
+        "Qwen/Qwen3.8-4B-GGUF",
     }
     assert result.rejected_counts["publisher"] == 1
 
@@ -178,12 +208,12 @@ async def test_unapproved_licence_rejected(
 ) -> None:
     monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
     rejected = _repo(
-        "XHToken/Spark-X2.6-4B-Gemma-GGUF", "gemma", "text-generation",
+        "XHToken/Spark-X2.6-4B-NC-GGUF", "cc-by-nc-4.0", "text-generation",
         ["Spark-X2.6-4B-Q4_K_M.gguf"],
     )
     accepted = _repo(
-        "XHToken/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
-        ["Spark-X2.6-4B-Q4_K_M.gguf"],
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF", "lfm1.0", "text-generation",
+        ["LFM2.5-1.2B-Instruct-Q4_K_M.gguf"], licence_key="other",
     )
 
     result = await discover_models(
@@ -196,3 +226,40 @@ async def test_unapproved_licence_rejected(
 
     assert [item.repo_id for item in result.models] == [accepted["id"]]
     assert result.rejected_counts["license"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bonsai_accepts_upstream_1_and_2_bit_quants_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    bonsai = _repo(
+        "prism-ml/Ternary-Bonsai-2-27B-gguf", "apache-2.0", "text-generation",
+        [
+            "Ternary-Bonsai-2-27B-Q1_0.gguf",
+            "Ternary-Bonsai-2-27B-Q2_0.gguf",
+            "Ternary-Bonsai-2-27B-PQ2_0.gguf",
+            "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+        ],
+    )
+    lfm = _repo(
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF", "lfm1.0", "text-generation",
+        ["LFM2.5-1.2B-Instruct-Q1_0.gguf", "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"],
+        licence_key="other",
+    )
+
+    result = await discover_models(
+        _probe(),
+        client=_discovery_client([bonsai, lfm], {bonsai["id"]: bonsai, lfm["id"]: lfm}),
+    )
+
+    assert {
+        item.filename for item in result.models if item.repo_id == bonsai["id"]
+    } == {
+        "Ternary-Bonsai-2-27B-Q1_0.gguf",
+        "Ternary-Bonsai-2-27B-Q2_0.gguf",
+    }
+    assert [item.filename for item in result.models if item.repo_id == lfm["id"]] == [
+        "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    ]

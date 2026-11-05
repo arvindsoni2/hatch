@@ -66,18 +66,33 @@ def _utcnow() -> datetime:
 
 def _family(repo_id: str, families: list[str]) -> str | None:
     lowered = repo_id.lower()
-    return next((family for family in families if family in lowered), None)
+    matches = [family for family in families if family.lower() in lowered]
+    return max(matches, key=len) if matches else None
 
 
-def _quantization(filename: str, quantizations: list[str]) -> str | None:
-    upper = filename.upper()
-    return next((value for value in quantizations if value.upper() in upper), None)
+def _quantization(
+    filename: str, quantizations: list[str], *, family: str | None = None
+) -> str | None:
+    allowed = list(quantizations)
+    if family == "bonsai":
+        allowed += _policy().get("bonsai_quantizations", [])
+    for value in allowed:
+        # Whole-token match: fork-only PQ2_0/PTQ1_0 must not match Q2_0/Q1_0.
+        if re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])", filename, re.IGNORECASE
+        ):
+            return value
+    return None
 
 
 def _license(details: dict[str, Any]) -> str:
     card = details.get("cardData")
-    if isinstance(card, dict) and isinstance(card.get("license"), str):
-        return card["license"].lower()
+    if isinstance(card, dict):
+        name = card.get("license_name")
+        if isinstance(name, str) and name:
+            return name.lower()
+        if isinstance(card.get("license"), str):
+            return card["license"].lower()
     for tag in details.get("tags") or []:
         if isinstance(tag, str) and tag.startswith("license:"):
             return tag.split(":", 1)[1].lower()
@@ -97,7 +112,7 @@ def _normalized_file(
     lfs = sibling.get("lfs") if isinstance(sibling.get("lfs"), dict) else {}
     size = sibling.get("size") or lfs.get("size")
     sha256 = str(lfs.get("sha256") or "")
-    quantization = _quantization(filename, policy["quantizations"])
+    quantization = _quantization(filename, policy["quantizations"], family=family)
     if not (
         "mmproj" not in filename.lower()
         and filename.lower().endswith(".gguf")
@@ -203,7 +218,11 @@ def _fallback(probe: dict[str, Any], error: str | None) -> ModelDiscoveryResult:
             download_size_gb=float(item["download_size_gb"]),
             disk_required_gb=float(item["disk_required_gb"]),
             min_ram_gb=int(item["min_ram_gb"]),
-            quantization=_quantization(item["filename"], _policy()["quantizations"]) or "Q4_K_M",
+            quantization=_quantization(
+                item["filename"],
+                _policy()["quantizations"],
+                family=_family(item["repo_id"], _policy()["approved_families"]),
+            ) or "Q4_K_M",
             license=item["license"],
             download_url=item["download_url_template"].format(
                 source_revision=item["source_revision"]
@@ -251,10 +270,13 @@ async def discover_models(
                     seen_repos.add(repo_id)
                     listing.append(summary)
         models: list[DiscoveredModel] = []
+        approved_publishers = {
+            str(name).lower() for name in policy["approved_publishers"]
+        }
         for summary in listing:
             repo_id = str(summary.get("id") or "")
             publisher = repo_id.split("/", 1)[0].lower()
-            if publisher not in policy["approved_publishers"]:
+            if publisher not in approved_publishers:
                 rejected["publisher"] += 1
                 continue
             family = _family(repo_id, policy["approved_families"])

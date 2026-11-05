@@ -32,6 +32,27 @@ def test_catalog_entries_have_revision_sha_tiers_and_status() -> None:
     assert any(model["status"] == "promoted" for model in catalog)
     assert all(len(model["source_revision"]) == 40 for model in catalog)
     assert all(len(model["sha256"]) == 64 for model in catalog)
+    expected_d18 = {
+        "gemma-4-e2b-q4km-triage": ["T"],
+        "bonsai-1.7b-q1-triage": ["T"],
+        "lfm2.5-1.2b-instruct-q4km-triage": ["T"],
+        "gemma-4-e4b-q4km-primary": ["S"],
+        "bonsai-4b-q1-primary": ["S"],
+        "bonsai-8b-q1-primary": ["S"],
+        "lfm2.5-8b-a1b-q4km-primary": ["S"],
+        "gemma-4-26b-a4b-ud-q4km-deep": ["L"],
+        "gemma-4-12b-q4km-deep": ["L"],
+        "ternary-bonsai-2-27b-q2-deep": ["L"],
+        "lfm2-24b-a2b-q4km-deep": ["L"],
+        "qwen3.8-27b-ud-q4km-deep": ["L"],
+    }
+    by_id = {model["id"]: model for model in catalog}
+    assert {model_id: by_id[model_id]["tiers"] for model_id in expected_d18} == expected_d18
+    assert all(by_id[model_id]["status"] == "candidate" for model_id in expected_d18)
+    assert all(
+        by_id[model_id]["license"] in {"apache-2.0", "mit", "qwen-research", "lfm1.0"}
+        for model_id in expected_d18
+    )
 
 
 def test_tier_map_defaults_to_promoted_incumbents() -> None:

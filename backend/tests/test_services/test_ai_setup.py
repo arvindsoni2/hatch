@@ -11,7 +11,7 @@ from app.services import ai_setup
 def test_catalogue_is_pinned_and_valid() -> None:
     catalogue = ai_setup.load_catalog()
 
-    assert len(catalogue) == 7
+    assert len(catalogue) == 19
     assert {model["role"] for model in catalogue} == {
         "triage",
         "combined_capable_primary",
