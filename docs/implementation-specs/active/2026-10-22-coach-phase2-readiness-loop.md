@@ -4,7 +4,7 @@ document_type: implementation-spec
 status: active
 implementation_status: not-applicable
 applies_to: main
-last_verified: 2026-11-02
+last_verified: 2026-11-05
 approval_status: final-for-implementation (owner, 2026-11-02)
 baseline_commit: b7274a6
 supersedes:
@@ -24,7 +24,7 @@ companions:
 **Delivery:** OpenCode (Go subscription) writes code. Claude Code reviews every PR and writes the failing contract tests first for high-assurance tasks.
 **Normative document:** this file. The plan sequences it; the HTML page only illustrates it. If they disagree, this file wins and the others are corrected.
 
-## 0. Owner decisions (22 Oct and 2 Nov 2026)
+## 0. Owner decisions (22 Oct, 2 Nov and 5 Nov 2026)
 
 | ID | Decision | Consequence |
 |---|---|---|
@@ -45,6 +45,7 @@ companions:
 | D15 | Round times are stored as UTC and shown in a Hatch display timezone that defaults to the browser's (2 Nov 2026) | §7.5 |
 | D16 | Existing domains report source changes through a neutral `source_events` hook and never import `coach_readiness`; every Phase 2 route lives in the readiness router; Today merges readiness actions in the frontend (2 Nov 2026) | §5.1–§5.3, §12 |
 | D17 | Real-interview signals are derived on read from debriefs and ship in P8 (2 Nov 2026) | §7.1.5 |
+| D18 | Recent edge-model families are first-class candidates for every tier: Spark, MiniCPM, Bonsai, Gemma 4, Liquid AI LFM and newer Qwen releases (5 Nov 2026) | Added to the §9.1 bench order and the §9.2 discovery policy; they still pass the §9.4 gate and the dual gate before promotion, and the incumbents stay until one does. The owner approves the LFM Open License v1.0 (`lfm1.0`) for these candidates |
 
 All open questions from the 22 Oct draft and the 2 Nov review are resolved (§17).
 
@@ -713,11 +714,12 @@ The state is stored as `status` on each catalogue entry (§9.2).
 
 | Tier | Route (shared) | Phase 2 tasks | Output cap | Candidates (bench order) |
 |---|---|---|---|---|
-| **T** tiny | `llm-triage` :8081 — also serves job-scoring triage | Debrief note extraction, competency extraction from the job description | 512 tokens | MiniCPM-V-4.7-1B (text-only), MiniCPM5-2B, Qwen3.5-0.8B (incumbent) |
-| **S** small | `llm-primary` :8080 — also serves Phase 1 Coach, CV and cover letter | Explain tips, brief talking points, plan item wording | 600 tokens | Spark-X2.6-4B, Qwen3.5-4B (incumbent), MiniCPM5-2B, phi4-mini |
-| **L** large (optional, off by default) | `llm-deep` :8082 (new, Phase 2 only) | Same as S when the owner opts in for richer wording | 600 tokens | MiniCPM-V-4.7-35B-A3B (MoE, ~3B active); gemma4:12b only if its licence is approved (§9.2) |
+| **T** tiny | `llm-triage` :8081 — also serves job-scoring triage | Debrief note extraction, competency extraction from the job description | 512 tokens | MiniCPM-V-4.7-1B (text-only), MiniCPM5-2B, Gemma 4 E2B (text-only), Bonsai 1.7B, LFM2.5-1.2B-Instruct, Qwen3.5-0.8B (incumbent) |
+| **S** small | `llm-primary` :8080 — also serves Phase 1 Coach, CV and cover letter | Explain tips, brief talking points, plan item wording | 600 tokens | Spark-X2.6-4B, Gemma 4 E4B (text-only), Bonsai 4B, Bonsai 8B, LFM2.5-8B-A1B (MoE, ~1B active), MiniCPM5-2B, phi4-mini, Qwen3.5-4B (incumbent) |
+| **L** large (optional, off by default) | `llm-deep` :8082 (new, Phase 2 only) | Same as S when the owner opts in for richer wording | 600 tokens | MiniCPM-V-4.7-35B-A3B (MoE, ~3B active), Gemma 4 26B-A4B (MoE, ~4B active), Gemma 4 12B, Ternary-Bonsai-2-27B (Q2_0), LFM2-24B-A2B (MoE, ~2B active), Qwen3.8-27B (dense; likely to miss the CPU latency gate, benched for comparison) |
 
 Rules:
+- **Candidate families (D18).** The names in the table are the bench order on 5 Nov 2026, not a closed list. Edge models move fast: a newer release in an allowlisted family (for example a Qwen3.8 model of 4B or less, or a new MiniCPM, Spark, Bonsai, Gemma or LFM revision) enters the catalogue as a `candidate` for the tier its size and RSS fit, and is benched like any other. A name in the table that has no GGUF file on Hugging Face, or a GGUF that the pinned mainline build cannot load, is recorded as skipped with the reason; it is not a P3 failure.
 - **Shared routes, dual gate (D14).** Each llama-server runs one model, so promoting a Tier T or Tier S model changes the model for every feature on that route. A model is promoted for T or S only when it passes **both** the Phase 2 tier gate (§9.4) **and** the existing route's regression bench on the same llama.cpp build: for Tier S, the Phase 1 Coach `acceptance-smoke` profile; for Tier T, the job-scoring triage checks in the representative local-model selection procedure (`docs/operations/REPRESENTATIVE_LOCAL_MODEL_BENCHMARK.md`). The P3 report records both results.
 - Every Tier L task has a Tier S fallback; every Tier S/T task has a deterministic fallback. No feature requires L.
 - **Thinking is off.** Both existing servers run with `--reasoning off`. P3 tests whether a per-request override (`chat_template_kwargs: {"enable_thinking": true}`) takes effect on the pinned build. If it does not, Phase 2 uses thinking off only and the bench measures nothing else. The adapter always strips reasoning text from outputs.
@@ -726,8 +728,10 @@ Rules:
 
 ### 9.2 Runtime and catalogue changes
 
-1. **Pin llama.cpp.** Replace the rolling `ghcr.io/ggml-org/llama.cpp:server` tag with a pinned build ≥ **b10828** (needed for Spark's `spark2_5` architecture). P3 records the exact tag and digest after the bench passes on it.
-2. **Discovery policy** (`model_discovery_policy.json`): add publishers `xhtoken`, `openbmb`; families `spark-x2`, `minicpm`; accept repos in an allowlisted family without the "instruct"/"chat" marker; accept `image-text-to-text` for allowlisted families when used text-only (no mmproj download). `approved_licenses` stays as it is: Spark-X2.6, MiniCPM-V 4.7 and MiniCPM5 are Apache-2.0 and phi4-mini is MIT (P3 re-checks each model card). A model whose licence is not on the list (for example a Gemma licence) is not benched unless the owner adds the licence first.
+1. **Pin llama.cpp.** Replace the rolling `ghcr.io/ggml-org/llama.cpp:server` tag with a pinned build ≥ **b10828** (needed for Spark's `spark2_5` architecture) and at least the build each benched candidate's model card names (Ternary-Bonsai-2 `Q2_0` needs upstream ≥ b11555). P3 records the exact tag and digest after the bench passes on it.
+2. **Discovery policy** (`model_discovery_policy.json`): add publishers `xhtoken`, `openbmb`, `prism-ml`, `LiquidAI`, `google`, `Qwen`; families `spark-x2`, `minicpm`, `bonsai`, `lfm2`, `gemma-4`, `qwen3.8`; accept repos in an allowlisted family without the "instruct"/"chat" marker; accept `image-text-to-text` for allowlisted families when used text-only (no mmproj download). Publisher matching is case-insensitive.
+   - **Quantisations.** Keep the existing list for every family. For `bonsai` only, also accept the upstream llama.cpp types `Q1_0` and `Q2_0`. Never accept a type that only a fork provides (`PQ2_0`, `PTQ1_0`): the bench uses mainline llama.cpp only (K3).
+   - **Licences.** `approved_licenses` keeps `apache-2.0`, `mit` and `qwen-research`, and adds `lfm1.0` (owner, 5 Nov 2026; D18). Spark-X2.6, MiniCPM-V 4.7, MiniCPM5, Bonsai and Qwen3.5 are Apache-2.0, and phi4-mini is MIT. Gemma 4 is labelled Apache-2.0 on its model card, but the card links to Google's own Gemma 4 licence page: P3 reads that page and accepts Gemma 4 only if the terms are plain Apache-2.0; otherwise the owner decides. Liquid AI models use the LFM Open License v1.0 (`lfm1.0`), now on the list. P3 re-checks every model card and records the licence it found; a model whose licence is not on the list is skipped with the reason.
 3. **Pinned catalogue** (`model_catalog.json`): one entry per candidate with `repo_id`, `filename`, `source_revision`, `sha256`, `download_size_gb`, `min_ram_gb`, `recommended_ram_gb`, `license`, and two new fields: `tiers: ["T"|"S"|"L"]` and `status: "candidate"|"qualified"|"promoted"|"rejected"|"retired"`. Existing entries get `status: "promoted"` for their current role. Revisions and hashes are recorded in P3 from the actual files; none are pre-filled in this spec.
 4. **Tier map** `config/model_tiers.json`: `{tier: {route, model_id, thinking, max_output_tokens, deadline_s}}`. Startup validation rejects any `model_id` whose catalogue `status` is not `promoted`. Exposed read-only in Settings.
 5. **Optional `llm-deep`**: a third service in `docker-compose.local-ai.yml` under a `deep` profile, same image, port 8082, started only when the owner enables Tier L in Settings and RAM ≥ the model's `recommended_ram_gb`.
@@ -994,7 +998,7 @@ Content canary: tests insert a unique string into synthetic transcripts and stor
 |---|---|---|
 | K1 | Coarser grouping compares different difficulties | Improvement guard (§7.1.4); difficulty shown on every supporting session |
 | K2 | Spark needs llama.cpp ≥ b10828; a newer build could change Phase 1 model behaviour | Pin build in P3; the dual gate (§9.1) reruns the Phase 1 `acceptance-smoke` profile and triage checks on the new build before switching |
-| K3 | MiniCPM-V-4.7-35B-A3B's on-device speed claims rely on a llama.cpp fork (LES) | Bench on mainline llama.cpp only; fork is out of scope |
+| K3 | MiniCPM-V-4.7-35B-A3B's on-device speed claims rely on a llama.cpp fork (LES), and Bonsai's `PQ2_0`/`PTQ1_0` files need the PrismML fork | Bench on mainline llama.cpp only; forks are out of scope. Bonsai is benched from its upstream `Q1_0`/`Q2_0` files |
 | K4 | 4 GiB VRAM partial offload helps the reference machine but not the floor profile | Gates use CPU-only numbers; GPU is a bonus |
 | K5 | Coverage thresholds (0.67 / 0.34 containment) are provisional | P1 calibrates on fixtures and records values in config |
 | K6 | R7–R9 paused indefinitely; Phase 1 Coach keeps its own durability path while Phase 2 uses the generic runtime | Accepted (D6). Two execution paths remain until R8 resumes; Phase 2 never calls Phase 1 queues |
@@ -1003,6 +1007,7 @@ Content canary: tests insert a unique string into synthetic transcripts and stor
 | K9 | Promoting a Tier S or T model changes the model for Phase 1 Coach, CV, cover letter or job triage too | Dual gate (D14, §9.1); existing entries stay `promoted` until a candidate passes both |
 | K10 | The existing round form may submit browser-local times that were stored as if UTC | P2 checks the form and converts to UTC in the frontend form before sending; existing rows unchanged (§7.5) |
 | K11 | A `source_events` listener error blocks the user's deletion or edit | The listener only deletes rows by indexed source and runs before any media removal (§5.3); AC29 proves rollback with the media intact; errors return the safe `temporarily_unavailable` code and the user can retry |
+| K12 | Edge-model families release new revisions every few weeks, so the §9.1 names go stale (D18) | Candidates are families, not fixed names; each revision is pinned by revision and sha256 and must pass the bench and the dual gate; the incumbents stay promoted until one does |
 | Q1–Q4 | Resolved 22 Oct 2026 | D6–D9 in §0 |
 | Q5 | Resolved 2 Nov 2026: reviewer and design reference | D10–D11 in §0 |
 | Q6 | Resolved 2 Nov 2026: Claude Code spec review (25 findings) | D12–D17 in §0; §5.3, §7, §8.4, §9–§12, §15 |

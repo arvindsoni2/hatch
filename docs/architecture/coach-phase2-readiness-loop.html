@@ -431,9 +431,9 @@ stateDiagram-v2
   <table>
     <thead><tr><th>Tier</th><th>Route</th><th>Used for</th><th>Output cap</th><th>Candidates</th></tr></thead>
     <tbody>
-      <tr><td><b>T</b> tiny</td><td><code>:8081</code> shared with job triage</td><td>Debrief note extraction, JD competencies (input ≤ 1,200 tokens)</td><td>512 tokens</td><td>MiniCPM-V-4.7-1B (text), MiniCPM5-2B, Qwen3.5-0.8B (current)</td></tr>
-      <tr><td><b>S</b> small</td><td><code>:8080</code> shared with Phase 1</td><td>Tips, brief talking points, plan wording</td><td>600 tokens</td><td>Spark-X2.6-4B (thinking off), Qwen3.5-4B (current), MiniCPM5-2B, phi4-mini</td></tr>
-      <tr><td><b>L</b> large, optional</td><td><code>:8082</code></td><td>Richer wording when opted in</td><td>600 tokens</td><td>MiniCPM-V-4.7-35B-A3B (MoE, ~3B active); gemma4:12b only if its licence is approved</td></tr>
+      <tr><td><b>T</b> tiny</td><td><code>:8081</code> shared with job triage</td><td>Debrief note extraction, JD competencies (input ≤ 1,200 tokens)</td><td>512 tokens</td><td>MiniCPM-V-4.7-1B (text), MiniCPM5-2B, Gemma 4 E2B (text), Bonsai 1.7B, LFM2.5-1.2B, Qwen3.5-0.8B (current)</td></tr>
+      <tr><td><b>S</b> small</td><td><code>:8080</code> shared with Phase 1</td><td>Tips, brief talking points, plan wording</td><td>600 tokens</td><td>Spark-X2.6-4B (thinking off), Gemma 4 E4B (text), Bonsai 4B/8B, LFM2.5-8B-A1B, MiniCPM5-2B, phi4-mini, Qwen3.5-4B (current)</td></tr>
+      <tr><td><b>L</b> large, optional</td><td><code>:8082</code></td><td>Richer wording when opted in</td><td>600 tokens</td><td>MiniCPM-V-4.7-35B-A3B (MoE, ~3B active), Gemma 4 26B-A4B or 12B, Ternary-Bonsai-2-27B, LFM2-24B-A2B, Qwen3.8-27B</td></tr>
     </tbody>
   </table>
   </div>
