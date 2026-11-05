@@ -104,6 +104,7 @@ def _normalize(raw: dict[str, Any]) -> SetupIntent:
         "setup_deferred_at": raw.get("setup_deferred_at"),
         "restart_required": raw.get("restart_required", False),
         "hardware_probe_id": raw.get("hardware_probe_id"),
+        "tier_l_enabled": bool(raw.get("tier_l_enabled", False)),
     }
     if mode == "none" and values["setup_deferred_at"] is None:
         values["setup_deferred_at"] = datetime.utcnow()

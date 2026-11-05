@@ -87,6 +87,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     logger.info("JobPilot starting up...")
 
+    # A tier may only name a promoted model; refuse to boot on a bad map.
+    from .services.coach_readiness.tiers import validate_tier_map  # noqa: PLC0415
+
+    try:
+        validate_tier_map()
+    except ValueError as exc:
+        raise RuntimeError(f"invalid model tier configuration: {exc}") from exc
+
     # Initialise database tables
     await init_db()
     logger.info("Database ready.")

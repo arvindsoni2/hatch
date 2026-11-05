@@ -99,7 +99,8 @@ def _normalized_file(
     sha256 = str(lfs.get("sha256") or "")
     quantization = _quantization(filename, policy["quantizations"])
     if not (
-        filename.lower().endswith(".gguf")
+        "mmproj" not in filename.lower()
+        and filename.lower().endswith(".gguf")
         and quantization
         and COMMIT_RE.fullmatch(revision)
         and SHA256_RE.fullmatch(sha256)
@@ -194,7 +195,7 @@ def _fallback(probe: dict[str, Any], error: str | None) -> ModelDiscoveryResult:
             catalog_id=item["id"],
             repo_id=item["repo_id"],
             publisher=item["repo_id"].split("/", 1)[0].lower(),
-            family="qwen3.5",
+            family=_family(item["repo_id"], _policy()["approved_families"]) or "unknown",
             filename=item["filename"],
             revision=item["source_revision"],
             sha256=item["sha256"],
@@ -209,6 +210,7 @@ def _fallback(probe: dict[str, Any], error: str | None) -> ModelDiscoveryResult:
             ),
         )
         for item in load_catalog()
+        if item["status"] == "promoted"
     ]
     return _result("fallback", models, probe, error=error)
 
@@ -228,20 +230,28 @@ async def discover_models(
     )
     rejected: Counter[str] = Counter()
     try:
-        response = await active_client.get(
-            "/api/models",
-            params={
-                "filter": "text-generation",
-                "search": "GGUF",
-                "sort": "downloads",
-                "direction": "-1",
-                "limit": policy["max_repositories"],
-            },
-        )
-        response.raise_for_status()
-        listing = response.json()
+        listing: list[dict[str, Any]] = []
+        seen_repos: set[str] = set()
+        for task in policy["tasks"]:
+            response = await active_client.get(
+                "/api/models",
+                params={
+                    "filter": task,
+                    "search": "GGUF",
+                    "sort": "downloads",
+                    "direction": "-1",
+                    "limit": policy["max_repositories"],
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            for summary in body if isinstance(body, list) else []:
+                repo_id = str(summary.get("id") or "")
+                if repo_id and repo_id not in seen_repos:
+                    seen_repos.add(repo_id)
+                    listing.append(summary)
         models: list[DiscoveredModel] = []
-        for summary in listing if isinstance(listing, list) else []:
+        for summary in listing:
             repo_id = str(summary.get("id") or "")
             publisher = repo_id.split("/", 1)[0].lower()
             if publisher not in policy["approved_publishers"]:
@@ -249,9 +259,11 @@ async def discover_models(
                 continue
             family = _family(repo_id, policy["approved_families"])
             lowered = repo_id.lower()
+            named_for_chat = any(marker in lowered for marker in ("instruct", "chat"))
+            marker_exempt = family in policy.get("marker_exempt_families", [])
             if (
                 not family
-                or not any(marker in lowered for marker in ("instruct", "chat"))
+                or not (named_for_chat or marker_exempt)
                 or any(marker in lowered for marker in ("reranker", "embedding", "embed"))
                 or summary.get("pipeline_tag") not in policy["tasks"]
             ):

@@ -1,0 +1,18 @@
+{
+  "T": {
+    "route": "llm-triage",
+    "model_id": "qwen3.5-0.8b-q8-triage",
+    "thinking": false,
+    "max_input_tokens": 1200,
+    "max_output_tokens": 512,
+    "deadline_s": 30
+  },
+  "S": {
+    "route": "llm-primary",
+    "model_id": "qwen3.5-4b-q4km-primary",
+    "thinking": false,
+    "max_input_tokens": 4096,
+    "max_output_tokens": 600,
+    "deadline_s": 90
+  }
+}

@@ -89,3 +89,110 @@ async def test_live_failure_uses_fresh_cache(
 
     assert result.source == "cache"
     assert result.models
+
+
+def _discovery_client(listing: list[dict], details: dict[str, dict]) -> httpx.AsyncClient:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/models":
+            return httpx.Response(200, json=listing)
+        repo_id = request.url.path.removeprefix("/api/models/")
+        body = details.get(repo_id)
+        return httpx.Response(200 if body else 404, json=body or {"error": "not found"})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://huggingface.co")
+
+
+def _repo(repo_id: str, license_name: str, pipeline_tag: str, files: list[str]) -> dict:
+    return {
+        "id": repo_id,
+        "sha": "a" * 40,
+        "pipeline_tag": pipeline_tag,
+        "cardData": {"license": license_name},
+        "siblings": [
+            {"rfilename": name, "size": 1_000_000_000, "lfs": {"sha256": "b" * 64}}
+            for name in files
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_policy_accepts_spark_and_minicpm_families_only_from_allowlisted_publishers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    details = {
+        "XHToken/Spark-X2.6-4B-GGUF": _repo(
+            "XHToken/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
+            ["Spark-X2.6-4B-Q4_K_M.gguf"],
+        ),
+        "openbmb/MiniCPM5-2B-GGUF": _repo(
+            "openbmb/MiniCPM5-2B-GGUF", "apache-2.0", "text-generation",
+            ["MiniCPM5-2B-Q4_K_M.gguf"],
+        ),
+        "evilcorp/Spark-X2.6-4B-GGUF": _repo(
+            "evilcorp/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
+            ["Spark-X2.6-4B-Q4_K_M.gguf"],
+        ),
+    }
+
+    result = await discover_models(
+        _probe(), client=_discovery_client(list(details.values()), details)
+    )
+
+    assert {item.repo_id for item in result.models} == {
+        "XHToken/Spark-X2.6-4B-GGUF",
+        "openbmb/MiniCPM5-2B-GGUF",
+    }
+    assert result.rejected_counts["publisher"] == 1
+
+
+@pytest.mark.asyncio
+async def test_vision_repo_accepted_text_only_without_mmproj(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    repo = _repo(
+        "openbmb/MiniCPM-V-4.7-1B-gguf", "apache-2.0", "image-text-to-text",
+        [
+            "MiniCPM-V-4_7-1B-Q8_0.gguf",
+            "MiniCPM-V-4_7-1B-F16.gguf",
+            "mmproj-model-f16-4x.gguf",
+        ],
+    )
+
+    result = await discover_models(
+        _probe(), client=_discovery_client([repo], {repo["id"]: repo})
+    )
+
+    assert [item.filename for item in result.models] == ["MiniCPM-V-4_7-1B-Q8_0.gguf"]
+    assert result.models[0].task == "text-generation"
+    assert all("mmproj" not in item.filename.lower() for item in result.models)
+
+
+@pytest.mark.asyncio
+async def test_unapproved_licence_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    rejected = _repo(
+        "XHToken/Spark-X2.6-4B-Gemma-GGUF", "gemma", "text-generation",
+        ["Spark-X2.6-4B-Q4_K_M.gguf"],
+    )
+    accepted = _repo(
+        "XHToken/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
+        ["Spark-X2.6-4B-Q4_K_M.gguf"],
+    )
+
+    result = await discover_models(
+        _probe(),
+        client=_discovery_client([rejected, accepted], {
+            rejected["id"]: rejected,
+            accepted["id"]: accepted,
+        }),
+    )
+
+    assert [item.repo_id for item in result.models] == [accepted["id"]]
+    assert result.rejected_counts["license"] == 1

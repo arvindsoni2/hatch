@@ -1,0 +1,106 @@
+"""Model tier map: promotion gate, budgets, and Tier L visibility (spec §9)."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app.services.ai_setup import load_catalog
+from app.services.coach_readiness import tiers
+
+
+def _write_tier_map(path: Path, mutate) -> Path:
+    payload = json.loads(tiers.TIERS_PATH.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_catalog_entries_have_revision_sha_tiers_and_status() -> None:
+    catalog = load_catalog()
+
+    assert all(model["tiers"] for model in catalog)
+    assert all(set(model["tiers"]) <= {"T", "S", "L"} for model in catalog)
+    assert {model["status"] for model in catalog} <= {
+        "candidate",
+        "qualified",
+        "promoted",
+        "rejected",
+        "retired",
+    }
+    assert any(model["status"] == "promoted" for model in catalog)
+    assert all(len(model["source_revision"]) == 40 for model in catalog)
+    assert all(len(model["sha256"]) == 64 for model in catalog)
+
+
+def test_tier_map_defaults_to_promoted_incumbents() -> None:
+    mapping = tiers.load_tier_map()
+    catalog = {model["id"]: model for model in load_catalog()}
+
+    assert set(mapping) == {"T", "S"}
+    assert mapping["T"].route == "llm-triage"
+    assert mapping["S"].route == "llm-primary"
+    assert mapping["T"].max_output_tokens == 512
+    assert mapping["S"].max_output_tokens == 600
+    assert mapping["T"].deadline_s <= tiers.MAX_DEADLINE_S["T"]
+    assert mapping["S"].deadline_s <= tiers.MAX_DEADLINE_S["S"]
+    assert mapping["T"].thinking is False
+    assert mapping["S"].thinking is False
+    assert catalog[mapping["T"].model_id]["status"] == "promoted"
+    assert catalog[mapping["S"].model_id]["status"] == "promoted"
+
+
+def test_tier_map_rejects_non_promoted_model(tmp_path: Path) -> None:
+    candidate = next(model for model in load_catalog() if model["status"] == "candidate")
+    path = _write_tier_map(
+        tmp_path / "model_tiers.json",
+        lambda payload: payload["S"].update({"model_id": candidate["id"]}),
+    )
+
+    with pytest.raises(ValueError, match="promoted"):
+        tiers.load_tier_map(path=path)
+
+
+def test_tier_map_rejects_unknown_model_and_over_max_deadline(tmp_path: Path) -> None:
+    unknown = _write_tier_map(
+        tmp_path / "unknown.json",
+        lambda payload: payload["T"].update({"model_id": "not-in-catalogue"}),
+    )
+    with pytest.raises(ValueError, match="promoted"):
+        tiers.load_tier_map(path=unknown)
+
+    slow = _write_tier_map(
+        tmp_path / "slow.json",
+        lambda payload: payload["T"].update({"deadline_s": tiers.MAX_DEADLINE_S["T"] + 1}),
+    )
+    with pytest.raises(ValueError, match="deadline"):
+        tiers.load_tier_map(path=slow)
+
+
+def test_tier_t_budget_truncates_input_and_caps_output() -> None:
+    mapping = tiers.load_tier_map()
+
+    assert mapping["T"].max_input_tokens == 1200
+    assert tiers.estimate_tokens("x" * 4000) == 1000
+    fitted = tiers.fit_input("x" * 6000, "T")
+    assert tiers.estimate_tokens(fitted) <= 1200
+    assert len(fitted) == 4800
+    assert mapping["T"].max_output_tokens == 512
+
+
+def test_tier_l_hidden_below_24gb() -> None:
+    assert tiers.tier_l_available(23.9) is False
+    assert tiers.tier_l_available(24) is True
+    assert tiers.MIN_TIER_L_RAM_GB == 24
+
+
+def test_phase1_routes_unchanged() -> None:
+    mapping = tiers.load_tier_map()
+    catalog = {model["id"]: model for model in load_catalog()}
+
+    assert mapping["T"].model_id == "qwen3.5-0.8b-q8-triage"
+    assert mapping["S"].model_id == "qwen3.5-4b-q4km-primary"
+    assert catalog[mapping["T"].model_id]["role"] == "triage"
+    assert catalog[mapping["S"].model_id]["role"] == "combined_capable_primary"
+    assert "L" not in mapping

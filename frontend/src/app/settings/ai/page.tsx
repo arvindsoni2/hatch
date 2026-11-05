@@ -1,6 +1,7 @@
 "use client";
 
 import { SettingsShell } from "@/components/settings/SettingsShell";
+import { ModelTierTable } from "@/components/settings/ModelTierTable";
 import { AiCapabilitiesForm } from "@/components/setup/AiCapabilitiesForm";
 
 export default function AiSettingsPage() {
@@ -11,6 +12,7 @@ export default function AiSettingsPage() {
       description="Choose local, cloud, or no AI independently from the Hatch capability profile. Provider secrets remain host-owned."
     >
       <AiCapabilitiesForm context="settings" />
+      <ModelTierTable />
     </SettingsShell>
   );
 }

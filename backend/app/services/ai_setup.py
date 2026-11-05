@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 CATALOG_PATH = Path(__file__).parents[1] / "config" / "model_catalog.json"
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 MODEL_ROLES = {"triage", "combined_capable_primary"}
+MODEL_TIERS = {"T", "S", "L"}
+MODEL_STATUSES = {"candidate", "qualified", "promoted", "rejected", "retired"}
 AI_MODES = {"not_configured", "none", "cloud", "local", "custom"}
 EXPERIENCES = {"essential", "full_ai", "custom"}
 BACKEND_PROFILES = {
@@ -47,6 +49,7 @@ class AISetupIntent(BaseModel):
     provider_metadata: dict[str, str] = Field(default_factory=dict)
     restart_required: bool = False
     hardware_probe_id: str | None = None
+    tier_l_enabled: bool = False
 
 
 class ExperienceSetupIntent(BaseModel):
@@ -116,6 +119,7 @@ def validate_catalog(catalog: Any) -> None:
         "supported_arch", "repo_id", "filename", "download_url_template",
         "source_revision", "sha256", "download_size_gb", "disk_required_gb",
         "min_ram_gb", "recommended_ram_gb", "license", "source_trust",
+        "tiers", "status",
     }
     for model in catalog:
         missing = required - set(model)
@@ -134,6 +138,11 @@ def validate_catalog(catalog: Any) -> None:
             raise ValueError(f"download URL is not revision-pinned for {model['id']}")
         if model["min_ram_gb"] > model["recommended_ram_gb"]:
             raise ValueError(f"invalid RAM thresholds for {model['id']}")
+        tiers = model["tiers"]
+        if not isinstance(tiers, list) or not tiers or not set(tiers) <= MODEL_TIERS:
+            raise ValueError(f"invalid tiers for {model['id']}")
+        if model["status"] not in MODEL_STATUSES:
+            raise ValueError(f"invalid status for {model['id']}")
 
 
 def recommend_models(
@@ -150,6 +159,8 @@ def recommend_models(
     aliases = {"aarch64": "arm64", "amd64": "x86_64"}
     normalized_arch = aliases.get(arch.lower(), arch.lower())
     for model in load_catalog():
+        if model["status"] != "promoted":
+            continue
         supported_arch = {aliases.get(value, value) for value in model["supported_arch"]}
         reasons: list[str] = []
         if os_family.lower() not in model["supported_os"]:

@@ -7,7 +7,7 @@ services:
   # Use ghcr.io/ggml-org/llama.cpp:server (rolling latest) or pin a bNNNN tag.
   # Model file: run scripts/fetch_models.sh to download the pinned GGUF.
   llm-primary:
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-b12124@sha256:c0a11067c72bb1eb330b8bddbf9869274c195e596bf4fae55fd527102e644b85
     container_name: hatch-llm-primary
     command: >
       --model /models/Qwen_Qwen3.5-4B-Q4_K_M.gguf
@@ -33,7 +33,7 @@ services:
   # ── llama-server: triage model (Qwen3.5-0.8B Q8_0, :8081) ──────────────────
   # --parallel 2 gives 2048 tokens/slot (4096 / 2) — sufficient for TRIAGE (1536+256).
   llm-triage:
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-b12124@sha256:c0a11067c72bb1eb330b8bddbf9869274c195e596bf4fae55fd527102e644b85
     container_name: hatch-llm-triage
     command: >
       --model /models/Qwen_Qwen3.5-0.8B-Q8_0.gguf

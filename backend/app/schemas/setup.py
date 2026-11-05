@@ -25,6 +25,7 @@ class SetupIntent(BaseModel):
     setup_deferred_at: datetime | None = None
     restart_required: bool = False
     hardware_probe_id: str | None = None
+    tier_l_enabled: bool = False
 
     @model_validator(mode="after")
     def keep_only_active_routing(self) -> "SetupIntent":
@@ -52,4 +53,5 @@ class IntentPatch(BaseModel):
     setup_deferred_at: datetime | None = None
     restart_required: bool | None = None
     hardware_probe_id: str | None = None
+    tier_l_enabled: bool | None = None
 
