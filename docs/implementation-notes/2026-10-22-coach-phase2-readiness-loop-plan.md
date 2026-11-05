@@ -3,7 +3,7 @@ title: Hatch Coach Phase 2 — Interview Readiness Loop — Implementation Plan
 document_type: implementation-plan
 status: active
 implementation_status: not-started
-last_verified: 2026-11-02
+last_verified: 2026-11-05
 approval_status: final-for-implementation (owner, 2026-11-02)
 baseline_commit: b7274a6
 spec: 2026-10-22-coach-phase2-readiness-loop.md
@@ -226,7 +226,7 @@ The suite is built here; the model bench **runs** happen in P3 once the pinned l
 
 **Files**
 - Modify: `docker-compose.yml`, `docker-compose.local-ai.yml` — pin llama.cpp server image to a build ≥ b10828 by tag **and** digest; add `llm-deep` service under profile `deep` (port 8082, same image)
-- Modify: `config/model_discovery_policy.json` — publishers, families, marker and task rules (§9.2); `approved_licenses` unchanged
+- Modify: `config/model_discovery_policy.json` — publishers, families, marker, task and Bonsai quantisation rules (§9.2, D18); add `lfm1.0` to `approved_licenses` (owner-approved, D18)
 - Modify: `services/model_discovery.py` — honour the family-allowlist exemption and text-only use of `image-text-to-text`
 - Modify: `config/model_catalog.json` — candidate entries with real revisions and sha256 taken from the downloaded files; add `tiers` and `status`; existing entries get `status: "promoted"`
 - Add: `config/model_tiers.json` + loader/validator in `backend/app/services/coach_readiness/tiers.py` (or the existing model registry module if it already owns config loading — follow the registry)
@@ -237,9 +237,10 @@ The suite is built here; the model bench **runs** happen in P3 once the pinned l
 **Named tests**
 | Test | Asserts |
 |---|---|
-| `test_policy_accepts_spark_and_minicpm_families_only_from_allowlisted_publishers` | Allowlist, not wildcard |
+| `test_policy_accepts_spark_and_minicpm_families_only_from_allowlisted_publishers` | Allowlist, not wildcard; the same holds for the D18 families (`bonsai`, `lfm2`, `gemma-4`, `qwen3.8`) |
+| `test_bonsai_accepts_upstream_1_and_2_bit_quants_only` | `Q1_0`/`Q2_0` accepted for `bonsai` only; fork-only `PQ2_0`/`PTQ1_0` refused |
 | `test_vision_repo_accepted_text_only_without_mmproj` | No projector file selected |
-| `test_unapproved_licence_rejected` | A Gemma-licence entry is refused while the licence is not in `approved_licenses` |
+| `test_unapproved_licence_rejected` | An entry whose licence is not in `approved_licenses` (for example `cc-by-nc-4.0`) is refused; an `lfm1.0` entry is accepted |
 | `test_catalog_entries_have_revision_sha_tiers_and_status` | Schema; no empty hashes; existing entries `promoted` |
 | `test_tier_map_rejects_non_promoted_model` | AC20, AC35 |
 | `test_tier_t_budget_enforced` | AC34: input truncated to ≤ 1,200 tokens, output cap 512 |
@@ -248,8 +249,8 @@ The suite is built here; the model bench **runs** happen in P3 once the pinned l
 
 **Bench runs (owner machine, synthetic data only)**
 - [ ] **Thinking check first:** on the pinned build, send one request with `chat_template_kwargs: {"enable_thinking": true}` to a server started with `--reasoning off`. Record whether reasoning text appears. If it does not, bench thinking off only (spec §9.1).
-- [ ] **Licence check:** re-read each candidate's model card; skip any whose licence is not in `approved_licenses` (gemma4:12b unless the owner has approved its licence) and record why.
-- [ ] Start pinned llama-server per candidate with the production flags (`llm-triage`: `--ctx-size 4096 --parallel 2`; `llm-primary`: `--ctx-size 16384 --parallel 1`; both `--reasoning off`); run `python -m benchmarks.coach run --profile phase2 …` (exact CLI per existing harness) for: Tier T — MiniCPM-V-4.7-1B (text), MiniCPM5-2B, Qwen3.5-0.8B; Tier S — Spark-X2.6-4B, Qwen3.5-4B, MiniCPM5-2B, phi4-mini; Tier L — MiniCPM-V-4.7-35B-A3B Q4 (and gemma4:12b only if its licence is approved).
+- [ ] **Licence check:** re-read each candidate's model card; skip any whose licence is not in `approved_licenses` (Gemma 4 unless its linked licence page is plain Apache-2.0; `lfm1.0` is approved) and record why.
+- [ ] Start pinned llama-server per candidate with the production flags (`llm-triage`: `--ctx-size 4096 --parallel 2`; `llm-primary`: `--ctx-size 16384 --parallel 1`; both `--reasoning off`); run `python -m benchmarks.coach run --profile phase2 …` (exact CLI per existing harness) for the spec §9.1 bench order: Tier T — MiniCPM-V-4.7-1B (text), MiniCPM5-2B, Gemma 4 E2B (text), Bonsai 1.7B, LFM2.5-1.2B-Instruct, Qwen3.5-0.8B; Tier S — Spark-X2.6-4B, Gemma 4 E4B (text), Bonsai 4B, Bonsai 8B, LFM2.5-8B-A1B, MiniCPM5-2B, phi4-mini, Qwen3.5-4B; Tier L — MiniCPM-V-4.7-35B-A3B Q4, Gemma 4 26B-A4B, Gemma 4 12B, Ternary-Bonsai-2-27B Q2_0, LFM2-24B-A2B, Qwen3.8-27B. Licence-gated models are run only after the licence check passes. A newer release in an allowlisted family (for example a Qwen3.8 model of 4B or less) is added as a `candidate` and benched the same way; a name with no GGUF, or one the pinned mainline build cannot load, is recorded as skipped.
 - [ ] Each on reference CPU-only, reference with GPU offload, and floor profile (T and S only).
 - [ ] Two independent runs on holdout; owner blind-rates 10 outputs per candidate.
 - [ ] **Dual gate (spec §9.1):** for every T or S candidate that passes the §9.4 gate, run the route's existing regression bench on the same build — Tier S: Phase 1 `python -m benchmarks.coach run --profile acceptance-smoke`; Tier T: the job-scoring triage checks in `REPRESENTATIVE_LOCAL_MODEL_BENCHMARK.md`. Only a model that passes both becomes `promoted`; otherwise it stays `qualified` and the incumbent stays.
