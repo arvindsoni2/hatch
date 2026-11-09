@@ -4,7 +4,7 @@
 
 services:
   # ── llama-server: primary model (Qwen3.5-4B Q4_K_M, :8080) ─────────────────
-  # Use ghcr.io/ggml-org/llama.cpp:server (rolling latest) or pin a bNNNN tag.
+  # Pinned to server-b12124 by tag and digest (Phase 2 bench build); update both together.
   # Model file: run scripts/fetch_models.sh to download the pinned GGUF.
   llm-primary:
     image: ghcr.io/ggml-org/llama.cpp:server-b12124@sha256:c0a11067c72bb1eb330b8bddbf9869274c195e596bf4fae55fd527102e644b85

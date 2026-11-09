@@ -28,7 +28,7 @@ export function ModelTierTable() {
 
   useEffect(() => {
     let cancelled = false;
-    setupRequest<TierPayload>("/api/setup/model-tiers")
+    setupRequest<TierPayload>("/api/coach/readiness/model-tiers")
       .then((payload) => {
         if (!cancelled) setData(payload);
       })

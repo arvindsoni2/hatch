@@ -88,11 +88,13 @@ def _quantization(
 def _license(details: dict[str, Any]) -> str:
     card = details.get("cardData")
     if isinstance(card, dict):
-        name = card.get("license_name")
-        if isinstance(name, str) and name:
-            return name.lower()
-        if isinstance(card.get("license"), str):
-            return card["license"].lower()
+        licence = card.get("license")
+        if licence == "other":
+            name = card.get("license_name")
+            if isinstance(name, str) and name:
+                return name.lower()
+        if isinstance(licence, str):
+            return licence.lower()
     for tag in details.get("tags") or []:
         if isinstance(tag, str) and tag.startswith("license:"):
             return tag.split(":", 1)[1].lower()

@@ -35,11 +35,6 @@ from ..services.onboarding_service import (
 from ..schemas.setup import IntentPatch
 from ..services.setup_intent import patch_setup_intent
 from ..services.model_discovery import discover_models
-from ..services.coach_readiness.tiers import (
-    MIN_TIER_L_RAM_GB,
-    load_tier_map,
-    tier_l_available,
-)
 from ..services.provider_catalog import (
     provider_catalog,
     test_provider_connection as run_provider_connection_test,
@@ -150,37 +145,6 @@ async def refresh_hardware_probe() -> dict[str, Any]:
 @router.get("/models/catalog")
 async def models_catalog() -> dict[str, Any]:
     return {"models": load_catalog()}
-
-
-@router.get("/model-tiers")
-async def model_tiers() -> dict[str, Any]:
-    mapping = load_tier_map()
-    catalogue = {model["id"]: model for model in load_catalog()}
-    snapshot = load_probe_snapshot() or {}
-    total_ram_gb = float((snapshot.get("memory") or {}).get("total_gb") or 0)
-    intent = load_intent()
-    return {
-        "tiers": [
-            {
-                "tier": config.tier,
-                "route": config.route,
-                "model_id": config.model_id,
-                "display_name": catalogue.get(config.model_id or "", {}).get(
-                    "display_name", config.model_id or ""
-                ),
-                "status": catalogue.get(config.model_id or "", {}).get("status", "promoted"),
-                "thinking": config.thinking,
-                "max_output_tokens": config.max_output_tokens,
-                "deadline_s": config.deadline_s,
-            }
-            for config in mapping.values()
-        ],
-        "tier_l": {
-            "available": tier_l_available(total_ram_gb),
-            "enabled": bool(intent.get("tier_l_enabled", False)),
-            "min_ram_gb": MIN_TIER_L_RAM_GB,
-        },
-    }
 
 
 @router.get("/providers")

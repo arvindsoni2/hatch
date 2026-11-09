@@ -28,7 +28,7 @@ describe("ModelTierTable", () => {
     vi.mocked(global.fetch).mockReset();
     vi.mocked(global.fetch).mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url.endsWith("/api/setup/model-tiers")) return response(tiers);
+      if (url.endsWith("/api/coach/readiness/model-tiers")) return response(tiers);
       if (url.endsWith("/api/setup/intent") && init?.method === "PATCH") {
         return response({ intent: { tier_l_enabled: true } });
       }
@@ -55,7 +55,7 @@ describe("ModelTierTable", () => {
     const user = userEvent.setup();
     vi.mocked(global.fetch).mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url.endsWith("/api/setup/model-tiers")) {
+      if (url.endsWith("/api/coach/readiness/model-tiers")) {
         return response({ ...tiers, tier_l: { available: true, enabled: false, min_ram_gb: 24 } });
       }
       if (url.endsWith("/api/setup/intent") && init?.method === "PATCH") {

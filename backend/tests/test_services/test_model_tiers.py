@@ -63,6 +63,10 @@ def test_tier_map_defaults_to_promoted_incumbents() -> None:
     assert mapping["T"].route == "llm-triage"
     assert mapping["S"].route == "llm-primary"
     assert mapping["T"].max_output_tokens == 512
+    assert (
+        300 + mapping["T"].max_input_tokens + mapping["T"].max_output_tokens
+        <= 2048
+    )
     assert mapping["S"].max_output_tokens == 600
     assert mapping["T"].deadline_s <= tiers.MAX_DEADLINE_S["T"]
     assert mapping["S"].deadline_s <= tiers.MAX_DEADLINE_S["S"]
@@ -99,7 +103,7 @@ def test_tier_map_rejects_unknown_model_and_over_max_deadline(tmp_path: Path) ->
         tiers.load_tier_map(path=slow)
 
 
-def test_tier_t_budget_truncates_input_and_caps_output() -> None:
+def test_tier_t_budget_enforced() -> None:
     mapping = tiers.load_tier_map()
 
     assert mapping["T"].max_input_tokens == 1200
@@ -108,6 +112,10 @@ def test_tier_t_budget_truncates_input_and_caps_output() -> None:
     assert tiers.estimate_tokens(fitted) <= 1200
     assert len(fitted) == 4800
     assert mapping["T"].max_output_tokens == 512
+    assert (
+        300 + mapping["T"].max_input_tokens + mapping["T"].max_output_tokens
+        <= 2048
+    )
 
 
 def test_tier_l_hidden_below_24gb() -> None:

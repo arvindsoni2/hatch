@@ -306,6 +306,10 @@ def port_status(port: int) -> str:
 def model_buckets(ram: float, disk: float) -> dict[str, list[str]]:
     result = {"recommended": [], "compatible": [], "not_recommended": []}
     for model in catalog():
+        # Candidates are bench-only: `models install --primary/--triage <id>` still
+        # accepts them by id, but a hardware probe never recommends one.
+        if model.get("status", "promoted") != "promoted":
+            continue
         supported = host_os() in model["supported_os"] and host_arch() in {
             "arm64" if arch == "aarch64" else arch for arch in model["supported_arch"]
         }

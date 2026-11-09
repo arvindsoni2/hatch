@@ -19,7 +19,7 @@ describe("AI & Capabilities settings page", () => {
         next_actions: [],
       });
       if (String(input).endsWith("/api/setup/providers")) return response({ providers: [] });
-      if (String(input).endsWith("/api/setup/model-tiers")) return response({
+      if (String(input).endsWith("/api/coach/readiness/model-tiers")) return response({
         tiers: [], tier_l: { available: false, enabled: false, min_ram_gb: 24 },
       });
       return response({});

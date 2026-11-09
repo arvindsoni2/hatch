@@ -263,3 +263,30 @@ async def test_bonsai_accepts_upstream_1_and_2_bit_quants_only(
     assert [item.filename for item in result.models if item.repo_id == lfm["id"]] == [
         "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
     ]
+
+
+@pytest.mark.asyncio
+async def test_license_name_does_not_override_a_concrete_license(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    spoofed = _repo(
+        "XHToken/Spark-X2.6-4B-NC-GGUF", "apache-2.0", "text-generation",
+        ["Spark-X2.6-4B-Q4_K_M.gguf"], licence_key="cc-by-nc-4.0",
+    )
+    accepted = _repo(
+        "XHToken/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
+        ["Spark-X2.6-4B-Q4_K_M.gguf"],
+    )
+
+    result = await discover_models(
+        _probe(),
+        client=_discovery_client([spoofed, accepted], {
+            spoofed["id"]: spoofed,
+            accepted["id"]: accepted,
+        }),
+    )
+
+    assert [item.repo_id for item in result.models] == [accepted["id"]]
+    assert result.rejected_counts["license"] == 1

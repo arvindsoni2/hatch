@@ -66,6 +66,15 @@ offload, and the floor profile (T and S only). Two independent holdout runs; own
 Measured values: **pending**. The tier map keeps the incumbents (`T` → Qwen 0.8B, `S` → Qwen 4B) and has no `L`
 entry until a candidate is `promoted`.
 
+## Pending bench checklist (owner)
+
+- [ ] **Thinking override:** send one request with `chat_template_kwargs: {"enable_thinking": true}` to a b12124
+      server started with `--reasoning off`; record whether reasoning text appears. If it does not, bench thinking
+      off only (spec §9.1).
+- [ ] **Phase 1 regression on the pinned build:** rerun `python -m benchmarks.coach run --profile
+      acceptance-smoke` with the existing incumbents on b12124 and record any change. If Phase 1 regresses, keep
+      the old image for the Phase 1 routes and pin b12124 only for `llm-deep`.
+
 ## Dual gate (spec §9.1)
 
 For every T/S candidate that passes §9.4, run the route's existing regression bench on the same pinned build:

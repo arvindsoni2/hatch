@@ -421,33 +421,3 @@ async def test_reset_apply_can_preserve_profile_and_master_cv_files(
     assert (tmp_path / "master_cv.json").exists()
     assert (tmp_path / "master_resume.pdf").exists()
     assert not (tmp_path / "generated" / "cv.docx").exists()
-
-
-@pytest.mark.asyncio
-async def test_model_tiers_list_promoted_routes_and_gate_tier_l(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("HATCH_PROBE_DIR", str(tmp_path / "probe"))
-    (tmp_path / "probe").mkdir()
-    (tmp_path / "probe" / "hardware_probe_latest.json").write_text(
-        '{"sanitised":true,"memory":{"total_gb":16},"storage":{"models_dir_free_gb":24}}'
-    )
-
-    payload = await setup.model_tiers()
-
-    assert [row["tier"] for row in payload["tiers"]] == ["T", "S"]
-    assert payload["tiers"][0]["route"] == "llm-triage"
-    assert payload["tiers"][1]["route"] == "llm-primary"
-    assert payload["tier_l"]["available"] is False
-    assert payload["tier_l"]["enabled"] is False
-
-    (tmp_path / "probe" / "hardware_probe_latest.json").write_text(
-        '{"sanitised":true,"memory":{"total_gb":32},"storage":{"models_dir_free_gb":80}}'
-    )
-    setup.patch_setup_intent(setup.IntentPatch(tier_l_enabled=True))
-    payload = await setup.model_tiers()
-
-    assert payload["tier_l"]["available"] is True
-    assert payload["tier_l"]["enabled"] is True

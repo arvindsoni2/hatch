@@ -158,3 +158,59 @@ All checks passed
 $ npm run type-check
 exit 0
 ```
+
+## Repair cycle 1 (9 Nov 2026)
+
+Review findings addressed:
+
+- **H1** — `GET /api/setup/model-tiers` moved to `GET /api/coach/readiness/model-tiers` in
+  `backend/app/routers/coach_readiness.py`; `backend/app/routers/setup.py` is reverted to `main` (no
+  `coach_readiness` import there). `ModelTierTable.tsx` and both frontend tests point at the new path. The route
+  test moved to `backend/tests/test_routers/test_coach_model_tiers_router.py`.
+- **M1** — `scripts/hatch_cli.py::model_buckets` skips entries whose status is not `promoted`, so a hardware probe
+  never recommends a bench candidate; `models install --primary/--triage <id>` still resolves candidate ids through
+  `catalog()`. Test: `test_model_buckets_never_recommend_candidates`.
+- **M2** — `backend/tests/runtime/test_model_tier_startup.py` sets the T tier to a candidate and asserts the real
+  lifespan raises `RuntimeError("invalid model tier configuration: …")`.
+- **L1** — `_license` reads `cardData.license_name` only when `cardData.license == "other"`; a concrete
+  `cc-by-nc-4.0` card with a spoofed `license_name: apache-2.0` is refused
+  (`test_license_name_does_not_override_a_concrete_license`).
+- **L2** — the test is renamed `test_tier_t_budget_enforced` and asserts
+  `300 + max_input_tokens + max_output_tokens <= 2048` for Tier T.
+- **L3** — the readiness tier route ignores a stored `tier_l_enabled` while probe RAM is below 24 GB
+  (`enabled` is false); the moved router test covers it.
+- **L4** — `docker-compose.yml` comment now says the image is pinned to b12124 by tag and digest, not rolling.
+- **L5** — `P3-local-model-bench.md` has a pending owner checklist for the thinking-override check and the Phase 1
+  `acceptance-smoke` rerun with the incumbents on b12124.
+
+Repair gates:
+
+```text
+$ python -m pytest -q --no-cov tests/test_routers/test_coach_model_tiers_router.py \
+    tests/test_services/test_model_discovery.py tests/test_services/test_model_tiers.py \
+    tests/test_services/test_ai_setup.py tests/runtime/test_model_tier_startup.py \
+    ../scripts/tests/test_hatch_cli.py
+58 passed
+
+$ python -m pytest -q --no-cov tests/test_services tests/test_routers tests/test_scripts tests/runtime
+2370 passed, 1 skipped in 394.84s
+
+$ npx vitest run src/components/settings/__tests__/ModelTierTable.test.tsx \
+    src/__tests__/components/SettingsAIPage.test.tsx
+4 passed (2 files)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ ruff check app tests ../scripts/hatch_cli.py ../scripts/tests/test_hatch_cli.py
+All checks passed
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+```
