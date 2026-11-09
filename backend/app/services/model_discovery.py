@@ -66,18 +66,35 @@ def _utcnow() -> datetime:
 
 def _family(repo_id: str, families: list[str]) -> str | None:
     lowered = repo_id.lower()
-    return next((family for family in families if family in lowered), None)
+    matches = [family for family in families if family.lower() in lowered]
+    return max(matches, key=len) if matches else None
 
 
-def _quantization(filename: str, quantizations: list[str]) -> str | None:
-    upper = filename.upper()
-    return next((value for value in quantizations if value.upper() in upper), None)
+def _quantization(
+    filename: str, quantizations: list[str], *, family: str | None = None
+) -> str | None:
+    allowed = list(quantizations)
+    if family == "bonsai":
+        allowed += _policy().get("bonsai_quantizations", [])
+    for value in allowed:
+        # Whole-token match: fork-only PQ2_0/PTQ1_0 must not match Q2_0/Q1_0.
+        if re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])", filename, re.IGNORECASE
+        ):
+            return value
+    return None
 
 
 def _license(details: dict[str, Any]) -> str:
     card = details.get("cardData")
-    if isinstance(card, dict) and isinstance(card.get("license"), str):
-        return card["license"].lower()
+    if isinstance(card, dict):
+        licence = card.get("license")
+        if licence == "other":
+            name = card.get("license_name")
+            if isinstance(name, str) and name:
+                return name.lower()
+        if isinstance(licence, str):
+            return licence.lower()
     for tag in details.get("tags") or []:
         if isinstance(tag, str) and tag.startswith("license:"):
             return tag.split(":", 1)[1].lower()
@@ -97,9 +114,10 @@ def _normalized_file(
     lfs = sibling.get("lfs") if isinstance(sibling.get("lfs"), dict) else {}
     size = sibling.get("size") or lfs.get("size")
     sha256 = str(lfs.get("sha256") or "")
-    quantization = _quantization(filename, policy["quantizations"])
+    quantization = _quantization(filename, policy["quantizations"], family=family)
     if not (
-        filename.lower().endswith(".gguf")
+        "mmproj" not in filename.lower()
+        and filename.lower().endswith(".gguf")
         and quantization
         and COMMIT_RE.fullmatch(revision)
         and SHA256_RE.fullmatch(sha256)
@@ -194,7 +212,7 @@ def _fallback(probe: dict[str, Any], error: str | None) -> ModelDiscoveryResult:
             catalog_id=item["id"],
             repo_id=item["repo_id"],
             publisher=item["repo_id"].split("/", 1)[0].lower(),
-            family="qwen3.5",
+            family=_family(item["repo_id"], _policy()["approved_families"]) or "unknown",
             filename=item["filename"],
             revision=item["source_revision"],
             sha256=item["sha256"],
@@ -202,13 +220,18 @@ def _fallback(probe: dict[str, Any], error: str | None) -> ModelDiscoveryResult:
             download_size_gb=float(item["download_size_gb"]),
             disk_required_gb=float(item["disk_required_gb"]),
             min_ram_gb=int(item["min_ram_gb"]),
-            quantization=_quantization(item["filename"], _policy()["quantizations"]) or "Q4_K_M",
+            quantization=_quantization(
+                item["filename"],
+                _policy()["quantizations"],
+                family=_family(item["repo_id"], _policy()["approved_families"]),
+            ) or "Q4_K_M",
             license=item["license"],
             download_url=item["download_url_template"].format(
                 source_revision=item["source_revision"]
             ),
         )
         for item in load_catalog()
+        if item["status"] == "promoted"
     ]
     return _result("fallback", models, probe, error=error)
 
@@ -228,30 +251,43 @@ async def discover_models(
     )
     rejected: Counter[str] = Counter()
     try:
-        response = await active_client.get(
-            "/api/models",
-            params={
-                "filter": "text-generation",
-                "search": "GGUF",
-                "sort": "downloads",
-                "direction": "-1",
-                "limit": policy["max_repositories"],
-            },
-        )
-        response.raise_for_status()
-        listing = response.json()
+        listing: list[dict[str, Any]] = []
+        seen_repos: set[str] = set()
+        for task in policy["tasks"]:
+            response = await active_client.get(
+                "/api/models",
+                params={
+                    "filter": task,
+                    "search": "GGUF",
+                    "sort": "downloads",
+                    "direction": "-1",
+                    "limit": policy["max_repositories"],
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            for summary in body if isinstance(body, list) else []:
+                repo_id = str(summary.get("id") or "")
+                if repo_id and repo_id not in seen_repos:
+                    seen_repos.add(repo_id)
+                    listing.append(summary)
         models: list[DiscoveredModel] = []
-        for summary in listing if isinstance(listing, list) else []:
+        approved_publishers = {
+            str(name).lower() for name in policy["approved_publishers"]
+        }
+        for summary in listing:
             repo_id = str(summary.get("id") or "")
             publisher = repo_id.split("/", 1)[0].lower()
-            if publisher not in policy["approved_publishers"]:
+            if publisher not in approved_publishers:
                 rejected["publisher"] += 1
                 continue
             family = _family(repo_id, policy["approved_families"])
             lowered = repo_id.lower()
+            named_for_chat = any(marker in lowered for marker in ("instruct", "chat"))
+            marker_exempt = family in policy.get("marker_exempt_families", [])
             if (
                 not family
-                or not any(marker in lowered for marker in ("instruct", "chat"))
+                or not (named_for_chat or marker_exempt)
                 or any(marker in lowered for marker in ("reranker", "embedding", "embed"))
                 or summary.get("pipeline_tag") not in policy["tasks"]
             ):

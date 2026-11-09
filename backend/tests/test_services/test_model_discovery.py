@@ -89,3 +89,204 @@ async def test_live_failure_uses_fresh_cache(
 
     assert result.source == "cache"
     assert result.models
+
+
+def _discovery_client(listing: list[dict], details: dict[str, dict]) -> httpx.AsyncClient:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/models":
+            return httpx.Response(200, json=listing)
+        repo_id = request.url.path.removeprefix("/api/models/")
+        body = details.get(repo_id)
+        return httpx.Response(200 if body else 404, json=body or {"error": "not found"})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://huggingface.co")
+
+
+def _repo(
+    repo_id: str,
+    license_name: str,
+    pipeline_tag: str,
+    files: list[str],
+    *,
+    licence_key: str | None = None,
+) -> dict:
+    card = {"license": licence_key or license_name}
+    if licence_key:
+        card["license_name"] = license_name
+    return {
+        "id": repo_id,
+        "sha": "a" * 40,
+        "pipeline_tag": pipeline_tag,
+        "cardData": card,
+        "siblings": [
+            {"rfilename": name, "size": 1_000_000_000, "lfs": {"sha256": "b" * 64}}
+            for name in files
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_policy_accepts_spark_and_minicpm_families_only_from_allowlisted_publishers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    details = {
+        "XHToken/Spark-X2.6-4B-GGUF": _repo(
+            "XHToken/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
+            ["Spark-X2.6-4B-Q4_K_M.gguf"],
+        ),
+        "openbmb/MiniCPM5-2B-GGUF": _repo(
+            "openbmb/MiniCPM5-2B-GGUF", "apache-2.0", "text-generation",
+            ["MiniCPM5-2B-Q4_K_M.gguf"],
+        ),
+        "prism-ml/Bonsai-1.7B-gguf": _repo(
+            "prism-ml/Bonsai-1.7B-gguf", "apache-2.0", "text-generation",
+            ["Bonsai-1.7B-Q1_0.gguf"],
+        ),
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF": _repo(
+            "LiquidAI/LFM2.5-1.2B-Instruct-GGUF", "lfm1.0", "text-generation",
+            ["LFM2.5-1.2B-Instruct-Q4_K_M.gguf"], licence_key="other",
+        ),
+        "google/gemma-4-E2B-it-GGUF": _repo(
+            "google/gemma-4-E2B-it-GGUF", "apache-2.0", "image-text-to-text",
+            ["gemma-4-E2B-it-Q4_K_M.gguf"],
+        ),
+        "Qwen/Qwen3.8-4B-GGUF": _repo(
+            "Qwen/Qwen3.8-4B-GGUF", "apache-2.0", "text-generation",
+            ["Qwen3.8-4B-Q4_K_M.gguf"],
+        ),
+        "evilcorp/Bonsai-1.7B-gguf": _repo(
+            "evilcorp/Bonsai-1.7B-gguf", "apache-2.0", "text-generation",
+            ["Bonsai-1.7B-Q1_0.gguf"],
+        ),
+    }
+
+    result = await discover_models(
+        _probe(), client=_discovery_client(list(details.values()), details)
+    )
+
+    assert {item.repo_id for item in result.models} == {
+        "XHToken/Spark-X2.6-4B-GGUF",
+        "openbmb/MiniCPM5-2B-GGUF",
+        "prism-ml/Bonsai-1.7B-gguf",
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
+        "google/gemma-4-E2B-it-GGUF",
+        "Qwen/Qwen3.8-4B-GGUF",
+    }
+    assert result.rejected_counts["publisher"] == 1
+
+
+@pytest.mark.asyncio
+async def test_vision_repo_accepted_text_only_without_mmproj(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    repo = _repo(
+        "openbmb/MiniCPM-V-4.7-1B-gguf", "apache-2.0", "image-text-to-text",
+        [
+            "MiniCPM-V-4_7-1B-Q8_0.gguf",
+            "MiniCPM-V-4_7-1B-F16.gguf",
+            "mmproj-model-f16-4x.gguf",
+        ],
+    )
+
+    result = await discover_models(
+        _probe(), client=_discovery_client([repo], {repo["id"]: repo})
+    )
+
+    assert [item.filename for item in result.models] == ["MiniCPM-V-4_7-1B-Q8_0.gguf"]
+    assert result.models[0].task == "text-generation"
+    assert all("mmproj" not in item.filename.lower() for item in result.models)
+
+
+@pytest.mark.asyncio
+async def test_unapproved_licence_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    rejected = _repo(
+        "XHToken/Spark-X2.6-4B-NC-GGUF", "cc-by-nc-4.0", "text-generation",
+        ["Spark-X2.6-4B-Q4_K_M.gguf"],
+    )
+    accepted = _repo(
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF", "lfm1.0", "text-generation",
+        ["LFM2.5-1.2B-Instruct-Q4_K_M.gguf"], licence_key="other",
+    )
+
+    result = await discover_models(
+        _probe(),
+        client=_discovery_client([rejected, accepted], {
+            rejected["id"]: rejected,
+            accepted["id"]: accepted,
+        }),
+    )
+
+    assert [item.repo_id for item in result.models] == [accepted["id"]]
+    assert result.rejected_counts["license"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bonsai_accepts_upstream_1_and_2_bit_quants_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    bonsai = _repo(
+        "prism-ml/Ternary-Bonsai-2-27B-gguf", "apache-2.0", "text-generation",
+        [
+            "Ternary-Bonsai-2-27B-Q1_0.gguf",
+            "Ternary-Bonsai-2-27B-Q2_0.gguf",
+            "Ternary-Bonsai-2-27B-PQ2_0.gguf",
+            "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+        ],
+    )
+    lfm = _repo(
+        "LiquidAI/LFM2.5-1.2B-Instruct-GGUF", "lfm1.0", "text-generation",
+        ["LFM2.5-1.2B-Instruct-Q1_0.gguf", "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"],
+        licence_key="other",
+    )
+
+    result = await discover_models(
+        _probe(),
+        client=_discovery_client([bonsai, lfm], {bonsai["id"]: bonsai, lfm["id"]: lfm}),
+    )
+
+    assert {
+        item.filename for item in result.models if item.repo_id == bonsai["id"]
+    } == {
+        "Ternary-Bonsai-2-27B-Q1_0.gguf",
+        "Ternary-Bonsai-2-27B-Q2_0.gguf",
+    }
+    assert [item.filename for item in result.models if item.repo_id == lfm["id"]] == [
+        "LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_license_name_does_not_override_a_concrete_license(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HATCH_CONFIG_DIR", str(tmp_path))
+    spoofed = _repo(
+        "XHToken/Spark-X2.6-4B-NC-GGUF", "apache-2.0", "text-generation",
+        ["Spark-X2.6-4B-Q4_K_M.gguf"], licence_key="cc-by-nc-4.0",
+    )
+    accepted = _repo(
+        "XHToken/Spark-X2.6-4B-GGUF", "apache-2.0", "text-generation",
+        ["Spark-X2.6-4B-Q4_K_M.gguf"],
+    )
+
+    result = await discover_models(
+        _probe(),
+        client=_discovery_client([spoofed, accepted], {
+            spoofed["id"]: spoofed,
+            accepted["id"]: accepted,
+        }),
+    )
+
+    assert [item.repo_id for item in result.models] == [accepted["id"]]
+    assert result.rejected_counts["license"] == 1

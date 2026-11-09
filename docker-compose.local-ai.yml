@@ -1,7 +1,7 @@
 services:
   llm-primary:
     profiles: ["local-primary"]
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-b12124@sha256:c0a11067c72bb1eb330b8bddbf9869274c195e596bf4fae55fd527102e644b85
     command: >
       --model /models/${HATCH_PRIMARY_MODEL_FILE:?Select and apply a primary local model first}
       --ctx-size 16384 --parallel 1 --reasoning off --host 0.0.0.0 --port 8080
@@ -14,7 +14,7 @@ services:
 
   llm-triage:
     profiles: ["local-triage"]
-    image: ghcr.io/ggml-org/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-b12124@sha256:c0a11067c72bb1eb330b8bddbf9869274c195e596bf4fae55fd527102e644b85
     command: >
       --model /models/${HATCH_TRIAGE_MODEL_FILE:?Select and apply a triage local model first}
       --ctx-size 4096 --parallel 2 --reasoning off --host 0.0.0.0 --port 8081
@@ -22,5 +22,20 @@ services:
       - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z
     ports:
       - "127.0.0.1:8081:8081"
+    restart: unless-stopped
+    networks: [hatch]
+
+  # Tier L is optional and off by default. Start it with `--profile deep`
+  # only after the owner enables Tier L in Settings and the model is promoted.
+  llm-deep:
+    profiles: ["deep"]
+    image: ghcr.io/ggml-org/llama.cpp:server-b12124@sha256:c0a11067c72bb1eb330b8bddbf9869274c195e596bf4fae55fd527102e644b85
+    command: >
+      --model /models/${HATCH_DEEP_MODEL_FILE:?Select and promote a deep local model first}
+      --ctx-size 16384 --parallel 1 --reasoning off --host 0.0.0.0 --port 8082
+    volumes:
+      - ${HATCH_HOME:-${HOME}/.hatch}/models:/models:ro,z
+    ports:
+      - "127.0.0.1:8082:8082"
     restart: unless-stopped
     networks: [hatch]

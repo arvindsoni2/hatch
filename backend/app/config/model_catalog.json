@@ -4,8 +4,16 @@
     "display_name": "Qwen3.5 0.8B Q8_0 - fast triage",
     "role": "triage",
     "format": "gguf",
-    "supported_os": ["linux", "macos", "windows"],
-    "supported_arch": ["x86_64", "arm64", "aarch64"],
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
     "repo_id": "bartowski/Qwen_Qwen3.5-0.8B-GGUF",
     "filename": "Qwen_Qwen3.5-0.8B-Q8_0.gguf",
     "download_url_template": "https://huggingface.co/bartowski/Qwen_Qwen3.5-0.8B-GGUF/resolve/{source_revision}/Qwen_Qwen3.5-0.8B-Q8_0.gguf",
@@ -16,15 +24,27 @@
     "min_ram_gb": 4,
     "recommended_ram_gb": 8,
     "license": "apache-2.0",
-    "source_trust": "community_quantization_of_official_qwen_model"
+    "source_trust": "community_quantization_of_official_qwen_model",
+    "tiers": [
+      "T"
+    ],
+    "status": "promoted"
   },
   {
     "id": "qwen3.5-4b-q4km-primary",
     "display_name": "Qwen3.5 4B Q4_K_M - compact primary",
     "role": "combined_capable_primary",
     "format": "gguf",
-    "supported_os": ["linux", "macos", "windows"],
-    "supported_arch": ["x86_64", "arm64", "aarch64"],
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
     "repo_id": "bartowski/Qwen_Qwen3.5-4B-GGUF",
     "filename": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
     "download_url_template": "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/{source_revision}/Qwen_Qwen3.5-4B-Q4_K_M.gguf",
@@ -35,6 +55,538 @@
     "min_ram_gb": 8,
     "recommended_ram_gb": 12,
     "license": "apache-2.0",
-    "source_trust": "community_quantization_of_official_qwen_model"
+    "source_trust": "community_quantization_of_official_qwen_model",
+    "tiers": [
+      "S"
+    ],
+    "status": "promoted"
+  },
+  {
+    "id": "minicpm-v-4.7-1b-q8-triage",
+    "display_name": "MiniCPM-V 4.7 1B Q8_0 - text-only triage",
+    "role": "triage",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "openbmb/MiniCPM-V-4.7-1B-gguf",
+    "filename": "MiniCPM-V-4_7-1B-Q8_0.gguf",
+    "download_url_template": "https://huggingface.co/openbmb/MiniCPM-V-4.7-1B-gguf/resolve/{source_revision}/MiniCPM-V-4_7-1B-Q8_0.gguf",
+    "source_revision": "345adbfa02c4a4671e61b7c75502dc9bf24fa93d",
+    "sha256": "32322779352e9c6e7b9748ecbf62c9b8a6570bb8630fa4dddb9d0394528ea7fa",
+    "download_size_gb": 1.08,
+    "disk_required_gb": 1.49,
+    "min_ram_gb": 4,
+    "recommended_ram_gb": 8,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository_text_only_use",
+    "tiers": [
+      "T"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "minicpm5-2b-q4km-triage",
+    "display_name": "MiniCPM5 2B Q4_K_M - small",
+    "role": "triage",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "openbmb/MiniCPM5-2B-GGUF",
+    "filename": "MiniCPM5-2B-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/openbmb/MiniCPM5-2B-GGUF/resolve/{source_revision}/MiniCPM5-2B-Q4_K_M.gguf",
+    "source_revision": "2079a22f3beaa4e306449978533478fe0522f4b3",
+    "sha256": "ec2d5801640099e97d8d7e8003ad4d81f336e757811f03a26173dddf386602fd",
+    "download_size_gb": 1.56,
+    "disk_required_gb": 2.04,
+    "min_ram_gb": 4,
+    "recommended_ram_gb": 8,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "T",
+      "S"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "spark-x2.6-4b-q4km-primary",
+    "display_name": "Spark-X2.6 4B Q4_K_M - primary",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "XHToken/Spark-X2.6-4B-GGUF",
+    "filename": "Spark-X2.6-4B-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/XHToken/Spark-X2.6-4B-GGUF/resolve/{source_revision}/Spark-X2.6-4B-Q4_K_M.gguf",
+    "source_revision": "3c33ab38746828196b9b5979c739ee2d0bef894d",
+    "sha256": "91cb2811aebb47ac916aa619d27d4cdd7f4143106b7917accb8ead4cd7f5cbd9",
+    "download_size_gb": 3.54,
+    "disk_required_gb": 4.32,
+    "min_ram_gb": 8,
+    "recommended_ram_gb": 12,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "S"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "phi-4-mini-instruct-q4km-primary",
+    "display_name": "Phi-4 mini instruct Q4_K_M - primary",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "unsloth/Phi-4-mini-instruct-GGUF",
+    "filename": "Phi-4-mini-instruct-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/{source_revision}/Phi-4-mini-instruct-Q4_K_M.gguf",
+    "source_revision": "78eb92a46fc37e6b524df991ed9aca9bc6aa7b80",
+    "sha256": "88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a",
+    "download_size_gb": 2.49,
+    "disk_required_gb": 3.11,
+    "min_ram_gb": 8,
+    "recommended_ram_gb": 12,
+    "license": "mit",
+    "source_trust": "community_quantization_of_official_microsoft_model",
+    "tiers": [
+      "S"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "minicpm-v-4.7-35b-a3b-q4km-deep",
+    "display_name": "MiniCPM-V 4.7 35B-A3B Q4_K_M - deep",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "openbmb/MiniCPM-V-4.7-35B-A3B-gguf",
+    "filename": "MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/openbmb/MiniCPM-V-4.7-35B-A3B-gguf/resolve/{source_revision}/MiniCPM-V-4_7-35B-A3B-Q4_K_M.gguf",
+    "source_revision": "cf943fbe32f840b20ca05ccc146e7dc72baf9a9b",
+    "sha256": "9ecf91e814d7e9adc64325b1b65f8628a9b1bb8da4f61a92869ca7489bfd888e",
+    "download_size_gb": 21.17,
+    "disk_required_gb": 24.6,
+    "min_ram_gb": 24,
+    "recommended_ram_gb": 29,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository_text_only_use",
+    "tiers": [
+      "L"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "gemma-4-e2b-q4km-triage",
+    "display_name": "Gemma 4 E2B Q4_K_M - text-only triage",
+    "role": "triage",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "unsloth/gemma-4-E2B-it-GGUF",
+    "filename": "gemma-4-E2B-it-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/{source_revision}/gemma-4-E2B-it-Q4_K_M.gguf",
+    "source_revision": "0314792d7f1f7e229411f620751375812bb9faf2",
+    "sha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "download_size_gb": 3.11,
+    "disk_required_gb": 3.83,
+    "min_ram_gb": 8,
+    "recommended_ram_gb": 12,
+    "license": "apache-2.0",
+    "source_trust": "community_quantization_of_official_google_model",
+    "tiers": [
+      "T"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "bonsai-1.7b-q1-triage",
+    "display_name": "Bonsai 1.7B Q1_0 - tiny",
+    "role": "triage",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "prism-ml/Bonsai-1.7B-gguf",
+    "filename": "Bonsai-1.7B-Q1_0.gguf",
+    "download_url_template": "https://huggingface.co/prism-ml/Bonsai-1.7B-gguf/resolve/{source_revision}/Bonsai-1.7B-Q1_0.gguf",
+    "source_revision": "210a9e99f79cb184909d49595906526eb2b3dd9a",
+    "sha256": "3d7c6c90dd98717a203adb22d5eacd2581850e40aa5327e144b97766cae5f7e3",
+    "download_size_gb": 0.25,
+    "disk_required_gb": 0.54,
+    "min_ram_gb": 4,
+    "recommended_ram_gb": 8,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "T"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "lfm2.5-1.2b-instruct-q4km-triage",
+    "display_name": "LFM2.5 1.2B Instruct Q4_K_M - tiny",
+    "role": "triage",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
+    "filename": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/{source_revision}/LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+    "source_revision": "8ed288026e23958ad9dfa92d53ed773a8eee7125",
+    "sha256": "b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5",
+    "download_size_gb": 0.73,
+    "disk_required_gb": 1.09,
+    "min_ram_gb": 4,
+    "recommended_ram_gb": 8,
+    "license": "lfm1.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "T"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "gemma-4-e4b-q4km-primary",
+    "display_name": "Gemma 4 E4B Q4_K_M - text-only primary",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "unsloth/gemma-4-E4B-it-GGUF",
+    "filename": "gemma-4-E4B-it-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/{source_revision}/gemma-4-E4B-it-Q4_K_M.gguf",
+    "source_revision": "bfc15c382204943c3a8fff0c750b94ae2364d7a3",
+    "sha256": "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87",
+    "download_size_gb": 4.98,
+    "disk_required_gb": 5.98,
+    "min_ram_gb": 8,
+    "recommended_ram_gb": 12,
+    "license": "apache-2.0",
+    "source_trust": "community_quantization_of_official_google_model",
+    "tiers": [
+      "S"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "bonsai-4b-q1-primary",
+    "display_name": "Bonsai 4B Q1_0 - small",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "prism-ml/Bonsai-4B-gguf",
+    "filename": "Bonsai-4B-Q1_0.gguf",
+    "download_url_template": "https://huggingface.co/prism-ml/Bonsai-4B-gguf/resolve/{source_revision}/Bonsai-4B-Q1_0.gguf",
+    "source_revision": "78f2c2bacd0904ffaba24b4873ed975e5818354a",
+    "sha256": "4524b3f997f0f06444e568d1f26e2efd69effa3218c7ad3047432fb171e42168",
+    "download_size_gb": 0.57,
+    "disk_required_gb": 0.91,
+    "min_ram_gb": 4,
+    "recommended_ram_gb": 8,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "S"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "bonsai-8b-q1-primary",
+    "display_name": "Bonsai 8B Q1_0 - small",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "prism-ml/Bonsai-8B-gguf",
+    "filename": "Bonsai-8B-Q1_0.gguf",
+    "download_url_template": "https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/{source_revision}/Bonsai-8B-Q1_0.gguf",
+    "source_revision": "48516770dd04643643e9f9019a2a349cf26c5dbd",
+    "sha256": "284a335aa3fb2ced3b1b01fcb40b08aa783e3b70832767f0dd2e3fdfa134bd54",
+    "download_size_gb": 1.16,
+    "disk_required_gb": 1.58,
+    "min_ram_gb": 4,
+    "recommended_ram_gb": 8,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "S"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "lfm2.5-8b-a1b-q4km-primary",
+    "display_name": "LFM2.5 8B-A1B Q4_K_M - small MoE",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "LiquidAI/LFM2.5-8B-A1B-GGUF",
+    "filename": "LFM2.5-8B-A1B-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B-GGUF/resolve/{source_revision}/LFM2.5-8B-A1B-Q4_K_M.gguf",
+    "source_revision": "49c14831707011e64d70b2ebd8462ba08d608434",
+    "sha256": "4923ec14f06b968b74d663e5949867d2d9c3bf13a20b8be1a9f9af39989b2bb0",
+    "download_size_gb": 5.16,
+    "disk_required_gb": 6.18,
+    "min_ram_gb": 12,
+    "recommended_ram_gb": 16,
+    "license": "lfm1.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "S"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "gemma-4-26b-a4b-ud-q4km-deep",
+    "display_name": "Gemma 4 26B-A4B UD-Q4_K_M - deep",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "unsloth/gemma-4-26B-A4B-it-GGUF",
+    "filename": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/{source_revision}/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+    "source_revision": "c099eb48e663fd284577b04978a94ffccb261841",
+    "sha256": "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f",
+    "download_size_gb": 16.95,
+    "disk_required_gb": 19.74,
+    "min_ram_gb": 24,
+    "recommended_ram_gb": 29,
+    "license": "apache-2.0",
+    "source_trust": "community_quantization_of_official_google_model",
+    "tiers": [
+      "L"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "gemma-4-12b-q4km-deep",
+    "display_name": "Gemma 4 12B Q4_K_M - deep",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "unsloth/gemma-4-12b-it-GGUF",
+    "filename": "gemma-4-12b-it-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/{source_revision}/gemma-4-12b-it-Q4_K_M.gguf",
+    "source_revision": "fc034cfff751157913579611efad8462ac1be606",
+    "sha256": "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42",
+    "download_size_gb": 7.12,
+    "disk_required_gb": 8.44,
+    "min_ram_gb": 12,
+    "recommended_ram_gb": 16,
+    "license": "apache-2.0",
+    "source_trust": "community_quantization_of_official_google_model",
+    "tiers": [
+      "L"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "ternary-bonsai-2-27b-q2-deep",
+    "display_name": "Ternary-Bonsai-2 27B Q2_0 - deep",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+    "filename": "Ternary-Bonsai-2-27B-Q2_0.gguf",
+    "download_url_template": "https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf/resolve/{source_revision}/Ternary-Bonsai-2-27B-Q2_0.gguf",
+    "source_revision": "839bd57023c1558945afea70a74fa83c054f35f9",
+    "sha256": "4f99aed01b8a877e153f9aa6569a4440fe17c59701cc0953e36d7f460549e70e",
+    "download_size_gb": 7.63,
+    "disk_required_gb": 9.02,
+    "min_ram_gb": 12,
+    "recommended_ram_gb": 16,
+    "license": "apache-2.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "L"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "lfm2-24b-a2b-q4km-deep",
+    "display_name": "LFM2 24B-A2B Q4_K_M - deep MoE",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "LiquidAI/LFM2-24B-A2B-GGUF",
+    "filename": "LFM2-24B-A2B-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/LiquidAI/LFM2-24B-A2B-GGUF/resolve/{source_revision}/LFM2-24B-A2B-Q4_K_M.gguf",
+    "source_revision": "6247d03b87c27c05a258feb5acdfb4d5efbf0bd8",
+    "sha256": "eb4d2d4d4e61b795726c2f526c4434ca6bc725ad7a783691b58681f025cf58f2",
+    "download_size_gb": 14.42,
+    "disk_required_gb": 16.83,
+    "min_ram_gb": 24,
+    "recommended_ram_gb": 29,
+    "license": "lfm1.0",
+    "source_trust": "official_model_repository",
+    "tiers": [
+      "L"
+    ],
+    "status": "candidate"
+  },
+  {
+    "id": "qwen3.8-27b-ud-q4km-deep",
+    "display_name": "Qwen3.8 27B UD-Q4_K_M - deep",
+    "role": "combined_capable_primary",
+    "format": "gguf",
+    "supported_os": [
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "supported_arch": [
+      "x86_64",
+      "arm64",
+      "aarch64"
+    ],
+    "repo_id": "unsloth/Qwen3.8-27B-GGUF",
+    "filename": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "download_url_template": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/{source_revision}/Qwen3.8-27B-UD-Q4_K_M.gguf",
+    "source_revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+    "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+    "download_size_gb": 16.46,
+    "disk_required_gb": 19.18,
+    "min_ram_gb": 24,
+    "recommended_ram_gb": 29,
+    "license": "apache-2.0",
+    "source_trust": "community_quantization_of_official_qwen_model",
+    "tiers": [
+      "L"
+    ],
+    "status": "candidate"
   }
 ]

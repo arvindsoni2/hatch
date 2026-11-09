@@ -1,10 +1,19 @@
 {
-  "approved_publishers": ["bartowski", "unsloth"],
-  "approved_families": ["qwen2.5", "qwen3", "qwen3.5", "llama-3.2", "gemma-3"],
-  "approved_licenses": ["apache-2.0", "mit", "qwen-research"],
+  "approved_publishers": [
+    "bartowski", "unsloth", "xhtoken", "openbmb", "prism-ml", "LiquidAI", "google", "Qwen"
+  ],
+  "approved_families": [
+    "qwen2.5", "qwen3", "qwen3.5", "qwen3.8", "llama-3.2", "gemma-3", "gemma-4",
+    "spark-x2", "minicpm", "bonsai", "lfm2"
+  ],
+  "marker_exempt_families": [
+    "spark-x2", "minicpm", "bonsai", "lfm2", "gemma-4", "qwen3.8"
+  ],
+  "approved_licenses": ["apache-2.0", "mit", "qwen-research", "lfm1.0"],
   "formats": ["gguf"],
-  "tasks": ["text-generation"],
+  "tasks": ["text-generation", "image-text-to-text"],
   "quantizations": ["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"],
+  "bonsai_quantizations": ["Q2_0", "Q1_0"],
   "cache_ttl_hours": 24,
   "max_repositories": 12,
   "max_files_per_repository": 4

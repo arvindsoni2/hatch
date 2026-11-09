@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
-import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -616,3 +615,31 @@ def test_uninstall_without_purge_preserves_home(
     hatch_cli.cmd_uninstall(args)
 
     assert marker.read_text() == "keep"
+
+
+def test_model_buckets_never_recommend_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    base = {
+        "supported_os": ["linux"],
+        "supported_arch": ["x86_64"],
+        "min_ram_gb": 4,
+        "recommended_ram_gb": 8,
+        "disk_required_gb": 1.0,
+    }
+    monkeypatch.setattr(
+        hatch_cli,
+        "catalog",
+        lambda: [
+            {**base, "id": "incumbent", "status": "promoted"},
+            {**base, "id": "candidate", "status": "candidate"},
+            {**base, "id": "rejected", "status": "rejected"},
+        ],
+    )
+    monkeypatch.setattr(hatch_cli, "host_os", lambda: "linux")
+    monkeypatch.setattr(hatch_cli, "host_arch", lambda: "x86_64")
+
+    buckets = hatch_cli.model_buckets(32, 100)
+
+    assert buckets["recommended"] == ["incumbent"]
+    assert "candidate" not in buckets["recommended"]
+    assert "candidate" not in buckets["compatible"]
+    assert "candidate" not in buckets["not_recommended"]

@@ -11,10 +11,14 @@ from app.services import ai_setup
 def test_catalogue_is_pinned_and_valid() -> None:
     catalogue = ai_setup.load_catalog()
 
-    assert len(catalogue) == 2
+    assert len(catalogue) == 19
     assert {model["role"] for model in catalogue} == {
         "triage",
         "combined_capable_primary",
+    }
+    assert {model["id"] for model in catalogue if model["status"] == "promoted"} == {
+        "qwen3.5-0.8b-q8-triage",
+        "qwen3.5-4b-q4km-primary",
     }
     assert all(len(model["source_revision"]) == 40 for model in catalogue)
     assert all(len(model["sha256"]) == 64 for model in catalogue)

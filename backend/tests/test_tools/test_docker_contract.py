@@ -104,4 +104,5 @@ def test_local_ai_overlay_remains_llamacpp_only() -> None:
     services = _compose("docker-compose.local-ai.yml")["services"]
 
     assert "backend" not in services
-    assert set(services) == {"llm-primary", "llm-triage"}
+    assert set(services) == {"llm-primary", "llm-triage", "llm-deep"}
+    assert services["llm-deep"]["profiles"] == ["deep"]

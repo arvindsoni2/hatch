@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,7 @@ from ..schemas.coach_readiness import (
     SaveDebriefRequest,
     SkipDebriefRequest,
 )
+from ..services.ai_setup import load_catalog, load_intent, load_probe_snapshot
 from ..services.coach_readiness import coverage
 from ..services.coach_readiness.contracts import (
     CoverageMap,
@@ -33,6 +35,11 @@ from ..services.coach_readiness.contracts import (
 )
 from ..services.coach_readiness.debrief import DebriefService
 from ..services.coach_readiness.next_actions import debrief_next_actions
+from ..services.coach_readiness.tiers import (
+    MIN_TIER_L_RAM_GB,
+    load_tier_map,
+    tier_l_available,
+)
 
 router = APIRouter(prefix="/api/coach/readiness", tags=["coach-readiness"])
 
@@ -266,3 +273,38 @@ async def get_readiness_next_actions(
 @router.get("/display-timezone")
 async def get_display_timezone() -> dict[str, str | None]:
     return {"display_timezone": settings.HATCH_DISPLAY_TIMEZONE}
+
+
+@router.get("/model-tiers")
+async def get_model_tiers() -> dict[str, Any]:
+    mapping = load_tier_map()
+    catalogue = {model["id"]: model for model in load_catalog()}
+    snapshot = load_probe_snapshot() or {}
+    total_ram_gb = float((snapshot.get("memory") or {}).get("total_gb") or 0)
+    available = tier_l_available(total_ram_gb)
+    intent = load_intent()
+    return {
+        "tiers": [
+            {
+                "tier": config.tier,
+                "route": config.route,
+                "model_id": config.model_id,
+                "display_name": catalogue.get(config.model_id or "", {}).get(
+                    "display_name", config.model_id or ""
+                ),
+                "status": catalogue.get(config.model_id or "", {}).get(
+                    "status", "promoted"
+                ),
+                "thinking": config.thinking,
+                "max_output_tokens": config.max_output_tokens,
+                "deadline_s": config.deadline_s,
+            }
+            for config in mapping.values()
+        ],
+        "tier_l": {
+            "available": available,
+            # A stored opt-in never takes effect on a machine below the RAM gate.
+            "enabled": bool(intent.get("tier_l_enabled", False)) and available,
+            "min_ram_gb": MIN_TIER_L_RAM_GB,
+        },
+    }
