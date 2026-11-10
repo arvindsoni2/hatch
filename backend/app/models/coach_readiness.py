@@ -76,3 +76,14 @@ class CoachInterviewDebrief(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class CoachPatternDismissal(Base):
+    """A dismissed pattern fingerprint; no content is stored."""
+
+    __tablename__ = "coach_pattern_dismissals"
+
+    fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dismissed_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )

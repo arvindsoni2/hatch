@@ -61,6 +61,8 @@ class ProgressSnapshot:
     role_family: str | None = None
     role_level: str | None = None
     interview_type: str | None = None
+    evaluation_contract_version: str = ""
+    difficulty: str | None = None
     strengths: tuple[Mapping[str, object], ...] = ()
     priorities: tuple[Mapping[str, object], ...] = ()
     evidence_review_items: tuple[Mapping[str, object], ...] = ()

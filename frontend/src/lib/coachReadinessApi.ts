@@ -184,3 +184,86 @@ export function fetchDisplayTimeZone(): Promise<string | null> {
   }
   return displayTimeZonePromise;
 }
+
+export type PatternKind = "focus" | "strength" | "mixed" | "forming";
+export type PatternTrendLabel =
+  | "improving"
+  | "easier_difficulty"
+  | "getting_weaker"
+  | "harder_difficulty";
+
+export interface PatternGroup {
+  role_family: string;
+  interview_type: string;
+  contract_version: string;
+}
+
+export interface PatternSupport {
+  session_id: string;
+  completed_at: string;
+  level: string;
+  difficulty: string | null;
+  role_level: string | null;
+}
+
+export interface Pattern {
+  fingerprint: string;
+  group: PatternGroup;
+  dimension: string;
+  kind: PatternKind;
+  trend: string;
+  trend_label: PatternTrendLabel | null;
+  supporting: PatternSupport[];
+  stale: boolean;
+  dismissed: boolean;
+}
+
+export interface PatternGroupSection {
+  role_family: string;
+  interview_type: string;
+  contract_version: string;
+  session_count: number;
+  patterns: Pattern[];
+}
+
+export interface PatternList {
+  groups: PatternGroupSection[];
+  include_stale: boolean;
+}
+
+export interface PatternWhyExcerpt {
+  session_id: string;
+  completed_at: string;
+  text: string;
+}
+
+export interface PatternWhy {
+  pattern: Pattern;
+  excerpts: PatternWhyExcerpt[];
+}
+
+export function fetchPatterns(includeStale = true): Promise<PatternList> {
+  return request<PatternList>(
+    `/api/coach/readiness/patterns?include_stale=${includeStale ? "true" : "false"}`,
+  );
+}
+
+export function fetchPatternWhy(fingerprint: string): Promise<PatternWhy> {
+  return request<PatternWhy>(
+    `/api/coach/readiness/patterns/${encodeURIComponent(fingerprint)}/why`,
+  );
+}
+
+export function dismissPattern(fingerprint: string): Promise<void> {
+  return request(
+    `/api/coach/readiness/patterns/${encodeURIComponent(fingerprint)}/dismiss`,
+    { method: "POST" },
+  );
+}
+
+export function undoPatternDismissal(fingerprint: string): Promise<void> {
+  return request(
+    `/api/coach/readiness/patterns/${encodeURIComponent(fingerprint)}/dismiss`,
+    { method: "DELETE" },
+  );
+}

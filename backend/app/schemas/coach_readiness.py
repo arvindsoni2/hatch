@@ -125,3 +125,59 @@ class ReadinessNextActionRead(BaseModel):
     reason: str
     urgency: str
     kind: str
+
+
+PatternKind = Literal["focus", "strength", "mixed", "forming"]
+PatternTrendLabel = Literal[
+    "improving", "easier_difficulty", "getting_weaker", "harder_difficulty"
+]
+
+
+class PatternSupportRead(BaseModel):
+    session_id: str
+    completed_at: str
+    level: str
+    difficulty: str | None = None
+    role_level: str | None = None
+
+
+class PatternGroupRead(BaseModel):
+    role_family: str
+    interview_type: str
+    contract_version: str
+
+
+class PatternRead(BaseModel):
+    fingerprint: str
+    group: PatternGroupRead
+    dimension: str
+    kind: PatternKind
+    trend: str
+    trend_label: PatternTrendLabel | None = None
+    supporting: list[PatternSupportRead] = Field(default_factory=list)
+    stale: bool = False
+    dismissed: bool = False
+
+
+class PatternGroupSectionRead(BaseModel):
+    role_family: str
+    interview_type: str
+    contract_version: str
+    session_count: int
+    patterns: list[PatternRead] = Field(default_factory=list)
+
+
+class PatternListRead(BaseModel):
+    groups: list[PatternGroupSectionRead] = Field(default_factory=list)
+    include_stale: bool = False
+
+
+class PatternWhyExcerptRead(BaseModel):
+    session_id: str
+    completed_at: str
+    text: str
+
+
+class PatternWhyRead(BaseModel):
+    pattern: PatternRead
+    excerpts: list[PatternWhyExcerptRead] = Field(default_factory=list)

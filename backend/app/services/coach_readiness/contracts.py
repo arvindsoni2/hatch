@@ -116,3 +116,57 @@ class ReadinessError(Exception):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+PatternKind = Literal["focus", "strength", "mixed", "forming"]
+PatternTrendLabel = Literal[
+    "improving", "easier_difficulty", "getting_weaker", "harder_difficulty"
+]
+
+
+@dataclass(frozen=True)
+class PatternGroup:
+    role_family: str
+    interview_type: str
+    contract_version: str
+
+
+@dataclass(frozen=True)
+class SupportingSession:
+    session_id: str
+    completed_at: datetime
+    level: str
+    difficulty: str | None
+    role_level: str | None
+
+
+@dataclass(frozen=True)
+class Pattern:
+    fingerprint: str
+    group: PatternGroup
+    dimension: str
+    kind: PatternKind
+    trend: str
+    trend_label: PatternTrendLabel | None
+    supporting: tuple[SupportingSession, ...]
+    stale: bool
+    dismissed: bool
+
+
+@dataclass(frozen=True)
+class PatternPolicy:
+    window_days: int = 90
+    max_sessions: int = 3
+
+
+@dataclass(frozen=True)
+class WhyExcerpt:
+    session_id: str
+    completed_at: datetime
+    text: str
+
+
+@dataclass(frozen=True)
+class PatternWhy:
+    pattern: Pattern
+    excerpts: tuple[WhyExcerpt, ...] = field(default_factory=tuple)

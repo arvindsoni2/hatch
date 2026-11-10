@@ -1487,6 +1487,84 @@ class ConversationalSessionRepository:
             )
         return snapshots
 
+    async def load_learning_snapshots(self, *, limit: int = 1000):
+        """Load completed conversational reports for cross-group pattern derivation."""
+
+        from ..services.coach_conversational_progress import ProgressSnapshot
+        from ..schemas.coach_conversation import ConversationalReportRead
+        from pydantic import ValidationError
+
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        filters = [
+            InterviewSession.experience_version == "conversational_v1",
+            InterviewSession.status == "completed",
+            InterviewSession.conversation_state == "completed",
+            InterviewSession.completed_at.is_not(None),
+            InterviewSession.compatibility_key.is_not(None),
+            InterviewSession.compatibility_key != "",
+            InterviewSession.report_state.in_(("completed", "fallback")),
+            InterviewSession.deletion_state == "not_requested",
+        ]
+        sessions = (await self._session.execute(
+            select(
+                InterviewSession.id, InterviewSession.compatibility_key,
+                InterviewSession.activity_version, InterviewSession.retention_version,
+                InterviewSession.completed_at, InterviewSession.report_state,
+                InterviewSession.report_json, InterviewSession.application_id,
+                InterviewSession.company_name, InterviewSession.role_title,
+                InterviewSession.session_plan_json,
+            )
+            .where(*filters)
+            .order_by(
+                InterviewSession.completed_at.desc(), InterviewSession.id.desc()
+            )
+            .limit(limit)
+        )).all()
+        snapshots: list[ProgressSnapshot] = []
+        for session in sessions:
+            if not isinstance(session.report_json, dict):
+                continue
+            if session.report_json.get("activity_version") != session.activity_version:
+                continue
+            try:
+                report = ConversationalReportRead.model_validate({
+                    **session.report_json,
+                    "session_id": session.id, "report_state": session.report_state,
+                    "activity_version": session.activity_version,
+                    "retention_version": session.retention_version,
+                    "retention_summary": {"attempts": []},
+                }).model_dump(mode="json")
+            except ValidationError:
+                continue
+            if report["compatibility_key"] != session.compatibility_key:
+                continue
+            plan = session.session_plan_json or {}
+            role = plan.get("role", {})
+            interview = plan.get("interview", {})
+            snapshots.append(
+                ProgressSnapshot(
+                    session_id=session.id,
+                    compatibility_key=session.compatibility_key,
+                    activity_version=session.activity_version,
+                    completed_at=session.completed_at,
+                    session_level=report["session_level"],
+                    dimensions=report["dimensions"],
+                    application_id=session.application_id,
+                    company_name=session.company_name,
+                    role_title=session.role_title,
+                    role_family=role.get("role_family"),
+                    role_level=role.get("role_level"),
+                    interview_type=interview.get("type"),
+                    evaluation_contract_version=report["contract_version"],
+                    difficulty=interview.get("difficulty"),
+                    strengths=tuple(report["strengths"]),
+                    priorities=tuple(report["improvement_priorities"]),
+                    evidence_review_items=tuple(report["evidence_review_items"]),
+                )
+            )
+        return snapshots
+
     @staticmethod
     def _report_retention_summary(attempts):
         """Project current retention only; never expose media paths or content."""
