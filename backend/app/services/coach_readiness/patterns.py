@@ -198,6 +198,8 @@ def explain_pattern(
             text = item.get("next_action")
             if not isinstance(text, str) or not text.strip():
                 continue
+            if any(existing.text == text.strip() for existing in excerpts):
+                continue
             excerpts.append(
                 WhyExcerpt(
                     session_id=supporting.session_id,

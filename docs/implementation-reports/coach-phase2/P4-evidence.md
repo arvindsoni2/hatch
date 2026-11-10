@@ -208,3 +208,52 @@ exit 0
 ```
 
 Ready for review: yes.
+
+## Repair cycle 2 (10 Nov 2026)
+
+Owner approval: the owner approved the narrow `backend/app/main.py` change for H2 on 10 Nov 2026.
+
+Review findings addressed:
+
+- **H2** — `AISetupGateMiddleware` now exempts the `/api/coach/readiness` prefix from the mutating-request AI setup gate. Nothing else in `main.py` changed. HTTP tests through the real app (httpx ASGITransport) with `feature_enabled` forced false prove POST/DELETE dismiss, PUT debrief and the readiness routes work, while a non-readiness `/api/coach` write still returns 409 `ai_setup_required`.
+- **M3** — a failed dismiss or undo sets a separate inline `role="status"` message and leaves the loaded groups untouched; the page-level error is reserved for a failed initial load. Page Vitest covers a failed dismiss while the pattern stays visible.
+- **M4** — `PatternGroup` renders the cold-start strip ("Patterns appear after your second session here" + "Practise this role") when `session_count < 2`, instead of a forming card. `PatternGroup.test.tsx` covers it.
+- **L6** — `explain_pattern` skips an excerpt whose text duplicates one already chosen.
+
+Repair gates:
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_coach_patterns.py \
+    tests/test_repositories/test_load_learning_snapshots.py \
+    tests/test_routers/test_coach_patterns_router.py \
+    tests/integration/test_readiness_ai_setup_gate.py \
+    tests/test_services/test_coach_conversational_progress.py \
+    tests/test_repositories/test_conversational_session_repository.py \
+    tests/test_services/test_coach_debrief.py tests/test_services/test_coach_debrief_rules.py \
+    tests/test_services/test_coach_questions.py tests/test_routers/test_coach_debrief_router.py \
+    tests/integration/test_coach_debrief_cascade.py tests/test_migrations/test_coach_debrief_migration.py \
+    tests/runtime
+660 passed, 1 skipped in 156.20s
+
+$ npx vitest run src/components/coach/readiness src/app/coach/readiness \
+    src/components/coach/conversation/__tests__/ConversationalProgress.test.tsx \
+    src/components/coach/conversation/__tests__/ConversationalReport.test.tsx
+21 passed (7 files)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ ruff check app tests
+All checks passed!
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+```
+
+Ready for review: yes.

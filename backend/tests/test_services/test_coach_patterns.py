@@ -203,13 +203,17 @@ def test_why_is_deterministic_and_uses_stored_excerpts_only() -> None:
     snapshots = [
         _snap(
             "a", "developing", completed_at=datetime(2026, 5, 1),
-            priorities=({"dimension": "specificity", "next_action": "Name the result."},),
+            priorities=(
+                {"dimension": "specificity", "next_action": "Name the result."},
+                {"dimension": "clarity", "next_action": "Name the result."},
+            ),
         ),
         _snap(
             "b", "needs_work", completed_at=datetime(2026, 5, 2),
             priorities=(
                 {"dimension": "specificity", "next_action": "Give one figure."},
-                {"dimension": "clarity", "next_action": "Use shorter sentences."},
+                {"dimension": "specificity", "next_action": "Give one figure."},
+                {"dimension": "specificity", "next_action": "Name the result."},
             ),
         ),
     ]

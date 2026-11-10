@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import ReadinessPage from "@/app/coach/readiness/page";
@@ -73,6 +74,26 @@ describe("Readiness page", () => {
       }
       return response({});
     });
+  });
+
+  it("keeps the patterns and shows an inline message when dismiss fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/api/coach/readiness/patterns") && init?.method === "POST") {
+        return { ok: false, status: 500, text: async () => "boom" } as Response;
+      }
+      if (url.includes("/api/coach/readiness/patterns")) {
+        return response({ groups: [group], include_stale: true });
+      }
+      return response({});
+    });
+
+    render(<ReadinessPage />);
+    await user.click(await screen.findByRole("button", { name: "Dismiss this pattern" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/could not dismiss/i);
+    expect(screen.getByText("specificity")).toBeVisible();
   });
 
   it("does not render a dismissed pattern after reload", async () => {

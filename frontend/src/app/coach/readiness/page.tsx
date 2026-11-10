@@ -24,6 +24,7 @@ export default function ReadinessPage() {
   const [groups, setGroups] = useState<PatternGroupSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [lastDismissed, setLastDismissed] = useState<string | null>(null);
 
   const load = () => {
@@ -47,22 +48,24 @@ export default function ReadinessPage() {
   };
 
   const dismiss = async (fingerprint: string) => {
+    setActionError(null);
     try {
       await dismissPattern(fingerprint);
       removePattern(fingerprint);
       setLastDismissed(fingerprint);
     } catch {
-      setError(true);
+      setActionError("Could not dismiss this pattern. It is still here; try again.");
     }
   };
 
   const undo = async (fingerprint: string) => {
+    setActionError(null);
     try {
       await undoPatternDismissal(fingerprint);
       setLastDismissed(null);
       load();
     } catch {
-      setError(true);
+      setActionError("Could not undo the dismissal. The pattern stays dismissed; try again.");
     }
   };
 
@@ -124,6 +127,11 @@ export default function ReadinessPage() {
           </div>
         ) : (
           <>
+            {actionError ? (
+              <p className="mb-4 text-sm text-[var(--danger)]" role="status">
+                {actionError}
+              </p>
+            ) : null}
             {lastDismissed ? (
               <div className="mb-4 flex items-center justify-between gap-3 rounded-[var(--radius-control)] bg-[var(--surface-2)] px-3 py-2" role="status">
                 <span className="text-sm text-[var(--text-dim)]">Pattern dismissed.</span>

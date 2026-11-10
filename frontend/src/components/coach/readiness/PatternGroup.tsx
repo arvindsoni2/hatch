@@ -22,6 +22,7 @@ export function PatternGroup({
 }) {
   const active = group.patterns.filter((pattern) => !pattern.stale);
   const stale = group.patterns.filter((pattern) => pattern.stale);
+  const coldStart = group.session_count < 2;
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
@@ -32,7 +33,16 @@ export function PatternGroup({
           {group.session_count} assessed {group.session_count === 1 ? "session" : "sessions"}
         </span>
       </div>
-      {active.length > 0 || stale.length > 0 ? (
+      {coldStart ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-card)] border border-dashed border-[var(--border)] px-4 py-3">
+          <p className="text-sm text-[var(--text-dim)]">
+            Patterns appear after your second session here.
+          </p>
+          <Link href="/coach" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+            Practise this role
+          </Link>
+        </div>
+      ) : active.length > 0 || stale.length > 0 ? (
         <div className="space-y-3">
           {active.map((pattern) => (
             <PatternCard
