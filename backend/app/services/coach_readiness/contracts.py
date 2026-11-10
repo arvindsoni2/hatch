@@ -151,6 +151,7 @@ class Pattern:
     supporting: tuple[SupportingSession, ...]
     stale: bool
     dismissed: bool
+    seen_again: bool = False
 
 
 @dataclass(frozen=True)

@@ -157,6 +157,7 @@ class PatternRead(BaseModel):
     supporting: list[PatternSupportRead] = Field(default_factory=list)
     stale: bool = False
     dismissed: bool = False
+    seen_again: bool = False
 
 
 class PatternGroupSectionRead(BaseModel):

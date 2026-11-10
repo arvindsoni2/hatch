@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-import { PatternCard } from "@/components/coach/readiness/PatternCard";
 import { PatternGroup } from "@/components/coach/readiness/PatternGroup";
 import { PageContainer, PageHeader } from "@/components/ui/page-layout";
 import { SectionCard } from "@/components/ui/section-card";
@@ -11,7 +10,6 @@ import {
   dismissPattern,
   fetchPatterns,
   undoPatternDismissal,
-  type Pattern,
   type PatternGroupSection,
 } from "@/lib/coachReadinessApi";
 import { cn } from "@/lib/utils";
@@ -21,19 +19,6 @@ const TABS = [
   { href: "/coach/stories", label: "Stories" },
   { href: "/coach/readiness", label: "Readiness" },
 ];
-
-function splitStale(groups: PatternGroupSection[]) {
-  const active: PatternGroupSection[] = [];
-  const stale: Pattern[] = [];
-  for (const group of groups) {
-    const visible = group.patterns.filter((pattern) => !pattern.stale);
-    stale.push(...group.patterns.filter((pattern) => pattern.stale));
-    if (visible.length > 0 || group.session_count < 2) {
-      active.push({ ...group, patterns: visible });
-    }
-  }
-  return { active, stale };
-}
 
 export default function ReadinessPage() {
   const [groups, setGroups] = useState<PatternGroupSection[]>([]);
@@ -81,7 +66,12 @@ export default function ReadinessPage() {
     }
   };
 
-  const { active, stale } = splitStale(groups);
+  const visibleGroups = groups
+    .map((group) => ({
+      ...group,
+      patterns: group.patterns.filter((pattern) => !pattern.dismissed),
+    }))
+    .filter((group) => group.patterns.length > 0 || group.session_count < 2);
 
   return (
     <PageContainer className="px-4 py-8">
@@ -122,7 +112,7 @@ export default function ReadinessPage() {
           <p className="text-sm text-[var(--danger)]" role="alert">
             Patterns are unavailable. Try again later.
           </p>
-        ) : active.length === 0 && stale.length === 0 ? (
+        ) : visibleGroups.length === 0 ? (
           <div className="rounded-[var(--radius-card)] border border-dashed border-[var(--border)] px-4 py-10 text-center">
             <p className="font-semibold text-[var(--text)]">No patterns yet</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-[var(--text-dim)]">
@@ -147,7 +137,7 @@ export default function ReadinessPage() {
               </div>
             ) : null}
             <div className="space-y-6">
-              {active.map((group) => (
+              {visibleGroups.map((group) => (
                 <PatternGroup
                   key={`${group.role_family}|${group.interview_type}|${group.contract_version}`}
                   group={group}
@@ -156,18 +146,6 @@ export default function ReadinessPage() {
                 />
               ))}
             </div>
-            {stale.length > 0 ? (
-              <details className="mt-6">
-                <summary className="cursor-pointer text-sm font-medium text-[var(--text-dim)]">
-                  Older patterns ({stale.length})
-                </summary>
-                <div className="mt-3 space-y-3 opacity-80">
-                  {stale.map((pattern) => (
-                    <PatternCard key={pattern.fingerprint} pattern={pattern} />
-                  ))}
-                </div>
-              </details>
-            ) : null}
           </>
         )}
       </SectionCard>

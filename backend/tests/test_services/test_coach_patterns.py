@@ -156,11 +156,14 @@ def test_dismissal_reappears_on_new_support() -> None:
     )
     assert new_support.fingerprint != original.fingerprint
     assert new_support.dismissed is False
+    assert new_support.seen_again is True
+    assert dismissed.seen_again is False
 
     undone = _find(
         derive_patterns(first_two, frozenset(), PatternPolicy(), now)
     )
     assert undone.dismissed is False
+    assert undone.seen_again is False
 
 
 def test_trend_labels_respect_difficulty() -> None:
@@ -222,3 +225,51 @@ def test_why_is_deterministic_and_uses_stored_excerpts_only() -> None:
         "Give one figure.", "Name the result."
     ]
     assert explain_pattern(replace(pattern, stale=True), snapshots) is None
+
+
+def test_existing_progress_trend_unchanged() -> None:
+    from app.services.coach_conversational_progress import (
+        ProgressSelector,
+        get_progress,
+    )
+
+    snapshots = [
+        replace(
+            _snap("p1", "needs_work", completed_at=datetime(2026, 5, 1)),
+            compatibility_key="progress-key",
+            evaluation_contract_version="",
+            difficulty=None,
+        ),
+        replace(
+            _snap("p2", "developing", completed_at=datetime(2026, 5, 2)),
+            compatibility_key="progress-key",
+            evaluation_contract_version="",
+            difficulty=None,
+        ),
+        replace(
+            _snap("p3", "interview_ready", completed_at=datetime(2026, 5, 3)),
+            compatibility_key="progress-key",
+            evaluation_contract_version="",
+            difficulty=None,
+        ),
+    ]
+    selector = ProgressSelector(mode="exact", compatibility_key="progress-key")
+
+    baseline = get_progress(selector, 10, snapshots=snapshots)
+    explicit = get_progress(
+        selector,
+        10,
+        snapshots=[
+            replace(
+                snapshot,
+                evaluation_contract_version="coach_conversational_report_v1",
+                difficulty="realistic",
+            )
+            for snapshot in snapshots
+        ],
+    )
+
+    assert snapshots[0].evaluation_contract_version == ""
+    assert snapshots[0].difficulty is None
+    assert baseline.model_dump() == explicit.model_dump()
+    assert baseline.groups[0].trends["specificity"] == "improving"

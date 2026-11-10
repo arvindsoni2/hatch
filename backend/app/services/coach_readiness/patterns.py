@@ -113,12 +113,13 @@ def derive_patterns(
             reverse=True,
         )
         for dimension in CONTENT_DIMENSIONS:
-            assessed = [
+            history = [
                 item
                 for item in members
                 if item.dimensions.get(dimension)
                 and item.dimensions[dimension] != "not_assessed"
-            ][: policy.max_sessions]
+            ]
+            assessed = history[: policy.max_sessions]
             if not assessed:
                 continue
             supporting = tuple(
@@ -139,6 +140,27 @@ def derive_patterns(
             fingerprint = _fingerprint(
                 group, dimension, kind, [item.session_id for item in supporting]
             )
+            is_dismissed = fingerprint in dismissed
+            seen_again = False
+            if not is_dismissed:
+                # A dismissal is fingerprint-only. Re-derive the same group and
+                # dimension with newer sessions removed; a match means this
+                # evidence replaced the set the candidate dismissed.
+                for removed in range(1, len(history)):
+                    earlier = history[removed:][: policy.max_sessions]
+                    if not earlier:
+                        continue
+                    earlier_levels = [
+                        item.dimensions[dimension] for item in reversed(earlier)
+                    ]
+                    earlier_kind = _kind(earlier_levels)
+                    earlier = _fingerprint(
+                        group, dimension, earlier_kind,
+                        [item.session_id for item in earlier],
+                    )
+                    if earlier in dismissed:
+                        seen_again = True
+                        break
             patterns.append(
                 Pattern(
                     fingerprint=fingerprint,
@@ -149,7 +171,8 @@ def derive_patterns(
                     trend_label=_trend_label(trend, supporting),
                     supporting=supporting,
                     stale=_utc(supporting[-1].completed_at) < cutoff,
-                    dismissed=fingerprint in dismissed,
+                    dismissed=is_dismissed,
+                    seen_again=seen_again,
                 )
             )
     return tuple(patterns)

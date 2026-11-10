@@ -4,8 +4,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
+from sqlalchemy import func, select
 
 from app.config import settings
+from app.models.coach_readiness import CoachPatternDismissal
 from app.models.coach_session import InterviewSession
 from app.routers.coach_readiness import (
     dismiss_readiness_pattern,
@@ -144,3 +147,55 @@ async def test_flag_off_returns_no_patterns(
     payload = await get_readiness_patterns(group=None, include_stale=True, db=db_session)
 
     assert payload.groups == []
+
+
+@pytest.mark.asyncio
+async def test_dismiss_rejects_invalid_fingerprint(db_session) -> None:
+    with pytest.raises(HTTPException) as invalid:
+        await dismiss_readiness_pattern("not-a-fingerprint", db=db_session)
+
+    assert invalid.value.status_code == 422
+    assert invalid.value.detail == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_dismiss_unknown_fingerprint_returns_not_found(db_session) -> None:
+    await _seed(db_session)
+
+    with pytest.raises(HTTPException) as missing:
+        await dismiss_readiness_pattern("0" * 64, db=db_session)
+
+    assert missing.value.status_code == 404
+    assert missing.value.detail == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_dismiss_is_idempotent(db_session) -> None:
+    await _seed(db_session)
+    payload = await get_readiness_patterns(group=None, include_stale=True, db=db_session)
+    fingerprint = payload.groups[0].patterns[0].fingerprint
+
+    first = await dismiss_readiness_pattern(fingerprint, db=db_session)
+    second = await dismiss_readiness_pattern(fingerprint, db=db_session)
+
+    assert first == second == {"fingerprint": fingerprint, "dismissed": True}
+    count = await db_session.scalar(
+        select(func.count()).select_from(CoachPatternDismissal)
+    )
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_why_flag_off_returns_disabled(
+    db_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(db_session)
+    payload = await get_readiness_patterns(group=None, include_stale=True, db=db_session)
+    fingerprint = payload.groups[0].patterns[0].fingerprint
+    monkeypatch.setattr(settings, "HATCH_COACH_READINESS_ENABLED", False)
+
+    with pytest.raises(HTTPException) as disabled:
+        await get_readiness_pattern_why(fingerprint, db=db_session)
+
+    assert disabled.value.status_code == 403
+    assert disabled.value.detail == "disabled"

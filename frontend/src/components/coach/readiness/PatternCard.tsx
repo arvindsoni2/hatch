@@ -86,41 +86,48 @@ export function PatternCard({
           : "border-[var(--border)] bg-[var(--surface-2)]"
       }`}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold capitalize text-[var(--text)]">
-          {pattern.dimension.replaceAll("_", " ")}
-        </h3>
-        <StatusBadge tone={kind.tone} icon={kind.icon ? <Icon name={kind.icon} size={14} /> : undefined}>
-          {kind.label}
-        </StatusBadge>
-        {pattern.trend_label === "improving" ? (
-          <StatusBadge tone="info" icon={<Icon name="trending" size={14} />}>
-            {TREND.improving}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-semibold capitalize text-[var(--text)]">
+            {pattern.dimension.replaceAll("_", " ")}
+          </h3>
+          <StatusBadge tone={kind.tone} icon={kind.icon ? <Icon name={kind.icon} size={14} /> : undefined}>
+            {kind.label}
           </StatusBadge>
-        ) : pattern.trend_label ? (
-          <span className="text-xs text-[var(--text-dim)]">
-            {TREND[pattern.trend_label]}
-          </span>
-        ) : null}
-        {pattern.stale ? <StatusBadge tone="neutral">Older</StatusBadge> : null}
-      </div>
-
-      <p className="mt-2 text-sm text-[var(--text-dim)]">{patternSummary(pattern)}</p>
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {!pattern.dismissed ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Dismiss this pattern"
-            onClick={() => onDismiss?.(pattern.fingerprint)}
-          >
-            <Icon name="x" size={16} />
-          </Button>
-        ) : (
-          <>
-            <span className="text-sm text-[var(--text-dim)]">Dismissed</span>
+          {pattern.trend_label === "improving" ? (
+            <StatusBadge tone="info" icon={<Icon name="trending" size={14} />}>
+              {TREND.improving}
+            </StatusBadge>
+          ) : pattern.trend_label ? (
+            <span className="text-xs text-[var(--text-dim)]">
+              {TREND[pattern.trend_label]}
+            </span>
+          ) : null}
+          {pattern.stale ? <StatusBadge tone="neutral">Older</StatusBadge> : null}
+        </div>
+        <div className="ml-auto flex items-center gap-1">
+          {!pattern.stale ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-expanded={whyOpen}
+              onClick={() => void toggleWhy()}
+            >
+              Why?
+            </Button>
+          ) : null}
+          {!pattern.dismissed ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Dismiss this pattern"
+              onClick={() => onDismiss?.(pattern.fingerprint)}
+            >
+              <Icon name="x" size={16} />
+            </Button>
+          ) : (
             <Button
               type="button"
               variant="outline"
@@ -129,20 +136,16 @@ export function PatternCard({
             >
               Undo dismissal
             </Button>
-          </>
-        )}
-        {!pattern.stale ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-expanded={whyOpen}
-            onClick={() => void toggleWhy()}
-          >
-            Why?
-          </Button>
-        ) : null}
+          )}
+        </div>
       </div>
+
+      <p className="mt-2 text-sm text-[var(--text-dim)]">{patternSummary(pattern)}</p>
+      {pattern.seen_again ? (
+        <p className="mt-1 text-xs text-[var(--text-dim)]">
+          Seen again since you dismissed it
+        </p>
+      ) : null}
 
       {whyOpen ? (
         why ? (

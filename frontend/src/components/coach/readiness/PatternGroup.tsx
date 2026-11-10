@@ -20,19 +20,21 @@ export function PatternGroup({
   onDismiss?: (fingerprint: string) => void;
   onUndo?: (fingerprint: string) => void;
 }) {
+  const active = group.patterns.filter((pattern) => !pattern.stale);
+  const stale = group.patterns.filter((pattern) => pattern.stale);
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-sm font-semibold text-[var(--text)]">
-          {group.role_family} · {titleCase(group.interview_type)}
+          {titleCase(group.role_family)} · {titleCase(group.interview_type)}
         </h3>
         <span className="text-xs text-[var(--text-dim)]">
           {group.session_count} assessed {group.session_count === 1 ? "session" : "sessions"}
         </span>
       </div>
-      {group.patterns.length > 0 ? (
+      {active.length > 0 || stale.length > 0 ? (
         <div className="space-y-3">
-          {group.patterns.map((pattern) => (
+          {active.map((pattern) => (
             <PatternCard
               key={pattern.fingerprint}
               pattern={pattern}
@@ -40,6 +42,18 @@ export function PatternGroup({
               onUndo={onUndo}
             />
           ))}
+          {stale.length > 0 ? (
+            <details>
+              <summary className="cursor-pointer text-sm font-medium text-[var(--text-dim)]">
+                Older patterns ({stale.length})
+              </summary>
+              <div className="mt-3 space-y-3 opacity-80">
+                {stale.map((pattern) => (
+                  <PatternCard key={pattern.fingerprint} pattern={pattern} />
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-card)] border border-dashed border-[var(--border)] px-4 py-3">

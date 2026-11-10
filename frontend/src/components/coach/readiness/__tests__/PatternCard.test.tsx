@@ -27,6 +27,7 @@ const base: Pattern = {
   ],
   stale: false,
   dismissed: false,
+  seen_again: false,
 };
 
 describe("PatternCard", () => {
@@ -88,6 +89,14 @@ describe("PatternCard", () => {
     );
     await user.click(screen.getByRole("button", { name: "Undo dismissal" }));
     expect(onUndo).toHaveBeenCalledWith(base.fingerprint);
+  });
+
+  it("says when a new support set follows a dismissal", () => {
+    render(<PatternCard pattern={{ ...base, seen_again: true }} />);
+
+    expect(
+      screen.getByText("Seen again since you dismissed it"),
+    ).toBeVisible();
   });
 
   it("marks stale patterns as older", () => {

@@ -1,11 +1,13 @@
 """Coach readiness coverage routes (P1)."""
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -56,6 +58,7 @@ from ..services.coach_readiness.tiers import (
 )
 
 router = APIRouter(prefix="/api/coach/readiness", tags=["coach-readiness"])
+FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _map_read(result: CoverageMap) -> CoverageMapRead:
@@ -348,6 +351,7 @@ def _pattern_read(pattern) -> PatternRead:
         ],
         stale=pattern.stale,
         dismissed=pattern.dismissed,
+        seen_again=pattern.seen_again,
     )
 
 
@@ -429,7 +433,7 @@ async def get_readiness_pattern_why(
     db: AsyncSession = Depends(get_db),
 ) -> PatternWhyRead:
     if not settings.HATCH_COACH_READINESS_ENABLED:
-        raise HTTPException(status_code=404, detail="not_found")
+        raise HTTPException(status_code=403, detail="disabled")
     snapshots, derived = await _pattern_sources(db)
     pattern = next(
         (item for item in derived if item.fingerprint == fingerprint), None
@@ -457,11 +461,19 @@ async def dismiss_readiness_pattern(
     fingerprint: str,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    if not FINGERPRINT_RE.fullmatch(fingerprint):
+        raise HTTPException(status_code=422, detail="invalid_input")
     if not settings.HATCH_COACH_READINESS_ENABLED:
         raise HTTPException(status_code=403, detail="disabled")
+    _snapshots, derived = await _pattern_sources(db)
+    if not any(item.fingerprint == fingerprint for item in derived):
+        raise HTTPException(status_code=404, detail="not_found")
     if await db.get(CoachPatternDismissal, fingerprint) is None:
         db.add(CoachPatternDismissal(fingerprint=fingerprint))
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
     return {"fingerprint": fingerprint, "dismissed": True}
 
 

@@ -216,6 +216,7 @@ export interface Pattern {
   supporting: PatternSupport[];
   stale: boolean;
   dismissed: boolean;
+  seen_again: boolean;
 }
 
 export interface PatternGroupSection {

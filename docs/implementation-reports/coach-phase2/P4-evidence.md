@@ -148,6 +148,63 @@ Not run / known limits:
 - No model call: P4 and the Why panel are deterministic.
 - No live screenshot comparison was run; the new page is covered by the component test, type-check and production build. The reviewer still needs to compare both themes at 390 px.
 - The P3 owner bench items and the Phase 1 `acceptance-smoke` rerun on b12124 remain open (not P4 failures).
-- Dismissals store fingerprints only (spec §11). The "Seen again since you dismissed it" wording is not emitted because the table holds no group/dimension to match an earlier dismissal after the supporting set changes.
+- Dismissals still store fingerprints only (spec §11); `seen_again` is re-derived in memory from earlier support sets, never stored.
 
 Ready for review: yes — Wave 1 gate recorded; named tests, regressions, runtime, migration and frontend gates pass.
+
+
+## Repair cycle 1 (10 Nov 2026)
+
+Review findings addressed:
+
+- **H1a** — the page filters `dismissed` patterns out of `visibleGroups`; a reload no longer renders them. The just-dismissed pattern keeps the undo banner until undo or the next load. Page test: `frontend/src/app/coach/readiness/__tests__/page.test.tsx`.
+- **H1b** — `derive_patterns` re-derives each non-dismissed pattern's same group x dimension over its assessed history with the newest 1..n sessions removed (latest 3 each time, same kind rule and fingerprint). A match in `dismissed` sets `seen_again=True`. Added `seen_again: bool = False` to `Pattern` and `PatternRead`; the card shows "Seen again since you dismissed it". Deviation from the P4 plan: this field is required by AC05 but was not in the original plan/contract list.
+- **M1** — named test `test_existing_progress_trend_unchanged` added; it proves `get_progress` output is identical with the new snapshot fields at defaults and at explicit values.
+- **M2** — dismiss validates `^[0-9a-f]{64}$` (422 `invalid_input`), requires a currently derived fingerprint (404 `not_found`), and catches `IntegrityError` so a duplicate insert is idempotent. Tests cover all three.
+- **L1** — `GET /patterns/{fingerprint}/why` with the flag off returns 403 `disabled`.
+- **L2** — `Why?` and the dismiss/undo control moved to the card header's right side; "Older patterns (N)" is a `<details>` inside each group.
+- **L3** — `PatternGroup` title-cases `role_family` as well as `interview_type`.
+
+Named tests are listed separately from extra tests below.
+
+Named tests (plan P4 table): `test_attempts_in_one_session_do_not_recur`, `test_difficulty_not_in_group`, `test_contract_versions_never_merge`, `test_latest_three_kept_regardless_of_age_then_marked_stale`, `test_dismissal_reappears_on_new_support`, `test_trend_labels_respect_difficulty`, `test_load_learning_snapshots_all_groups_and_unspecified_role`, `test_load_learning_snapshots_excludes_sessions_being_deleted`, `test_why_is_deterministic_and_uses_stored_excerpts_only`, `test_existing_progress_trend_unchanged`, `PatternCard.test.tsx`.
+
+Extra tests added in this repair: `test_dismiss_rejects_invalid_fingerprint`, `test_dismiss_unknown_fingerprint_returns_not_found`, `test_dismiss_is_idempotent`, `test_why_flag_off_returns_disabled`, page test `does not render a dismissed pattern after reload`, card test `says when a new support set follows a dismissal`.
+
+Repair gates:
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_coach_patterns.py \
+    tests/test_repositories/test_load_learning_snapshots.py \
+    tests/test_routers/test_coach_patterns_router.py
+17 passed in 1.49s
+
+$ python -m pytest -q --no-cov tests/test_services/test_coach_patterns.py \
+    tests/test_repositories/test_load_learning_snapshots.py \
+    tests/test_routers/test_coach_patterns_router.py \
+    tests/test_services/test_coach_conversational_progress.py \
+    tests/test_repositories/test_conversational_session_repository.py tests/runtime
+635 passed, 1 skipped in 146.42s
+
+$ npx vitest run src/components/coach/readiness src/app/coach/readiness \
+    src/components/coach/conversation/__tests__/ConversationalProgress.test.tsx \
+    src/components/coach/conversation/__tests__/ConversationalReport.test.tsx
+19 passed (6 files)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ ruff check <changed files>
+All checks passed!
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+```
+
+Ready for review: yes.
