@@ -477,6 +477,9 @@ class AISetupGateMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: StarletteRequest, call_next):
         if request.method in _MUTATING_METHODS:
+            # Phase 2 readiness writes are deterministic and must work with AI off.
+            if request.url.path.startswith("/api/coach/readiness"):
+                return await call_next(request)
             for prefix, feature in self._PREFIX_FEATURES.items():
                 if request.url.path.startswith(prefix) and not feature_enabled(feature):
                     return JSONResponse(

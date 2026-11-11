@@ -1,16 +1,30 @@
 """Coach readiness coverage routes (P1)."""
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..database import get_db
+from ..models.coach_readiness import CoachPatternDismissal
+from ..repositories.conversational_session_repository import (
+    ConversationalSessionRepository,
+)
 from ..schemas.coach_readiness import (
     CompetencyCoverageRead,
+    PatternGroupRead,
+    PatternGroupSectionRead,
+    PatternListRead,
+    PatternRead,
+    PatternSupportRead,
+    PatternWhyExcerptRead,
+    PatternWhyRead,
     CoverageGapRead,
     CoverageMapRead,
     CoverageOverviewRead,
@@ -24,12 +38,14 @@ from ..schemas.coach_readiness import (
 )
 from ..services.ai_setup import load_catalog, load_intent, load_probe_snapshot
 from ..services.coach_readiness import coverage
+from ..services.coach_readiness import patterns as pattern_rules
 from ..services.coach_readiness.contracts import (
     CoverageMap,
     CoverageOverride,
     CoverageOverview,
     DebriefQuestion,
     DebriefRead,
+    PatternPolicy,
     ReadinessError,
     SaveDebriefCommand,
 )
@@ -42,6 +58,7 @@ from ..services.coach_readiness.tiers import (
 )
 
 router = APIRouter(prefix="/api/coach/readiness", tags=["coach-readiness"])
+FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _map_read(result: CoverageMap) -> CoverageMapRead:
@@ -308,3 +325,167 @@ async def get_model_tiers() -> dict[str, Any]:
             "min_ram_gb": MIN_TIER_L_RAM_GB,
         },
     }
+
+
+def _pattern_read(pattern) -> PatternRead:
+    return PatternRead(
+        fingerprint=pattern.fingerprint,
+        group=PatternGroupRead(
+            role_family=pattern.group.role_family,
+            interview_type=pattern.group.interview_type,
+            contract_version=pattern.group.contract_version,
+        ),
+        dimension=pattern.dimension,
+        kind=pattern.kind,
+        trend=pattern.trend,
+        trend_label=pattern.trend_label,
+        supporting=[
+            PatternSupportRead(
+                session_id=item.session_id,
+                completed_at=_utc_z(item.completed_at) or "",
+                level=item.level,
+                difficulty=item.difficulty,
+                role_level=item.role_level,
+            )
+            for item in pattern.supporting
+        ],
+        stale=pattern.stale,
+        dismissed=pattern.dismissed,
+        seen_again=pattern.seen_again,
+    )
+
+
+async def _pattern_sources(db: AsyncSession):
+    snapshots = await ConversationalSessionRepository(db).load_learning_snapshots()
+    rows = (await db.execute(select(CoachPatternDismissal.fingerprint))).scalars()
+    derived = pattern_rules.derive_patterns(
+        snapshots,
+        frozenset(rows),
+        PatternPolicy(window_days=settings.HATCH_COACH_PATTERN_WINDOW_DAYS),
+        datetime.now(UTC),
+    )
+    return snapshots, derived
+
+
+@router.get("/patterns", response_model=PatternListRead)
+async def get_readiness_patterns(
+    group: str | None = Query(default=None),
+    include_stale: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> PatternListRead:
+    if not settings.HATCH_COACH_READINESS_ENABLED:
+        return PatternListRead(groups=[], include_stale=include_stale)
+    snapshots, derived = await _pattern_sources(db)
+    sections: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for snapshot in snapshots:
+        key = (
+            snapshot.role_family or "unspecified",
+            snapshot.interview_type or "unspecified",
+            snapshot.evaluation_contract_version,
+        )
+        section = sections.setdefault(
+            key, {"ids": set(), "latest": snapshot.completed_at, "patterns": []}
+        )
+        section["ids"].add(snapshot.session_id)
+        if snapshot.completed_at > section["latest"]:
+            section["latest"] = snapshot.completed_at
+    for pattern in derived:
+        if pattern.stale and not include_stale:
+            continue
+        key = (
+            pattern.group.role_family,
+            pattern.group.interview_type,
+            pattern.group.contract_version,
+        )
+        sections.setdefault(
+            key, {"ids": set(), "latest": datetime.min, "patterns": []}
+        )["patterns"].append(_pattern_read(pattern))
+    if group:
+        role_family, _, interview_type = group.partition("|")
+        sections = {
+            key: value
+            for key, value in sections.items()
+            if key[0] == role_family and (not interview_type or key[1] == interview_type)
+        }
+    ordered = sorted(
+        sections.items(),
+        key=lambda item: (item[1]["latest"], item[0]),
+        reverse=True,
+    )
+    return PatternListRead(
+        groups=[
+            PatternGroupSectionRead(
+                role_family=key[0],
+                interview_type=key[1],
+                contract_version=key[2],
+                session_count=len(value["ids"]),
+                patterns=value["patterns"],
+            )
+            for key, value in ordered
+        ],
+        include_stale=include_stale,
+    )
+
+
+@router.get("/patterns/{fingerprint}/why", response_model=PatternWhyRead)
+async def get_readiness_pattern_why(
+    fingerprint: str,
+    db: AsyncSession = Depends(get_db),
+) -> PatternWhyRead:
+    if not settings.HATCH_COACH_READINESS_ENABLED:
+        raise HTTPException(status_code=403, detail="disabled")
+    snapshots, derived = await _pattern_sources(db)
+    pattern = next(
+        (item for item in derived if item.fingerprint == fingerprint), None
+    )
+    if pattern is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    why = pattern_rules.explain_pattern(pattern, snapshots)
+    if why is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    return PatternWhyRead(
+        pattern=_pattern_read(why.pattern),
+        excerpts=[
+            PatternWhyExcerptRead(
+                session_id=item.session_id,
+                completed_at=_utc_z(item.completed_at) or "",
+                text=item.text,
+            )
+            for item in why.excerpts
+        ],
+    )
+
+
+@router.post("/patterns/{fingerprint}/dismiss")
+async def dismiss_readiness_pattern(
+    fingerprint: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if not FINGERPRINT_RE.fullmatch(fingerprint):
+        raise HTTPException(status_code=422, detail="invalid_input")
+    if not settings.HATCH_COACH_READINESS_ENABLED:
+        raise HTTPException(status_code=403, detail="disabled")
+    _snapshots, derived = await _pattern_sources(db)
+    if not any(item.fingerprint == fingerprint for item in derived):
+        raise HTTPException(status_code=404, detail="not_found")
+    if await db.get(CoachPatternDismissal, fingerprint) is None:
+        db.add(CoachPatternDismissal(fingerprint=fingerprint))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+    return {"fingerprint": fingerprint, "dismissed": True}
+
+
+@router.delete("/patterns/{fingerprint}/dismiss")
+async def undo_readiness_pattern_dismissal(
+    fingerprint: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    await db.execute(
+        delete(CoachPatternDismissal).where(
+            CoachPatternDismissal.fingerprint == fingerprint
+        )
+    )
+    await db.commit()
+    return {"fingerprint": fingerprint, "dismissed": False}

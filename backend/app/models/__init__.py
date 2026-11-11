@@ -27,7 +27,11 @@ from .agent_event import AgentEvent  # noqa: F401
 from .agent_state import AgentState  # noqa: F401
 from .job_score import JobScore  # noqa: F401
 from .story import Story, StoryUsage  # noqa: F401
-from .coach_readiness import CoachCompetencyOverride, CoachInterviewDebrief  # noqa: F401
+from .coach_readiness import (  # noqa: F401
+    CoachCompetencyOverride,
+    CoachInterviewDebrief,
+    CoachPatternDismissal,
+)
 from .cost_tracking import CostTracking  # noqa: F401
 from .async_job import AsyncJob  # noqa: F401
 from .application_score_snapshot import ApplicationScoreSnapshot  # noqa: F401

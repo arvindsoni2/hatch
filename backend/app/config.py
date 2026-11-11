@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     HATCH_COACH_DEBRIEF_ENABLED: bool = False
     HATCH_DISPLAY_TIMEZONE: str | None = None
 
+    # Phase 2 readiness patterns (P4).
+    HATCH_COACH_READINESS_ENABLED: bool = False
+    HATCH_COACH_PATTERN_WINDOW_DAYS: int = Field(default=90, ge=1, le=3650)
+
     # Conversational Coach browser and processing policy.
     HATCH_COACH_MEDIA_ROOT: Path = Path("./data/coach-media")
     HATCH_COACH_SILENCE_WARNING_MS: int = Field(default=4000, ge=1000, le=30000)
