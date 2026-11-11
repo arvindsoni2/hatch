@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "@/lib/api";
 
 const session: api.SessionListItem = {
@@ -41,6 +41,10 @@ vi.mock("@/lib/api", async () => {
 });
 
 describe("CoachPage", () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.listSessions).mockResolvedValue([]);
@@ -59,6 +63,23 @@ describe("CoachPage", () => {
     expect(await screen.findByRole("heading", { name: "Interview Coach" })).toBeVisible();
     expect(screen.getAllByText(/live mock interviews/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /review prep materials/i })).toHaveAttribute("href", "/prep");
+    expect(screen.getByRole("link", { name: "Readiness" })).toHaveAttribute(
+      "href", "/coach/readiness",
+    );
+  });
+
+  it("opens the launcher prefilled from readiness query parameters", async () => {
+    window.history.pushState(
+      {}, "", "/coach?launch=1&role=Delivery%20Lead&difficulty=easy",
+    );
+    const { default: CoachPage } = await import("@/app/coach/page");
+    render(<CoachPage />);
+
+    expect(await screen.findByDisplayValue("Delivery Lead")).toBeVisible();
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Company Name"), "Synthetic");
+    await user.click(screen.getByRole("button", { name: "Next →" }));
+    expect(screen.getByRole("button", { name: "easy" })).toHaveClass("bg-indigo-600");
   });
 
   it("requires an eligible context rather than issuing an unfiltered progress request", async () => {

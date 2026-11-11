@@ -8,7 +8,7 @@ import { listSessions, getCoachCapabilities, getSession, getConversationalReport
   type SessionListItem, type SessionResponse } from "@/lib/api";
 import { ConversationalProgress } from "@/components/coach/conversation/ConversationalProgress";
 import { SessionLauncherDialog } from "@/components/coach/SessionLauncher";
-import { Brain, BookOpen, ChevronRight, Loader2, Plus } from "lucide-react";
+import { Brain, BookOpen, ChevronRight, Loader2, Plus, Zap } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { PageContainer, PageHeader } from "@/components/ui/page-layout";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -33,6 +33,9 @@ export default function CoachPage() {
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLauncher, setShowLauncher] = useState(false);
+  const [launcherInitial, setLauncherInitial] = useState<{
+    role?: string; difficulty?: "easy" | "medium" | "hard";
+  }>({});
   const [progressEnabled, setProgressEnabled] = useState(false);
   const [progressSessionId, setProgressSessionId] = useState("");
   const [comparison, setComparison] = useState<"format" | "application">("format");
@@ -42,6 +45,17 @@ export default function CoachPage() {
   const eligible = sessions.filter((session) => session.experience_version === "conversational_v1"
     && session.status === "completed" && session.conversation_state === "completed");
   const selectedIsVisible = eligible.some((session) => session.id === progressSessionId);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("launch") !== "1") return;
+    const difficulty = params.get("difficulty");
+    setLauncherInitial({
+      role: params.get("role") ?? "",
+      difficulty: difficulty === "easy" || difficulty === "hard" ? difficulty : "medium",
+    });
+    setShowLauncher(true);
+  }, []);
 
   const fetchSessions = () =>
     listSessions(20)
@@ -153,7 +167,10 @@ export default function CoachPage() {
 
       {/* Sub-navigation */}
       <div className="mb-6 flex gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-1">
-        <span className="flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-[var(--on-accent)]">
+        <span
+          aria-current="page"
+          className="flex items-center gap-1.5 rounded-lg bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-[var(--on-accent)]"
+        >
           <Brain className="h-3.5 w-3.5" /> Sessions
         </span>
         <Link
@@ -162,6 +179,12 @@ export default function CoachPage() {
         >
           <BookOpen className="h-3.5 w-3.5" /> Story Bank
         </Link>
+        <Link
+          href="/coach/readiness"
+          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-[var(--text-dim)] hover:bg-[var(--surface)] hover:text-[var(--text)] transition-colors"
+        >
+          <Zap className="h-3.5 w-3.5" /> Readiness
+        </Link>
       </div>
 
       {/* Launcher modal */}
@@ -169,6 +192,8 @@ export default function CoachPage() {
         <SessionLauncherDialog
           onClose={() => setShowLauncher(false)}
           onSessionCreated={handleSessionCreated}
+          initialRoleTitle={launcherInitial.role}
+          initialDifficulty={launcherInitial.difficulty}
         />
       )}
 

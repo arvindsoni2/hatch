@@ -268,3 +268,132 @@ export function undoPatternDismissal(fingerprint: string): Promise<void> {
     { method: "DELETE" },
   );
 }
+
+export interface FocusGroup {
+  role_family: string;
+  interview_type: string;
+  contract_version: string;
+}
+
+export interface FocusCriterion {
+  kind: "level" | "practice";
+  label: string;
+  status: "not_started" | "in_progress" | "met" | "no_evidence_yet";
+  completed: number;
+  target: number;
+}
+
+export interface FocusArea {
+  id: string;
+  version: number;
+  status: "active" | "paused" | "achieved" | "archived";
+  active_slot: number | null;
+  title: string;
+  dimension: string;
+  group: FocusGroup | null;
+  application_id: string | null;
+  criteria: FocusCriterion[];
+  every_criterion_met: boolean;
+  created_at: string;
+}
+
+export interface FocusAreaList {
+  items: FocusArea[];
+  active_count: number;
+  active_limit: number;
+}
+
+export interface PlanItem {
+  id: string;
+  type: "practice_session" | "story_work" | "review_answer";
+  title: string;
+  minutes: number;
+  status: "todo" | "done" | "skipped";
+  group: FocusGroup | null;
+  focus_area_ids: string[];
+  due_at: string | null;
+  auto: boolean;
+  completed_at: string | null;
+}
+
+export interface PracticePlan {
+  id: string;
+  version: number;
+  status: "draft" | "active" | "completed" | "superseded" | "expired" | "discarded";
+  minutes: number;
+  target_round_id: string | null;
+  items: PlanItem[];
+  unallocated_minutes: number;
+  done_count: number;
+  total_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface PlanList {
+  active: PracticePlan | null;
+  draft: PracticePlan | null;
+}
+
+export function fetchFocusAreas(): Promise<FocusAreaList> {
+  return request<FocusAreaList>("/api/coach/readiness/focus-areas");
+}
+
+export function createFocusArea(input: {
+  title: string;
+  dimension: string;
+  group?: FocusGroup | null;
+  application_id?: string | null;
+  criteria: { kind: "level" | "practice"; count?: number | null }[];
+}): Promise<FocusArea> {
+  return request<FocusArea>("/api/coach/readiness/focus-areas", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function patchFocusArea(
+  id: string,
+  patch: {
+    expected_version: number;
+    title?: string;
+    status?: FocusArea["status"];
+  },
+): Promise<FocusArea> {
+  return request<FocusArea>(`/api/coach/readiness/focus-areas/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function fetchPlans(): Promise<PlanList> {
+  return request<PlanList>("/api/coach/readiness/plans");
+}
+
+export function createPlan(input: {
+  minutes: number;
+  target_round_id?: string | null;
+}): Promise<PracticePlan> {
+  return request<PracticePlan>("/api/coach/readiness/plans", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function startPlan(id: string): Promise<PracticePlan> {
+  return request<PracticePlan>(
+    `/api/coach/readiness/plans/${encodeURIComponent(id)}/start`,
+    { method: "POST" },
+  );
+}
+
+export function patchPlanItem(
+  planId: string,
+  itemId: string,
+  action: "done" | "skipped" | "todo",
+): Promise<PracticePlan> {
+  return request<PracticePlan>(
+    `/api/coach/readiness/plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`,
+    { method: "PATCH", body: JSON.stringify({ action }) },
+  );
+}

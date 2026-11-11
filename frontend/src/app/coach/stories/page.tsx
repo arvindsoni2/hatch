@@ -8,7 +8,7 @@ import { fetchCoverageOverview, type CoverageOverview } from "@/lib/coachReadine
 import { CoverageStrip } from "@/components/coach/readiness/CoverageStrip";
 import { StoryBankGrid } from "@/components/coach/StoryBankGrid";
 import { StoryFilters } from "@/components/coach/StoryFilters";
-import { Brain, BookOpen, Plus } from "lucide-react";
+import { Brain, BookOpen, Plus, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function StoryBankPage() {
@@ -75,9 +75,18 @@ export default function StoryBankPage() {
         >
           <Brain className="h-3.5 w-3.5" /> Sessions
         </Link>
-        <span className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white">
+        <span
+          aria-current="page"
+          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white"
+        >
           <BookOpen className="h-3.5 w-3.5" /> Story Bank
         </span>
+        <Link
+          href="/coach/readiness"
+          className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-medium text-slate-500 hover:bg-white hover:text-slate-900 transition-colors"
+        >
+          <Target className="h-3.5 w-3.5" /> Readiness
+        </Link>
       </div>
 
       {coverage ? <CoverageStrip overview={coverage} /> : null}

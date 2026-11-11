@@ -15,10 +15,12 @@ export function PatternGroup({
   group,
   onDismiss,
   onUndo,
+  onWorkOnThis,
 }: {
   group: PatternGroupSection;
   onDismiss?: (fingerprint: string) => void;
   onUndo?: (fingerprint: string) => void;
+  onWorkOnThis?: (pattern: import("@/lib/coachReadinessApi").Pattern) => void;
 }) {
   const active = group.patterns.filter((pattern) => !pattern.stale);
   const stale = group.patterns.filter((pattern) => pattern.stale);
@@ -50,6 +52,7 @@ export function PatternGroup({
               pattern={pattern}
               onDismiss={onDismiss}
               onUndo={onUndo}
+              onWorkOnThis={onWorkOnThis}
             />
           ))}
           {stale.length > 0 ? (
