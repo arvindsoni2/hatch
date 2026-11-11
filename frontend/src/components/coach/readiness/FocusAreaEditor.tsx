@@ -45,6 +45,11 @@ export function FocusAreaEditor({
   const [interviewType, setInterviewType] = useState(
     initial?.group?.interview_type ?? area?.group?.interview_type ?? "",
   );
+  const [contractVersion, setContractVersion] = useState(
+    initial?.group?.contract_version
+      ?? area?.group?.contract_version
+      ?? "coach_conversational_report_v1",
+  );
   const [useLevel, setUseLevel] = useState(
     area?.criteria.some((item) => item.kind === "level") ?? Boolean(initial?.group),
   );
@@ -64,6 +69,11 @@ export function FocusAreaEditor({
     setDimension(initial?.dimension ?? area?.dimension ?? "specificity");
     setRoleFamily(initial?.group?.role_family ?? area?.group?.role_family ?? "");
     setInterviewType(initial?.group?.interview_type ?? area?.group?.interview_type ?? "");
+    setContractVersion(
+      initial?.group?.contract_version
+        ?? area?.group?.contract_version
+        ?? "coach_conversational_report_v1",
+    );
     setUseLevel(area?.criteria.some((item) => item.kind === "level") ?? Boolean(initial?.group));
     setUsePractice(area?.criteria.some((item) => item.kind === "practice") ?? true);
     setPracticeCount(area?.criteria.find((item) => item.kind === "practice")?.target ?? 3);
@@ -75,7 +85,7 @@ export function FocusAreaEditor({
     ? {
         role_family: roleFamily,
         interview_type: interviewType,
-        contract_version: "coach_conversational_report_v1",
+        contract_version: contractVersion,
       }
     : null;
 

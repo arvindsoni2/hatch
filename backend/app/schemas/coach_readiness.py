@@ -266,6 +266,7 @@ class PlanCreate(BaseModel):
 class PlanItemPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    expected_version: int = Field(ge=0)
     action: Literal["done", "skipped", "todo"]
 
 
@@ -276,8 +277,11 @@ class PlanItemRead(BaseModel):
     minutes: int
     status: Literal["todo", "done", "skipped"]
     group: FocusGroupRead | None = None
+    difficulty: str | None = None
     focus_area_ids: list[str] = Field(default_factory=list)
     due_at: str | None = None
+    story_competency: str | None = None
+    question_id: str | None = None
     auto: bool = False
     completed_at: str | None = None
 

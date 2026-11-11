@@ -87,12 +87,15 @@ def test_round_within_seven_days_orders_story_review_story_practice() -> None:
         now=NOW,
         coverage_gaps=["budget ownership", "stakeholder management"],
         likely_question="Tell me about a delivery that slipped.",
+        likely_question_id="qb-1",
     )
 
     assert [item.type for item in draft.items] == [
         "story_work", "review_answer", "story_work", "practice_session"
     ]
     assert draft.unallocated_minutes == 10
+    review = next(item for item in draft.items if item.type == "review_answer")
+    assert review.question_id == "qb-1"
 
 
 def test_plan_due_at_round_minus_two_hours() -> None:
@@ -192,3 +195,25 @@ def test_plan_expiry_after_14_days_or_round_passed() -> None:
     assert focus_rules.plan_expired(active, None, NOW) is True
     assert focus_rules.plan_expired(recent, None, NOW) is False
     assert focus_rules.plan_expired(recent, passed, NOW) is True
+
+
+def test_plan_practice_item_uses_latest_group_difficulty() -> None:
+    draft = plan_rules.build_plan(
+        focus_areas=[
+            PlanFocusInput(
+                focus_id="a",
+                title="Focus",
+                status="active",
+                group=GROUP_A,
+                created_at=NOW,
+                all_criteria_met=False,
+                latest_difficulty="challenging",
+            )
+        ],
+        target_round=None,
+        minutes=30,
+        now=NOW,
+    )
+
+    practice = next(item for item in draft.items if item.type == "practice_session")
+    assert practice.difficulty == "challenging"

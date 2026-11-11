@@ -18,8 +18,11 @@ const plan = {
       minutes: 15,
       status: "done",
       group: null,
+      difficulty: null,
       focus_area_ids: ["focus-1"],
       due_at: null,
+      story_competency: null,
+      question_id: null,
       auto: true,
       completed_at: "2026-05-01T10:00:00Z",
     },
@@ -30,8 +33,11 @@ const plan = {
       minutes: 5,
       status: "todo",
       group: null,
+      difficulty: null,
       focus_area_ids: [],
       due_at: null,
+      story_competency: null,
+      question_id: null,
       auto: false,
       completed_at: null,
     },
@@ -87,8 +93,62 @@ describe("PracticePlan", () => {
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/items/item-2"),
-        expect.objectContaining({ method: "PATCH", body: JSON.stringify({ action: "done" }) }),
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ action: "done", expected_version: 2 }),
+        }),
       );
     });
   });
+});
+
+it("links every todo item to its target and still offers Plan my week", async () => {
+  const targetPlan = {
+    ...plan,
+    version: 3,
+    items: [
+      {
+        ...plan.items[1],
+        id: "practice",
+        type: "practice_session",
+        title: "Practise a behavioural session — Delivery Lead",
+        group: {
+          role_family: "Delivery Lead",
+          interview_type: "behavioural",
+          contract_version: "coach_conversational_report_v1",
+        },
+        difficulty: "supportive",
+      },
+      {
+        ...plan.items[1],
+        id: "story",
+        type: "story_work",
+        title: "Draft a story for budget ownership",
+        story_competency: "budget ownership",
+      },
+      {
+        ...plan.items[1],
+        id: "review",
+        type: "review_answer",
+        title: "Re-read your answer to Tell me about a delivery",
+        question_id: "qb-1",
+      },
+    ],
+  };
+  vi.mocked(global.fetch).mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/api/coach/readiness/plans")) return response({ active: targetPlan, draft: null });
+    if (url.includes("/api/interviews/upcoming")) return response([]);
+    return response({});
+  });
+
+  render(<PracticePlan />);
+
+  const links = await screen.findAllByRole("link", { name: "Open" });
+  expect(links.map((link) => link.getAttribute("href"))).toEqual([
+    "/coach?launch=1&role=Delivery+Lead&difficulty=easy",
+    "/coach/stories/new?competency=budget+ownership",
+    "/prep/question-bank?item=qb-1",
+  ]);
+  expect(screen.getByRole("button", { name: "Plan my week" })).toBeVisible();
 });

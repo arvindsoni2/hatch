@@ -42,6 +42,7 @@ def build_plan(
     now: datetime,
     coverage_gaps: Sequence[str] = (),
     likely_question: str | None = None,
+    likely_question_id: str | None = None,
 ) -> PlanDraft:
     if not 10 <= minutes <= 120:
         raise PlanError("invalid_input")
@@ -83,6 +84,7 @@ def build_plan(
                 title=_practice_title(group),
                 minutes=PRACTICE_MINUTES,
                 group=group,
+                difficulty=members[0].latest_difficulty or "realistic",
                 due_at=due_at,
                 focus_area_ids=tuple(area.focus_id for area in members),
             )
@@ -106,6 +108,7 @@ def build_plan(
             title=f'Re-read your answer to "{likely_question}"',
             minutes=REVIEW_MINUTES,
             due_at=due_at,
+            question_id=likely_question_id,
         )
         if likely_question
         else None
@@ -145,6 +148,7 @@ def build_plan(
                 title=item.title,
                 minutes=item.minutes,
                 group=item.group,
+                difficulty=item.difficulty,
                 focus_area_ids=item.focus_area_ids,
                 due_at=item.due_at,
                 story_competency=item.story_competency,

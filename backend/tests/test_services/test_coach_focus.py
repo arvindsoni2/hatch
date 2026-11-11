@@ -155,3 +155,26 @@ def test_practice_items_never_satisfy_level_criterion() -> None:
 
     assert rows[0].status == "no_evidence_yet"
     assert rows[0].completed == 0
+
+
+def test_older_completed_items_do_not_count_for_practice_criterion() -> None:
+    area = _area(
+        created_at=datetime(2026, 5, 2),
+        criteria=[{"kind": "practice", "count": 2}],
+    )
+    older = type(
+        "Plan",
+        (),
+        {
+            "started_at": datetime(2026, 4, 1),
+            "items_json": [
+                {"status": "done", "completed_at": "2026-05-01T10:00:00"},
+                {"status": "done", "completed_at": "2026-05-03T10:00:00"},
+            ],
+        },
+    )()
+
+    rows = focus_rules.criterion_reads(area, [], [older])
+
+    assert rows[0].completed == 1
+    assert rows[0].status == "in_progress"

@@ -208,6 +208,7 @@ class PlanFocusInput:
     group: FocusGroup | None
     created_at: datetime
     all_criteria_met: bool
+    latest_difficulty: str | None = None
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,7 @@ class PlanItem:
     minutes: int
     status: Literal["todo", "done", "skipped"] = "todo"
     group: FocusGroup | None = None
+    difficulty: str | None = None
     focus_area_ids: tuple[str, ...] = ()
     due_at: datetime | None = None
     story_competency: str | None = None

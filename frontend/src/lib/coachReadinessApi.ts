@@ -310,8 +310,11 @@ export interface PlanItem {
   minutes: number;
   status: "todo" | "done" | "skipped";
   group: FocusGroup | null;
+  difficulty: string | null;
   focus_area_ids: string[];
   due_at: string | null;
+  story_competency: string | null;
+  question_id: string | null;
   auto: boolean;
   completed_at: string | null;
 }
@@ -391,9 +394,13 @@ export function patchPlanItem(
   planId: string,
   itemId: string,
   action: "done" | "skipped" | "todo",
+  expectedVersion: number,
 ): Promise<PracticePlan> {
   return request<PracticePlan>(
     `/api/coach/readiness/plans/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`,
-    { method: "PATCH", body: JSON.stringify({ action }) },
+    {
+      method: "PATCH",
+      body: JSON.stringify({ action, expected_version: expectedVersion }),
+    },
   );
 }

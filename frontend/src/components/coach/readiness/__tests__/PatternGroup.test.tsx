@@ -37,7 +37,9 @@ describe("PatternGroup", () => {
     expect(
       screen.getByText("Patterns appear after your second session here."),
     ).toBeVisible();
-    expect(screen.getByRole("link", { name: "Practise this role" })).toBeVisible();
+    const link = screen.getByRole("link", { name: "Practise this role" });
+    expect(link).toBeVisible();
+    expect(link.getAttribute("href")).toContain("launch=1");
     expect(screen.queryByText("Needs more practice")).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { ArrowLeft, CopyPlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -153,6 +153,13 @@ export function QuestionBankClient({ initialItems, initialTotal }: QuestionBankC
     setForm(formFromItem(item));
     setShowForm(true);
   };
+
+  useEffect(() => {
+    const itemId = new URLSearchParams(window.location.search).get("item");
+    if (!itemId) return;
+    const item = initialItems.find((candidate) => candidate.id === itemId);
+    if (item) edit(item);
+  }, [initialItems]);
 
   const duplicate = (item: QuestionBankItem) => {
     setForm({ ...formFromItem(item), id: undefined, title: `${item.title} adaptation` });

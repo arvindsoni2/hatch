@@ -42,6 +42,7 @@ export default function ReadinessPage() {
     dimension?: string;
     group?: FocusGroup;
   }>();
+  const [editingArea, setEditingArea] = useState<FocusArea | undefined>();
 
   const load = () => {
     setLoading(true);
@@ -71,8 +72,32 @@ export default function ReadinessPage() {
     dimension?: string;
     group?: FocusGroup;
   }) => {
+    setEditingArea(undefined);
     setEditorInitial(initial);
     setEditorOpen(true);
+  };
+
+  const editArea = (area: FocusArea) => {
+    setEditingArea(area);
+    setEditorInitial(undefined);
+    setEditorOpen(true);
+  };
+
+  const changeFocusStatus = async (area: FocusArea, status: FocusArea["status"]) => {
+    setActionError(null);
+    try {
+      await patchFocusArea(area.id, {
+        expected_version: area.version,
+        status,
+      });
+      loadFocus();
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "version_conflict") {
+        setActionError("This focus area changed. Reload and re-apply.");
+      } else {
+        setActionError("Could not update this focus area.");
+      }
+    }
   };
 
   const markAchieved = async (area: FocusArea) => {
@@ -160,10 +185,12 @@ export default function ReadinessPage() {
 
       <div className="mb-6">
         <FocusAreas
-          areas={focusAreas}
+          areas={focusAreas.filter((area) => area.status !== "archived")}
           activeCount={focusCount}
           onAdd={() => openEditor()}
           onMarkAchieved={(area) => void markAchieved(area)}
+          onStatusChange={(area, status) => void changeFocusStatus(area, status)}
+          onEdit={editArea}
         />
       </div>
 
@@ -232,6 +259,7 @@ export default function ReadinessPage() {
       <FocusAreaEditor
         open={editorOpen}
         initial={editorInitial}
+        area={editingArea}
         onClose={() => setEditorOpen(false)}
         onSaved={loadFocus}
       />

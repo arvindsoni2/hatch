@@ -101,12 +101,19 @@ def _practice_progress(
     area, criterion: FocusCriterion, plans: Sequence[object]
 ) -> tuple[int, CriterionStatus]:
     completed = 0
+    created = _utc(area.created_at)
     for plan in plans:
         if getattr(plan, "started_at", None) is None:
             continue
         for item in getattr(plan, "items_json", None) or ():
-            if isinstance(item, dict) and item.get("status") == "done":
-                completed += 1
+            if not isinstance(item, dict) or item.get("status") != "done":
+                continue
+            completed_at = item.get("completed_at")
+            if not isinstance(completed_at, str):
+                continue
+            if _utc(datetime.fromisoformat(completed_at)) < created:
+                continue
+            completed += 1
     completed = min(completed, criterion.count)
     if completed >= criterion.count:
         return completed, "met"
@@ -125,7 +132,7 @@ def criterion_reads(
         if criterion.kind == "level":
             completed, status = _level_progress(area, criterion, snapshots)
             label = (
-                f"Reach {LEVEL_TARGET} or better in {area.dimension.replace('_', ' ')} "
+                f"Reach Interview ready or better in {area.dimension.replace('_', ' ')} "
                 f"in {criterion.count} practice sessions"
             )
         else:

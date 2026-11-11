@@ -14,11 +14,15 @@ export function FocusAreas({
   activeCount,
   onAdd,
   onMarkAchieved,
+  onStatusChange,
+  onEdit,
 }: {
   areas: FocusArea[];
   activeCount: number;
   onAdd: () => void;
   onMarkAchieved: (area: FocusArea) => void;
+  onStatusChange: (area: FocusArea, status: FocusArea["status"]) => void;
+  onEdit: (area: FocusArea) => void;
 }) {
   return (
     <SectionCard
@@ -48,9 +52,36 @@ export function FocusAreas({
                     {area.dimension.replaceAll("_", " ")} · {groupLabel(area)}
                   </p>
                 </div>
-                {area.status !== "active" ? (
-                  <span className="text-xs capitalize text-[var(--text-dim)]">{area.status}</span>
-                ) : null}
+                <div className="flex flex-wrap items-center gap-1">
+                  {area.status === "active" ? (
+                    <>
+                      <Button type="button" variant="outline" size="sm" onClick={() => onStatusChange(area, "paused")}>
+                        Pause
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => onStatusChange(area, "archived")}>
+                        Archive
+                      </Button>
+                    </>
+                  ) : null}
+                  {area.status === "paused" ? (
+                    <>
+                      <Button type="button" variant="outline" size="sm" onClick={() => onStatusChange(area, "active")}>
+                        Resume
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => onStatusChange(area, "archived")}>
+                        Archive
+                      </Button>
+                    </>
+                  ) : null}
+                  {area.status === "achieved" ? (
+                    <Button type="button" variant="outline" size="sm" onClick={() => onStatusChange(area, "active")}>
+                      Reopen
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(area)}>
+                    Edit
+                  </Button>
+                </div>
               </div>
               <ul className="mt-3 space-y-2">
                 {area.criteria.map((criterion) => {

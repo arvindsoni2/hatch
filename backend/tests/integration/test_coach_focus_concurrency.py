@@ -9,9 +9,15 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from app.config import settings
 from app.models.coach_readiness import CoachFocusArea, CoachPracticePlan
 from app.routers.coach_readiness import patch_focus_area
 from app.schemas.coach_readiness import FocusAreaPatch
+
+
+@pytest.fixture(autouse=True)
+def _enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "HATCH_COACH_READINESS_ENABLED", True)
 
 
 def _focus(area_id: str, status: str, slot: int | None) -> CoachFocusArea:
@@ -85,3 +91,34 @@ async def test_single_active_plan_enforced_by_index(coach_database) -> None:
         db.add(CoachPracticePlan(id="plan-two", status="active", items_json=[]))
         with pytest.raises(IntegrityError):
             await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_plan_start_leaves_exactly_one_active(coach_database) -> None:
+    from app.routers.coach_readiness import start_plan
+
+    async with coach_database() as db:
+        db.add_all(
+            [
+                CoachPracticePlan(id="draft-one", status="draft", items_json=[]),
+                CoachPracticePlan(id="draft-two", status="draft", items_json=[]),
+            ]
+        )
+        await db.commit()
+
+    async def start(plan_id: str):
+        async with coach_database() as db:
+            return await start_plan(plan_id, db)
+
+    results = await asyncio.gather(
+        start("draft-one"), start("draft-two"), return_exceptions=True
+    )
+    assert any(not isinstance(item, Exception) for item in results)
+
+    async with coach_database() as db:
+        rows = (await db.execute(
+            text("SELECT status FROM coach_practice_plans")
+        )).all()
+        statuses = [row[0] for row in rows]
+        assert statuses.count("active") == 1
+        assert statuses.count("superseded") == 1

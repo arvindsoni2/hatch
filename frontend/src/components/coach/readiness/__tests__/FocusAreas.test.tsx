@@ -30,13 +30,43 @@ const area: FocusArea = {
 
 describe("FocusAreas", () => {
   it("shows N of 3 in use and a labelled progress bar", () => {
-    render(<FocusAreas areas={[area]} activeCount={1} onAdd={vi.fn()} onMarkAchieved={vi.fn()} />);
+    render(
+      <FocusAreas
+        areas={[area]}
+        activeCount={1}
+        onAdd={vi.fn()}
+        onMarkAchieved={vi.fn()}
+        onStatusChange={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText("1 of 3 in use")).toBeVisible();
     expect(screen.getByRole("progressbar", { name: "Finish 3 plan items" })).toHaveAttribute(
       "aria-valuenow", "1",
     );
     expect(screen.getByText("1 of 3")).toBeVisible();
+  });
+
+  it("pauses, archives and edits through callbacks", async () => {
+    const user = userEvent.setup();
+    const onStatusChange = vi.fn();
+    const onEdit = vi.fn();
+    render(
+      <FocusAreas
+        areas={[area]}
+        activeCount={1}
+        onAdd={vi.fn()}
+        onMarkAchieved={vi.fn()}
+        onStatusChange={onStatusChange}
+        onEdit={onEdit}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Pause" }));
+    expect(onStatusChange).toHaveBeenCalledWith(area, "paused");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    expect(onEdit).toHaveBeenCalledWith(area);
   });
 
   it("offers Mark achieved only when every criterion is met", async () => {
@@ -47,7 +77,16 @@ describe("FocusAreas", () => {
       every_criterion_met: true,
       criteria: [{ ...area.criteria[0], status: "met" as const, completed: 3 }],
     };
-    render(<FocusAreas areas={[met]} activeCount={1} onAdd={vi.fn()} onMarkAchieved={onMarkAchieved} />);
+    render(
+      <FocusAreas
+        areas={[met]}
+        activeCount={1}
+        onAdd={vi.fn()}
+        onMarkAchieved={onMarkAchieved}
+        onStatusChange={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText("Every criterion is met.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Mark achieved" }));

@@ -117,3 +117,64 @@ Not run / known limits:
 - P3 bench/acceptance-smoke owner items remain open.
 
 Ready for review: yes.
+
+## Repair cycle 1 (11 Nov 2026)
+
+Review findings addressed:
+
+- **H1** — todo plan items now show an outline "Open" button:
+  - `practice_session` → `/coach?launch=1&role=<group role family>&difficulty=<mapped>`, using the latest difficulty in that group from `load_learning_snapshots` (default `realistic`); mapping supportive→easy, realistic→medium, challenging→hard.
+  - `story_work` → the existing `/coach/stories/new?competency=…` route, which already prefills the editor.
+  - `review_answer` → `/prep/question-bank?item=<id>` (the Question Bank client now opens the item from the query).
+  - `build_plan` persists `story_competency`, `question_id` and `difficulty`; `PlanItemRead` exposes them.
+  - The first likely question without an answer is selected (Question Bank `answer_draft` empty; session-plan questions with no QB answer are accepted without an item link).
+  - Both PatternGroup "Practise this role" links use the same launch target and latest difficulty.
+- **H2** — FocusAreas now offers Pause, Resume, Archive, Edit and Reopen, all through PATCH with `expected_version`; archived areas are hidden; Edit passes the area to the editor. A 409 keeps the editor draft and shows "Reload and re-apply".
+- **M1** — a practice criterion counts only `done` items whose `completed_at` is at or after the area's creation. New older-plan test.
+- **M2** — `patch_plan_item` accepts only an active plan; drafts return 409 `invalid_state`.
+- **M3** — creating a focus area with an unknown `application_id` returns 404 `not_found`; test added.
+- **M4** — `PlanItemPatch` carries `expected_version`; a versioned UPDATE is the first write and a mismatch returns 409 `version_conflict`; the frontend sends `plan.version`.
+- **M5** — with an active plan, "Plan my week" remains available; a new draft shows Start, and starting it supersedes the active plan.
+- **L1** — skipped items render "Skipped" with Undo; done→skipped is allowed, skipped→done returns 409 `invalid_state`.
+- **L2** — the level criterion says "Interview ready", not the raw enum.
+- **L3** — removed the no-op SELECT in `start_plan`.
+- **L4** — `GET /focus-areas` takes `limit` (default 20, max 100) and `offset`, ordered by `created_at, id`.
+- **L5** — the editor carries the pattern group's `contract_version` into creation.
+- **L6** — concurrent-start test starts two drafts at once and asserts exactly one active row (the other superseded).
+- **L7** — the round picker uses `formatInterviewTime` with the display timezone and abbreviation.
+
+Repair gates:
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_coach_focus.py \
+    tests/test_services/test_coach_plan.py \
+    tests/integration/test_coach_focus_concurrency.py \
+    tests/test_routers/test_coach_focus_plan_router.py
+25 passed in 1.93s
+
+$ python -m pytest -q --no-cov <full regression batch from the evidence above>
+685 passed, 1 skipped in 139.89s
+
+$ npx vitest run src/components/coach/readiness src/app/coach/readiness \
+    src/__tests__/components/CoachPage.test.tsx \
+    src/components/coach/conversation/__tests__/ConversationalProgress.test.tsx \
+    src/components/coach/conversation/__tests__/ConversationalReport.test.tsx
+36 passed (11 files)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ ruff check app tests
+All checks passed!
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+```
+
+Ready for review: yes.

@@ -68,7 +68,7 @@ async def test_focus_and_plan_lifecycle(client: AsyncClient) -> None:
     item_id = started.json()["items"][0]["id"]
     done = await client.patch(
         f"/api/coach/readiness/plans/{plan['id']}/items/{item_id}",
-        json={"action": "done"},
+        json={"action": "done", "expected_version": started.json()["version"]},
     )
     assert done.status_code == 200, done.text
     assert done.json()["items"][0]["status"] == "done"
@@ -172,3 +172,65 @@ async def test_round_under_two_hours_is_invalid_input(
 
     assert response.status_code == 422
     assert response.json()["detail"] == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_plan_item_version_and_state_guards(client: AsyncClient) -> None:
+    await client.post("/api/coach/readiness/focus-areas", json=_focus_body())
+    draft = (await client.post("/api/coach/readiness/plans", json={})).json()
+    item_id = draft["items"][0]["id"]
+
+    draft_patch = await client.patch(
+        f"/api/coach/readiness/plans/{draft['id']}/items/{item_id}",
+        json={"action": "done", "expected_version": draft["version"]},
+    )
+    assert draft_patch.status_code == 409
+    assert draft_patch.json()["detail"] == "invalid_state"
+
+    active = (
+        await client.post(f"/api/coach/readiness/plans/{draft['id']}/start")
+    ).json()
+    stale = await client.patch(
+        f"/api/coach/readiness/plans/{draft['id']}/items/{item_id}",
+        json={"action": "done", "expected_version": active["version"] + 1},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "version_conflict"
+
+    skipped = await client.patch(
+        f"/api/coach/readiness/plans/{draft['id']}/items/{item_id}",
+        json={"action": "skipped", "expected_version": active["version"]},
+    )
+    assert skipped.status_code == 200
+    bad_done = await client.patch(
+        f"/api/coach/readiness/plans/{draft['id']}/items/{item_id}",
+        json={"action": "done", "expected_version": skipped.json()["version"]},
+    )
+    assert bad_done.status_code == 409
+    assert bad_done.json()["detail"] == "invalid_state"
+
+
+@pytest.mark.asyncio
+async def test_unknown_application_is_not_found(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/coach/readiness/focus-areas",
+        json={**_focus_body(), "application_id": "missing-app"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_focus_list_is_paginated_and_stable(client: AsyncClient) -> None:
+    for index in range(2):
+        await client.post(
+            "/api/coach/readiness/focus-areas", json=_focus_body(title=f"Focus {index}")
+        )
+
+    first = await client.get("/api/coach/readiness/focus-areas?limit=1")
+    second = await client.get("/api/coach/readiness/focus-areas?limit=1&offset=1")
+
+    assert len(first.json()["items"]) == 1
+    assert len(second.json()["items"]) == 1
+    assert first.json()["items"][0]["id"] != second.json()["items"][0]["id"]
+    assert first.json()["active_count"] == 2
