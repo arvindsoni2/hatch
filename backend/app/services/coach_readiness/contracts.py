@@ -171,3 +171,79 @@ class WhyExcerpt:
 class PatternWhy:
     pattern: Pattern
     excerpts: tuple[WhyExcerpt, ...] = field(default_factory=tuple)
+
+
+FocusStatus = Literal["active", "paused", "achieved", "archived"]
+CriterionKind = Literal["level", "practice"]
+CriterionStatus = Literal["not_started", "in_progress", "met", "no_evidence_yet"]
+
+
+@dataclass(frozen=True)
+class FocusGroup:
+    role_family: str
+    interview_type: str
+    contract_version: str = "coach_conversational_report_v1"
+
+
+@dataclass(frozen=True)
+class FocusCriterion:
+    kind: CriterionKind
+    count: int = 1
+
+
+@dataclass(frozen=True)
+class CriterionRead:
+    kind: CriterionKind
+    label: str
+    status: CriterionStatus
+    completed: int
+    target: int
+
+
+@dataclass(frozen=True)
+class PlanFocusInput:
+    focus_id: str
+    title: str
+    status: FocusStatus
+    group: FocusGroup | None
+    created_at: datetime
+    all_criteria_met: bool
+    latest_difficulty: str | None = None
+
+
+@dataclass(frozen=True)
+class TargetRound:
+    round_id: str
+    scheduled_at: datetime
+    application_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PlanItem:
+    id: str
+    type: Literal["practice_session", "story_work", "review_answer"]
+    title: str
+    minutes: int
+    status: Literal["todo", "done", "skipped"] = "todo"
+    group: FocusGroup | None = None
+    difficulty: str | None = None
+    focus_area_ids: tuple[str, ...] = ()
+    due_at: datetime | None = None
+    story_competency: str | None = None
+    question_id: str | None = None
+    auto: bool = False
+    completed_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class PlanDraft:
+    items: tuple[PlanItem, ...]
+    unallocated_minutes: int
+
+
+class PlanError(Exception):
+    """A safe plan error code from spec §12."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)

@@ -69,9 +69,17 @@ describe("Readiness page", () => {
   beforeEach(() => {
     vi.mocked(global.fetch).mockReset();
     vi.mocked(global.fetch).mockImplementation(async (input) => {
-      if (String(input).includes("/api/coach/readiness/patterns")) {
+      const url = String(input);
+      if (url.includes("/api/coach/readiness/patterns")) {
         return response({ groups: [group], include_stale: true });
       }
+      if (url.endsWith("/api/coach/readiness/focus-areas")) {
+        return response({ items: [], active_count: 0, active_limit: 3 });
+      }
+      if (url.endsWith("/api/coach/readiness/plans")) {
+        return response({ active: null, draft: null });
+      }
+      if (url.includes("/api/interviews/upcoming")) return response([]);
       return response({});
     });
   });
@@ -86,6 +94,13 @@ describe("Readiness page", () => {
       if (url.includes("/api/coach/readiness/patterns")) {
         return response({ groups: [group], include_stale: true });
       }
+      if (url.endsWith("/api/coach/readiness/focus-areas")) {
+        return response({ items: [], active_count: 0, active_limit: 3 });
+      }
+      if (url.endsWith("/api/coach/readiness/plans")) {
+        return response({ active: null, draft: null });
+      }
+      if (url.includes("/api/interviews/upcoming")) return response([]);
       return response({});
     });
 
@@ -94,6 +109,18 @@ describe("Readiness page", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent(/could not dismiss/i);
     expect(screen.getByText("specificity")).toBeVisible();
+  });
+
+  it("orders the sections and marks the Readiness tab", async () => {
+    render(<ReadinessPage />);
+
+    const headings = await screen.findAllByRole("heading", { level: 2 });
+    expect(headings.slice(0, 3).map((heading) => heading.textContent)).toEqual([
+      "Focus areas", "This week's plan", "Patterns",
+    ]);
+    expect(screen.getByRole("link", { name: "Readiness" })).toHaveAttribute(
+      "aria-current", "page",
+    );
   });
 
   it("does not render a dismissed pattern after reload", async () => {

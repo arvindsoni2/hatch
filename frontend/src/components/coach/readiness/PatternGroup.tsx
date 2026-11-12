@@ -15,14 +15,28 @@ export function PatternGroup({
   group,
   onDismiss,
   onUndo,
+  onWorkOnThis,
 }: {
   group: PatternGroupSection;
   onDismiss?: (fingerprint: string) => void;
   onUndo?: (fingerprint: string) => void;
+  onWorkOnThis?: (pattern: import("@/lib/coachReadinessApi").Pattern) => void;
 }) {
   const active = group.patterns.filter((pattern) => !pattern.stale);
   const stale = group.patterns.filter((pattern) => pattern.stale);
   const coldStart = group.session_count < 2;
+  const latest = group.patterns
+    .flatMap((pattern) => pattern.supporting)
+    .sort((a, b) => a.completed_at.localeCompare(b.completed_at))
+    .at(-1);
+  const difficulty = {
+    supportive: "easy", realistic: "medium", challenging: "hard",
+  }[latest?.difficulty ?? "realistic"] ?? "medium";
+  const launchHref = `/coach?${new URLSearchParams({
+    launch: "1",
+    role: group.role_family,
+    difficulty,
+  }).toString()}`;
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
@@ -38,7 +52,7 @@ export function PatternGroup({
           <p className="text-sm text-[var(--text-dim)]">
             Patterns appear after your second session here.
           </p>
-          <Link href="/coach" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+          <Link href={launchHref} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
             Practise this role
           </Link>
         </div>
@@ -50,6 +64,7 @@ export function PatternGroup({
               pattern={pattern}
               onDismiss={onDismiss}
               onUndo={onUndo}
+              onWorkOnThis={onWorkOnThis}
             />
           ))}
           {stale.length > 0 ? (
@@ -70,7 +85,7 @@ export function PatternGroup({
           <p className="text-sm text-[var(--text-dim)]">
             Patterns appear after your second session here.
           </p>
-          <Link href="/coach" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+          <Link href={launchHref} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
             Practise this role
           </Link>
         </div>

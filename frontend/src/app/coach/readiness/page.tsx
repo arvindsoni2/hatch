@@ -3,13 +3,21 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+import { FocusAreaEditor } from "@/components/coach/readiness/FocusAreaEditor";
+import { FocusAreas } from "@/components/coach/readiness/FocusAreas";
 import { PatternGroup } from "@/components/coach/readiness/PatternGroup";
+import { PracticePlan } from "@/components/coach/readiness/PracticePlan";
 import { PageContainer, PageHeader } from "@/components/ui/page-layout";
 import { SectionCard } from "@/components/ui/section-card";
 import {
   dismissPattern,
+  fetchFocusAreas,
   fetchPatterns,
+  patchFocusArea,
   undoPatternDismissal,
+  type FocusArea,
+  type FocusGroup,
+  type Pattern,
   type PatternGroupSection,
 } from "@/lib/coachReadinessApi";
 import { cn } from "@/lib/utils";
@@ -26,6 +34,15 @@ export default function ReadinessPage() {
   const [error, setError] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [lastDismissed, setLastDismissed] = useState<string | null>(null);
+  const [focusAreas, setFocusAreas] = useState<FocusArea[]>([]);
+  const [focusCount, setFocusCount] = useState(0);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorInitial, setEditorInitial] = useState<{
+    title?: string;
+    dimension?: string;
+    group?: FocusGroup;
+  }>();
+  const [editingArea, setEditingArea] = useState<FocusArea | undefined>();
 
   const load = () => {
     setLoading(true);
@@ -36,7 +53,72 @@ export default function ReadinessPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  const loadFocus = () => {
+    fetchFocusAreas()
+      .then((result) => {
+        setFocusAreas(result.items);
+        setFocusCount(result.active_count);
+      })
+      .catch(() => setFocusAreas([]));
+  };
+
+  useEffect(() => {
+    load();
+    loadFocus();
+  }, []);
+
+  const openEditor = (initial?: {
+    title?: string;
+    dimension?: string;
+    group?: FocusGroup;
+  }) => {
+    setEditingArea(undefined);
+    setEditorInitial(initial);
+    setEditorOpen(true);
+  };
+
+  const editArea = (area: FocusArea) => {
+    setEditingArea(area);
+    setEditorInitial(undefined);
+    setEditorOpen(true);
+  };
+
+  const changeFocusStatus = async (area: FocusArea, status: FocusArea["status"]) => {
+    setActionError(null);
+    try {
+      await patchFocusArea(area.id, {
+        expected_version: area.version,
+        status,
+      });
+      loadFocus();
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === "version_conflict") {
+        setActionError("This focus area changed. Reload and re-apply.");
+      } else {
+        setActionError("Could not update this focus area.");
+      }
+    }
+  };
+
+  const markAchieved = async (area: FocusArea) => {
+    try {
+      await patchFocusArea(area.id, {
+        expected_version: area.version,
+        status: "achieved",
+      });
+      loadFocus();
+    } catch {
+      setActionError("Could not mark this focus area achieved.");
+    }
+  };
+
+  const workOnPattern = (pattern: Pattern) => {
+    openEditor({
+      title: `Work on ${pattern.dimension.replaceAll("_", " ")}`,
+      dimension: pattern.dimension,
+      group: pattern.group,
+    });
+  };
 
   const removePattern = (fingerprint: string) => {
     setGroups((current) =>
@@ -101,6 +183,21 @@ export default function ReadinessPage() {
         ))}
       </nav>
 
+      <div className="mb-6">
+        <FocusAreas
+          areas={focusAreas.filter((area) => area.status !== "archived")}
+          activeCount={focusCount}
+          onAdd={() => openEditor()}
+          onMarkAchieved={(area) => void markAchieved(area)}
+          onStatusChange={(area, status) => void changeFocusStatus(area, status)}
+          onEdit={editArea}
+        />
+      </div>
+
+      <div className="mb-6">
+        <PracticePlan />
+      </div>
+
       <SectionCard
         title="Patterns"
         description="From your practice in the last 90 days, grouped by role and interview type. Dismiss anything that looks wrong."
@@ -151,12 +248,21 @@ export default function ReadinessPage() {
                   group={group}
                   onDismiss={(fingerprint) => void dismiss(fingerprint)}
                   onUndo={(fingerprint) => void undo(fingerprint)}
+                  onWorkOnThis={workOnPattern}
                 />
               ))}
             </div>
           </>
         )}
       </SectionCard>
+
+      <FocusAreaEditor
+        open={editorOpen}
+        initial={editorInitial}
+        area={editingArea}
+        onClose={() => setEditorOpen(false)}
+        onSaved={loadFocus}
+      />
     </PageContainer>
   );
 }

@@ -14,18 +14,25 @@ import {
 interface SessionLauncherProps {
   onSessionCreated: (session: SessionResponse) => void;
   onBusyChange?: (busy: boolean) => void;
+  initialRoleTitle?: string;
+  initialDifficulty?: "easy" | "medium" | "hard";
 }
 
 const CATEGORIES = ["Technical", "Behavioural", "Situational", "Domain", "Culture", "Commercial"];
 
-export function SessionLauncher({ onSessionCreated, onBusyChange }: SessionLauncherProps) {
+export function SessionLauncher({
+  onSessionCreated,
+  onBusyChange,
+  initialRoleTitle = "",
+  initialDifficulty = "medium",
+}: SessionLauncherProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [companyName, setCompanyName] = useState("");
-  const [roleTitle, setRoleTitle] = useState("");
+  const [roleTitle, setRoleTitle] = useState(initialRoleTitle);
   const [jdText, setJdText] = useState("");
   const [interviewDate, setInterviewDate] = useState("");
   const [questionCount, setQuestionCount] = useState(10);
-  const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">("medium");
+  const [difficulty, setDifficulty] = useState<"easy" | "medium" | "hard">(initialDifficulty);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -264,6 +271,8 @@ interface SessionLauncherDialogProps extends SessionLauncherProps {
 export function SessionLauncherDialog({
   onClose,
   onSessionCreated,
+  initialRoleTitle,
+  initialDifficulty,
 }: SessionLauncherDialogProps) {
   const [busy, setBusy] = useState(false);
 
@@ -277,6 +286,8 @@ export function SessionLauncherDialog({
         <SessionLauncher
           onBusyChange={setBusy}
           onSessionCreated={onSessionCreated}
+          initialRoleTitle={initialRoleTitle}
+          initialDifficulty={initialDifficulty}
         />
       </DialogContent>
     </Dialog>

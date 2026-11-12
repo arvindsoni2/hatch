@@ -57,10 +57,12 @@ export function PatternCard({
   pattern,
   onDismiss,
   onUndo,
+  onWorkOnThis,
 }: {
   pattern: Pattern;
   onDismiss?: (fingerprint: string) => void;
   onUndo?: (fingerprint: string) => void;
+  onWorkOnThis?: (pattern: Pattern) => void;
 }) {
   const [why, setWhy] = useState<PatternWhy | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
@@ -145,6 +147,18 @@ export function PatternCard({
         <p className="mt-1 text-xs text-[var(--text-dim)]">
           Seen again since you dismissed it
         </p>
+      ) : null}
+      {pattern.kind === "focus" && !pattern.stale && !pattern.dismissed ? (
+        <div className="mt-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onWorkOnThis?.(pattern)}
+          >
+            Work on this
+          </Button>
+        </div>
       ) : null}
 
       {whyOpen ? (
