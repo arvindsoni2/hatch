@@ -4,6 +4,7 @@ from app.runtime.context import ContextRegistry
 
 from .application import ApplicationContextProvider
 from .coach import CoachContextProvider
+from .coach_readiness import ReadinessContextProvider
 from .job import JobPostingContextProvider
 from .profile import ProfileYamlContextProvider
 from .resume import ResumeContextProvider
@@ -34,6 +35,7 @@ def register_initial_context_providers(
 __all__ = [
     "ApplicationContextProvider",
     "CoachContextProvider",
+    "ReadinessContextProvider",
     "JobPostingContextProvider",
     "ProfileYamlContextProvider",
     "ResumeContextProvider",

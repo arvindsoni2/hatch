@@ -58,3 +58,40 @@ def register_product_capabilities(
             ),
             ArtifactCapabilityAdapter(handler),
         )
+
+
+def register_readiness_capabilities(
+    registry: CapabilityRegistry,
+    *,
+    handlers: dict[str, CapabilityHandler],
+) -> None:
+    """Register the five local-capable readiness tasks (spec §10)."""
+    from app.runtime_bindings.tasks.coach_readiness import (
+        COACH_READINESS_BRIEF_ENHANCE_V1,
+        COACH_READINESS_COMPETENCY_EXTRACT_V1,
+        COACH_READINESS_DEBRIEF_EXTRACT_V1,
+        COACH_READINESS_EXPLAIN_V1,
+        COACH_READINESS_PLAN_WORDING_V1,
+    )
+
+    for task in (
+        COACH_READINESS_EXPLAIN_V1,
+        COACH_READINESS_BRIEF_ENHANCE_V1,
+        COACH_READINESS_PLAN_WORDING_V1,
+        COACH_READINESS_DEBRIEF_EXTRACT_V1,
+        COACH_READINESS_COMPETENCY_EXTRACT_V1,
+    ):
+        registry.register(
+            CapabilityDescriptor(
+                capability_id=task.task_id,
+                version=task.version,
+                input_model=task.input_model,
+                output_model=task.output_model,
+                side_effect_class=SideEffectClass.PURE,
+                idempotency_class=IdempotencyClass.IDEMPOTENT,
+                required_permissions=(),
+                default_timeout_seconds=30.0,
+                uses_model_routing=True,
+            ),
+            NativeCapabilityAdapter(handlers[task.task_id]),
+        )

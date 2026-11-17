@@ -10,7 +10,9 @@ import {
   type Pattern,
   type PatternWhy,
 } from "@/lib/coachReadinessApi";
+import { PatternTips } from "@/components/coach/readiness/PatternTips";
 import { WhyPanel } from "@/components/coach/readiness/WhyPanel";
+import { fetchGenerationOperation, requestPatternTips } from "@/lib/coachReadinessApi";
 
 const KIND: Record<
   Pattern["kind"],
@@ -67,6 +69,9 @@ export function PatternCard({
   const [why, setWhy] = useState<PatternWhy | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
   const [whyError, setWhyError] = useState(false);
+  const [tips, setTips] = useState<string[] | null>(null);
+  const [tipsLoading, setTipsLoading] = useState(false);
+  const [tipsError, setTipsError] = useState(false);
   const kind = KIND[pattern.kind];
 
   const toggleWhy = async () => {
@@ -78,6 +83,32 @@ export function PatternCard({
       }
     }
     setWhyOpen((open) => !open);
+  };
+
+  const loadTips = async () => {
+    setTipsLoading(true);
+    setTipsError(false);
+    try {
+      let result = await requestPatternTips(pattern.fingerprint);
+      const terminal = new Set(["succeeded", "degraded", "fenced"]);
+      while (
+        result.operation_id
+        && !terminal.has(result.status)
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        result = await fetchGenerationOperation(result.operation_id);
+      }
+      if (result.status === "succeeded") {
+        const cached = await requestPatternTips(pattern.fingerprint);
+        setTips(cached.tips ?? []);
+      } else if (result.status === "degraded" || result.status === "fenced") {
+        setTipsError(true);
+      }
+    } catch {
+      setTipsError(true);
+    } finally {
+      setTipsLoading(false);
+    }
   };
 
   return (
@@ -117,6 +148,17 @@ export function PatternCard({
               onClick={() => void toggleWhy()}
             >
               Why?
+            </Button>
+          ) : null}
+          {!pattern.stale ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={tipsLoading}
+              onClick={() => void loadTips()}
+            >
+              Tips
             </Button>
           ) : null}
           {!pattern.dismissed ? (
@@ -161,6 +203,9 @@ export function PatternCard({
         </div>
       ) : null}
 
+      {tipsLoading || tips || tipsError ? (
+        <PatternTips tips={tips} loading={tipsLoading} error={tipsError ? "unavailable" : null} />
+      ) : null}
       {whyOpen ? (
         why ? (
           <WhyPanel why={why} />

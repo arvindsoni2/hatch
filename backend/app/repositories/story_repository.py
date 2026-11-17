@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.story import Story, StoryUsage
+from ..services.source_events import SourceChange, notify
 from ..schemas.story import (
     PaginatedStories,
     StoryCreate,
@@ -120,6 +121,7 @@ class StoryRepository:
         if not row:
             return None
 
+        await notify(self._session, SourceChange("story", story_id, "edited"))
         changes = data.model_dump(exclude_none=True)
         for field, value in changes.items():
             setattr(row, field, value)
@@ -152,6 +154,7 @@ class StoryRepository:
         )
 
     async def soft_delete(self, story_id: str) -> bool:
+        await notify(self._session, SourceChange("story", story_id, "deleted"))
         result = await self._session.execute(
             update(Story)
             .where(Story.id == story_id)

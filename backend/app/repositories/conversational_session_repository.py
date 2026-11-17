@@ -22,6 +22,8 @@ from sqlalchemy import and_, case, delete, exists, func, null, or_, select, upda
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..services.source_events import SourceChange, notify
+
 from ..config import settings
 from ..models.async_job import AsyncJob
 from ..models.coach_session import (
@@ -1820,6 +1822,9 @@ class ConversationalSessionRepository:
         ):
             raise ConversationalRepositoryError("coach_attempt_not_active")
 
+        await notify(
+            self._session, SourceChange("coach_session", claim.session_id, "edited")
+        )
         now = datetime.utcnow()
         if (
             attempt.audio_uri is not None
@@ -2060,6 +2065,9 @@ class ConversationalSessionRepository:
             return await self.claim_hard_deletion(
                 session_id, request, request_hash, now
             )
+        await notify(
+            self._session, SourceChange("coach_session", session_id, "deactivated")
+        )
         job = await AsyncJobService.create(self._session, "coach_session_hard_deletion")
         await self._session.refresh(session)
         previous_job_ids = {session.setup_job_id, session.report_job_id}
@@ -2203,6 +2211,9 @@ class ConversationalSessionRepository:
         )
         if locked.rowcount != 1:
             raise ConversationalRepositoryError("coach_session_deletion_failed")
+        await notify(
+            self._session, SourceChange("coach_session", claim.session_id, "deleted")
+        )
         receipt = await self._session.scalar(
             select(CoachSessionDeletionResult).where(
                 CoachSessionDeletionResult.session_key_hash == claim.session_key_hash,
