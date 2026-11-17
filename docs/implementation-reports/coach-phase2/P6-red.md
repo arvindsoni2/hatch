@@ -77,7 +77,16 @@ The probe is deleted and not committed. It is not a reference implementation.
 5. **Carry-over from the P4 repair.** Readiness writes now bypass `AISetupGateMiddleware`. The tips route must enforce AI mode None itself (§10: "requests are not created"). OpenCode's `test_ai_mode_none_creates_no_requests` must cover this through the route, not only the service.
 6. **New test dependency in use.** `pytest-httpx==0.36.0` is pinned in `requirements-dev.txt` but no test used it until now. No new dependency is added.
 
-## Assumed interfaces (binding once the owner approves)
+## Owner decisions (17 Nov 2026)
+
+1. Approved: add `backend/app/repositories/coach_readiness_repository.py` with `CoachReadinessRepository(session_factory)`.
+2. Accepted: transcript deletion is the AC19 "edit"; no call site is added in `claim_transcript_edit`.
+3. Approved: the tips and operations routes work in an app built from the readiness router alone, with no lifespan state.
+4. Noted: mismatches 4–6 need no decision.
+
+The Assumed interfaces below are approved and binding.
+
+## Assumed interfaces (approved and binding)
 
 Beyond spec §10.1 and names already in the codebase:
 
