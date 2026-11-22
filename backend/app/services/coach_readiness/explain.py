@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -34,6 +35,15 @@ from app.services.coach_readiness.tiers import load_tier_map
 
 TASK_ID = "coach.readiness.explain"
 PROMPT_VERSION = "explain-v1"
+RUBRICS = {
+    "relevance": "Answers the question asked and keeps the role requirements in view.",
+    "structure": "Signals situation, task, action and result in a clear order.",
+    "specificity": "Names the system, the people and the numbers that make the story checkable.",
+    "impact": "States the measurable result and who benefited from it.",
+    "role_depth": "Shows the judgement expected at the target role level.",
+    "clarity": "Uses short sentences and plain words without filler.",
+    "conciseness": "Stays inside the time box and drops repeated setup.",
+}
 ROUTE_URLS = {
     "llm-primary": "http://llm-primary:8080/v1",
     "llm-triage": "http://llm-triage:8081/v1",
@@ -42,7 +52,8 @@ ROUTE_URLS = {
 _OPERATIONS: dict[str, dict[str, Any]] = {}
 _INFLIGHT: dict[str, str] = {}
 _OPERATION_LOCK = asyncio.Lock()
-_THINKING = re.compile(r"<thinking>.*?</thinking>", re.DOTALL | re.IGNORECASE)
+_TASKS: set[asyncio.Task] = set()
+_THINKING = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 
 
 @dataclass
@@ -55,6 +66,7 @@ class ExplainContext:
     model_id: str
     prompt: str
     deadline_s: int
+    params: dict[str, str]
 
 
 @dataclass
@@ -79,11 +91,23 @@ def _parse_tips(content: str) -> list[str]:
     return tips
 
 
+def _route_base_url(route: str) -> str:
+    try:
+        from app.agents.tools.profile_loader import load_profile
+
+        llm = load_profile().llm
+        if route == "llm-triage":
+            return (llm.triage_base_url or llm.base_url or ROUTE_URLS[route]).rstrip("/")
+        if route == "llm-primary":
+            return (llm.base_url or ROUTE_URLS[route]).rstrip("/")
+    except Exception:
+        pass
+    return ROUTE_URLS.get(route, ROUTE_URLS["llm-primary"])
+
+
 async def _call_model(context: ExplainContext) -> list[str]:
     tier = load_tier_map()["S"]
-    base_url = ROUTE_URLS.get(tier.route)
-    if base_url is None:
-        raise RuntimeError("no route for tier S")
+    base_url = _route_base_url(tier.route)
     payload = {
         "model": context.model_id,
         "messages": [
@@ -110,7 +134,7 @@ async def _call_model(context: ExplainContext) -> list[str]:
 def _valid_tips(tips: list[str], context: ExplainContext) -> list[str] | None:
     case = {
         "dimension": context.dimension,
-        "rubric_description": "Coach readiness rubric evidence.",
+        "rubric_description": RUBRICS.get(context.dimension, ""),
         "excerpts": [
             {
                 "excerpt_id": item["excerpt_id"],
@@ -127,13 +151,17 @@ def _valid_tips(tips: list[str], context: ExplainContext) -> list[str] | None:
     return tips
 
 
-async def _run(operation_id: str, context: ExplainContext) -> None:
+async def _run(operation_id: str, context: ExplainContext, deadline_at: float) -> None:
     _OPERATIONS[operation_id]["status"] = "running"
     try:
         valid: list[str] | None = None
         for _attempt in range(2):
+            remaining = deadline_at - time.monotonic()
+            if remaining <= 0:
+                _OPERATIONS[operation_id]["status"] = "degraded"
+                return
             tips = await asyncio.wait_for(
-                _call_model(context), timeout=context.deadline_s
+                _call_model(context), timeout=remaining
             )
             valid = _valid_tips(tips, context)
             if valid is not None:
@@ -145,8 +173,9 @@ async def _run(operation_id: str, context: ExplainContext) -> None:
             task_id=TASK_ID,
             kind="explain",
             cache_key=context.cache_key,
-            input_fingerprint=input_fingerprint(TASK_ID, context.sources),
+            input_fingerprint=input_fingerprint(TASK_ID, context.sources, context.params),
             sources=context.sources,
+            params=context.params,
         )
         async with database.AsyncSessionLocal() as db:
             outcome = await finalise_generation(
@@ -165,7 +194,7 @@ async def _run(operation_id: str, context: ExplainContext) -> None:
     except Exception:
         _OPERATIONS[operation_id]["status"] = "degraded"
     finally:
-        _INFLIGHT.pop(input_fingerprint(TASK_ID, context.sources), None)
+        _INFLIGHT.pop(input_fingerprint(TASK_ID, context.sources, context.params), None)
 
 
 async def _context(db: AsyncSession, fingerprint: str) -> ExplainContext | None:
@@ -183,7 +212,7 @@ async def _context(db: AsyncSession, fingerprint: str) -> ExplainContext | None:
     if pattern is None:
         return None
     why = explain_pattern(pattern, snapshots)
-    if why is None or not why.excerpts:
+    if why is None:
         return None
     by_id = {item.session_id: item for item in snapshots}
     sources = tuple(
@@ -205,19 +234,22 @@ async def _context(db: AsyncSession, fingerprint: str) -> ExplainContext | None:
     )
     prompt = (
         f"Dimension: {pattern.dimension}\n"
-        f"Rubric: Coach readiness rubric for {pattern.dimension}.\n"
+        f"Rubric: {RUBRICS.get(pattern.dimension, '')}\n"
         "Excerpts:\n"
         + "\n".join(f"- {item['text']}" for item in excerpts)
     )
+    model_id = tier.model_id or "qwen3.5-4b-q4km-primary"
+    params = {"pattern": fingerprint, "prompt": PROMPT_VERSION, "model": model_id}
     return ExplainContext(
         fingerprint=fingerprint,
         dimension=pattern.dimension,
         excerpts=excerpts,
         sources=sources,
-        cache_key=f"explain:{fingerprint}:{PROMPT_VERSION}:{tier.model_id}",
-        model_id=tier.model_id or "qwen3.5-4b-q4km-primary",
+        cache_key=f"explain:{fingerprint}:{PROMPT_VERSION}:{model_id}",
+        model_id=model_id,
         prompt=prompt,
         deadline_s=tier.deadline_s,
+        params=params,
     )
 
 
@@ -242,7 +274,8 @@ async def request_tips(db: AsyncSession, fingerprint: str) -> tuple[int, dict[st
             "operation_id": None,
         }
 
-    key = input_fingerprint(TASK_ID, context.sources)
+    key = input_fingerprint(TASK_ID, context.sources, context.params)
+    deadline_at = time.monotonic() + context.deadline_s
     async with _OPERATION_LOCK:
         if (existing := _INFLIGHT.get(key)) is not None:
             return 202, {"operation_id": existing, "status": _OPERATIONS[existing]["status"]}
@@ -252,8 +285,12 @@ async def request_tips(db: AsyncSession, fingerprint: str) -> tuple[int, dict[st
             "status": "queued",
             "derived_text_id": None,
         }
+        if len(_OPERATIONS) > 200:
+            _OPERATIONS.pop(next(iter(_OPERATIONS)))
         _INFLIGHT[key] = operation_id
-    asyncio.create_task(_run(operation_id, context))
+    task = asyncio.create_task(_run(operation_id, context, deadline_at))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
     return 202, {"operation_id": operation_id, "status": "queued"}
 
 

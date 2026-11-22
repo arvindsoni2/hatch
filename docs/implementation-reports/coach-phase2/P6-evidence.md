@@ -34,7 +34,7 @@ Files changed (one line each: responsibility):
 - `backend/app/services/coach_readiness/grounding.py` — production grounding checks; `benchmarks/coach/phase2_checks.py` is now a re-export.
 - `backend/app/services/coach_readiness/explain.py` — Explain cache, dedupe, one-repair generation, absolute deadline, fencing, AI-off handling, reasoning stripping.
 - `backend/app/routers/coach_readiness.py` — tips and operations routes, including 202/200 cache/dedupe behaviour.
-- `backend/app/runtime_bindings/tasks/coach_readiness.py`, `.../context/coach_readiness.py`, `.../capabilities/registry.py`, `.../context/__init__.py`, `.../tasks/__init__.py` — five TaskSpecs, reference-only context provider and local-capable capability registration.
+- Runtime-binding files were added in the first pass and then **removed in repair cycle 1** per owner decision M5(b); the direct httpx path approved by P6-red remains.
 - `frontend/src/lib/coachReadinessApi.ts`, `frontend/src/components/coach/readiness/PatternTips.tsx`, `PatternCard.tsx` — tips request, instant skeleton, `aria-live="polite"` arriving text, retry/unavailable state.
 - Tests: `backend/tests/runtime/test_coach_readiness_bindings.py`, `backend/tests/test_services/test_coach_grounding.py`, `frontend/src/components/coach/readiness/__tests__/PatternTips.test.tsx`.
 - `docs/implementation-reports/coach-phase2/P6-evidence.md` — this report.
@@ -110,7 +110,66 @@ Privacy / deletion / fencing evidence: the cascade tests drive the real domain m
 Not run / known limits:
 
 - Live local-model generation is P3's bench/owner step; P6 tests use the HTTP fake.
-- The runtime TaskSpecs/context provider/capability registration are added for §10 wiring; the tips route's transport is the direct httpx path explicitly allowed by the approved P6 interfaces.
+- Runtime wiring moves to P7 or P8, whichever first needs it (owner decision M5(b)); the tips route uses the direct httpx path explicitly allowed by the approved P6 interfaces.
 - P3 bench/acceptance-smoke owner items remain open.
+
+Ready for review: yes.
+
+
+## Repair cycle 1 (22 Nov 2026)
+
+Owner decision M5(b): remove the unused runtime bindings. The TaskSpecs, context provider and capability registration were removed; their exports and registry changes were restored to `main`. Runtime wiring moves to P7 or P8, whichever first needs it. Explain keeps the direct httpx path approved in P6-red.
+
+Findings fixed:
+
+- **H1** — `finalise_generation` now begins with `DELETE FROM coach_derived_text WHERE cache_key = :cache_key` (the first write taking SQLite's write lock) before source checks and the insert. New test wraps `input_fingerprint` to open a second sqlite3 connection with `timeout=0.2` and proves the source update gets `database is locked`; after commit the session is still `not_requested` and exactly one row exists.
+- **H2** — Question Bank and interview round sources compare current `updated_at.isoformat()` with the request version and add that current value to the recomputed fingerprint. Tests edit an item and reschedule a round through their public services; both finalise as `fenced` with no row.
+- **H3** — `request_tips` computes `deadline_at = monotonic() + deadline_s` before queueing; each attempt gets `max(0, deadline_at - monotonic())`. A 1 s test with 0.6 s invalid answer and 0.6 s repair ends `degraded` under 1.3 s with no cache row.
+- **H4** — dedupe now uses `params={pattern, prompt, model}` in the key, `GenerationRequest.params`, the request fingerprint and the inflight pop. Two seeded patterns sharing sessions get different operation ids and two cache rows.
+- **M6** — added one-line rubrics for all seven dimensions from the bench fixtures and use them in the prompt/grounding case. Tips for a dimension with no stored excerpts succeed on rubric alone.
+- **M7** — `<think>…</think>` and `<thinking>…</thinking>` are stripped case-insensitively; `reasoning_content` is ignored. The test includes a `<think>` block containing braces.
+- **M8** — tips loading shows the three skeleton lines plus "Adding tips…"; AI off shows "Turn on local AI for tips"; degraded/fenced shows a ghost `sm` retry button "Tips unavailable — try again". Vitest covers all three.
+- Low: tracked `create_task` references with `add_done_callback(discard)`, capped `_OPERATIONS` at 200, stopped polling on unmount, merged duplicate API imports.
+
+Repair gates:
+
+```text
+$ python -m pytest -q --no-cov <the 14 protected + new finalise/bindings/grounding + bench suite>
+46 passed in 13.04s
+
+$ npx vitest run src/components/coach/readiness src/app/coach/readiness
+29 passed (9 files)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ ruff check app/ tests/
+All checks passed!
+
+$ alembic heads
+54f861f6f61d (head)
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+
+$ git diff --name-only 491a6df..HEAD -- <six protected paths>
+(no output)
+```
+
+Full backend suite:
+
+```text
+$ python -m pytest -q --no-cov tests
+4107 passed, 2 skipped, 8 failed in 719.90s
+# The 8 failures are the known CUDA/sm_61 environment failures in
+# tests/test_tools/test_embedder.py and tests/test_tools/test_semantic_scorer.py;
+# every P6 and protected test passed.
+```
 
 Ready for review: yes.

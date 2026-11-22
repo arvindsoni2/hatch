@@ -1,18 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
+  fetchGenerationOperation,
   fetchPatternWhy,
+  requestPatternTips,
   type Pattern,
   type PatternWhy,
 } from "@/lib/coachReadinessApi";
 import { PatternTips } from "@/components/coach/readiness/PatternTips";
 import { WhyPanel } from "@/components/coach/readiness/WhyPanel";
-import { fetchGenerationOperation, requestPatternTips } from "@/lib/coachReadinessApi";
 
 const KIND: Record<
   Pattern["kind"],
@@ -71,7 +72,11 @@ export function PatternCard({
   const [whyError, setWhyError] = useState(false);
   const [tips, setTips] = useState<string[] | null>(null);
   const [tipsLoading, setTipsLoading] = useState(false);
-  const [tipsError, setTipsError] = useState(false);
+  const [tipsAiOff, setTipsAiOff] = useState(false);
+  const [tipsUnavailable, setTipsUnavailable] = useState(false);
+  const mounted = useRef(true);
+
+  useEffect(() => () => { mounted.current = false; }, []);
   const kind = KIND[pattern.kind];
 
   const toggleWhy = async () => {
@@ -87,27 +92,30 @@ export function PatternCard({
 
   const loadTips = async () => {
     setTipsLoading(true);
-    setTipsError(false);
+    setTipsAiOff(false);
+    setTipsUnavailable(false);
     try {
       let result = await requestPatternTips(pattern.fingerprint);
+      if (result.status === "unavailable" || result.reason === "ai_off") {
+        if (mounted.current) setTipsAiOff(true);
+        return;
+      }
       const terminal = new Set(["succeeded", "degraded", "fenced"]);
-      while (
-        result.operation_id
-        && !terminal.has(result.status)
-      ) {
+      while (result.operation_id && !terminal.has(result.status)) {
         await new Promise((resolve) => setTimeout(resolve, 250));
+        if (!mounted.current) return;
         result = await fetchGenerationOperation(result.operation_id);
       }
       if (result.status === "succeeded") {
         const cached = await requestPatternTips(pattern.fingerprint);
-        setTips(cached.tips ?? []);
+        if (mounted.current) setTips(cached.tips ?? []);
       } else if (result.status === "degraded" || result.status === "fenced") {
-        setTipsError(true);
+        if (mounted.current) setTipsUnavailable(true);
       }
     } catch {
-      setTipsError(true);
+      if (mounted.current) setTipsUnavailable(true);
     } finally {
-      setTipsLoading(false);
+      if (mounted.current) setTipsLoading(false);
     }
   };
 
@@ -203,8 +211,14 @@ export function PatternCard({
         </div>
       ) : null}
 
-      {tipsLoading || tips || tipsError ? (
-        <PatternTips tips={tips} loading={tipsLoading} error={tipsError ? "unavailable" : null} />
+      {tipsLoading || tips || tipsAiOff || tipsUnavailable ? (
+        <PatternTips
+          tips={tips}
+          loading={tipsLoading}
+          aiOff={tipsAiOff}
+          unavailable={tipsUnavailable}
+          onRetry={() => void loadTips()}
+        />
       ) : null}
       {whyOpen ? (
         why ? (

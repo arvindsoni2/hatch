@@ -409,6 +409,7 @@ export interface PatternTipsResponse {
   tips?: string[];
   operation_id?: string | null;
   status: string;
+  reason?: string;
 }
 
 export function requestPatternTips(fingerprint: string): Promise<PatternTipsResponse> {

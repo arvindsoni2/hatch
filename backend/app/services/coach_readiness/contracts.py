@@ -304,11 +304,19 @@ def input_fingerprint(
 async def finalise_generation(
     session, request: GenerationRequest, output: ValidatedOutput, now
 ) -> GenerationOutcome:
+    from sqlalchemy import delete
+
     from app.models.application import InterviewRound
     from app.models.coach_readiness import CoachDerivedSource, CoachDerivedText
     from app.models.coach_session import InterviewSession
     from app.models.question_bank import QuestionBankItem
     from app.models.story import Story
+
+    # The first statement is a write so SQLite takes the write lock before any
+    # source is read. A concurrent source deletion cannot commit in between.
+    await session.execute(
+        delete(CoachDerivedText).where(CoachDerivedText.cache_key == request.cache_key)
+    )
 
     current: list[SourceRef] = []
     for ref in request.sources:
@@ -330,12 +338,18 @@ async def finalise_generation(
             row = await session.get(QuestionBankItem, ref.source_id)
             if row is None or row.archived_at is not None:
                 return GenerationOutcome("fenced")
-            current.append(SourceRef(ref.kind, ref.source_id, ref.version))
+            version = row.updated_at.isoformat() if row.updated_at else ""
+            if version != ref.version:
+                return GenerationOutcome("fenced")
+            current.append(SourceRef(ref.kind, ref.source_id, version))
         elif ref.kind == "interview_round":
             row = await session.get(InterviewRound, ref.source_id)
             if row is None or row.status == "cancelled":
                 return GenerationOutcome("fenced")
-            current.append(SourceRef(ref.kind, ref.source_id, ref.version))
+            version = row.updated_at.isoformat() if row.updated_at else ""
+            if version != ref.version:
+                return GenerationOutcome("fenced")
+            current.append(SourceRef(ref.kind, ref.source_id, version))
         else:
             return GenerationOutcome("fenced")
 
