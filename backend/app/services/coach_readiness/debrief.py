@@ -236,23 +236,33 @@ class DebriefService:
         self._validate(command)
 
         moment = _naive_utc(now)
-        values = {
-            "status": "draft" if command.overall is None else "saved",
-            "overall": command.overall,
-            "expectation": command.expectation,
-            "questions_json": [
-                _serialize_question(question) for question in command.questions
-            ],
-            "went_well": command.went_well,
-            "do_differently": command.do_differently,
-            "notes_text": command.notes_text,
-            "proposals_json": [
-                asdict(proposal) for proposal in await self._proposals(
-                    round_row.application_id, command.questions
-                )
-            ],
-            "updated_at": moment,
-        }
+        if command.overall is None and row is not None:
+            # A notes-only save touches the notes and nothing else: a saved
+            # debrief stays saved; a skipped one becomes a draft again.
+            values = {
+                "notes_text": command.notes_text,
+                "updated_at": moment,
+            }
+            if row.status == "skipped":
+                values["status"] = "draft"
+        else:
+            values = {
+                "status": "draft" if command.overall is None else "saved",
+                "overall": command.overall,
+                "expectation": command.expectation,
+                "questions_json": [
+                    _serialize_question(question) for question in command.questions
+                ],
+                "went_well": command.went_well,
+                "do_differently": command.do_differently,
+                "notes_text": command.notes_text,
+                "proposals_json": [
+                    asdict(proposal) for proposal in await self._proposals(
+                        round_row.application_id, command.questions
+                    )
+                ],
+                "updated_at": moment,
+            }
         if row is None:
             row = CoachInterviewDebrief(
                 interview_round_id=round_id,

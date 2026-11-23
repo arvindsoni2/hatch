@@ -449,3 +449,65 @@ async def test_concurrent_accepts_record_one_story_use(tmp_path) -> None:
             )
         ).scalars().all()
     assert len(usages) == 1
+
+
+@pytest.mark.asyncio
+async def test_notes_only_save_keeps_a_saved_debrief(db_session: AsyncSession) -> None:
+    await _seed(db_session)
+    service = DebriefService(db_session)
+    question = _question("How do you handle a stakeholder who disagrees?")
+    saved = await service.save(
+        "prop-round",
+        SaveDebriefCommand(
+            expected_version=0,
+            overall=4,
+            expectation="yes",
+            questions=(question,),
+            went_well="It went well.",
+            do_differently="Prepare budgets.",
+        ),
+        NOW,
+    )
+    assert saved.status == "saved"
+
+    with_notes = await service.save(
+        "prop-round",
+        SaveDebriefCommand(
+            expected_version=saved.version,
+            overall=None,
+            notes_text="Asked about budgets and sign-off.",
+        ),
+        NOW,
+    )
+
+    assert with_notes.status == "saved"
+    assert with_notes.version == saved.version + 1
+    assert with_notes.overall == 4
+    assert with_notes.expectation == "yes"
+    assert [item.text for item in with_notes.questions] == [question.text]
+    assert with_notes.went_well == "It went well."
+    assert with_notes.do_differently == "Prepare budgets."
+    assert with_notes.notes_text == "Asked about budgets and sign-off."
+
+
+@pytest.mark.asyncio
+async def test_notes_only_save_moves_a_skipped_debrief_back_to_draft(
+    db_session: AsyncSession,
+) -> None:
+    await _seed(db_session)
+    service = DebriefService(db_session)
+    skipped = await service.skip("prop-round", 0, NOW)
+    assert skipped.status == "skipped"
+
+    draft = await service.save(
+        "prop-round",
+        SaveDebriefCommand(
+            expected_version=skipped.version,
+            overall=None,
+            notes_text="Asked about budgets.",
+        ),
+        NOW,
+    )
+
+    assert draft.status == "draft"
+    assert draft.overall is None
