@@ -18,6 +18,8 @@ CoverageAction = Literal["use", "strengthen", "draft"]
 class Competency:
     text: str
     match_key: str
+    # Set for extracted items: "from the job description" (spec §7.4).
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class CompetencyCoverage:
     status: CoverageStatus
     action: CoverageAction
     stories: tuple[CoverageStory, ...] = field(default_factory=tuple)
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,19 @@ class CoverageGap:
 @dataclass(frozen=True)
 class CoverageOverview:
     gaps: tuple[CoverageGap, ...] = field(default_factory=tuple)
+    signals: tuple["RealInterviewSignal", ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class RealInterviewSignal:
+    """Derived on read from saved debriefs (spec §7.1.5); nothing is stored."""
+
+    key: str
+    display: str
+    fingerprint: str
+    asked_rounds: int
+    low_rating_debriefs: int
+    last_at: datetime | None = None
 
 
 DebriefStatus = Literal["due", "draft", "saved", "skipped"]
@@ -89,12 +105,25 @@ class DebriefQuestion:
 @dataclass(frozen=True)
 class SaveDebriefCommand:
     expected_version: int
-    overall: int
+    # None saves a notes-only draft (spec §7.6 "Paste rough notes").
+    overall: int | None
     expectation: str | None = None
     questions: Sequence[DebriefQuestion] = field(default_factory=tuple)
     went_well: str | None = None
     do_differently: str | None = None
     notes_text: str | None = None
+
+
+@dataclass(frozen=True)
+class DebriefProposal:
+    """One S2 batch proposal stored in the debrief row (spec §7.6)."""
+
+    id: str
+    kind: Literal["question_bank", "story_use"]
+    questions: tuple[str, ...] = field(default_factory=tuple)
+    story_id: str | None = None
+    story_title: str | None = None
+    accepted: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,6 +142,7 @@ class DebriefRead:
     scheduled_at: datetime | None = None
     duration_minutes: int | None = None
     questions_added: int = 0
+    proposals: Sequence[DebriefProposal] = field(default_factory=tuple)
 
 
 class ReadinessError(Exception):
@@ -309,6 +339,7 @@ async def finalise_generation(
     from app.models.application import InterviewRound
     from app.models.coach_readiness import CoachDerivedSource, CoachDerivedText
     from app.models.coach_session import InterviewSession
+    from app.models.job import JobPosting
     from app.models.question_bank import QuestionBankItem
     from app.models.story import Story
 
@@ -345,6 +376,14 @@ async def finalise_generation(
         elif ref.kind == "interview_round":
             row = await session.get(InterviewRound, ref.source_id)
             if row is None or row.status == "cancelled":
+                return GenerationOutcome("fenced")
+            version = row.updated_at.isoformat() if row.updated_at else ""
+            if version != ref.version:
+                return GenerationOutcome("fenced")
+            current.append(SourceRef(ref.kind, ref.source_id, version))
+        elif ref.kind == "job":
+            row = await session.get(JobPosting, ref.source_id)
+            if row is None:
                 return GenerationOutcome("fenced")
             version = row.updated_at.isoformat() if row.updated_at else ""
             if version != ref.version:

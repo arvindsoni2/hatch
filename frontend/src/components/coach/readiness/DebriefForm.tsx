@@ -5,9 +5,12 @@ import {
   fetchDebrief,
   saveDebrief,
   skipDebrief,
+  type DebriefProposal,
   type DebriefQuestion,
   type DebriefRead,
 } from "@/lib/coachReadinessApi";
+import { DebriefNotesExtract } from "@/components/coach/readiness/DebriefNotesExtract";
+import { DebriefProposals } from "@/components/coach/readiness/DebriefProposals";
 import { listStories, type StoryListItem } from "@/lib/api";
 import { formatInterviewTime } from "@/lib/formatInterviewTime";
 import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
@@ -59,6 +62,7 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
   const [conflict, setConflict] = useState(false);
   const [savedAck, setSavedAck] = useState("");
   const [saving, setSaving] = useState(false);
+  const [proposals, setProposals] = useState<DebriefProposal[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +76,7 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
         setExpectation(value.expectation);
         setWentWell(value.went_well ?? "");
         setDoDifferently(value.do_differently ?? "");
+        setProposals(value.proposals ?? []);
       })
       .catch(() => {
         if (active) setDebrief(null);
@@ -116,11 +121,12 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
         questions,
         went_well: wentWell || null,
         do_differently: doDifferently || null,
-        notes_text: null,
+        notes_text: debrief.notes_text,
       });
       setDebrief(saved);
       setVersion(saved.version);
       setQuestions(saved.questions);
+      setProposals(saved.proposals ?? []);
       setSavedAck(
         `Saved. ${saved.questions_added} questions added to this round.`,
       );
@@ -178,6 +184,28 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
       }
     >
       <div className="space-y-5">
+        <DebriefNotesExtract
+          roundId={roundId}
+          version={version}
+          savedNotes={debrief.notes_text}
+          onDraftSaved={(nextVersion, notes) => {
+            setVersion(nextVersion);
+            setDebrief((current) =>
+              current ? { ...current, version: nextVersion, notes_text: notes } : current,
+            );
+          }}
+          onQuestionsProposed={(texts) =>
+            setQuestions((current) => [...current, ...texts.map(newQuestion)])
+          }
+        />
+        <DebriefProposals
+          roundId={roundId}
+          proposals={proposals ?? []}
+          onAccepted={(nextVersion, nextProposals) => {
+            setVersion(nextVersion);
+            setProposals(nextProposals);
+          }}
+        />
         <div>
           <h4 className="mb-2 text-sm font-semibold text-[var(--text)]">
             Questions you were asked

@@ -124,3 +124,66 @@ async def test_display_timezone_route(
     assert configured.status_code == 200
     assert configured.json() == {"display_timezone": "Asia/Kolkata"}
     assert unset.json() == {"display_timezone": None}
+
+
+async def test_notes_only_draft_save_and_extract_routes(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.coach_readiness.debrief import DebriefService
+
+    await _seed_round(db_session, round_id="round-notes")
+
+    draft = await client.put(
+        "/api/coach/readiness/rounds/round-notes/debrief",
+        json={
+            "expected_version": 0,
+            "overall": None,
+            "notes_text": "Asked about budgets and sign-off.",
+        },
+    )
+    assert draft.status_code == 200
+    assert draft.json()["status"] == "draft"
+    assert draft.json()["proposals"] == []
+
+    async def fake_extract(self, round_id, now):
+        return ("How did you manage the budget?",)
+
+    monkeypatch.setattr(DebriefService, "extract_notes", fake_extract)
+    extracted = await client.post(
+        "/api/coach/readiness/rounds/round-notes/debrief/extract"
+    )
+    assert extracted.status_code == 200
+    assert extracted.json() == {"questions": ["How did you manage the budget?"]}
+
+    async def fake_accept(self, round_id, proposal_id, now):
+        return await DebriefService.get_or_due(self, round_id, now)
+
+    monkeypatch.setattr(DebriefService, "accept_proposal", fake_accept)
+    accepted = await client.post(
+        "/api/coach/readiness/rounds/round-notes/debrief/proposals/xyz/accept"
+    )
+    assert accepted.status_code == 200
+
+    monkeypatch.setattr(settings, "HATCH_COACH_DEBRIEF_ENABLED", False)
+    blocked_extract = await client.post(
+        "/api/coach/readiness/rounds/round-notes/debrief/extract"
+    )
+    blocked_accept = await client.post(
+        "/api/coach/readiness/rounds/round-notes/debrief/proposals/xyz/accept"
+    )
+    assert blocked_extract.status_code == 403
+    assert blocked_extract.json()["detail"] == "disabled"
+    assert blocked_accept.status_code == 403
+
+
+async def test_coverage_overview_includes_signals(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    await _seed_round(db_session, app_id="app-signal", round_id="round-signal")
+
+    response = await client.get("/api/coach/readiness/coverage/overview")
+
+    assert response.status_code == 200
+    assert response.json()["signals"] == []

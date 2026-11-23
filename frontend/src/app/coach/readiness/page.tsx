@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { FocusAreaEditor } from "@/components/coach/readiness/FocusAreaEditor";
+import { RealInterviewSignals } from "@/components/coach/readiness/RealInterviewSignals";
 import { FocusAreas } from "@/components/coach/readiness/FocusAreas";
 import { PatternGroup } from "@/components/coach/readiness/PatternGroup";
 import { PracticePlan } from "@/components/coach/readiness/PracticePlan";
@@ -16,11 +17,13 @@ import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
 import { SectionCard } from "@/components/ui/section-card";
 import {
   dismissPattern,
+  fetchCoverageOverview,
   fetchFocusAreas,
   fetchInterviewBrief,
   fetchPatterns,
   patchFocusArea,
   undoPatternDismissal,
+  type CoverageOverviewSignal,
   type FocusArea,
   type FocusGroup,
   type Pattern,
@@ -52,6 +55,7 @@ export default function ReadinessPage() {
   const [focusAreas, setFocusAreas] = useState<FocusArea[]>([]);
   const [nextRound, setNextRound] = useState<InterviewRound | null>(null);
   const [nextBriefState, setNextBriefState] = useState<string | null>(null);
+  const [signals, setSignals] = useState<CoverageOverviewSignal[]>([]);
   const [focusCount, setFocusCount] = useState(0);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorInitial, setEditorInitial] = useState<{
@@ -82,6 +86,9 @@ export default function ReadinessPage() {
   useEffect(() => {
     load();
     loadFocus();
+    fetchCoverageOverview()
+      .then((overview) => setSignals(overview.signals ?? []))
+      .catch(() => setSignals([]));
     getUpcomingInterviews(90)
       .then((items) => {
         // Only a round you can still take gets a brief.
@@ -261,6 +268,10 @@ export default function ReadinessPage() {
 
       <div className="mb-6">
         <PracticePlan />
+      </div>
+
+      <div className="mb-6">
+        <RealInterviewSignals signals={signals} />
       </div>
 
       <SectionCard
