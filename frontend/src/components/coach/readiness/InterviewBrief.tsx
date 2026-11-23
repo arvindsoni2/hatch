@@ -44,7 +44,7 @@ export function InterviewBrief({ roundId }: { roundId: string }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="brief-header flex flex-wrap items-start justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold text-[var(--text)]">
             {brief.header.round_type.replaceAll("_", " ")} interview with {brief.header.company || "the company"}
@@ -87,6 +87,7 @@ export function InterviewBrief({ roundId }: { roundId: string }) {
               <li key={item.story_id}>
                 <strong className="text-[var(--text)]">{item.title}</strong>
                 <p className="text-xs">{item.competencies.join(" · ")}</p>
+                {item.talking_point ? <p className="text-sm">{item.talking_point}</p> : null}
               </li>
             ))}
           </ul>
@@ -95,7 +96,12 @@ export function InterviewBrief({ roundId }: { roundId: string }) {
       <BriefSection title="Watch-outs">
         {brief.watch_outs.length === 0 ? <p>Practise for this role to get watch-outs</p> : (
           <ul className="list-disc pl-4">
-            {brief.watch_outs.map((item) => <li key={item.fingerprint}>{item.dimension.replaceAll("_", " ")}</li>)}
+            {brief.watch_outs.map((item) => (
+              <li key={item.fingerprint}>
+                {item.dimension.replaceAll("_", " ")}
+                {item.sentence ? ` — ${item.sentence}` : ""}
+              </li>
+            ))}
           </ul>
         )}
       </BriefSection>
@@ -120,8 +126,10 @@ export function InterviewBrief({ roundId }: { roundId: string }) {
       <style jsx global>{`
         @media print {
           body * { visibility: hidden; }
+          .brief-header, .brief-header *,
           .brief-section, .brief-section * { visibility: visible; }
-          .brief-section { break-inside: avoid; border: 0; padding: 0; }
+          .brief-header, .brief-section { break-inside: avoid; }
+          .brief-section { border: 0; padding: 0; }
           nav, button { display: none !important; }
         }
       `}</style>

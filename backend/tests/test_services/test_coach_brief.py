@@ -1,17 +1,24 @@
 """Brief skeleton, state and archive contracts (spec §7.5, §8.4)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
 from app.config import settings
 from app.models.application import Application, InterviewRound
 from app.models.coach_readiness import CoachDerivedText, CoachInterviewBrief
+from app.models.coach_session import InterviewSession
 from app.models.job import JobPosting
 from app.models.story import Story
 from app.services.coach_conversational_progress import ProgressSnapshot
+from app.services.coach_conversational_report import (
+    AcceptedAnswer,
+    ReportInputSnapshot,
+    build_conversational_report,
+)
 from app.services.coach_readiness import brief as brief_service
+from app.services.coach_readiness.next_actions import debrief_next_actions
 
 
 @pytest.fixture(autouse=True)
@@ -71,15 +78,95 @@ async def test_section_limits_and_source_order(db_session) -> None:
     assert len(data["ask_them"]) <= 3
 
 
+def _learning_session(
+    session_id: str, interview_type: str, dimension: str, completed_at: datetime
+) -> InterviewSession:
+    report = build_conversational_report(
+        ReportInputSnapshot(
+            session_id=session_id,
+            activity_version=1,
+            retention_version=0,
+            compatibility_key=f"key-{session_id}",
+            counts={
+                "planned_questions_total": 2,
+                "planned_questions_answered": 2,
+                "planned_questions_skipped": 0,
+                "follow_ups_asked": 0,
+                "follow_ups_answered": 0,
+                "accepted_attempts": 2,
+                "retry_attempts": 0,
+                "unavailable_attempts": 0,
+                "hints_used": 0,
+            },
+            accepted_root_bundles=tuple(
+                (
+                    AcceptedAnswer(f"answer-{session_id}-{root}", {dimension: "needs_work"}),
+                    (),
+                )
+                for root in (1, 2)
+            ),
+        )
+    )
+    return InterviewSession(
+        id=session_id,
+        application_id="brief-app",
+        company_name="Northwind",
+        role_title="Delivery Lead",
+        config={},
+        status="completed",
+        conversation_state="completed",
+        experience_version="conversational_v1",
+        completed_at=completed_at,
+        activity_version=1,
+        report_state="completed",
+        report_json=report.persisted_json(),
+        compatibility_key=f"key-{session_id}",
+        session_plan_json={
+            "role": {"role_family": "Delivery Lead", "role_level": "senior"},
+            "interview": {"type": interview_type, "difficulty": "realistic"},
+        },
+    )
+
+
 @pytest.mark.asyncio
-async def test_round_type_maps_to_practice_interview_types(db_session) -> None:
-    await _seed(db_session, round_type="technical")
+@pytest.mark.parametrize(
+    ("round_type", "expected", "excluded"),
+    [
+        ("technical", {"structure"}, {"specificity"}),
+        ("phone_screen", {"specificity", "structure"}, set()),
+    ],
+)
+async def test_round_type_maps_to_practice_interview_types(
+    db_session, round_type, expected, excluded
+) -> None:
+    await _seed(db_session, round_type=round_type)
+    db_session.add_all(
+        [
+            _learning_session(
+                f"behavioural-{index}", "behavioural", "specificity",
+                datetime(2026, 11, index),
+            )
+            for index in (10, 11)
+        ]
+        + [
+            _learning_session(
+                f"role-specific-{index}", "role_specific_verbal", "structure",
+                datetime(2026, 11, index),
+            )
+            for index in (12, 13)
+        ]
+    )
+    await db_session.commit()
 
     data = await brief_service.build_brief(
         db_session, "brief-round", datetime(2026, 12, 1, tzinfo=None)
     )
 
-    assert data["header"]["round_type"] == "technical"
+    assert data is not None
+    assert data["header"]["round_type"] == round_type
+    dimensions = {item["dimension"] for item in data["watch_outs"]}
+    assert expected <= dimensions
+    assert not (excluded & dimensions)
     assert brief_service.PRACTICE_TYPES == {
         "behavioural": ("behavioural", "mixed"),
         "culture_fit": ("behavioural", "mixed"),
@@ -163,6 +250,29 @@ async def test_purged_tips_read_as_none(db_session) -> None:
     )
 
     assert data["enhancement"]["state"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_brief_next_actions_for_upcoming_and_missing_round(db_session) -> None:
+    now = datetime.utcnow()
+    await _seed(db_session, scheduled_at=now + timedelta(days=3))
+    db_session.add_all([
+        Application(id="brief-app-no-round", status="interview", priority="normal"),
+        Application(id="brief-app-later", status="interview", priority="normal"),
+        InterviewRound(
+            id="brief-later-round", application_id="brief-app-later", round_number=1,
+            type="behavioural", scheduled_at=now + timedelta(days=20), status="scheduled",
+        ),
+    ])
+    await db_session.commit()
+
+    actions = [item for item in await debrief_next_actions(db_session, now) if item["kind"] == "brief"]
+
+    assert {item["application_id"] for item in actions} == {
+        "brief-app", "brief-app-no-round",
+    }
+    assert any(item["round_id"] == "brief-round" and "brief ready" in item["action"] for item in actions)
+    assert any(item["application_id"] == "brief-app-no-round" and item["round_id"] == "" for item in actions)
 
 
 @pytest.mark.asyncio

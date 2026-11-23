@@ -47,6 +47,33 @@ describe("InterviewBrief", () => {
     expect(screen.getAllByText(/2026/).length).toBeGreaterThan(0);
   });
 
+  it("renders current talking points and watch-out sentences", async () => {
+    vi.mocked(global.fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/brief")) {
+        return response({
+          ...brief,
+          stories: [{
+            story_id: "s1", title: "Rescued a delivery", competencies: ["delivery"],
+            score: 1, has_metric: true, talking_point: "Lead with the deadline.",
+          }],
+          watch_outs: [{
+            fingerprint: "f".repeat(64), dimension: "specificity",
+            source: "practice", sentence: "Name the decision you made.",
+          }],
+          enhancement: { ...brief.enhancement, state: "current" },
+        });
+      }
+      if (url.includes("/display-timezone")) return response({ display_timezone: "Europe/London" });
+      return response({});
+    });
+
+    render(<InterviewBrief roundId="round-1" />);
+
+    expect(await screen.findByText("Lead with the deadline.")).toBeVisible();
+    expect(screen.getByText(/Name the decision you made\./)).toBeVisible();
+  });
+
   it("test_brief_times_in_display_timezone", async () => {
     render(<InterviewBrief roundId="round-1" />);
     expect((await screen.findAllByText(/20 Dec 2026/)).length).toBeGreaterThan(0);

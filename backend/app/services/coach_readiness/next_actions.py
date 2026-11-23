@@ -24,8 +24,6 @@ async def debrief_next_actions(db: AsyncSession, now: datetime) -> list[dict]:
             .order_by(InterviewRound.scheduled_at.asc())
         )
     ).scalars().all()
-    if not rows:
-        rows = []
     saved = {
         item.interview_round_id: item.status
         for item in (
@@ -78,9 +76,6 @@ async def debrief_next_actions(db: AsyncSession, now: datetime) -> list[dict]:
                 "urgency": "high" if days <= 2 else "normal",
                 "kind": "brief",
             })
-    with_rounds = {
-        row.application_id for row in upcoming
-    }
     all_round_apps = select(InterviewRound.application_id)
     without_rounds = (
         await db.execute(

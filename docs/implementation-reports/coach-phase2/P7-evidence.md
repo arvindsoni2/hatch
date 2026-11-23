@@ -8,6 +8,8 @@ All three carry-over findings were fixed first in commit `b9a76a4` (`fix(coach):
 - **Local-only explain routing:** `_route_base_url` uses the profile's base URL only when `llm.provider == "llamacpp"`; otherwise it returns the local `ROUTE_URLS` default. Test: an `openrouter` profile with `base_url=https://openrouter.ai/api/v1` resolves to the local default.
 - **Operations cap:** eviction skips `queued`/`running` entries. Test fills 200 terminal entries plus one running entry and asserts the running operation survives.
 
+The carry-over regression suite is `backend/tests/runtime/test_coach_readiness_bindings.py`. It sits in the P7 diff because P6 was already merged when the review findings were fixed; it is P6 explain/tips carry-over scope, not new P7 behaviour. The six P6 protected files are unchanged (`git diff --name-only f58e14d..HEAD -- <protected paths>` prints nothing).
+
 Carry-over gates (real output):
 
 ```text
@@ -28,7 +30,7 @@ exit 0
 
 Task / spec sections / ACs: P7, Wave 1. Spec §7.5, §8.4, §10, §13.1–§13.4, §14; AC12–AC15, AC28, AC32, AC33.
 
-Baseline SHA → head SHA: `f58e14d` (P6 merge) → carry-over `b9a76a4` → head recorded in the P7 commit.
+Baseline SHA → head SHA: `f58e14d` (P6 merge) → carry-over `b9a76a4` → P7 commits `ed3d48b`, `883d98f`, `39a21ca`, `a29fd7b` → final P7 commit on `coach-p7/p7-brief`.
 
 Model: harness-reported `opencode/deepseek-v4.1-flash-free`; plan id `opencode-go/deepseek-v4.1-flash`, owner-confirmed 2026-11-05. No switch.
 
@@ -42,11 +44,12 @@ Files changed:
 - `backend/app/routers/coach_readiness.py` — GET brief and POST brief/tips.
 - `backend/app/config.py` — `HATCH_COACH_BRIEF_ENABLED=False`.
 - `backend/app/main.py` — scheduler job registration.
+- `backend/tests/test_services/test_coach_reconciliation.py` — the startup test's scheduler stub implements `add_job`, matching the real APScheduler instance now that lifespan registers the brief job.
 - `frontend/src/components/coach/readiness/InterviewBrief.tsx`, `BriefSection.tsx` — 7 sections, print action, no Refresh button, print stylesheet.
 - `frontend/src/components/InterviewTimeline.tsx` — Brief/Debrief tabs per round.
 - `frontend/src/lib/coachReadinessApi.ts` — typed brief client.
-- Tests: `backend/tests/test_services/test_coach_brief.py`, `backend/tests/integration/test_coach_brief_enhancement.py`, `backend/tests/test_services/test_coach_readiness_scheduler.py`, `backend/tests/integration/test_coach_brief_lifecycle.py`, `frontend/src/components/coach/readiness/__tests__/InterviewBrief.test.tsx`.
-- `frontend/src/app/coach/readiness/page.tsx` — "Next interview" card (no Refresh button).
+- Tests: `backend/tests/test_services/test_coach_brief.py`, `backend/tests/integration/test_coach_brief_enhancement.py`, `backend/tests/test_services/test_coach_readiness_scheduler.py`, `backend/tests/integration/test_coach_brief_lifecycle.py`, `backend/tests/runtime/test_coach_readiness_bindings.py` (P6 carry-over regression), `frontend/src/components/coach/readiness/__tests__/InterviewBrief.test.tsx`, `frontend/e2e/coach-readiness-brief.spec.ts`.
+- `frontend/src/app/coach/readiness/page.tsx`, `frontend/src/app/coach/readiness/__tests__/page.test.tsx` — "Next interview" card (no Refresh button).
 
 GREEN:
 
@@ -54,28 +57,21 @@ GREEN:
 $ python -m pytest -q --no-cov tests/test_services/test_coach_brief.py \
     tests/integration/test_coach_brief_enhancement.py \
     tests/test_services/test_coach_readiness_scheduler.py \
-    tests/test_services/test_coach_brief.py tests/runtime/test_coach_readiness_bindings.py
-24 passed in 6.64s
-
-$ python -m pytest -q --no-cov tests/runtime \
-    tests/integration/test_coach_report_privacy_flow.py \
-    tests/integration/test_coach_deletion_recovery.py \
-    tests/integration/test_coach_audio_restart_recovery.py \
-    tests/test_services/test_coach_privacy.py tests/test_routers/test_question_bank.py \
-    tests/test_services/test_coach_brief.py tests/integration/test_coach_brief_lifecycle.py
-554 passed, 1 skipped in 195.41s
+    tests/runtime/test_coach_readiness_bindings.py
+26 passed in 6.87s
 
 $ python -m pytest -q --no-cov tests \
     --ignore=tests/test_tools/test_embedder.py \
     --ignore=tests/test_tools/test_semantic_scorer.py
-4119 passed, 2 skipped in 690.71s
+4121 passed, 2 skipped in 642.76s
 
-$ npx playwright test --list e2e/coach-readiness-brief.spec.ts
-2 tests listed (chromium, readme-screenshots)
-# print test exists and compiles; not executed because no Playwright server was started
+$ PLAYWRIGHT_BASE_URL=http://localhost:3001 npx playwright test \
+    e2e/coach-readiness-brief.spec.ts --project=chromium
+1 passed (4.3s)
+# generates an A4 PDF and asserts exactly one page; header and all sections print
 
-$ npx vitest run src/components/coach/readiness/__tests__/InterviewBrief.test.tsx
-2 passed
+$ npx vitest run src/components/coach/readiness src/app/coach/readiness
+33 passed (33)
 
 $ npm run type-check
 exit 0
@@ -98,13 +94,28 @@ exit 0
 
 Migration round trip on a disposable DB: stamp `54f861f6f61d` → upgrade `6e209652647a` → downgrade `54f861f6f61d` → upgrade `6e209652647a`.
 
+Named P7 tests (all passing):
+
+| Test | Location |
+|---|---|
+| `test_brief_ready_with_ai_off_all_sections` | `tests/test_services/test_coach_brief.py` |
+| `test_section_limits_and_source_order` | `tests/test_services/test_coach_brief.py` |
+| `test_round_type_maps_to_practice_interview_types` (technical and phone-screen, seeded practice patterns) | `tests/test_services/test_coach_brief.py` |
+| `test_brief_next_actions_for_upcoming_and_missing_round` | `tests/test_services/test_coach_brief.py` |
+| `test_brief_archives_after_round_time_or_completed`, `test_cancelled_round_archives_brief`, `test_brief_without_round_date` | `tests/test_services/test_coach_brief.py` |
+| `test_bad_enhancement_discarded_skeleton_kept` | `tests/integration/test_coach_brief_enhancement.py` |
+| `test_successful_enhancement_sources_and_refresh` (story, round and Question Bank source refs; fingerprint change; purged text requeue) | `tests/integration/test_coach_brief_enhancement.py` |
+| `test_scheduler_enhances_rounds_in_next_seven_days_only`, `test_scheduler_skips_when_flag_or_ai_is_off` | `tests/test_services/test_coach_readiness_scheduler.py` |
+| `test_brief_times_in_display_timezone` | `frontend/src/components/coach/readiness/__tests__/InterviewBrief.test.tsx` |
+| `test_print_layout_one_page` | `frontend/e2e/coach-readiness-brief.spec.ts` |
+
 Sections/limits: likely questions ≤ 5, stories ≤ 3, watch-outs ≤ 2, gaps ≤ 2, ask-them ≤ 3; the skeleton is rebuilt on every read and archive follows `scheduled_at + duration`, `completed` and `cancelled`.
 
-Model calls in tests: none live. Brief enhancement uses the same local-only route resolution as Explain and `finalise_generation`; no DB transaction is held during the HTTP call.
+Model calls in tests: none live. Brief enhancement uses the same local-only route resolution as Explain and `finalise_generation`; no DB transaction is held during the HTTP call. When the stored fingerprint matches, validated talking points and watch-out sentences are merged into the skeleton; stale or unavailable tips are not shown.
 
 Not run / known limits:
 
-- The Playwright A4 print spec is `frontend/e2e/coach-readiness-brief.spec.ts`; it was not run in this environment (no Playwright server/browser session).
+- The Playwright A4 print spec was run against the local dev server on port 3001; CI must provide its own server.
 - The P3 bench/acceptance-smoke owner items remain open.
 
 Ready for review: yes.

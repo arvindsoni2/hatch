@@ -51,6 +51,16 @@ PRACTICE_TYPES = {
     "panel": ("behavioural", "role_specific_verbal", "mixed"),
     "final": ("behavioural", "role_specific_verbal", "mixed"),
 }
+BRIEF_ROUND_TYPE = {
+    "behavioural": "behavioural",
+    "culture_fit": "behavioural",
+    "technical": "role_specific_verbal",
+    "assessment": "role_specific_verbal",
+    "presentation": "role_specific_verbal",
+    "phone_screen": "mixed",
+    "panel": "mixed",
+    "final": "mixed",
+}
 ASK_TEMPLATES = {
     "behavioural": ["What does success look like in the first 90 days?", "How does the team handle competing priorities?"],
     "technical": ["How does the team review technical decisions?", "What does the on-call and support model look like?"],
@@ -204,6 +214,17 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
         state = "unavailable"
     else:
         state = "none"
+    tips = enhanced.text_json if state == "current" and isinstance(enhanced.text_json, dict) else {}
+    talking_points = {
+        item.get("story_id"): item.get("text")
+        for item in tips.get("talking_points", ())
+        if isinstance(item, dict)
+    }
+    watch_out_tips = {
+        item.get("fingerprint"): item.get("text")
+        for item in tips.get("watch_outs", ())
+        if isinstance(item, dict)
+    }
     archived = _round_archived(round_row, now)
     return {
         "round_id": round_row.id,
@@ -226,14 +247,15 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
             {
                 "story_id": item["story_id"], "title": item["title"],
                 "competencies": item["competencies"], "score": item["score"],
-                "has_metric": item["has_metric"], "talking_point": None,
+                "has_metric": item["has_metric"],
+                "talking_point": talking_points.get(item["story_id"]),
             }
             for item in stories
         ],
         "watch_outs": [
             {
                 "fingerprint": item.fingerprint, "dimension": item.dimension,
-                "source": "practice", "sentence": None,
+                "source": "practice", "sentence": watch_out_tips.get(item.fingerprint),
             }
             for item in watch_outs
         ],
@@ -315,8 +337,13 @@ async def _run_enhancement(round_id: str, data: dict) -> None:
         case = {
             "brief_id": round_id,
             "input_fingerprint": "sha256:" + context["fingerprint"],
-            "header": {"company": data["header"]["company"], "role": data["header"]["role"],
-                       "round_type": data["header"]["round_type"]},
+            "header": {
+                "company": data["header"]["company"],
+                "role": data["header"]["role"],
+                "round_type": BRIEF_ROUND_TYPE.get(
+                    data["header"]["round_type"], "behavioural"
+                ),
+            },
             "stories": [
                 {"story_id": item["story_id"], "title": item["title"],
                  "text": item["text"], "competencies": item["competencies"], "score": item["score"]}

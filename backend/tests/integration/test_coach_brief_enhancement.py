@@ -47,7 +47,7 @@ async def _seed(factory):
         ))
         db.add(InterviewRound(
             id="enh-round", application_id="enh-app", round_number=1,
-            type="behavioural", scheduled_at=NOW + timedelta(days=3),
+            type="technical", scheduled_at=NOW + timedelta(days=3),
             duration_minutes=60, status="scheduled",
         ))
         db.add(Story(
@@ -141,12 +141,18 @@ async def test_successful_enhancement_sources_and_refresh(
     async with coach_database() as db:
         data = await brief_service.build_brief(db, "enh-round", NOW)
         assert data["enhancement"]["state"] == "current"
+        assert data["stories"][0]["talking_point"] == "Delivered on time."
         await StoryRepository(db).update("enh-story", StoryUpdate(title="Edited story"))
         await db.commit()
         data = await brief_service.build_brief(db, "enh-round", NOW)
         assert data["enhancement"]["state"] == "outdated"
         await brief_service.request_enhancement(db, "enh-round", NOW)
     await _wait_state(coach_database, "current")
+    assert len(model_dispatches(httpx_mock)) == 2
+
+    async with coach_database() as db:
+        await brief_service.request_enhancement(db, "enh-round", NOW)
+    assert len(model_dispatches(httpx_mock)) == 2
 
     async with coach_database() as db:
         rows = (await db.execute(select(CoachInterviewBrief))).scalars().all()

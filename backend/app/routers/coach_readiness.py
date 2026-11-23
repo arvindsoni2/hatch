@@ -1051,7 +1051,6 @@ async def get_generation_operation(
     return payload
 
 
-
 @router.get("/rounds/{round_id}/brief")
 async def get_interview_brief(
     round_id: str,

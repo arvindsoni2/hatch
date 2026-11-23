@@ -9,6 +9,8 @@ import { PatternGroup } from "@/components/coach/readiness/PatternGroup";
 import { PracticePlan } from "@/components/coach/readiness/PracticePlan";
 import { PageContainer, PageHeader } from "@/components/ui/page-layout";
 import { getUpcomingInterviews, type InterviewRound } from "@/lib/api";
+import { formatInterviewTime } from "@/lib/formatInterviewTime";
+import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
 import { SectionCard } from "@/components/ui/section-card";
 import {
   dismissPattern,
@@ -30,6 +32,7 @@ const TABS = [
 ];
 
 export default function ReadinessPage() {
+  const timeZone = useDisplayTimeZone();
   const [groups, setGroups] = useState<PatternGroupSection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -67,7 +70,7 @@ export default function ReadinessPage() {
   useEffect(() => {
     load();
     loadFocus();
-    getUpcomingInterviews(7)
+    getUpcomingInterviews(90)
       .then((items) => setNextRound(items[0] ?? null))
       .catch(() => setNextRound(null));
   }, []);
@@ -198,7 +201,7 @@ export default function ReadinessPage() {
                 </p>
                 <p className="text-xs text-[var(--text-dim)]">
                   {nextRound.scheduled_at
-                    ? new Date(nextRound.scheduled_at).toLocaleString()
+                    ? formatInterviewTime(nextRound.scheduled_at, timeZone)
                     : "No date yet"}
                 </p>
               </div>
