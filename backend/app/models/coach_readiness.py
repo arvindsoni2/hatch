@@ -203,3 +203,35 @@ class CoachDerivedSource(Base):
     source_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
     source_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     source_version: Mapped[str] = mapped_column(String(80), nullable=False)
+
+
+class CoachInterviewBrief(Base):
+    """Stored enhancement state for one interview round; skeleton is derived."""
+
+    __tablename__ = "coach_interview_briefs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    interview_round_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("interview_rounds.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    enhancement_state: Mapped[str] = mapped_column(
+        String(16), default="none", nullable=False
+    )
+    enhancement_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    enhanced_text_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("coach_derived_text.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
+    )

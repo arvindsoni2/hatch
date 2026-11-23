@@ -7,6 +7,7 @@ import { downloadInterviewIcs } from "@/lib/api";
 import { formatInterviewTime } from "@/lib/formatInterviewTime";
 import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
 import { DebriefForm } from "@/components/coach/readiness/DebriefForm";
+import { InterviewBrief } from "@/components/coach/readiness/InterviewBrief";
 import type { InterviewRound } from "@/lib/api";
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -61,6 +62,31 @@ function IcsButton({ interviewId }: { interviewId: string }) {
       )}
       {state === "error" ? "Failed" : "Add to calendar"}
     </button>
+  );
+}
+
+function RoundReadiness({ roundId }: { roundId: string }) {
+  const [tab, setTab] = useState<"brief" | "debrief">("brief");
+  return (
+    <div className="mt-3">
+      <div className="mb-2 flex gap-1 border-b border-slate-200">
+        <button
+          type="button"
+          className={`px-3 py-1.5 text-sm font-medium ${tab === "brief" ? "border-b-2 border-indigo-600 text-slate-900" : "text-slate-500"}`}
+          onClick={() => setTab("brief")}
+        >
+          Brief
+        </button>
+        <button
+          type="button"
+          className={`px-3 py-1.5 text-sm font-medium ${tab === "debrief" ? "border-b-2 border-indigo-600 text-slate-900" : "text-slate-500"}`}
+          onClick={() => setTab("debrief")}
+        >
+          Debrief
+        </button>
+      </div>
+      {tab === "brief" ? <InterviewBrief roundId={roundId} /> : <DebriefForm roundId={roundId} />}
+    </div>
   );
 }
 
@@ -138,9 +164,7 @@ export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
                 </div>
               )}
 
-              <div className="mt-3">
-                <DebriefForm roundId={round.id} />
-              </div>
+              <RoundReadiness roundId={round.id} />
             </div>
           </div>
         ))}

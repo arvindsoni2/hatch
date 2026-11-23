@@ -32,6 +32,7 @@ from .coach_readiness import (  # noqa: F401
     CoachDerivedSource,
     CoachDerivedText,
     CoachFocusArea,
+    CoachInterviewBrief,
     CoachInterviewDebrief,
     CoachPatternDismissal,
     CoachPracticePlan,
