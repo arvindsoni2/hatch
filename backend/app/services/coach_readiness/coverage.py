@@ -4,8 +4,10 @@ The match key is internal. Responses always keep the first-seen original text.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +16,7 @@ import httpx
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import database
 from app.config import settings
 from app.models.application import Application
 from app.models.coach_readiness import CoachCompetencyOverride, CoachDerivedText
@@ -233,6 +236,11 @@ _COMPETENCY_PROMPT = "competency-extract-v1"
 _EXTRACTED_LABEL = "from the job description"
 _MAX_EXTRACTED = 4
 _MAX_INPUT_CHARS = 4_500  # ≤ 1,200 tokens at 4 characters per token (AC34).
+# A failed extraction is not retried on every read (P8 repair cycle 1).
+_EXTRACT_FAILURE_TTL_SECONDS = 600
+_EXTRACT_INFLIGHT: set[str] = set()
+_EXTRACT_TASKS: set[asyncio.Task] = set()
+_EXTRACT_FAILED: dict[str, float] = {}
 _SKILL_WORDS = (
     "experience", "proficiency", "knowledge", "familiarity", "expertise",
     "skilled", "responsible for", "must have", "required", "ownership of",
@@ -301,10 +309,19 @@ async def _competency_call(text: str) -> dict:
     return json.loads(content[start : end + 1])
 
 
+def _extract_key(job_id: str, cache_key: str) -> str:
+    return f"{job_id}:{cache_key}"
+
+
 async def _extracted_competencies(
     db: AsyncSession, application: Application
 ) -> tuple[Competency, ...]:
-    """Optional Tier T extraction when fewer than 5 deterministic (spec §7.4)."""
+    """Cached Tier T extraction only; reads never call the model (spec §7.4).
+
+    A cache miss starts one background generation per job and description
+    hash, deduped in process; a failure marks the key so it is not retried
+    on every read.
+    """
     if not settings.HATCH_COACH_STORY_COVERAGE_ENABLED:
         return ()
     if load_runtime().get("ai_mode") not in {"local", "custom"}:
@@ -330,37 +347,59 @@ async def _extracted_competencies(
     if cached is not None and isinstance(cached.text_json, Mapping):
         return _competencies_from(cached.text_json)
 
-    try:
-        output = await _competency_call(text)
-    except Exception:
+    key = _extract_key(job.id, cache_key)
+    if key in _EXTRACT_INFLIGHT:
         return ()
-    case = {"job_id": job.id, "job_description": text}
-    if grounding_violations("competency_extract", output, case):
+    if _EXTRACT_FAILED.get(key, 0.0) > time.monotonic():
         return ()
+    _EXTRACT_INFLIGHT.add(key)
     sources = (
         SourceRef("job", job.id, job.updated_at.isoformat() if job.updated_at else ""),
     )
-    request = GenerationRequest(
-        task_id=_COMPETENCY_TASK,
-        kind="competency",
-        cache_key=cache_key,
-        input_fingerprint=input_fingerprint(_COMPETENCY_TASK, sources, {"job": job.id}),
-        sources=sources,
-        params={"job": job.id},
+    task = asyncio.create_task(
+        _extract_and_cache(job.id, sources, cache_key, text, key)
     )
-    outcome = await finalise_generation(
-        db,
-        request,
-        ValidatedOutput(
-            text_json=output,
-            model_identity=load_tier_map()["T"].model_id or "",
-            prompt_version=_COMPETENCY_PROMPT,
-        ),
-        datetime.now(UTC),
-    )
-    if outcome.status == "fenced":
-        return ()
-    return _competencies_from(output)
+    _EXTRACT_TASKS.add(task)
+    task.add_done_callback(_EXTRACT_TASKS.discard)
+    return ()
+
+
+async def _extract_and_cache(
+    job_id: str, sources: tuple[SourceRef, ...], cache_key: str, text: str, key: str
+) -> None:
+    try:
+        output = await _competency_call(text)
+        case = {"job_id": job_id, "job_description": text}
+        if grounding_violations("competency_extract", output, case):
+            _EXTRACT_FAILED[key] = time.monotonic() + _EXTRACT_FAILURE_TTL_SECONDS
+            return
+        request = GenerationRequest(
+            task_id=_COMPETENCY_TASK,
+            kind="competency",
+            cache_key=cache_key,
+            input_fingerprint=input_fingerprint(
+                _COMPETENCY_TASK, sources, {"job": job_id}
+            ),
+            sources=sources,
+            params={"job": job_id},
+        )
+        async with database.AsyncSessionLocal() as db:
+            outcome = await finalise_generation(
+                db,
+                request,
+                ValidatedOutput(
+                    text_json=output,
+                    model_identity=load_tier_map()["T"].model_id or "",
+                    prompt_version=_COMPETENCY_PROMPT,
+                ),
+                datetime.now(UTC),
+            )
+        if outcome.status == "fenced":
+            _EXTRACT_FAILED[key] = time.monotonic() + _EXTRACT_FAILURE_TTL_SECONDS
+    except Exception:
+        _EXTRACT_FAILED[key] = time.monotonic() + _EXTRACT_FAILURE_TTL_SECONDS
+    finally:
+        _EXTRACT_INFLIGHT.discard(key)
 
 
 async def coverage_overview(

@@ -5,6 +5,7 @@ proposal writes through the Question Bank and Story public services only.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from app.config import settings
 from app.models.application import Application, InterviewRound
 from app.models.coach_readiness import CoachDerivedText, CoachInterviewDebrief
 from app.models.job import JobPosting
+from app.models.job_score import JobScore
 from app.models.question_bank import QuestionBankItem
 from app.models.story import Story, StoryUsage
 from app.services.coach_readiness import coverage as coverage_module
@@ -44,6 +46,10 @@ def _enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(coverage_module, "load_runtime", lambda: {"ai_mode": "local"})
     monkeypatch.setattr(debrief_module, "load_tier_map", lambda: {"T": _TIER})
     monkeypatch.setattr(coverage_module, "load_tier_map", lambda: {"T": _TIER})
+    # Fresh extraction state per test: no cross-test inflight or failure marks.
+    monkeypatch.setattr(coverage_module, "_EXTRACT_INFLIGHT", set())
+    monkeypatch.setattr(coverage_module, "_EXTRACT_TASKS", set())
+    monkeypatch.setattr(coverage_module, "_EXTRACT_FAILED", {})
 
 
 def _chat(content: str) -> dict:
@@ -303,51 +309,95 @@ async def test_competency_extract_input_is_requirement_lines_within_budget(
     await _seed(db_session, description=description)
     requests: list[httpx.Request] = []
 
-    async def completion(request: httpx.Request) -> httpx.Response:
+    async def failing(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json=_chat(
-            json.dumps({"competencies": ["quarterly planning", "dependency management"]})
-        ))
+        return httpx.Response(500, json={"error": "unavailable"})
 
     httpx_mock.add_callback(
-        completion, method="POST", url=CHAT_COMPLETIONS, is_reusable=True
+        failing, method="POST", url=CHAT_COMPLETIONS, is_reusable=True
     )
 
     result = await coverage_module.coverage_for_application(db_session, "prop-app")
+
+    # The read returns the deterministic list straight away (no label yet).
+    assert all(item.label is None for item in result.competencies)
+    while coverage_module._EXTRACT_TASKS:
+        await asyncio.sleep(0)
 
     assert len(requests) == 1
     sent = json.loads(requests[0].read())["messages"][1]["content"]
     assert "friendly company" not in sent
     assert sent.startswith("- Own quarterly planning")
     assert len(sent) <= 4_500  # ≤ 1,200 tokens at 4 characters per token (AC34).
-    assert any(
-        item.label == "from the job description" for item in result.competencies
-    )
 
 
 @pytest.mark.asyncio
-async def test_extracted_competencies_labelled_and_capped(
+async def test_coverage_reads_with_a_failing_model_make_at_most_one_call(
     db_session: AsyncSession, httpx_mock
 ) -> None:
     await _seed(db_session)
+    db_session.add(JobScore(
+        id="prop-score", job_id="prop-job", overall_score=0.9,
+        keyword_matches=["budgeting"], keyword_misses=[], scoring_method="local",
+    ))
+    await db_session.commit()
+    calls: list[httpx.Request] = []
+
+    async def failing(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(500, json={"error": "unavailable"})
+
     httpx_mock.add_callback(
-        lambda request: httpx.Response(200, json=_chat(json.dumps({
-            # The output contract caps at four; duplicates are dropped here too.
-            "competencies": [
-                "quarterly planning", "quarterly  planning", "risk management",
-                "stakeholder reporting",
-            ]
-        }))),
-        method="POST", url=CHAT_COMPLETIONS, is_reusable=True,
+        failing, method="POST", url=CHAT_COMPLETIONS, is_reusable=True
     )
+
+    reads = await asyncio.gather(*(
+        coverage_module.coverage_for_application(db_session, "prop-app")
+        for _ in range(3)
+    ))
+    for result in reads:
+        # A cache miss returns the deterministic list straight away.
+        assert [item.competency for item in result.competencies] == ["budgeting"]
+        assert all(item.label is None for item in result.competencies)
+    while coverage_module._EXTRACT_TASKS:
+        await asyncio.sleep(0)
+
+    # One background attempt; the failure mark stops retries on later reads.
+    assert len(calls) == 1
+    again = await coverage_module.coverage_for_application(db_session, "prop-app")
+    assert [item.competency for item in again.competencies] == ["budgeting"]
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_extracted_competencies_labelled_and_capped_from_the_cache(
+    db_session: AsyncSession, httpx_mock
+) -> None:
+    import hashlib as _hashlib
+
+    from app.services.coach_readiness.coverage import requirement_lines
+
+    await _seed(db_session)
+    text = requirement_lines(
+        "We are hiring a delivery lead.\n- Own quarterly planning across four teams."
+    )
+    cache_key = f"competency:prop-job:{_hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+    db_session.add(CoachDerivedText(
+        id="prop-cache", kind="competency", cache_key=cache_key,
+        text_json={"competencies": ["quarterly planning", "risk management"]},
+        model_identity="synthetic-t", prompt_version="competency-extract-v1",
+    ))
+    await db_session.commit()
 
     result = await coverage_module.coverage_for_application(db_session, "prop-app")
 
     extracted = [item for item in result.competencies if item.label]
     assert [item.competency for item in extracted] == [
-        "quarterly planning", "risk management", "stakeholder reporting",
+        "quarterly planning", "risk management",
     ]
     assert all(item.label == "from the job description" for item in extracted)
+    # A cached read never touches the model.
+    assert httpx_mock.get_requests() == []
 
 
 def _committing_app(factory):
