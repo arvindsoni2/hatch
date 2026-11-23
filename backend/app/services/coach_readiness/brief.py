@@ -163,8 +163,9 @@ async def _build_brief(
         and pattern.group.role_family == (role_family or "unspecified")
         and pattern.group.interview_type in practice_types
     ][:2]
-    # Real-interview signals fill the remaining watch-out slots (spec §7.5 §4).
-    for signal in await load_signals(db, round_row.application_id):
+    # Real-interview signals fill the remaining watch-out slots (spec §7.5 §4,
+    # §7.1.5: signals aggregate across all saved debriefs, not one application).
+    for signal in await load_signals(db):
         if len(watch_outs) == 2:
             break
         if signal.fingerprint not in {item.fingerprint for item in watch_outs}:
