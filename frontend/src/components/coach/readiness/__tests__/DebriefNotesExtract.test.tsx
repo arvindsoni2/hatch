@@ -66,6 +66,36 @@ describe("DebriefNotesExtract", () => {
     });
   });
 
+  it("saves changed notes before extracting them", async () => {
+    const user = userEvent.setup();
+    const onDraftSaved = vi.fn();
+    render(
+      <DebriefNotesExtract
+        roundId="round-1"
+        version={0}
+        savedNotes={null}
+        onDraftSaved={onDraftSaved}
+        onQuestionsProposed={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Paste rough notes"), "Asked about budgets.");
+    await user.click(screen.getByRole("button", { name: "Extract questions" }));
+
+    expect(await screen.findByText("Proposed from your notes")).toBeVisible();
+    expect(vi.mocked(saveDebrief)).toHaveBeenCalledWith("round-1", {
+      expected_version: 0,
+      overall: null,
+      notes_text: "Asked about budgets.",
+    });
+    expect(vi.mocked(extractDebriefNotes)).toHaveBeenCalledWith("round-1");
+    expect(onDraftSaved).toHaveBeenCalledWith(1, "Asked about budgets.");
+    // The draft save runs before the extraction reads the notes.
+    const saveOrder = vi.mocked(saveDebrief).mock.invocationCallOrder[0];
+    const extractOrder = vi.mocked(extractDebriefNotes).mock.invocationCallOrder[0];
+    expect(saveOrder).toBeLessThan(extractOrder);
+  });
+
   it("extracts a proposal the candidate confirms into the checklist", async () => {
     const user = userEvent.setup();
     const onQuestionsProposed = vi.fn();

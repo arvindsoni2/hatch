@@ -23,6 +23,7 @@ export function DebriefNotesExtract({
   onQuestionsProposed,
 }: DebriefNotesExtractProps) {
   const [notes, setNotes] = useState(savedNotes ?? "");
+  const [storedNotes, setStoredNotes] = useState(savedNotes ?? "");
   const [message, setMessage] = useState("");
   const [proposed, setProposed] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
@@ -39,6 +40,7 @@ export function DebriefNotesExtract({
         overall: null,
         notes_text: notes.slice(0, MAX_NOTES),
       });
+      setStoredNotes(notes.slice(0, MAX_NOTES));
       onDraftSaved(draft.version, notes);
       setMessage("Notes saved.");
     } catch {
@@ -54,6 +56,17 @@ export function DebriefNotesExtract({
     setError("");
     setMessage("");
     try {
+      // Changed notes are saved as a draft before anything reads them.
+      const trimmed = notes.slice(0, MAX_NOTES);
+      if (trimmed !== storedNotes) {
+        const draft = await saveDebrief(roundId, {
+          expected_version: version,
+          overall: null,
+          notes_text: trimmed,
+        });
+        setStoredNotes(trimmed);
+        onDraftSaved(draft.version, trimmed);
+      }
       const result = await extractDebriefNotes(roundId);
       setProposed(result.questions);
       setPicked(result.questions);
