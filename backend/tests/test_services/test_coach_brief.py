@@ -80,6 +80,16 @@ async def test_round_type_maps_to_practice_interview_types(db_session) -> None:
     )
 
     assert data["header"]["round_type"] == "technical"
+    assert brief_service.PRACTICE_TYPES == {
+        "behavioural": ("behavioural", "mixed"),
+        "culture_fit": ("behavioural", "mixed"),
+        "technical": ("role_specific_verbal", "mixed"),
+        "assessment": ("role_specific_verbal", "mixed"),
+        "presentation": ("role_specific_verbal", "mixed"),
+        "phone_screen": ("behavioural", "role_specific_verbal", "mixed"),
+        "panel": ("behavioural", "role_specific_verbal", "mixed"),
+        "final": ("behavioural", "role_specific_verbal", "mixed"),
+    }
 
 
 def test_role_family_from_latest_linked_session() -> None:

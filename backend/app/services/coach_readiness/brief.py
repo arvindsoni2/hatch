@@ -21,6 +21,7 @@ from app.models.coach_readiness import (
 )
 from app.models.coach_session import CompanyResearch
 from app.models.job import JobPosting
+from app.models.question_bank import QuestionBankItem
 from app.models.story import Story
 from app.repositories.conversational_session_repository import (
     ConversationalSessionRepository,
@@ -169,6 +170,16 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
     ask_them = ask_them[:3] or ASK_TEMPLATES.get(
         round_row.type, ["What does success look like in this role?"]
     )[:3]
+    question_refs: list[SourceRef] = []
+    for question in questions:
+        reference = question.source_ref or {}
+        if reference.get("kind") != "question_bank_item":
+            continue
+        item = await db.get(QuestionBankItem, reference["id"])
+        if item is not None:
+            question_refs.append(
+                SourceRef("question_bank_item", item.id, item.updated_at.isoformat())
+            )
     brief_row = (await db.execute(
         select(CoachInterviewBrief).where(
             CoachInterviewBrief.interview_round_id == round_row.id
@@ -237,6 +248,7 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
         "_context": {
             "stories": stories, "watch_outs": watch_outs,
             "job_description": job_description, "fingerprint": fingerprint,
+            "question_refs": question_refs,
             "round_id": round_row.id,
             "round_version": round_row.updated_at.isoformat() if round_row.updated_at else "",
         },
@@ -251,6 +263,7 @@ def _sources(context: dict) -> tuple[SourceRef, ...]:
     refs.append(
         SourceRef("interview_round", context["round_id"], context["round_version"])
     )
+    refs.extend(context.get("question_refs", ()))
     return tuple(refs)
 
 

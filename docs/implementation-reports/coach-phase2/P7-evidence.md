@@ -45,15 +45,17 @@ Files changed:
 - `frontend/src/components/coach/readiness/InterviewBrief.tsx`, `BriefSection.tsx` — 7 sections, print action, no Refresh button, print stylesheet.
 - `frontend/src/components/InterviewTimeline.tsx` — Brief/Debrief tabs per round.
 - `frontend/src/lib/coachReadinessApi.ts` — typed brief client.
-- Tests: `backend/tests/test_services/test_coach_brief.py`, `backend/tests/integration/test_coach_brief_lifecycle.py`, `frontend/src/components/coach/readiness/__tests__/InterviewBrief.test.tsx`.
+- Tests: `backend/tests/test_services/test_coach_brief.py`, `backend/tests/integration/test_coach_brief_enhancement.py`, `backend/tests/test_services/test_coach_readiness_scheduler.py`, `backend/tests/integration/test_coach_brief_lifecycle.py`, `frontend/src/components/coach/readiness/__tests__/InterviewBrief.test.tsx`.
+- `frontend/src/app/coach/readiness/page.tsx` — "Next interview" card (no Refresh button).
 
 GREEN:
 
 ```text
 $ python -m pytest -q --no-cov tests/test_services/test_coach_brief.py \
-    tests/integration/test_coach_brief_lifecycle.py \
-    tests/runtime/test_coach_readiness_bindings.py tests/test_services/test_source_events.py
-24 passed in 6.06s
+    tests/integration/test_coach_brief_enhancement.py \
+    tests/test_services/test_coach_readiness_scheduler.py \
+    tests/test_services/test_coach_brief.py tests/runtime/test_coach_readiness_bindings.py
+24 passed in 6.64s
 
 $ python -m pytest -q --no-cov tests/runtime \
     tests/integration/test_coach_report_privacy_flow.py \
@@ -93,7 +95,7 @@ Model calls in tests: none live. Brief enhancement uses the same local-only rout
 
 Not run / known limits:
 
-- The Playwright A4 print test was not added/run in this environment; the print stylesheet is in `InterviewBrief.tsx`.
+- The Playwright A4 print test is still missing; the print stylesheet is in `InterviewBrief.tsx`. P7 is not complete until `frontend/e2e/coach-readiness-brief.spec.ts` exists and passes.
 - The P3 bench/acceptance-smoke owner items remain open.
 
 Ready for review: yes.

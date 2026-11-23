@@ -8,6 +8,7 @@ import { FocusAreas } from "@/components/coach/readiness/FocusAreas";
 import { PatternGroup } from "@/components/coach/readiness/PatternGroup";
 import { PracticePlan } from "@/components/coach/readiness/PracticePlan";
 import { PageContainer, PageHeader } from "@/components/ui/page-layout";
+import { getUpcomingInterviews, type InterviewRound } from "@/lib/api";
 import { SectionCard } from "@/components/ui/section-card";
 import {
   dismissPattern,
@@ -35,6 +36,7 @@ export default function ReadinessPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [lastDismissed, setLastDismissed] = useState<string | null>(null);
   const [focusAreas, setFocusAreas] = useState<FocusArea[]>([]);
+  const [nextRound, setNextRound] = useState<InterviewRound | null>(null);
   const [focusCount, setFocusCount] = useState(0);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorInitial, setEditorInitial] = useState<{
@@ -65,6 +67,9 @@ export default function ReadinessPage() {
   useEffect(() => {
     load();
     loadFocus();
+    getUpcomingInterviews(7)
+      .then((items) => setNextRound(items[0] ?? null))
+      .catch(() => setNextRound(null));
   }, []);
 
   const openEditor = (initial?: {
@@ -182,6 +187,33 @@ export default function ReadinessPage() {
           </Link>
         ))}
       </nav>
+
+      <div className="mb-6">
+        <SectionCard title="Next interview">
+          {nextRound ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-[var(--text)]">
+                  {nextRound.type.replaceAll("_", " ")} interview
+                </p>
+                <p className="text-xs text-[var(--text-dim)]">
+                  {nextRound.scheduled_at
+                    ? new Date(nextRound.scheduled_at).toLocaleString()
+                    : "No date yet"}
+                </p>
+              </div>
+              <Link
+                href={`/applications/${nextRound.application_id}`}
+                className="text-sm font-semibold text-[var(--accent)] underline-offset-4 hover:underline"
+              >
+                Open brief
+              </Link>
+            </div>
+          ) : (
+            <p className="text-sm text-[var(--text-dim)]">Add your interview date to get a brief</p>
+          )}
+        </SectionCard>
+      </div>
 
       <div className="mb-6">
         <FocusAreas
