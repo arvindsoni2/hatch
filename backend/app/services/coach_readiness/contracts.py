@@ -1,9 +1,14 @@
 """Coverage DTOs shared by the Phase 2 readiness services and routers."""
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Sequence
+from typing import Any, Literal, Sequence
+
+from ..coach_conversational_contracts import REPORT_CONTRACT
 
 CoverageStatus = Literal["covered", "thin", "gap"]
 CoverageAction = Literal["use", "strengthen", "draft"]
@@ -182,7 +187,7 @@ CriterionStatus = Literal["not_started", "in_progress", "met", "no_evidence_yet"
 class FocusGroup:
     role_family: str
     interview_type: str
-    contract_version: str = "coach_conversational_report_v1"
+    contract_version: str = REPORT_CONTRACT
 
 
 @dataclass(frozen=True)
@@ -247,3 +252,128 @@ class PlanError(Exception):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+@dataclass(frozen=True)
+class SourceRef:
+    kind: str
+    source_id: str
+    version: str
+
+
+@dataclass(frozen=True)
+class GenerationRequest:
+    task_id: str
+    kind: str
+    cache_key: str
+    input_fingerprint: str
+    sources: tuple[SourceRef, ...]
+    params: Mapping[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class ValidatedOutput:
+    text_json: Mapping[str, Any]
+    model_identity: str
+    prompt_version: str
+
+
+@dataclass(frozen=True)
+class GenerationOutcome:
+    status: Literal["succeeded", "fenced"]
+    derived_text_id: str | None = None
+
+
+def input_fingerprint(
+    task_id: str,
+    sources: Sequence[SourceRef],
+    params: Mapping[str, str] | None = None,
+) -> str:
+    payload = {
+        "task": task_id,
+        "params": dict(sorted((params or {}).items())),
+        "sources": sorted(
+            [[source.kind, source.source_id, source.version] for source in sources]
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+async def finalise_generation(
+    session, request: GenerationRequest, output: ValidatedOutput, now
+) -> GenerationOutcome:
+    from sqlalchemy import delete
+
+    from app.models.application import InterviewRound
+    from app.models.coach_readiness import CoachDerivedSource, CoachDerivedText
+    from app.models.coach_session import InterviewSession
+    from app.models.question_bank import QuestionBankItem
+    from app.models.story import Story
+
+    # The first statement is a write so SQLite takes the write lock before any
+    # source is read. A concurrent source deletion cannot commit in between.
+    await session.execute(
+        delete(CoachDerivedText).where(CoachDerivedText.cache_key == request.cache_key)
+    )
+
+    current: list[SourceRef] = []
+    for ref in request.sources:
+        if ref.kind == "coach_session":
+            row = await session.get(InterviewSession, ref.source_id)
+            if (
+                row is None
+                or row.deletion_state != "not_requested"
+                or str(row.activity_version) != ref.version
+            ):
+                return GenerationOutcome("fenced")
+            current.append(SourceRef(ref.kind, ref.source_id, str(row.activity_version)))
+        elif ref.kind == "story":
+            row = await session.get(Story, ref.source_id)
+            if row is None or not row.is_active or str(row.version) != ref.version:
+                return GenerationOutcome("fenced")
+            current.append(SourceRef(ref.kind, ref.source_id, str(row.version)))
+        elif ref.kind == "question_bank_item":
+            row = await session.get(QuestionBankItem, ref.source_id)
+            if row is None or row.archived_at is not None:
+                return GenerationOutcome("fenced")
+            version = row.updated_at.isoformat() if row.updated_at else ""
+            if version != ref.version:
+                return GenerationOutcome("fenced")
+            current.append(SourceRef(ref.kind, ref.source_id, version))
+        elif ref.kind == "interview_round":
+            row = await session.get(InterviewRound, ref.source_id)
+            if row is None or row.status == "cancelled":
+                return GenerationOutcome("fenced")
+            version = row.updated_at.isoformat() if row.updated_at else ""
+            if version != ref.version:
+                return GenerationOutcome("fenced")
+            current.append(SourceRef(ref.kind, ref.source_id, version))
+        else:
+            return GenerationOutcome("fenced")
+
+    if input_fingerprint(request.task_id, current, request.params) != request.input_fingerprint:
+        return GenerationOutcome("fenced")
+
+    text = CoachDerivedText(
+        kind=request.kind,
+        cache_key=request.cache_key,
+        text_json=dict(output.text_json),
+        model_identity=output.model_identity,
+        prompt_version=output.prompt_version,
+        created_at=now.replace(tzinfo=None),
+    )
+    session.add(text)
+    await session.flush()
+    for ref in request.sources:
+        session.add(
+            CoachDerivedSource(
+                derived_text_id=text.id,
+                source_kind=ref.kind,
+                source_id=ref.source_id,
+                source_version=ref.version,
+            )
+        )
+    await session.flush()
+    return GenerationOutcome("succeeded", text.id)

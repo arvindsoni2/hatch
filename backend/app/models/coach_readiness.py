@@ -169,3 +169,37 @@ class CoachPracticePlan(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class CoachDerivedText(Base):
+    """Cached model text; sources cascade away with the text."""
+
+    __tablename__ = "coach_derived_text"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    cache_key: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    text_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    model_identity: Mapped[str] = mapped_column(String(200), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, nullable=False
+    )
+
+
+class CoachDerivedSource(Base):
+    """One source cited by a cached model output."""
+
+    __tablename__ = "coach_derived_sources"
+    __table_args__ = (
+        Index("idx_coach_derived_sources_source", "source_kind", "source_id"),
+    )
+
+    derived_text_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("coach_derived_text.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_version: Mapped[str] = mapped_column(String(80), nullable=False)

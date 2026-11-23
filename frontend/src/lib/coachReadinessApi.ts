@@ -404,3 +404,23 @@ export function patchPlanItem(
     },
   );
 }
+
+export interface PatternTipsResponse {
+  tips?: string[];
+  operation_id?: string | null;
+  status: string;
+  reason?: string;
+}
+
+export function requestPatternTips(fingerprint: string): Promise<PatternTipsResponse> {
+  return request<PatternTipsResponse>(
+    `/api/coach/readiness/patterns/${encodeURIComponent(fingerprint)}/tips`,
+    { method: "POST" },
+  );
+}
+
+export function fetchGenerationOperation(operationId: string): Promise<PatternTipsResponse> {
+  return request<PatternTipsResponse>(
+    `/api/coach/readiness/operations/${encodeURIComponent(operationId)}`,
+  );
+}

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.application import Application
 from ..models.coach_session import InterviewSession, SessionQuestion
 from ..models.question_bank import QuestionBankItem
+from .source_events import SourceChange, notify
 from ..schemas.question_bank import (
     QuestionBankCreate,
     QuestionBankFromInterviewAnswer,
@@ -104,6 +105,7 @@ async def update_question_bank_item(
     row = await get_question_bank_item(db, item_id)
     if row is None:
         return None
+    await notify(db, SourceChange("question_bank_item", item_id, "edited"))
     data = payload.model_dump(exclude_unset=True)
     if "linked_applications" in data:
         await _validate_linked_applications(db, data["linked_applications"] or [])
@@ -119,6 +121,7 @@ async def archive_question_bank_item(db: AsyncSession, item_id: str) -> bool:
     row = await get_question_bank_item(db, item_id)
     if row is None:
         return False
+    await notify(db, SourceChange("question_bank_item", item_id, "deleted"))
     row.archived_at = _now()
     row.updated_at = row.archived_at
     await db.flush()

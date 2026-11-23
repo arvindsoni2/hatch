@@ -214,10 +214,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "Context budget check skipped (profile not loaded or non-llamacpp)."
         )
 
+    from .repositories.coach_readiness_repository import CoachReadinessRepository  # noqa: PLC0415
+    from .services.coach_readiness.privacy import ReadinessPrivacy  # noqa: PLC0415
+    from .services.source_events import register_listener, unregister_listener  # noqa: PLC0415
+
+    readiness_listener = ReadinessPrivacy(CoachReadinessRepository(AsyncSessionLocal))
+    register_listener(readiness_listener)
+
     try:
         yield  # Application running
     finally:
         # Shutdown
+        unregister_listener(readiness_listener)
         logger.info("JobPilot shutting down...")
         if orchestrator is not None:
             orchestrator.stop()

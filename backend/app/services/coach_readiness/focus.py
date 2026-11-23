@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
+from app.services.coach_conversational_contracts import REPORT_CONTRACT
 from app.services.coach_conversational_progress import ProgressSnapshot
 from app.services.coach_conversational_report import LEVEL_TO_ORDINAL
 
@@ -36,7 +37,7 @@ def _group_of(area) -> FocusGroup | None:
         role_family=role_family,
         interview_type=interview_type,
         contract_version=str(
-            raw.get("contract_version") or "coach_conversational_report_v1"
+            raw.get("contract_version") or REPORT_CONTRACT
         ),
     )
 

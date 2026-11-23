@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +57,7 @@ from ..schemas.coach_readiness import (
 from ..services.coach_conversational_contracts import CONTENT_DIMENSIONS
 from ..services.ai_setup import load_catalog, load_intent, load_probe_snapshot
 from ..services.coach_readiness import coverage
+from ..services.coach_readiness import explain as explain_service
 from ..services.coach_readiness import focus as focus_rules
 from ..services.coach_readiness import plan as plan_rules
 from ..services.coach_readiness import patterns as pattern_rules
@@ -1026,3 +1028,23 @@ async def patch_plan_item(
         plan.completed_at = datetime.utcnow()
     await db.commit()
     return _plan_read(plan)
+
+
+
+@router.post("/patterns/{fingerprint}/tips")
+async def request_pattern_tips(
+    fingerprint: str,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    status, payload = await explain_service.request_tips(db, fingerprint)
+    return JSONResponse(payload, status_code=status)
+
+
+@router.get("/operations/{operation_id}")
+async def get_generation_operation(
+    operation_id: str,
+) -> dict[str, Any]:
+    payload = explain_service.operation(operation_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    return payload

@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..services.coach_conversational_contracts import REPORT_CONTRACT
+
 CoverageStatus = Literal["covered", "thin", "gap"]
 CoverageAction = Literal["use", "strengthen", "draft"]
 
@@ -195,7 +197,7 @@ class FocusGroupWrite(BaseModel):
     role_family: str = Field(min_length=1, max_length=80)
     interview_type: str = Field(min_length=1, max_length=40)
     contract_version: str = Field(
-        default="coach_conversational_report_v1", min_length=1, max_length=80
+        default=REPORT_CONTRACT, min_length=1, max_length=80
     )
 
 

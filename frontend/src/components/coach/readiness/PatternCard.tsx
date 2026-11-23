@@ -1,15 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
+  fetchGenerationOperation,
   fetchPatternWhy,
+  requestPatternTips,
   type Pattern,
   type PatternWhy,
 } from "@/lib/coachReadinessApi";
+import { PatternTips } from "@/components/coach/readiness/PatternTips";
 import { WhyPanel } from "@/components/coach/readiness/WhyPanel";
 
 const KIND: Record<
@@ -67,6 +70,13 @@ export function PatternCard({
   const [why, setWhy] = useState<PatternWhy | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
   const [whyError, setWhyError] = useState(false);
+  const [tips, setTips] = useState<string[] | null>(null);
+  const [tipsLoading, setTipsLoading] = useState(false);
+  const [tipsAiOff, setTipsAiOff] = useState(false);
+  const [tipsUnavailable, setTipsUnavailable] = useState(false);
+  const mounted = useRef(true);
+
+  useEffect(() => () => { mounted.current = false; }, []);
   const kind = KIND[pattern.kind];
 
   const toggleWhy = async () => {
@@ -78,6 +88,35 @@ export function PatternCard({
       }
     }
     setWhyOpen((open) => !open);
+  };
+
+  const loadTips = async () => {
+    setTipsLoading(true);
+    setTipsAiOff(false);
+    setTipsUnavailable(false);
+    try {
+      let result = await requestPatternTips(pattern.fingerprint);
+      if (result.status === "unavailable" || result.reason === "ai_off") {
+        if (mounted.current) setTipsAiOff(true);
+        return;
+      }
+      const terminal = new Set(["succeeded", "degraded", "fenced"]);
+      while (result.operation_id && !terminal.has(result.status)) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        if (!mounted.current) return;
+        result = await fetchGenerationOperation(result.operation_id);
+      }
+      if (result.status === "succeeded") {
+        const cached = await requestPatternTips(pattern.fingerprint);
+        if (mounted.current) setTips(cached.tips ?? []);
+      } else if (result.status === "degraded" || result.status === "fenced") {
+        if (mounted.current) setTipsUnavailable(true);
+      }
+    } catch {
+      if (mounted.current) setTipsUnavailable(true);
+    } finally {
+      if (mounted.current) setTipsLoading(false);
+    }
   };
 
   return (
@@ -117,6 +156,17 @@ export function PatternCard({
               onClick={() => void toggleWhy()}
             >
               Why?
+            </Button>
+          ) : null}
+          {!pattern.stale ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={tipsLoading}
+              onClick={() => void loadTips()}
+            >
+              Tips
             </Button>
           ) : null}
           {!pattern.dismissed ? (
@@ -161,6 +211,15 @@ export function PatternCard({
         </div>
       ) : null}
 
+      {tipsLoading || tips || tipsAiOff || tipsUnavailable ? (
+        <PatternTips
+          tips={tips}
+          loading={tipsLoading}
+          aiOff={tipsAiOff}
+          unavailable={tipsUnavailable}
+          onRetry={() => void loadTips()}
+        />
+      ) : null}
       {whyOpen ? (
         why ? (
           <WhyPanel why={why} />
