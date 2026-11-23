@@ -76,7 +76,10 @@ export function PatternCard({
   const [tipsUnavailable, setTipsUnavailable] = useState(false);
   const mounted = useRef(true);
 
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const kind = KIND[pattern.kind];
 
   const toggleWhy = async () => {

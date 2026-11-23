@@ -115,8 +115,8 @@ describe("Readiness page", () => {
     render(<ReadinessPage />);
 
     const headings = await screen.findAllByRole("heading", { level: 2 });
-    expect(headings.slice(0, 3).map((heading) => heading.textContent)).toEqual([
-      "Focus areas", "This week's plan", "Patterns",
+    expect(headings.slice(0, 4).map((heading) => heading.textContent)).toEqual([
+      "Next interview", "Focus areas", "This week's plan", "Patterns",
     ]);
     expect(screen.getByRole("link", { name: "Readiness" })).toHaveAttribute(
       "aria-current", "page",

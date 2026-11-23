@@ -24,8 +24,6 @@ async def debrief_next_actions(db: AsyncSession, now: datetime) -> list[dict]:
             .order_by(InterviewRound.scheduled_at.asc())
         )
     ).scalars().all()
-    if not rows:
-        return []
     saved = {
         item.interview_round_id: item.status
         for item in (
@@ -54,4 +52,47 @@ async def debrief_next_actions(db: AsyncSession, now: datetime) -> list[dict]:
                 "kind": "debrief",
             }
         )
+    upcoming = (
+        await db.execute(
+            select(InterviewRound)
+            .join(Application, Application.id == InterviewRound.application_id)
+            .where(
+                Application.is_active.is_(True),
+                InterviewRound.status.in_(("scheduled", "rescheduled")),
+                InterviewRound.scheduled_at.is_not(None),
+                InterviewRound.scheduled_at > datetime.utcnow(),
+            )
+            .order_by(InterviewRound.scheduled_at.asc())
+        )
+    ).scalars().all()
+    for row in upcoming:
+        days = max(0, (row.scheduled_at - datetime.utcnow()).days)
+        if days <= 7:
+            actions.append({
+                "application_id": row.application_id,
+                "round_id": row.id,
+                "action": f"Interview in {days} day{'s' if days != 1 else ''} — brief ready",
+                "reason": "Pre-interview brief",
+                "urgency": "high" if days <= 2 else "normal",
+                "kind": "brief",
+            })
+    all_round_apps = select(InterviewRound.application_id)
+    without_rounds = (
+        await db.execute(
+            select(Application).where(
+                Application.is_active.is_(True),
+                Application.status == "interview",
+                ~Application.id.in_(all_round_apps),
+            )
+        )
+    ).scalars().all()
+    for application in without_rounds:
+        actions.append({
+            "application_id": application.id,
+            "round_id": "",
+            "action": "Add your interview date to get a brief",
+            "reason": "No interview round yet",
+            "urgency": "normal",
+            "kind": "brief",
+        })
     return actions

@@ -7,6 +7,7 @@ import { downloadInterviewIcs } from "@/lib/api";
 import { formatInterviewTime } from "@/lib/formatInterviewTime";
 import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
 import { DebriefForm } from "@/components/coach/readiness/DebriefForm";
+import { InterviewBrief } from "@/components/coach/readiness/InterviewBrief";
 import type { InterviewRound } from "@/lib/api";
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -61,6 +62,41 @@ function IcsButton({ interviewId }: { interviewId: string }) {
       )}
       {state === "error" ? "Failed" : "Add to calendar"}
     </button>
+  );
+}
+
+function RoundReadiness({ roundId }: { roundId: string }) {
+  const [tab, setTab] = useState<"brief" | "debrief">("brief");
+  return (
+    <div className="mt-3">
+      <div
+        role="tablist"
+        aria-label="Interview round"
+        className="mb-2 flex gap-1 border-b border-[var(--border)]"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "brief"}
+          className={`px-3 py-1.5 text-sm font-medium ${tab === "brief" ? "border-b-2 border-[var(--accent)] text-[var(--text)]" : "text-[var(--text-dim)]"}`}
+          onClick={() => setTab("brief")}
+        >
+          Brief
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "debrief"}
+          className={`px-3 py-1.5 text-sm font-medium ${tab === "debrief" ? "border-b-2 border-[var(--accent)] text-[var(--text)]" : "text-[var(--text-dim)]"}`}
+          onClick={() => setTab("debrief")}
+        >
+          Debrief <span className="text-xs font-normal text-[var(--text-dim)]">after the interview</span>
+        </button>
+      </div>
+      <div role="tabpanel">
+        {tab === "brief" ? <InterviewBrief roundId={roundId} /> : <DebriefForm roundId={roundId} />}
+      </div>
+    </div>
   );
 }
 
@@ -138,9 +174,7 @@ export function InterviewTimeline({ interviews }: InterviewTimelineProps) {
                 </div>
               )}
 
-              <div className="mt-3">
-                <DebriefForm roundId={round.id} />
-              </div>
+              <RoundReadiness roundId={round.id} />
             </div>
           </div>
         ))}

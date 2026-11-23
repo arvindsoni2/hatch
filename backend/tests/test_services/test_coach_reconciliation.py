@@ -3031,6 +3031,9 @@ async def test_startup_resets_running_jobs_before_coach_reconciliation(
         return None
 
     class Scheduler:
+        def add_job(self, *args, **kwargs) -> None:
+            return None
+
         def start(self) -> None:
             return None
 

@@ -424,3 +424,49 @@ export function fetchGenerationOperation(operationId: string): Promise<PatternTi
     `/api/coach/readiness/operations/${encodeURIComponent(operationId)}`,
   );
 }
+
+export interface BriefEnhancement {
+  state: "none" | "enhancing" | "current" | "outdated" | "unavailable";
+  fingerprint: string;
+  operation_id: string | null;
+  model_identity: string | null;
+}
+
+export interface InterviewBriefData {
+  round_id: string;
+  state: "active" | "archived";
+  header: {
+    company: string;
+    role: string;
+    round_type: string;
+    starts_at: string | null;
+    display_timezone: string | null;
+    duration_minutes: number | null;
+    interviewer: string | null;
+    location: string | null;
+  };
+  likely_questions: { id: string; text: string; source: string }[];
+  stories: {
+    story_id: string; title: string; competencies: string[];
+    score: number; has_metric: boolean; talking_point: string | null;
+  }[];
+  watch_outs: {
+    fingerprint: string; dimension: string; source: string; sentence: string | null;
+  }[];
+  gaps: { competency: string; action: string }[];
+  ask_them: string[];
+  enhancement: BriefEnhancement;
+}
+
+export function fetchInterviewBrief(roundId: string): Promise<InterviewBriefData> {
+  return request<InterviewBriefData>(
+    `/api/coach/readiness/rounds/${encodeURIComponent(roundId)}/brief`,
+  );
+}
+
+export function retryInterviewBriefTips(roundId: string): Promise<InterviewBriefData> {
+  return request<InterviewBriefData>(
+    `/api/coach/readiness/rounds/${encodeURIComponent(roundId)}/brief/tips`,
+    { method: "POST" },
+  );
+}

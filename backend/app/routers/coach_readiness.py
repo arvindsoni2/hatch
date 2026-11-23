@@ -56,6 +56,7 @@ from ..schemas.coach_readiness import (
 )
 from ..services.coach_conversational_contracts import CONTENT_DIMENSIONS
 from ..services.ai_setup import load_catalog, load_intent, load_probe_snapshot
+from ..services.coach_readiness import brief as brief_service
 from ..services.coach_readiness import coverage
 from ..services.coach_readiness import explain as explain_service
 from ..services.coach_readiness import focus as focus_rules
@@ -1048,3 +1049,35 @@ async def get_generation_operation(
     if payload is None:
         raise HTTPException(status_code=404, detail="not_found")
     return payload
+
+
+@router.get("/rounds/{round_id}/brief")
+async def get_interview_brief(
+    round_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    data = await brief_service.build_brief(db, round_id, datetime.now(UTC))
+    if data is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    if (
+        data["state"] == "active"
+        # "enhancing" is included so a stale row (no generation actually in
+        # flight, e.g. after a restart) recovers on the next read.
+        and data["enhancement"]["state"] in {"none", "outdated", "enhancing"}
+        and settings.HATCH_COACH_BRIEF_ENABLED
+    ):
+        data = await brief_service.request_enhancement(db, round_id, datetime.now(UTC)) or data
+    return data
+
+
+@router.post("/rounds/{round_id}/brief/tips")
+async def retry_interview_brief_tips(
+    round_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if not settings.HATCH_COACH_BRIEF_ENABLED:
+        raise HTTPException(status_code=403, detail="disabled")
+    data = await brief_service.request_enhancement(db, round_id, datetime.now(UTC))
+    if data is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    return data

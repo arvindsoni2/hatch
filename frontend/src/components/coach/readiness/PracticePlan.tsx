@@ -71,6 +71,13 @@ export function PracticePlan() {
 
   useEffect(load, []);
 
+  // The Next interview card's "Plan my week" opens this planner.
+  useEffect(() => {
+    const open = () => setShowPlanner(true);
+    window.addEventListener("hatch:plan-week", open);
+    return () => window.removeEventListener("hatch:plan-week", open);
+  }, []);
+
   const draft = async () => {
     setDrafting(true);
     setError(null);

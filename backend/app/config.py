@@ -172,6 +172,7 @@ class Settings(BaseSettings):
 
     # Phase 2 readiness patterns (P4).
     HATCH_COACH_READINESS_ENABLED: bool = False
+    HATCH_COACH_BRIEF_ENABLED: bool = False
     HATCH_COACH_PATTERN_WINDOW_DAYS: int = Field(default=90, ge=1, le=3650)
 
     # Conversational Coach browser and processing policy.
