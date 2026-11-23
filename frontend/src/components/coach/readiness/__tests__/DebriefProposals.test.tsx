@@ -62,8 +62,18 @@ describe("DebriefProposals", () => {
       <DebriefProposals roundId="round-1" proposals={[qb, story]} onAccepted={vi.fn()} />,
     );
 
+    expect(screen.getByText("Suggestions from this debrief")).toBeVisible();
+    expect(screen.getByText("Saved")).toBeVisible();
     expect(screen.getByText(/Add 2 new questions to your Question Bank/)).toBeVisible();
-    expect(screen.getByText(/Record that you used Rescued a late delivery/)).toBeVisible();
+    expect(
+      screen.getByText(/“How do you handle pressure\?” is not in your bank yet\./),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add to Question Bank" })).toBeVisible();
+    expect(screen.getByText(/Record that you used “Rescued a late delivery”/)).toBeVisible();
+    expect(
+      screen.getByText(/Helps Hatch rank your stories for the next brief\./),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Record use" })).toBeVisible();
   });
 
   it("accepts through the public route and reports the new version", async () => {
@@ -73,7 +83,7 @@ describe("DebriefProposals", () => {
       <DebriefProposals roundId="round-1" proposals={[qb]} onAccepted={onAccepted} />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: "Add to Question Bank" }));
 
     await waitFor(() =>
       expect(vi.mocked(acceptDebriefProposal)).toHaveBeenCalledWith(
@@ -93,6 +103,7 @@ describe("DebriefProposals", () => {
     await user.click(screen.getByRole("button", { name: "Not now" }));
 
     expect(screen.queryByText(/Record that you used/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record use" })).not.toBeInTheDocument();
     expect(vi.mocked(acceptDebriefProposal)).not.toHaveBeenCalled();
   });
 

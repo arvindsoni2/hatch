@@ -54,7 +54,9 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
   const [questions, setQuestions] = useState<DebriefQuestion[]>([]);
   const [stories, setStories] = useState<StoryListItem[]>([]);
   const [overall, setOverall] = useState<number | null>(null);
-  const [expectation, setExpectation] = useState<"yes" | "unsure" | "no" | null>(null);
+  const [expectation, setExpectation] = useState<
+    "yes" | "unsure" | "no" | null
+  >(null);
   const [wentWell, setWentWell] = useState("");
   const [doDifferently, setDoDifferently] = useState("");
   const [quickAdd, setQuickAdd] = useState("");
@@ -63,6 +65,7 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
   const [savedAck, setSavedAck] = useState("");
   const [saving, setSaving] = useState(false);
   const [proposals, setProposals] = useState<DebriefProposal[]>([]);
+  const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -147,7 +150,9 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
     try {
       const fresh = await fetchDebrief(roundId);
       setVersion(fresh.version);
-      setDebrief((current) => (current ? { ...current, version: fresh.version } : current));
+      setDebrief((current) =>
+        current ? { ...current, version: fresh.version } : current,
+      );
       setConflict(false);
       setError("Reloaded. Your draft is kept; save again to re-apply.");
     } catch {
@@ -170,34 +175,288 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
   };
 
   return (
-    <SectionCard
-      title="How did it go?"
-      description={
-        debrief.scheduled_at
-          ? `Round finished ${formatInterviewTime(debrief.scheduled_at, timeZone)}`
-          : "Only your overall rating is needed."
-      }
-      actions={
-        <StatusBadge tone={debrief.status === "saved" ? "success" : "neutral"}>
-          {STATUS_LABELS[debrief.status]}
-        </StatusBadge>
-      }
-    >
-      <div className="space-y-5">
-        <DebriefNotesExtract
-          roundId={roundId}
-          version={version}
-          savedNotes={debrief.notes_text}
-          onDraftSaved={(nextVersion, notes) => {
-            setVersion(nextVersion);
-            setDebrief((current) =>
-              current ? { ...current, version: nextVersion, notes_text: notes } : current,
-            );
-          }}
-          onQuestionsProposed={(texts) =>
-            setQuestions((current) => [...current, ...texts.map(newQuestion)])
-          }
-        />
+    <>
+      <SectionCard
+        title="How did it go?"
+        description={
+          debrief.scheduled_at
+            ? `Round finished ${formatInterviewTime(debrief.scheduled_at, timeZone)}`
+            : "Only your overall rating is needed."
+        }
+        actions={
+          <StatusBadge
+            tone={debrief.status === "saved" ? "success" : "neutral"}
+          >
+            {STATUS_LABELS[debrief.status]}
+          </StatusBadge>
+        }
+      >
+        <div className="space-y-5">
+          <div>
+            <h4 className="mb-2 text-sm font-semibold text-[var(--text)]">
+              Questions you were asked
+            </h4>
+            {questions.length === 0 ? (
+              <p className="text-sm text-[var(--text-dim)]">
+                No likely questions available.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {questions.map((question) => (
+                  <li key={question.id}>
+                    <label className="flex min-h-11 items-start gap-2 text-sm text-[var(--text)]">
+                      <input
+                        type="checkbox"
+                        checked={question.asked}
+                        onChange={() =>
+                          updateQuestion(question.id, {
+                            asked: !question.asked,
+                          })
+                        }
+                        className="mt-1 h-4 w-4"
+                      />
+                      <span>
+                        {question.text}
+                        {question.id.startsWith("custom-") ? (
+                          <span className="ml-2 text-xs text-[var(--text-dim)]">
+                            Added by you
+                          </span>
+                        ) : null}
+                      </span>
+                    </label>
+                    {question.asked ? (
+                      <div className="ml-6 mt-2 space-y-2">
+                        <div>
+                          <span className="mr-2 text-xs text-[var(--text-dim)]">
+                            How did you answer?
+                          </span>
+                          {[1, 2, 3, 4, 5].map((value) => (
+                            <button
+                              key={value}
+                              type="button"
+                              aria-pressed={question.rating === value}
+                              aria-label={`Question rating ${value} of 5`}
+                              onClick={() =>
+                                updateQuestion(question.id, { rating: value })
+                              }
+                              className={`mr-1 h-9 min-w-9 rounded-[var(--radius-control)] border text-sm ${
+                                question.rating === value
+                                  ? "bg-[var(--accent)] text-[var(--on-accent)]"
+                                  : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text)]"
+                              }`}
+                            >
+                              {value}
+                            </button>
+                          ))}
+                        </div>
+                        <label className="block text-xs text-[var(--text-dim)]">
+                          Story you used
+                          <select
+                            value={question.story_id ?? ""}
+                            onChange={(event) =>
+                              updateQuestion(question.id, {
+                                story_id: event.target.value || null,
+                              })
+                            }
+                            className="ml-2 min-h-9 rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-2 text-sm text-[var(--text)]"
+                          >
+                            <option value="">None</option>
+                            {stories.map((story) => (
+                              <option key={story.id} value={story.id}>
+                                {story.title}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block text-xs text-[var(--text-dim)]">
+                          Note
+                          <input
+                            value={question.note ?? ""}
+                            onChange={(event) =>
+                              updateQuestion(question.id, {
+                                note: event.target.value,
+                              })
+                            }
+                            maxLength={200}
+                            placeholder="One line, optional"
+                            className="ml-2 min-h-9 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-2 text-sm text-[var(--text)]"
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="min-w-0 flex-1 text-sm text-[var(--text)]">
+                Another question
+                <input
+                  value={quickAdd}
+                  onChange={(event) => setQuickAdd(event.target.value)}
+                  placeholder="Type a question you were asked"
+                  className="mt-1 min-h-9 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-sm text-[var(--text)]"
+                />
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addQuestion}
+              >
+                Add
+              </Button>
+            </div>
+            <button
+              type="button"
+              className="mt-2 min-h-11 self-start text-sm font-medium text-[var(--accent)] underline-offset-4 hover:underline"
+              onClick={() => setShowNotes((open) => !open)}
+            >
+              {showNotes ? "Hide the rough notes" : "Paste rough notes instead"}
+            </button>
+            {showNotes ? (
+              <DebriefNotesExtract
+                roundId={roundId}
+                version={version}
+                savedNotes={debrief.notes_text}
+                onDraftSaved={(nextVersion, notes) => {
+                  setVersion(nextVersion);
+                  setDebrief((current) =>
+                    current
+                      ? { ...current, version: nextVersion, notes_text: notes }
+                      : current,
+                  );
+                }}
+                onQuestionsProposed={(texts) =>
+                  setQuestions((current) => [
+                    ...current,
+                    ...texts.map(newQuestion),
+                  ])
+                }
+              />
+            ) : null}
+          </div>
+
+          <fieldset>
+            <legend className="mb-2 text-sm font-semibold text-[var(--text)]">
+              Overall, how did it go?
+            </legend>
+            <div className="flex flex-wrap items-center gap-2">
+              {OVERALL_LABELS.map((label, index) => {
+                const value = index + 1;
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={overall === value}
+                    aria-label={`${value} ${label}`}
+                    onClick={() => setOverall(value)}
+                    className={`h-11 min-w-11 rounded-[var(--radius-control)] border px-2 text-sm ${
+                      overall === value
+                        ? "bg-[var(--accent)] text-[var(--on-accent)]"
+                        : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text)]"
+                    }`}
+                  >
+                    {value}
+                  </button>
+                );
+              })}
+              <span className="text-sm text-[var(--text-dim)]">
+                {overall ? OVERALL_LABELS[overall - 1] : ""}
+              </span>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend className="mb-2 text-sm font-semibold text-[var(--text)]">
+              Do you expect to move to the next round?
+            </legend>
+            <div className="flex flex-wrap gap-2">
+              {EXPECTATION_LABELS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  aria-pressed={expectation === item.value}
+                  onClick={() => setExpectation(item.value)}
+                  className={`min-h-11 rounded-[var(--radius-control)] border px-3 text-sm ${
+                    expectation === item.value
+                      ? "border-[var(--accent)] text-[var(--accent)]"
+                      : "border-[var(--border)] text-[var(--text)]"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <label className="block text-sm text-[var(--text)]">
+            What went well
+            <textarea
+              value={wentWell}
+              onChange={(event) => setWentWell(event.target.value)}
+              maxLength={1_000}
+              placeholder="Optional"
+              className="mt-1 min-h-20 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)]"
+            />
+          </label>
+          <label className="block text-sm text-[var(--text)]">
+            What you would do differently
+            <textarea
+              value={doDifferently}
+              onChange={(event) => setDoDifferently(event.target.value)}
+              maxLength={1_000}
+              placeholder="Optional"
+              className="mt-1 min-h-20 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)]"
+            />
+          </label>
+
+          {error ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="status" className="text-sm text-[var(--danger)]">
+                {error}
+              </p>
+              {conflict ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void reloadAndReapply()}
+                >
+                  Reload and re-apply
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {savedAck ? (
+            <p
+              role="status"
+              aria-live="polite"
+              className="text-sm text-[var(--success)]"
+            >
+              {savedAck}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={overall == null || saving}
+            >
+              Save debrief
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => void handleSkip()}
+              disabled={saving}
+            >
+              Skip this one
+            </Button>
+          </div>
+        </div>
+      </SectionCard>
+      <div className="mt-3">
         <DebriefProposals
           roundId={roundId}
           proposals={proposals ?? []}
@@ -206,198 +465,7 @@ export function DebriefForm({ roundId }: DebriefFormProps) {
             setProposals(nextProposals);
           }}
         />
-        <div>
-          <h4 className="mb-2 text-sm font-semibold text-[var(--text)]">
-            Questions you were asked
-          </h4>
-          {questions.length === 0 ? (
-            <p className="text-sm text-[var(--text-dim)]">No likely questions available.</p>
-          ) : (
-            <ul className="space-y-3">
-              {questions.map((question) => (
-                <li key={question.id}>
-                  <label className="flex min-h-11 items-start gap-2 text-sm text-[var(--text)]">
-                    <input
-                      type="checkbox"
-                      checked={question.asked}
-                      onChange={() => updateQuestion(question.id, { asked: !question.asked })}
-                      className="mt-1 h-4 w-4"
-                    />
-                    <span>
-                      {question.text}
-                      {question.id.startsWith("custom-") ? (
-                        <span className="ml-2 text-xs text-[var(--text-dim)]">Added by you</span>
-                      ) : null}
-                    </span>
-                  </label>
-                  {question.asked ? (
-                    <div className="ml-6 mt-2 space-y-2">
-                      <div>
-                        <span className="mr-2 text-xs text-[var(--text-dim)]">How did you answer?</span>
-                        {[1, 2, 3, 4, 5].map((value) => (
-                          <button
-                            key={value}
-                            type="button"
-                            aria-pressed={question.rating === value}
-                            aria-label={`Question rating ${value} of 5`}
-                            onClick={() => updateQuestion(question.id, { rating: value })}
-                            className={`mr-1 h-9 min-w-9 rounded-[var(--radius-control)] border text-sm ${
-                              question.rating === value
-                                ? "bg-[var(--accent)] text-[var(--on-accent)]"
-                                : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text)]"
-                            }`}
-                          >
-                            {value}
-                          </button>
-                        ))}
-                      </div>
-                      <label className="block text-xs text-[var(--text-dim)]">
-                        Story you used
-                        <select
-                          value={question.story_id ?? ""}
-                          onChange={(event) =>
-                            updateQuestion(question.id, {
-                              story_id: event.target.value || null,
-                            })
-                          }
-                          className="ml-2 min-h-9 rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-2 text-sm text-[var(--text)]"
-                        >
-                          <option value="">None</option>
-                          {stories.map((story) => (
-                            <option key={story.id} value={story.id}>
-                              {story.title}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block text-xs text-[var(--text-dim)]">
-                        Note
-                        <input
-                          value={question.note ?? ""}
-                          onChange={(event) =>
-                            updateQuestion(question.id, { note: event.target.value })
-                          }
-                          maxLength={200}
-                          placeholder="One line, optional"
-                          className="ml-2 min-h-9 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-2 text-sm text-[var(--text)]"
-                        />
-                      </label>
-                    </div>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="mt-3 flex flex-wrap items-end gap-2">
-            <label className="min-w-0 flex-1 text-sm text-[var(--text)]">
-              Another question
-              <input
-                value={quickAdd}
-                onChange={(event) => setQuickAdd(event.target.value)}
-                placeholder="Type a question you were asked"
-                className="mt-1 min-h-9 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-sm text-[var(--text)]"
-              />
-            </label>
-            <Button type="button" variant="outline" size="sm" onClick={addQuestion}>
-              Add
-            </Button>
-          </div>
-        </div>
-
-        <fieldset>
-          <legend className="mb-2 text-sm font-semibold text-[var(--text)]">
-            Overall, how did it go?
-          </legend>
-          <div className="flex flex-wrap items-center gap-2">
-            {OVERALL_LABELS.map((label, index) => {
-              const value = index + 1;
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  aria-pressed={overall === value}
-                  aria-label={`${value} ${label}`}
-                  onClick={() => setOverall(value)}
-                  className={`h-11 min-w-11 rounded-[var(--radius-control)] border px-2 text-sm ${
-                    overall === value
-                      ? "bg-[var(--accent)] text-[var(--on-accent)]"
-                      : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text)]"
-                  }`}
-                >
-                  {value}
-                </button>
-              );
-            })}
-            <span className="text-sm text-[var(--text-dim)]">
-              {overall ? OVERALL_LABELS[overall - 1] : ""}
-            </span>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend className="mb-2 text-sm font-semibold text-[var(--text)]">
-            Do you expect to move to the next round?
-          </legend>
-          <div className="flex flex-wrap gap-2">
-            {EXPECTATION_LABELS.map((item) => (
-              <button
-                key={item.value}
-                type="button"
-                aria-pressed={expectation === item.value}
-                onClick={() => setExpectation(item.value)}
-                className={`min-h-11 rounded-[var(--radius-control)] border px-3 text-sm ${
-                  expectation === item.value
-                    ? "border-[var(--accent)] text-[var(--accent)]"
-                    : "border-[var(--border)] text-[var(--text)]"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <label className="block text-sm text-[var(--text)]">
-          What went well
-          <textarea
-            value={wentWell}
-            onChange={(event) => setWentWell(event.target.value)}
-            maxLength={1_000}
-            placeholder="Optional"
-            className="mt-1 min-h-20 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)]"
-          />
-        </label>
-        <label className="block text-sm text-[var(--text)]">
-          What you would do differently
-          <textarea
-            value={doDifferently}
-            onChange={(event) => setDoDifferently(event.target.value)}
-            maxLength={1_000}
-            placeholder="Optional"
-            className="mt-1 min-h-20 w-full rounded-[var(--radius-control)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--text)]"
-          />
-        </label>
-
-        {error ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <p role="status" className="text-sm text-[var(--danger)]">{error}</p>
-            {conflict ? (
-              <Button type="button" variant="outline" size="sm" onClick={() => void reloadAndReapply()}>
-                Reload and re-apply
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        {savedAck ? <p role="status" aria-live="polite" className="text-sm text-[var(--success)]">{savedAck}</p> : null}
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" onClick={() => void handleSave()} disabled={overall == null || saving}>
-            Save debrief
-          </Button>
-          <Button type="button" variant="ghost" onClick={() => void handleSkip()} disabled={saving}>
-            Skip this one
-          </Button>
-        </div>
       </div>
-    </SectionCard>
+    </>
   );
 }
