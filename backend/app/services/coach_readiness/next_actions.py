@@ -81,13 +81,15 @@ async def debrief_next_actions(db: AsyncSession, now: datetime) -> list[dict]:
     with_rounds = {
         row.application_id for row in upcoming
     }
-    conditions = [
-        Application.is_active.is_(True), Application.status == "interview"
-    ]
-    if with_rounds:
-        conditions.append(~Application.id.in_(with_rounds))
+    all_round_apps = select(InterviewRound.application_id)
     without_rounds = (
-        await db.execute(select(Application).where(*conditions))
+        await db.execute(
+            select(Application).where(
+                Application.is_active.is_(True),
+                Application.status == "interview",
+                ~Application.id.in_(all_round_apps),
+            )
+        )
     ).scalars().all()
     for application in without_rounds:
         actions.append({

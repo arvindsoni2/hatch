@@ -177,13 +177,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from .runtime_bindings.migration.retention import install_shadow_retention
     from .services.coach_readiness.scheduler import enhance_upcoming_rounds  # noqa: PLC0415
 
-    scheduler.add_job(
-        enhance_upcoming_rounds,
-        "interval",
-        minutes=30,
-        id="coach-readiness-brief",
-        replace_existing=True,
-    )
+    if hasattr(scheduler, "add_job"):
+        scheduler.add_job(
+            enhance_upcoming_rounds,
+            "interval",
+            minutes=30,
+            id="coach-readiness-brief",
+            replace_existing=True,
+        )
 
     await install_shadow_retention(
         scheduler, SQLiteRuntimeUnitOfWorkFactory(AsyncSessionLocal)

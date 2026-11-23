@@ -65,6 +65,15 @@ $ python -m pytest -q --no-cov tests/runtime \
     tests/test_services/test_coach_brief.py tests/integration/test_coach_brief_lifecycle.py
 554 passed, 1 skipped in 195.41s
 
+$ python -m pytest -q --no-cov tests \
+    --ignore=tests/test_tools/test_embedder.py \
+    --ignore=tests/test_tools/test_semantic_scorer.py
+4119 passed, 2 skipped in 690.71s
+
+$ npx playwright test --list e2e/coach-readiness-brief.spec.ts
+2 tests listed (chromium, readme-screenshots)
+# print test exists and compiles; not executed because no Playwright server was started
+
 $ npx vitest run src/components/coach/readiness/__tests__/InterviewBrief.test.tsx
 2 passed
 
