@@ -423,59 +423,72 @@ class DebriefService:
         proposal = next((item for item in proposals if item.id == proposal_id), None)
         if proposal is None:
             raise ReadinessError("not_found")
-        if not proposal.accepted:
-            if proposal.kind == "question_bank":
-                # Accept is idempotent: only texts not already stored are created.
-                existing = {
-                    _normalised(str(item.question))
-                    for item in (
-                        await self._session.execute(select(QuestionBankItem))
-                    ).scalars()
-                    if str(item.question or "").strip()
-                }
-                for text in proposal.questions:
-                    if _normalised(text) in existing:
-                        continue
-                    await create_question_bank_item(
-                        self._session,
-                        QuestionBankCreate(
-                            title=text[:256],
-                            question=text,
-                            answer_draft="Draft",
-                            linked_applications=[round_row.application_id],
-                            source="interview_prep",
-                        ),
-                    )
-                    existing.add(_normalised(text))
-            elif proposal.story_id:
-                if not await StoryService().record_use(
-                    proposal.story_id, self._session
-                ):
-                    raise ReadinessError("not_found")
+        if proposal.accepted:
+            return self._read(round_row, row)
 
-            updated = [
-                asdict(item)
-                for item in proposals
-            ]
-            for item in updated:
-                if item["id"] == proposal_id:
-                    item["accepted"] = True
-            result = await self._session.execute(
-                update(CoachInterviewDebrief)
-                .where(CoachInterviewDebrief.id == row.id)
-                .values(
-                    proposals_json=updated,
-                    version=row.version + 1,
-                    updated_at=_naive_utc(now),
-                )
+        # Claim the accept before any domain write: concurrent accepts collide
+        # on the version guard and exactly one performs the writes (AC27).
+        claimed = [asdict(item) for item in proposals]
+        for item in claimed:
+            if item["id"] == proposal_id:
+                item["accepted"] = True
+        result = await self._session.execute(
+            update(CoachInterviewDebrief)
+            .where(
+                CoachInterviewDebrief.id == row.id,
+                CoachInterviewDebrief.version == row.version,
             )
-            if (result.rowcount or 0) == 0:
-                raise ReadinessError("version_conflict")
-            await self._session.flush()
+            .values(
+                proposals_json=claimed,
+                version=row.version + 1,
+                updated_at=_naive_utc(now),
+            )
+        )
+        if (result.rowcount or 0) == 0:
+            # Lost the race: return the state the winner wrote.
             row = await self._row(round_id)
             if row is None:
                 raise ReadinessError("version_conflict")
-        return self._read(round_row, row)
+            return self._read(round_row, row)
+
+        if proposal.kind == "question_bank":
+            # Accept is idempotent: only texts not already stored are created.
+            existing = {
+                _normalised(str(item.question))
+                for item in (
+                    await self._session.execute(select(QuestionBankItem))
+                ).scalars()
+                if str(item.question or "").strip()
+            }
+            for text in proposal.questions:
+                if _normalised(text) in existing:
+                    continue
+                await create_question_bank_item(
+                    self._session,
+                    QuestionBankCreate(
+                        title=text[:256],
+                        question=text,
+                        answer_draft="Draft",
+                        linked_applications=[round_row.application_id],
+                        source="interview_prep",
+                    ),
+                )
+                existing.add(_normalised(text))
+        elif proposal.story_id:
+            if not await StoryService().record_use(proposal.story_id, self._session):
+                raise ReadinessError("not_found")
+
+        return replace(
+            self._read(round_row, row),
+            version=row.version + 1,
+            proposals=tuple(
+                proposal
+                for proposal in (
+                    _deserialize_proposal(value) for value in claimed
+                )
+                if proposal is not None
+            ),
+        )
 
     async def extract_notes(self, round_id: str, now: datetime) -> tuple[str, ...]:
         """Tier T proposal of the asked questions; nothing is saved (spec §10)."""

@@ -62,12 +62,14 @@ def _chat(content: str) -> dict:
 
 
 async def _seed(db: AsyncSession, *, description: str | None = None) -> None:
-    db.add(Application(id="prop-app", job_id="prop-job", status="interview", priority="normal"))
     db.add(JobPosting(
         id="prop-job", title="Delivery Lead", company="Northwind",
         url="https://example.test/prop", source="synthetic",
         description=description or "We are hiring a delivery lead.\n- Own quarterly planning across four teams.",
     ))
+    # Flush in FK order: the file-backed race DB enforces foreign keys.
+    await db.flush()
+    db.add(Application(id="prop-app", job_id="prop-job", status="interview", priority="normal"))
     db.add(InterviewRound(
         id="prop-round", application_id="prop-app", round_number=1,
         type="behavioural", scheduled_at=datetime(2026, 11, 9, 10, 0),
@@ -346,3 +348,104 @@ async def test_extracted_competencies_labelled_and_capped(
         "quarterly planning", "risk management", "stakeholder reporting",
     ]
     assert all(item.label == "from the job description" for item in extracted)
+
+
+def _committing_app(factory):
+    from fastapi import FastAPI
+
+    from app.database import Base, get_db  # noqa: F401  (Base imported above)
+    from app.routers.coach_readiness import router
+
+    app = FastAPI()
+    app.include_router(router)
+
+    async def request_db():
+        async with factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    app.dependency_overrides[get_db] = request_db
+    return app
+
+
+async def _accept_race(tmp_path, *, story_id: str | None):
+    from fastapi import FastAPI  # noqa: F401
+
+    from app.database import Base as _Base, create_sqlite_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    import asyncio
+
+    engine = create_sqlite_engine(f"sqlite+aiosqlite:///{tmp_path / 'accept.db'}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(_Base.metadata.create_all)
+    try:
+        async with factory() as db:
+            await _seed(db)
+            saved = await DebriefService(db).save(
+                "prop-round",
+                SaveDebriefCommand(
+                    expected_version=0,
+                    overall=4,
+                    questions=(
+                        _question(
+                            "How do you handle a stakeholder who disagrees?",
+                            story_id=story_id,
+                        ),
+                    ),
+                ),
+                NOW,
+            )
+            await db.commit()
+            proposal = next(
+                item for item in saved.proposals
+                if item.kind == ("story_use" if story_id else "question_bank")
+            )
+        app = _committing_app(factory)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            responses = await asyncio.gather(*(
+                client.post(
+                    "/api/coach/readiness/rounds/prop-round/debrief/proposals/"
+                    f"{proposal.id}/accept"
+                )
+                for _ in range(3)
+            ))
+        for response in responses:
+            assert response.status_code == 200, response.text
+        return factory
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_accepts_make_one_question_bank_item(tmp_path) -> None:
+    factory = await _accept_race(tmp_path, story_id=None)
+
+    async with factory() as db:
+        items = (
+            await db.execute(
+                select(QuestionBankItem).where(
+                    QuestionBankItem.question
+                    == "How do you handle a stakeholder who disagrees?"
+                )
+            )
+        ).scalars().all()
+    assert len(items) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_accepts_record_one_story_use(tmp_path) -> None:
+    factory = await _accept_race(tmp_path, story_id="prop-story")
+
+    async with factory() as db:
+        usages = (
+            await db.execute(
+                select(StoryUsage).where(StoryUsage.story_id == "prop-story")
+            )
+        ).scalars().all()
+    assert len(usages) == 1
