@@ -1061,7 +1061,9 @@ async def get_interview_brief(
         raise HTTPException(status_code=404, detail="not_found")
     if (
         data["state"] == "active"
-        and data["enhancement"]["state"] in {"none", "outdated"}
+        # "enhancing" is included so a stale row (no generation actually in
+        # flight, e.g. after a restart) recovers on the next read.
+        and data["enhancement"]["state"] in {"none", "outdated", "enhancing"}
         and settings.HATCH_COACH_BRIEF_ENABLED
     ):
         data = await brief_service.request_enhancement(db, round_id, datetime.now(UTC)) or data

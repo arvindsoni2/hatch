@@ -184,3 +184,65 @@ Named repair tests (all passing):
 | `test_purged_tips_read_as_none_and_requeue` | purged text reads `none`, then exactly one re-queue (`model_dispatches` 1 → 2) |
 | `test_reads_while_enhancing_make_one_model_call` | three GETs of the brief while enhancing produce exactly 1 model call |
 | `test_enhancing_row_reads_enhancing` | a stored `enhancing` row with no text reads `enhancing` |
+
+## Repair cycle 2
+
+Findings from the review of `2ea0572` and fixes:
+
+- **Stuck enhancing (High A):** `request_enhancement` returns early on `enhancing` only while `_INFLIGHT` holds a key for that round (`_inflight_for`). A stale row — nothing in flight, e.g. after a restart — re-queues: `enhanced_text_id` cleared, state stays `enhancing`, a task starts. The GET route now also requests on `enhancing`, so a plain read recovers a stale row.
+- **Concurrent reads (High B):** the round is claimed in `_INFLIGHT` before the first await, and the claim is discarded if the row write fails. The row insert is idempotent: an `IntegrityError` from a concurrent insert rolls back and reloads the row.
+- **Low:** Question Bank questions now say "Open answer" and practice-session questions "Draft answer". The Question Bank page has no `?item=` deep-link handling and adding it is not a one-line change, so "Open answer" links to the Question Bank list (`/prep/question-bank`); noted here as the reviewer asked.
+
+GREEN (real output):
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_coach_brief.py \
+    tests/integration/test_coach_brief_enhancement.py \
+    tests/test_services/test_coach_readiness_scheduler.py \
+    tests/integration/test_coach_brief_lifecycle.py \
+    tests/runtime/test_coach_readiness_bindings.py
+34 passed in 12.32s
+
+$ python -m pytest -q --no-cov tests/test_services/test_source_events.py \
+    tests/integration/test_coach_readiness_cascade.py \
+    tests/integration/test_coach_readiness_fencing.py \
+    tests/security/test_coach_readiness_canary.py \
+    tests/architecture/test_coach_readiness_imports.py \
+    tests/runtime/test_coach_readiness_bindings.py \
+    tests/test_services/test_coach_grounding.py tests/benchmarks/coach/test_phase2_suite.py
+45 passed in 14.88s
+
+$ npx vitest run src/components/coach/readiness src/app/coach/readiness
+36 passed (36)
+
+$ npx playwright test e2e/coach-readiness-brief.spec.ts --project=chromium
+1 passed (5.1s)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ ruff check app/ tests/
+All checks passed!
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+
+$ python -m pytest -q --no-cov tests \
+    --ignore=tests/test_tools/test_embedder.py \
+    --ignore=tests/test_tools/test_semantic_scorer.py
+4128 passed, 2 skipped in 685.96s
+```
+
+Named repair tests (all passing):
+
+| Test | Asserts |
+|---|---|
+| `test_stale_enhancing_row_requeues_on_read` | a row left `enhancing` with `_INFLIGHT` empty: one GET re-queues, exactly 1 model call, one row, final state `current` |
+| `test_concurrent_reads_make_one_model_call_and_one_row` | `asyncio.gather` of three GETs on a fresh brief: all 200 `enhancing`, exactly 1 model call, exactly one `coach_interview_briefs` row |
+| `test_scheduler_requeues_stale_enhancing_row` | the 30-minute job re-queues a stale `enhancing` row for a round in the next 7 days |

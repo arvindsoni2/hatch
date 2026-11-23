@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app import database
 from app.config import settings
@@ -412,6 +413,12 @@ async def _run_enhancement(round_id: str, context: dict, key: str) -> None:
         _INFLIGHT.discard(key)
 
 
+def _inflight_for(round_id: str) -> bool:
+    """True while any generation for this round is queued or running."""
+    prefix = f"{round_id}:"
+    return any(key.startswith(prefix) for key in _INFLIGHT)
+
+
 async def request_enhancement(db, round_id: str, now: datetime) -> dict[str, Any] | None:
     if not settings.HATCH_COACH_BRIEF_ENABLED:
         return None
@@ -424,10 +431,17 @@ async def request_enhancement(db, round_id: str, now: datetime) -> dict[str, Any
     data, context = built
     if data["state"] == "archived":
         return data
-    if data["enhancement"]["state"] in {"current", "enhancing"}:
+    if data["enhancement"]["state"] == "current":
+        return data
+    if data["enhancement"]["state"] == "enhancing" and _inflight_for(round_id):
         return data
     key = f"{round_id}:{context['fingerprint']}"
-    if key not in _INFLIGHT:
+    if key in _INFLIGHT:
+        data["enhancement"]["state"] = "enhancing"
+        return data
+    # Claim the round before the first await so concurrent reads dedupe here.
+    _INFLIGHT.add(key)
+    try:
         row = (await db.execute(
             select(CoachInterviewBrief).where(
                 CoachInterviewBrief.interview_round_id == round_id
@@ -436,13 +450,31 @@ async def request_enhancement(db, round_id: str, now: datetime) -> dict[str, Any
         if row is None:
             db.add(CoachInterviewBrief(interview_round_id=round_id, enhancement_state="enhancing"))
         else:
-            # Old tips never read as current while the fresh ones are on their way.
+            # Old tips never read as current while the fresh ones are on their
+            # way. A stale enhancing row (no in-flight task, e.g. after a
+            # restart) re-queues here too.
             row.enhancement_state = "enhancing"
             row.enhanced_text_id = None
         await db.commit()
-        _INFLIGHT.add(key)
-        task = asyncio.create_task(_run_enhancement(round_id, context, key))
-        _TASKS.add(task)
-        task.add_done_callback(_TASKS.discard)
+    except IntegrityError:
+        # A concurrent request inserted the row first; our write is idempotent.
+        await db.rollback()
+        row = (await db.execute(
+            select(CoachInterviewBrief).where(
+                CoachInterviewBrief.interview_round_id == round_id
+            )
+        )).scalar_one_or_none()
+        if row is None:
+            _INFLIGHT.discard(key)
+            raise
+        row.enhancement_state = "enhancing"
+        row.enhanced_text_id = None
+        await db.commit()
+    except Exception:
+        _INFLIGHT.discard(key)
+        raise
+    task = asyncio.create_task(_run_enhancement(round_id, context, key))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
     data["enhancement"]["state"] = "enhancing"
     return data

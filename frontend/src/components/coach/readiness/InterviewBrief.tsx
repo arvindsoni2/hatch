@@ -135,11 +135,9 @@ export function InterviewBrief({ roundId }: { roundId: string }) {
                     </p>
                     <a
                       className="text-sm font-medium text-[var(--accent)] underline-offset-4 hover:underline"
-                      href={item.source === "question_bank"
-                        ? `/prep/question-bank?item=${encodeURIComponent(item.id)}`
-                        : "/coach"}
+                      href={item.source === "question_bank" ? "/prep/question-bank" : "/coach"}
                     >
-                      {item.source === "question_bank" ? "Draft answer" : "Open answer"}
+                      {item.source === "question_bank" ? "Open answer" : "Draft answer"}
                     </a>
                   </li>
                 ))}
