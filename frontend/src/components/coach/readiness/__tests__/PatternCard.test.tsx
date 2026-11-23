@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import React from "react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -67,6 +68,33 @@ describe("PatternCard", () => {
       expect(screen.getByText(copy)).toBeVisible();
       unmount();
     }
+  });
+
+  it("keeps polling after a StrictMode effect replay", async () => {
+    const user = userEvent.setup();
+    let tipsRequests = 0;
+    vi.mocked(global.fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/tips")) {
+        tipsRequests += 1;
+        return tipsRequests === 1
+          ? { ok: true, status: 202, json: async () => ({ operation_id: "op-1", status: "queued" }), text: async () => "" } as Response
+          : { ok: true, status: 200, json: async () => ({ tips: ["A tip."], status: "succeeded" }), text: async () => "" } as Response;
+      }
+      if (url.includes("/operations/op-1")) {
+        return { ok: true, status: 200, json: async () => ({ operation_id: "op-1", status: "succeeded" }), text: async () => "" } as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => "" } as Response;
+    });
+
+    render(
+      <React.StrictMode>
+        <PatternCard pattern={base} />
+      </React.StrictMode>,
+    );
+    await user.click(screen.getByRole("button", { name: "Tips" }));
+
+    await waitFor(() => expect(screen.getByText("A tip.")).toBeVisible());
   });
 
   it("dismisses and can undo a dismissal", async () => {

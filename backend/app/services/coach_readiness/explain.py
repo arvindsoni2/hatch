@@ -96,6 +96,8 @@ def _route_base_url(route: str) -> str:
         from app.agents.tools.profile_loader import load_profile
 
         llm = load_profile().llm
+        if getattr(llm, "provider", None) != "llamacpp":
+            return ROUTE_URLS.get(route, ROUTE_URLS["llm-primary"])
         if route == "llm-triage":
             return (llm.triage_base_url or llm.base_url or ROUTE_URLS[route]).rstrip("/")
         if route == "llm-primary":
@@ -285,13 +287,26 @@ async def request_tips(db: AsyncSession, fingerprint: str) -> tuple[int, dict[st
             "status": "queued",
             "derived_text_id": None,
         }
-        if len(_OPERATIONS) > 200:
-            _OPERATIONS.pop(next(iter(_OPERATIONS)))
+        _evict_operations()
         _INFLIGHT[key] = operation_id
     task = asyncio.create_task(_run(operation_id, context, deadline_at))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return 202, {"operation_id": operation_id, "status": "queued"}
+
+
+def _evict_operations() -> None:
+    while len(_OPERATIONS) > 200:
+        victim = next(
+            (
+                key for key, value in _OPERATIONS.items()
+                if value["status"] not in {"queued", "running"}
+            ),
+            None,
+        )
+        if victim is None:
+            return
+        _OPERATIONS.pop(victim)
 
 
 def operation(operation_id: str) -> dict[str, Any] | None:

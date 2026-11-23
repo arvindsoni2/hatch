@@ -279,3 +279,39 @@ async def test_tips_without_stored_excerpts_use_the_rubric(
         finished = await wait_for_operation(client, response.json()["operation_id"])
 
     assert finished["status"] == "succeeded"
+
+
+def test_openrouter_profile_never_reuses_its_base_url(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from app.agents.tools import profile_loader
+
+    monkeypatch.setattr(
+        profile_loader,
+        "load_profile",
+        lambda: SimpleNamespace(
+            llm=SimpleNamespace(
+                provider="openrouter",
+                base_url="https://openrouter.ai/api/v1",
+                triage_base_url="https://openrouter.ai/api/v1",
+            )
+        ),
+    )
+    assert explain._route_base_url("llm-primary") == explain.ROUTE_URLS["llm-primary"]
+
+
+def test_operation_cap_never_evicts_running_work() -> None:
+    original = explain._OPERATIONS.copy()
+    explain._OPERATIONS.clear()
+    try:
+        explain._OPERATIONS["running"] = {"operation_id": "running", "status": "running"}
+        for index in range(200):
+            explain._OPERATIONS[f"done-{index}"] = {
+                "operation_id": f"done-{index}", "status": "succeeded",
+            }
+        explain._evict_operations()
+        assert len(explain._OPERATIONS) == 200
+        assert explain._OPERATIONS["running"]["status"] == "running"
+    finally:
+        explain._OPERATIONS.clear()
+        explain._OPERATIONS.update(original)
