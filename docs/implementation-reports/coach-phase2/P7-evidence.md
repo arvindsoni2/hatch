@@ -95,7 +95,7 @@ Model calls in tests: none live. Brief enhancement uses the same local-only rout
 
 Not run / known limits:
 
-- The Playwright A4 print test is still missing; the print stylesheet is in `InterviewBrief.tsx`. P7 is not complete until `frontend/e2e/coach-readiness-brief.spec.ts` exists and passes.
+- The Playwright A4 print spec is `frontend/e2e/coach-readiness-brief.spec.ts`; it was not run in this environment (no Playwright server/browser session).
 - The P3 bench/acceptance-smoke owner items remain open.
 
 Ready for review: yes.
