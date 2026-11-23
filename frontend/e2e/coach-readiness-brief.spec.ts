@@ -99,7 +99,7 @@ test("test_print_layout_one_page", async ({ page }) => {
 
   await page.goto("/applications/app-brief-e2e");
   await page.getByRole("button", { name: "Interviews" }).click();
-  await page.getByRole("button", { name: "Brief", exact: true }).click();
+  await page.getByRole("tab", { name: "Brief", exact: true }).click();
 
   await expect(page.getByText("Likely questions")).toBeVisible();
   await expect(page.getByText("Your best stories")).toBeVisible();

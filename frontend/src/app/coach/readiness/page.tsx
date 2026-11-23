@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+import { Button, buttonVariants } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { FocusAreaEditor } from "@/components/coach/readiness/FocusAreaEditor";
 import { FocusAreas } from "@/components/coach/readiness/FocusAreas";
 import { PatternGroup } from "@/components/coach/readiness/PatternGroup";
@@ -15,6 +17,7 @@ import { SectionCard } from "@/components/ui/section-card";
 import {
   dismissPattern,
   fetchFocusAreas,
+  fetchInterviewBrief,
   fetchPatterns,
   patchFocusArea,
   undoPatternDismissal,
@@ -31,6 +34,14 @@ const TABS = [
   { href: "/coach/readiness", label: "Readiness" },
 ];
 
+const NEXT_BADGE: Record<string, { tone: "neutral" | "info" | "success" | "warning"; label: string }> = {
+  none: { tone: "neutral", label: "Ready" },
+  enhancing: { tone: "info", label: "Adding tips" },
+  current: { tone: "success", label: "Brief ready" },
+  outdated: { tone: "warning", label: "Tips out of date" },
+  unavailable: { tone: "neutral", label: "Ready" },
+};
+
 export default function ReadinessPage() {
   const timeZone = useDisplayTimeZone();
   const [groups, setGroups] = useState<PatternGroupSection[]>([]);
@@ -40,6 +51,7 @@ export default function ReadinessPage() {
   const [lastDismissed, setLastDismissed] = useState<string | null>(null);
   const [focusAreas, setFocusAreas] = useState<FocusArea[]>([]);
   const [nextRound, setNextRound] = useState<InterviewRound | null>(null);
+  const [nextBriefState, setNextBriefState] = useState<string | null>(null);
   const [focusCount, setFocusCount] = useState(0);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorInitial, setEditorInitial] = useState<{
@@ -71,7 +83,17 @@ export default function ReadinessPage() {
     load();
     loadFocus();
     getUpcomingInterviews(90)
-      .then((items) => setNextRound(items[0] ?? null))
+      .then((items) => {
+        // Only a round you can still take gets a brief.
+        const next = items.find(
+          (round) => round.status === "scheduled" || round.status === "rescheduled",
+        ) ?? null;
+        setNextRound(next);
+        if (!next) return;
+        fetchInterviewBrief(next.id)
+          .then((brief) => setNextBriefState(brief.enhancement?.state ?? null))
+          .catch(() => setNextBriefState(null));
+      })
       .catch(() => setNextRound(null));
   }, []);
 
@@ -196,21 +218,29 @@ export default function ReadinessPage() {
           {nextRound ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-[var(--text)]">
+                <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--text)]">
                   {nextRound.type.replaceAll("_", " ")} interview
+                  <StatusBadge tone={(NEXT_BADGE[nextBriefState ?? "none"] ?? NEXT_BADGE.none).tone}>
+                    {(NEXT_BADGE[nextBriefState ?? "none"] ?? NEXT_BADGE.none).label}
+                  </StatusBadge>
                 </p>
-                <p className="text-xs text-[var(--text-dim)]">
+                <p className="mb-0 mt-1 text-xs text-[var(--text-dim)]">
                   {nextRound.scheduled_at
                     ? formatInterviewTime(nextRound.scheduled_at, timeZone)
                     : "No date yet"}
                 </p>
               </div>
-              <Link
-                href={`/applications/${nextRound.application_id}`}
-                className="text-sm font-semibold text-[var(--accent)] underline-offset-4 hover:underline"
-              >
-                Open brief
-              </Link>
+              <div className="flex items-center gap-2">
+                <Link href={`/applications/${nextRound.application_id}`} className={buttonVariants()}>
+                  Open brief
+                </Link>
+                <Button
+                  variant="outline"
+                  onClick={() => window.dispatchEvent(new Event("hatch:plan-week"))}
+                >
+                  Plan my week
+                </Button>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-[var(--text-dim)]">Add your interview date to get a brief</p>

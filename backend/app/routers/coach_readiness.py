@@ -1064,9 +1064,7 @@ async def get_interview_brief(
         and data["enhancement"]["state"] in {"none", "outdated"}
         and settings.HATCH_COACH_BRIEF_ENABLED
     ):
-        updated = await brief_service.request_enhancement(db, round_id, datetime.now(UTC))
-        if updated is not None:
-            data["enhancement"]["state"] = "enhancing"
+        data = await brief_service.request_enhancement(db, round_id, datetime.now(UTC)) or data
     return data
 
 
@@ -1080,5 +1078,4 @@ async def retry_interview_brief_tips(
     data = await brief_service.request_enhancement(db, round_id, datetime.now(UTC))
     if data is None:
         raise HTTPException(status_code=404, detail="not_found")
-    data["enhancement"]["state"] = "enhancing"
     return data

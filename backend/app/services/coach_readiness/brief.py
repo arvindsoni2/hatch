@@ -68,6 +68,9 @@ ASK_TEMPLATES = {
 }
 ENHANCE_TASK = "coach.readiness.brief_enhance"
 ENHANCE_PROMPT = "brief-enhance-v1"
+# Dedupe: one enhancement per (round, fingerprint) while queued or running.
+_INFLIGHT: set[str] = set()
+_TASKS: set[asyncio.Task] = set()
 
 
 def _utc(value: datetime) -> datetime:
@@ -130,6 +133,13 @@ async def _story_rows(db, coverage_map):
 
 
 async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None:
+    built = await _build_brief(db, round_id, now)
+    return built[0] if built else None
+
+
+async def _build_brief(
+    db, round_id: str, now: datetime
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     round_row = await db.get(InterviewRound, round_id)
     if round_row is None:
         return None
@@ -210,6 +220,8 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
         state = "current"
     elif brief_row and enhanced:
         state = "outdated"
+    elif brief_row and brief_row.enhancement_state == "enhancing":
+        state = "enhancing"
     elif brief_row and brief_row.enhancement_state == "unavailable":
         state = "unavailable"
     else:
@@ -226,7 +238,7 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
         if isinstance(item, dict)
     }
     archived = _round_archived(round_row, now)
-    return {
+    data: dict[str, Any] = {
         "round_id": round_row.id,
         "state": "archived" if archived else "active",
         "header": {
@@ -240,7 +252,12 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
             "location": round_row.location,
         },
         "likely_questions": [
-            {"id": item.id, "text": item.text, "source": (item.source_ref or {}).get("kind", "session_plan")}
+            {
+                "id": item.id, "text": item.text,
+                "source": "question_bank"
+                if (item.source_ref or {}).get("kind") == "question_bank_item"
+                else "session_plan",
+            }
             for item in questions
         ],
         "stories": [
@@ -263,18 +280,20 @@ async def build_brief(db, round_id: str, now: datetime) -> dict[str, Any] | None
         "ask_them": ask_them,
         "enhancement": {
             "state": state,
-            "fingerprint": fingerprint,
+            "fingerprint": f"sha256:{fingerprint}",
             "operation_id": None,
             "model_identity": enhanced.model_identity if enhanced else None,
         },
-        "_context": {
-            "stories": stories, "watch_outs": watch_outs,
-            "job_description": job_description, "fingerprint": fingerprint,
-            "question_refs": question_refs,
-            "round_id": round_row.id,
-            "round_version": round_row.updated_at.isoformat() if round_row.updated_at else "",
-        },
     }
+    context = {
+        "header": data["header"],
+        "stories": stories, "watch_outs": watch_outs,
+        "job_description": job_description, "fingerprint": fingerprint,
+        "question_refs": question_refs,
+        "round_id": round_row.id,
+        "round_version": round_row.updated_at.isoformat() if round_row.updated_at else "",
+    }
+    return data, context
 
 
 def _sources(context: dict) -> tuple[SourceRef, ...]:
@@ -314,8 +333,7 @@ async def _enhance_call(prompt: str) -> dict:
     return json.loads(content[start : end + 1])
 
 
-async def _run_enhancement(round_id: str, data: dict) -> None:
-    context = data["_context"]
+async def _run_enhancement(round_id: str, context: dict, key: str) -> None:
     request = GenerationRequest(
         task_id=ENHANCE_TASK,
         kind="brief",
@@ -338,10 +356,10 @@ async def _run_enhancement(round_id: str, data: dict) -> None:
             "brief_id": round_id,
             "input_fingerprint": "sha256:" + context["fingerprint"],
             "header": {
-                "company": data["header"]["company"],
-                "role": data["header"]["role"],
+                "company": context["header"]["company"],
+                "role": context["header"]["role"],
                 "round_type": BRIEF_ROUND_TYPE.get(
-                    data["header"]["round_type"], "behavioural"
+                    context["header"]["round_type"], "behavioural"
                 ),
             },
             "stories": [
@@ -372,9 +390,13 @@ async def _run_enhancement(round_id: str, data: dict) -> None:
                 )
             )).scalar_one_or_none()
             if row is not None:
-                row.enhancement_state = "unavailable" if outcome.status == "fenced" else "current"
-                row.enhanced_text_id = outcome.derived_text_id
-                row.enhancement_fingerprint = context["fingerprint"]
+                if outcome.status == "fenced":
+                    row.enhancement_state = "unavailable"
+                else:
+                    # Only a successful finalise publishes the fingerprint.
+                    row.enhancement_state = "current"
+                    row.enhanced_text_id = outcome.derived_text_id
+                    row.enhancement_fingerprint = context["fingerprint"]
             await db.commit()
     except Exception:
         async with database.AsyncSessionLocal() as db:
@@ -386,6 +408,8 @@ async def _run_enhancement(round_id: str, data: dict) -> None:
             if row is not None:
                 row.enhancement_state = "unavailable"
                 await db.commit()
+    finally:
+        _INFLIGHT.discard(key)
 
 
 async def request_enhancement(db, round_id: str, now: datetime) -> dict[str, Any] | None:
@@ -394,27 +418,31 @@ async def request_enhancement(db, round_id: str, now: datetime) -> dict[str, Any
     runtime = load_runtime()
     if runtime.get("ai_mode") not in {"local", "custom"}:
         return None
-    data = await build_brief(db, round_id, now)
-    if data is None or data["state"] == "archived":
+    built = await _build_brief(db, round_id, now)
+    if built is None:
+        return None
+    data, context = built
+    if data["state"] == "archived":
         return data
-    if data["enhancement"]["state"] == "current":
+    if data["enhancement"]["state"] in {"current", "enhancing"}:
         return data
-    row = (await db.execute(
-        select(CoachInterviewBrief).where(
-            CoachInterviewBrief.interview_round_id == round_id
-        )
-    )).scalar_one_or_none()
-    if row is None:
-        row = CoachInterviewBrief(
-            interview_round_id=round_id,
-            enhancement_state="enhancing",
-            enhancement_fingerprint=data["enhancement"]["fingerprint"],
-        )
-        db.add(row)
-    else:
-        row.enhancement_state = "enhancing"
-        row.enhancement_fingerprint = data["enhancement"]["fingerprint"]
-    await db.commit()
-    task = asyncio.create_task(_run_enhancement(round_id, data))
-    task.add_done_callback(lambda _task: None)
+    key = f"{round_id}:{context['fingerprint']}"
+    if key not in _INFLIGHT:
+        row = (await db.execute(
+            select(CoachInterviewBrief).where(
+                CoachInterviewBrief.interview_round_id == round_id
+            )
+        )).scalar_one_or_none()
+        if row is None:
+            db.add(CoachInterviewBrief(interview_round_id=round_id, enhancement_state="enhancing"))
+        else:
+            # Old tips never read as current while the fresh ones are on their way.
+            row.enhancement_state = "enhancing"
+            row.enhanced_text_id = None
+        await db.commit()
+        _INFLIGHT.add(key)
+        task = asyncio.create_task(_run_enhancement(round_id, context, key))
+        _TASKS.add(task)
+        task.add_done_callback(_TASKS.discard)
+    data["enhancement"]["state"] = "enhancing"
     return data

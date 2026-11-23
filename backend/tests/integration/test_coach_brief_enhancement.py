@@ -16,16 +16,16 @@ from app.models.job import JobPosting
 from app.models.job_score import JobScore
 from app.models.question_bank import QuestionBankItem
 from app.models.story import Story
-from app.repositories.story_repository import StoryRepository
-from app.schemas.story import StoryUpdate
 from app.services.coach_readiness import brief as brief_service
 from coach_readiness_support import (
     CHAT_COMPLETIONS,
     chat_completion,
+    client_for,
     configure_local_ai,
     fake_llama,
     model_dispatches,
     not_the_test_client,
+    readiness_app,
     seed_pattern_sessions,
 )
 
@@ -80,6 +80,13 @@ async def _wait_state(factory, state: str, timeout: float = 5.0) -> CoachIntervi
         await asyncio.sleep(0.05)
 
 
+def _output(text: str = "Delivered on time.") -> dict:
+    return {
+        "talking_points": [{"story_id": "enh-story", "text": text}],
+        "watch_outs": [],
+    }
+
+
 @pytest.mark.httpx_mock(should_mock=not_the_test_client)
 async def test_bad_enhancement_discarded_skeleton_kept(
     coach_database, httpx_mock, tmp_path, monkeypatch
@@ -117,17 +124,17 @@ async def test_successful_enhancement_sources_and_refresh(
     monkeypatch.setattr(settings, "HATCH_COACH_BRIEF_ENABLED", True)
     await seed_pattern_sessions(coach_database)
     await _seed(coach_database)
-    output = {
-        "talking_points": [{"story_id": "enh-story", "text": "Delivered on time."}],
-        "watch_outs": [],
-    }
     httpx_mock.add_callback(
-        lambda _request: httpx.Response(200, json=chat_completion(json.dumps(output))),
+        lambda _request: httpx.Response(
+            200, json=chat_completion(json.dumps(_output()))
+        ),
         method="POST", url=CHAT_COMPLETIONS, is_reusable=True,
     )
 
     async with coach_database() as db:
-        await brief_service.request_enhancement(db, "enh-round", NOW)
+        data = await brief_service.request_enhancement(db, "enh-round", NOW)
+        assert data["enhancement"]["state"] == "enhancing"
+        assert "_context" not in data
     await _wait_state(coach_database, "current")
     assert len(model_dispatches(httpx_mock)) == 1
     async with coach_database() as db:
@@ -142,17 +149,93 @@ async def test_successful_enhancement_sources_and_refresh(
         data = await brief_service.build_brief(db, "enh-round", NOW)
         assert data["enhancement"]["state"] == "current"
         assert data["stories"][0]["talking_point"] == "Delivered on time."
-        await StoryRepository(db).update("enh-story", StoryUpdate(title="Edited story"))
-        await db.commit()
-        data = await brief_service.build_brief(db, "enh-round", NOW)
-        assert data["enhancement"]["state"] == "outdated"
-        await brief_service.request_enhancement(db, "enh-round", NOW)
-    await _wait_state(coach_database, "current")
-    assert len(model_dispatches(httpx_mock)) == 2
+        assert data["likely_questions"][0]["source"] == "question_bank"
+
+
+@pytest.mark.httpx_mock(should_mock=not_the_test_client)
+async def test_fingerprint_change_hides_tips_and_requeues_once(
+    coach_database, httpx_mock, tmp_path, monkeypatch
+) -> None:
+    configure_local_ai(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "HATCH_COACH_BRIEF_ENABLED", True)
+    await seed_pattern_sessions(coach_database)
+    await _seed(coach_database)
+    httpx_mock.add_callback(
+        lambda _request: httpx.Response(
+            200, json=chat_completion(json.dumps(_output()))
+        ),
+        method="POST", url=CHAT_COMPLETIONS, is_reusable=True,
+    )
 
     async with coach_database() as db:
         await brief_service.request_enhancement(db, "enh-round", NOW)
-    assert len(model_dispatches(httpx_mock)) == 2
+    await _wait_state(coach_database, "current")
+
+    # The job description feeds the fingerprint but is never a source, so the
+    # re-queued generation cannot be fenced by it.
+    async with coach_database() as db:
+        job = await db.get(JobPosting, "enh-job")
+        job.description += " New requirement: budget ownership."
+        await db.commit()
+    async with coach_database() as db:
+        data = await brief_service.build_brief(db, "enh-round", NOW)
+        assert data["enhancement"]["state"] == "outdated"
+        assert data["stories"][0]["talking_point"] is None
+
+    calls: list[httpx.Request] = []
+    release = asyncio.Event()
+
+    async def delayed(_request: httpx.Request) -> httpx.Response:
+        calls.append(_request)
+        await release.wait()
+        return httpx.Response(
+            200, json=chat_completion(json.dumps(_output("Led the billing reset.")))
+        )
+
+    httpx_mock.reset()
+    httpx_mock.add_callback(delayed, method="POST", url=CHAT_COMPLETIONS, is_reusable=True)
+
+    async with coach_database() as db:
+        data = await brief_service.request_enhancement(db, "enh-round", NOW)
+        assert data["enhancement"]["state"] == "enhancing"
+    async with coach_database() as db:
+        data = await brief_service.build_brief(db, "enh-round", NOW)
+        assert data["enhancement"]["state"] == "enhancing"
+        assert data["stories"][0]["talking_point"] is None
+
+    # A second request while the first generation is in flight never re-queues.
+    async with coach_database() as db:
+        await brief_service.request_enhancement(db, "enh-round", NOW)
+    assert len(calls) == 1
+
+    release.set()
+    await _wait_state(coach_database, "current")
+    assert len(calls) == 1
+    async with coach_database() as db:
+        data = await brief_service.build_brief(db, "enh-round", NOW)
+        assert data["enhancement"]["state"] == "current"
+        assert data["stories"][0]["talking_point"] == "Led the billing reset."
+
+
+@pytest.mark.httpx_mock(should_mock=not_the_test_client)
+async def test_purged_tips_read_as_none_and_requeue(
+    coach_database, httpx_mock, tmp_path, monkeypatch
+) -> None:
+    configure_local_ai(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "HATCH_COACH_BRIEF_ENABLED", True)
+    await seed_pattern_sessions(coach_database)
+    await _seed(coach_database)
+    httpx_mock.add_callback(
+        lambda _request: httpx.Response(
+            200, json=chat_completion(json.dumps(_output()))
+        ),
+        method="POST", url=CHAT_COMPLETIONS, is_reusable=True,
+    )
+
+    async with coach_database() as db:
+        await brief_service.request_enhancement(db, "enh-round", NOW)
+    await _wait_state(coach_database, "current")
+    assert len(model_dispatches(httpx_mock)) == 1
 
     async with coach_database() as db:
         rows = (await db.execute(select(CoachInterviewBrief))).scalars().all()
@@ -164,3 +247,42 @@ async def test_successful_enhancement_sources_and_refresh(
         assert data["enhancement"]["state"] == "none"
         await brief_service.request_enhancement(db, "enh-round", NOW)
     await _wait_state(coach_database, "current")
+    assert len(model_dispatches(httpx_mock)) == 2
+
+
+@pytest.mark.httpx_mock(should_mock=not_the_test_client)
+async def test_reads_while_enhancing_make_one_model_call(
+    coach_database, httpx_mock, tmp_path, monkeypatch
+) -> None:
+    configure_local_ai(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "HATCH_COACH_BRIEF_ENABLED", True)
+    await seed_pattern_sessions(coach_database)
+    await _seed(coach_database)
+    release = asyncio.Event()
+
+    async def delayed(_request: httpx.Request) -> httpx.Response:
+        await release.wait()
+        return httpx.Response(
+            200, json=chat_completion(json.dumps(_output()))
+        )
+
+    httpx_mock.add_callback(delayed, method="POST", url=CHAT_COMPLETIONS, is_reusable=True)
+
+    app = readiness_app(coach_database)
+    async with client_for(app) as client:
+        for _ in range(3):
+            response = await client.get("/api/coach/readiness/rounds/enh-round/brief")
+            assert response.status_code == 200, response.text
+            assert response.json()["enhancement"]["state"] == "enhancing"
+            assert "_context" not in response.json()
+        assert len(model_dispatches(httpx_mock)) == 1
+        release.set()
+        deadline = asyncio.get_running_loop().time() + 5
+        while True:
+            response = await client.get("/api/coach/readiness/rounds/enh-round/brief")
+            if response.json()["enhancement"]["state"] == "current":
+                break
+            assert asyncio.get_running_loop().time() < deadline, "brief never became current"
+            await asyncio.sleep(0.05)
+        assert len(model_dispatches(httpx_mock)) == 1
+        assert response.json()["stories"][0]["talking_point"] == "Delivered on time."

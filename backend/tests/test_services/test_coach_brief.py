@@ -215,7 +215,7 @@ async def test_skeleton_reflects_edits_on_next_read(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fingerprint_change_hides_tips_and_marks_outdated(db_session) -> None:
+async def test_fingerprint_mismatch_reads_outdated(db_session) -> None:
     await _seed(db_session)
     text = CoachDerivedText(
         id="brief-text", kind="brief", cache_key="brief-cache",
@@ -237,7 +237,7 @@ async def test_fingerprint_change_hides_tips_and_marks_outdated(db_session) -> N
 
 
 @pytest.mark.asyncio
-async def test_purged_tips_read_as_none(db_session) -> None:
+async def test_purged_text_reads_as_none(db_session) -> None:
     await _seed(db_session)
     db_session.add(CoachInterviewBrief(
         id="brief-row", interview_round_id="brief-round",
@@ -273,6 +273,22 @@ async def test_brief_next_actions_for_upcoming_and_missing_round(db_session) -> 
     }
     assert any(item["round_id"] == "brief-round" and "brief ready" in item["action"] for item in actions)
     assert any(item["application_id"] == "brief-app-no-round" and item["round_id"] == "" for item in actions)
+
+
+@pytest.mark.asyncio
+async def test_enhancing_row_reads_enhancing(db_session) -> None:
+    await _seed(db_session)
+    db_session.add(CoachInterviewBrief(
+        id="brief-row", interview_round_id="brief-round",
+        enhancement_state="enhancing", enhanced_text_id=None,
+    ))
+    await db_session.commit()
+
+    data = await brief_service.build_brief(
+        db_session, "brief-round", datetime(2026, 12, 1, tzinfo=None)
+    )
+
+    assert data["enhancement"]["state"] == "enhancing"
 
 
 @pytest.mark.asyncio

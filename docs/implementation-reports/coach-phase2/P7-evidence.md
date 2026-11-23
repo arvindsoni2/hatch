@@ -119,3 +119,68 @@ Not run / known limits:
 - The P3 bench/acceptance-smoke owner items remain open.
 
 Ready for review: yes.
+
+## Repair cycle 1
+
+Review findings and fixes (commit `a6ea0db` was the pre-repair head):
+
+- **Fingerprint ownership:** `request_enhancement` no longer writes `enhancement_fingerprint`; only `_run_enhancement` sets it, and only after a successful (non-fenced) `finalise_generation`. Re-queueing from `outdated` clears `enhanced_text_id`, so old tips can never read as current while fresh ones generate.
+- **Dedupe:** a stored `enhancing` row with no current text reads as `enhancing`; `request_enhancement` returns without queueing then. An in-flight guard keyed on `{round_id}:{fingerprint}` (like `_INFLIGHT` in `explain.py`) closes the commit race; tasks are held in a module `_TASKS` set and discarded on completion.
+- **Response shape:** the brief payload no longer leaks `_context`; it matches spec Appendix B, with question sources reported as `question_bank | session_plan` and the enhancement fingerprint exposed as `sha256:…`.
+- **InterviewBrief:** polls while `enhancing`/`outdated` and stops on unmount (PatternCard's mounted-ref pattern); tips and watch-out sentences render in an `aria-live="polite"` region with skeleton lines while enhancing; an archived round shows a neutral "Archived" badge and no "Try again". Layout follows the design screen and README table (sentence-case title, sub-line, status line, question source sub-line with "Open answer"/"Draft answer", "Ready story" badge with competency chips, provenance line, watch-out source line, "No story yet" + outline "Draft a story", ask-them source line, When/Where/With/Round logistics).
+- **Round tabs** use tokens only with `role="tablist"`/`tab`/`aria-selected` and "Debrief after the interview"; the **Next interview** card shows a brief-state `StatusBadge`, default "Open brief" and outline "Plan my week", and only considers scheduled/rescheduled rounds.
+
+GREEN (real output):
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_coach_brief.py \
+    tests/integration/test_coach_brief_enhancement.py \
+    tests/test_services/test_coach_readiness_scheduler.py \
+    tests/integration/test_coach_brief_lifecycle.py \
+    tests/runtime/test_coach_readiness_bindings.py
+31 passed in 10.82s
+
+$ python -m pytest -q --no-cov tests/test_services/test_source_events.py \
+    tests/integration/test_coach_readiness_cascade.py \
+    tests/integration/test_coach_readiness_fencing.py \
+    tests/security/test_coach_readiness_canary.py \
+    tests/architecture/test_coach_readiness_imports.py \
+    tests/runtime/test_coach_readiness_bindings.py \
+    tests/test_services/test_coach_grounding.py tests/benchmarks/coach/test_phase2_suite.py
+45 passed in 14.98s
+
+$ npx vitest run src/components/coach/readiness src/app/coach/readiness
+36 passed (36)
+
+$ npx playwright test e2e/coach-readiness-brief.spec.ts --project=chromium
+1 passed (3.6s)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ ruff check app/ tests/
+All checks passed!
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+
+$ python -m pytest -q --no-cov tests \
+    --ignore=tests/test_tools/test_embedder.py \
+    --ignore=tests/test_tools/test_semantic_scorer.py
+4125 passed, 2 skipped in 862.46s
+```
+
+Named repair tests (all passing):
+
+| Test | Asserts |
+|---|---|
+| `test_fingerprint_change_hides_tips_and_requeues_once` | job description (a fingerprint input that is not a source) changes: read is `outdated` with no tips; the re-queue shows `enhancing`, no old talking point, not current; a second request does not re-queue; the fresh tips land as `current` |
+| `test_purged_tips_read_as_none_and_requeue` | purged text reads `none`, then exactly one re-queue (`model_dispatches` 1 → 2) |
+| `test_reads_while_enhancing_make_one_model_call` | three GETs of the brief while enhancing produce exactly 1 model call |
+| `test_enhancing_row_reads_enhancing` | a stored `enhancing` row with no text reads `enhancing` |
