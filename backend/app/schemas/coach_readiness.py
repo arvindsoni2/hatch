@@ -145,6 +145,25 @@ class DebriefReadResponse(BaseModel):
     proposals: list[DebriefProposalRead] = Field(default_factory=list)
 
 
+class MemoryKindSummaryRead(BaseModel):
+    kind: str
+    count: int
+    last_updated: str | None = None
+
+
+class MemoryInventoryRead(BaseModel):
+    kinds: list[MemoryKindSummaryRead] = Field(default_factory=list)
+
+
+class MemoryDeleteRead(BaseModel):
+    kind: str
+    removed: int
+
+
+class MemoryDeleteAllRead(BaseModel):
+    removed: dict[str, int] = Field(default_factory=dict)
+
+
 class ReadinessNextActionRead(BaseModel):
     application_id: str
     round_id: str
