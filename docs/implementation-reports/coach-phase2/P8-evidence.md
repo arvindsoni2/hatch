@@ -155,3 +155,43 @@ $ python -m pytest -q --no-cov tests \
 ```
 
 `answer_draft="Draft"` is left as it is for the owner to decide, per the review.
+
+## Repair cycle 2
+
+Two High findings from the review of `58dcd68`; only these were touched.
+
+- **H1 — background cache row rolled back (`4caac15`):** `_extract_and_cache` committed nothing, so the flushed `CoachDerivedText` row was discarded when the background session closed; every read re-called the model. The background session now commits after `finalise_generation` returns `succeeded`. Test `test_background_extraction_persists_the_cache_row` uses the file-backed `coach_database` fixture: a succeeding fake model, the first read returns the deterministic list, awaiting `_EXTRACT_TASKS` leaves exactly one `kind="competency"` row in a fresh session, and a second read returns the labelled competencies with no further model call. The test fails without the commit (verified by temporarily removing it) and passes with it.
+- **H2 — accepted version off by one (`fed90b8`):** the ORM `update()` synchronised `row.version`, so `version=row.version + 1` in the returned `DebriefRead` was one ahead of the database; the UI then saved with a stale version and got 409. `next_version` is captured before the UPDATE and used in both the `.values(version=...)` and the returned read. Test `test_accept_returns_the_persisted_version` accepts through the router, asserts the response version equals the DB row version, then PUTs the debrief with `expected_version=response version` and gets 200.
+
+GREEN (real output):
+
+```text
+$ python -m pytest -q --no-cov tests/test_services/test_coach_signals.py \
+    tests/test_services/test_coach_debrief_proposals.py \
+    tests/integration/test_coach_coverage_extract.py \
+    tests/test_services/test_coach_debrief.py tests/test_services/test_coach_brief.py \
+    tests/test_services/test_coach_coverage.py tests/test_routers/test_coach_debrief_router.py \
+    tests/test_routers/test_coach_coverage_router.py tests/integration/test_coach_debrief_cascade.py \
+    tests/integration/test_coach_brief_enhancement.py tests/test_services/test_coach_readiness_scheduler.py
+71 passed in 12.49s
+
+$ python -m pytest -q --no-cov tests/test_services/test_source_events.py \
+    tests/integration/test_coach_readiness_cascade.py \
+    tests/integration/test_coach_readiness_fencing.py \
+    tests/security/test_coach_readiness_canary.py \
+    tests/architecture/test_coach_readiness_imports.py \
+    tests/runtime/test_coach_readiness_bindings.py \
+    tests/test_services/test_coach_grounding.py tests/benchmarks/coach/test_phase2_suite.py
+45 passed in 12.71s
+
+$ ruff check app/services/coach_readiness/coverage.py \
+    app/services/coach_readiness/debrief.py \
+    tests/integration/test_coach_coverage_extract.py \
+    tests/test_services/test_coach_debrief_proposals.py
+All checks passed!
+
+$ git diff --check
+exit 0
+```
+
+`answer_draft="Draft"` remains untouched for the owner; no other files changed in this cycle.
