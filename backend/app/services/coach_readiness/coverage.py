@@ -4,19 +4,27 @@ The match key is internal. Responses always keep the first-seen original text.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
+import time
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import database
 from app.config import settings
 from app.models.application import Application
-from app.models.coach_readiness import CoachCompetencyOverride
+from app.models.coach_readiness import CoachCompetencyOverride, CoachDerivedText
 from app.models.job import JobPosting
 from app.models.job_score import JobScore
 from app.models.story import Story
 from app.repositories.story_repository import StoryRepository
+from app.services.ai_setup import load_runtime
 
 from .contracts import (
     Competency,
@@ -26,7 +34,14 @@ from .contracts import (
     CoverageOverride,
     CoverageOverview,
     CoverageStory,
+    GenerationRequest,
+    SourceRef,
+    ValidatedOutput,
+    finalise_generation,
+    input_fingerprint,
 )
+from .grounding import grounding_violations
+from .tiers import load_tier_map
 
 _STOPWORDS_PATH = Path(__file__).with_name("stopwords_en.txt")
 _STOPWORDS = frozenset(
@@ -122,6 +137,7 @@ def build_coverage(
                 competency=display,
                 status=status,
                 action=action,
+                label=competency.label,
                 stories=tuple(
                     CoverageStory(
                         story_id=story.id,
@@ -196,9 +212,12 @@ async def coverage_for_application(
     if application is None:
         return None
     stories = await StoryRepository(db).list_all_active_orm()
+    competencies = await _competencies_for_application(db, application)
+    if len(competencies) < 5:
+        competencies = (*competencies, *await _extracted_competencies(db, application))
     return build_coverage(
         application_id=application_id,
-        competencies=await _competencies_for_application(db, application),
+        competencies=competencies,
         stories=stories,
         overrides=await _overrides_for_application(db, application_id),
         covered_min=(
@@ -210,6 +229,181 @@ async def coverage_for_application(
             settings.HATCH_COACH_COVERAGE_THIN_MIN if thin_min is None else thin_min
         ),
     )
+
+
+_COMPETENCY_TASK = "coach.readiness.competency_extract"
+_COMPETENCY_PROMPT = "competency-extract-v1"
+_EXTRACTED_LABEL = "from the job description"
+_MAX_EXTRACTED = 4
+_MAX_INPUT_CHARS = 4_500  # ≤ 1,200 tokens at 4 characters per token (AC34).
+# A failed extraction is not retried on every read (P8 repair cycle 1).
+_EXTRACT_FAILURE_TTL_SECONDS = 600
+_EXTRACT_INFLIGHT: set[str] = set()
+_EXTRACT_TASKS: set[asyncio.Task] = set()
+_EXTRACT_FAILED: dict[str, float] = {}
+_SKILL_WORDS = (
+    "experience", "proficiency", "knowledge", "familiarity", "expertise",
+    "skilled", "responsible for", "must have", "required", "ownership of",
+)
+_BULLET_PREFIXES = ("-", "•", "*", "–")
+
+
+def requirement_lines(description: str) -> str:
+    """Requirement-like lines only: bullets and lines naming skills (§10)."""
+    lines: list[str] = []
+    for raw in str(description or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line[0] in _BULLET_PREFIXES or any(word in line.casefold() for word in _SKILL_WORDS):
+            lines.append(line)
+    return "\n".join(lines)[:_MAX_INPUT_CHARS]
+
+
+def _competencies_from(output: Mapping) -> tuple[Competency, ...]:
+    items: list[Competency] = []
+    seen: set[str] = set()
+    for value in output.get("competencies", ()):
+        if not isinstance(value, str) or not value.strip():
+            continue
+        key = match_key(value)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            Competency(text=value.strip(), match_key=key, label=_EXTRACTED_LABEL)
+        )
+        if len(items) == _MAX_EXTRACTED:
+            break
+    return tuple(items)
+
+
+async def _competency_call(text: str) -> dict:
+    from .explain import _route_base_url
+
+    tier = load_tier_map()["T"]
+    payload = {
+        "model": tier.model_id,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Return only JSON with a competencies array of at most four "
+                    "short skill names found in the job requirements."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        "temperature": 0,
+        "max_tokens": tier.max_output_tokens,
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(tier.deadline_s)) as client:
+        response = await client.post(
+            f"{_route_base_url(tier.route)}/chat/completions", json=payload
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+    start, end = content.find("{"), content.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("competency extraction is not JSON")
+    return json.loads(content[start : end + 1])
+
+
+def _extract_key(job_id: str, cache_key: str) -> str:
+    return f"{job_id}:{cache_key}"
+
+
+async def _extracted_competencies(
+    db: AsyncSession, application: Application
+) -> tuple[Competency, ...]:
+    """Cached Tier T extraction only; reads never call the model (spec §7.4).
+
+    A cache miss starts one background generation per job and description
+    hash, deduped in process; a failure marks the key so it is not retried
+    on every read.
+    """
+    if not settings.HATCH_COACH_STORY_COVERAGE_ENABLED:
+        return ()
+    if load_runtime().get("ai_mode") not in {"local", "custom"}:
+        return ()
+    if application.job_id is None:
+        return ()
+    job = await db.get(JobPosting, application.job_id)
+    if job is None:
+        return ()
+    text = requirement_lines(job.description or "")
+    if not text:
+        return ()
+
+    cache_key = (
+        f"competency:{job.id}:"
+        f"{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+    )
+    cached = (
+        await db.execute(
+            select(CoachDerivedText).where(CoachDerivedText.cache_key == cache_key)
+        )
+    ).scalar_one_or_none()
+    if cached is not None and isinstance(cached.text_json, Mapping):
+        return _competencies_from(cached.text_json)
+
+    key = _extract_key(job.id, cache_key)
+    if key in _EXTRACT_INFLIGHT:
+        return ()
+    if _EXTRACT_FAILED.get(key, 0.0) > time.monotonic():
+        return ()
+    _EXTRACT_INFLIGHT.add(key)
+    sources = (
+        SourceRef("job", job.id, job.updated_at.isoformat() if job.updated_at else ""),
+    )
+    task = asyncio.create_task(
+        _extract_and_cache(job.id, sources, cache_key, text, key)
+    )
+    _EXTRACT_TASKS.add(task)
+    task.add_done_callback(_EXTRACT_TASKS.discard)
+    return ()
+
+
+async def _extract_and_cache(
+    job_id: str, sources: tuple[SourceRef, ...], cache_key: str, text: str, key: str
+) -> None:
+    try:
+        output = await _competency_call(text)
+        case = {"job_id": job_id, "job_description": text}
+        if grounding_violations("competency_extract", output, case):
+            _EXTRACT_FAILED[key] = time.monotonic() + _EXTRACT_FAILURE_TTL_SECONDS
+            return
+        request = GenerationRequest(
+            task_id=_COMPETENCY_TASK,
+            kind="competency",
+            cache_key=cache_key,
+            input_fingerprint=input_fingerprint(
+                _COMPETENCY_TASK, sources, {"job": job_id}
+            ),
+            sources=sources,
+            params={"job": job_id},
+        )
+        async with database.AsyncSessionLocal() as db:
+            outcome = await finalise_generation(
+                db,
+                request,
+                ValidatedOutput(
+                    text_json=output,
+                    model_identity=load_tier_map()["T"].model_id or "",
+                    prompt_version=_COMPETENCY_PROMPT,
+                ),
+                datetime.now(UTC),
+            )
+            if outcome.status == "succeeded":
+                # The background session owns this transaction: without the
+                # commit, the flushed cache row is rolled back on close.
+                await db.commit()
+        if outcome.status == "fenced":
+            _EXTRACT_FAILED[key] = time.monotonic() + _EXTRACT_FAILURE_TTL_SECONDS
+    except Exception:
+        _EXTRACT_FAILED[key] = time.monotonic() + _EXTRACT_FAILURE_TTL_SECONDS
+    finally:
+        _EXTRACT_INFLIGHT.discard(key)
 
 
 async def coverage_overview(
@@ -258,7 +452,9 @@ async def coverage_overview(
         if count >= 2
     ]
     gaps.sort(key=lambda item: (-item.application_count, item.competency.casefold()))
-    return CoverageOverview(gaps=tuple(gaps))
+    from .signals import load_signals  # local import: signals reads coverage keys
+
+    return CoverageOverview(gaps=tuple(gaps), signals=await load_signals(db))
 
 
 async def replace_overrides(

@@ -1,25 +1,41 @@
-"""Commands and reads for real-interview debriefs (P2)."""
+"""Commands, reads, extraction and proposals for real-interview debriefs."""
 from __future__ import annotations
 
-from dataclasses import replace
+import hashlib
+import json
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
 from app.models.coach_readiness import CoachInterviewDebrief
+from app.models.question_bank import QuestionBankItem
+from app.models.story import Story
 from app.repositories.interview_repository import InterviewRepository
 from app.schemas.interview import InterviewRoundUpdate
+from app.schemas.question_bank import QuestionBankCreate
+from app.services.ai_setup import load_runtime
+from app.services.question_bank import create_question_bank_item
+from app.services.story_service import StoryService
 
 from .contracts import (
+    DebriefProposal,
     DebriefQuestion,
     DebriefRead,
     ReadinessError,
     SaveDebriefCommand,
 )
+from .grounding import grounding_violations
 from .questions import likely_questions
+from .tiers import load_tier_map
+
+EXTRACT_TASK = "coach.readiness.debrief_extract"
+EXTRACT_PROMPT = "debrief-extract-v1"
+_MAX_EXTRACT_QUESTIONS = 12
 
 _DEFAULT_DURATION_MINUTES = 60
 _MAX_QUESTIONS = 20
@@ -80,6 +96,25 @@ def _deserialize_question(value: object) -> DebriefQuestion | None:
     )
 
 
+def _normalised(text: str) -> str:
+    return " ".join(text.strip().casefold().split())
+
+
+def _deserialize_proposal(value: object) -> DebriefProposal | None:
+    if not isinstance(value, dict) or value.get("kind") not in {"question_bank", "story_use"}:
+        return None
+    return DebriefProposal(
+        id=str(value.get("id", "")),
+        kind=value["kind"],
+        questions=tuple(
+            item for item in value.get("questions", []) if isinstance(item, str)
+        ),
+        story_id=value.get("story_id") if isinstance(value.get("story_id"), str) else None,
+        story_title=value.get("story_title") if isinstance(value.get("story_title"), str) else None,
+        accepted=bool(value.get("accepted", False)),
+    )
+
+
 class DebriefService:
     """Read, save and skip a debrief for one real interview round."""
 
@@ -109,20 +144,27 @@ class DebriefService:
             for value in (row.questions_json or [])
             if (question := _deserialize_question(value)) is not None
         )
-        return DebriefRead(
-            status=row.status,
-            version=row.version,
-            overall=row.overall,
-            expectation=row.expectation,
-            questions=questions,
-            went_well=row.went_well,
-            do_differently=row.do_differently,
-            notes_text=row.notes_text,
-            round_id=round_row.id,
-            application_id=round_row.application_id,
-            round_status=round_row.status,
-            scheduled_at=round_row.scheduled_at,
-            duration_minutes=round_row.duration_minutes,
+        return replace(
+            DebriefRead(
+                status=row.status,
+                version=row.version,
+                overall=row.overall,
+                expectation=row.expectation,
+                questions=questions,
+                went_well=row.went_well,
+                do_differently=row.do_differently,
+                notes_text=row.notes_text,
+                round_id=round_row.id,
+                application_id=round_row.application_id,
+                round_status=round_row.status,
+                scheduled_at=round_row.scheduled_at,
+                duration_minutes=round_row.duration_minutes,
+            ),
+            proposals=tuple(
+                proposal
+                for value in (row.proposals_json or [])
+                if (proposal := _deserialize_proposal(value)) is not None
+            ),
         )
 
     async def get_or_due(self, round_id: str, now: datetime) -> DebriefRead | None:
@@ -150,7 +192,10 @@ class DebriefService:
         )
 
     def _validate(self, command: SaveDebriefCommand) -> None:
-        if not 1 <= int(command.overall) <= 5:
+        if command.overall is not None and not 1 <= int(command.overall) <= 5:
+            raise ReadinessError("invalid_input")
+        if command.overall is None and not (command.notes_text or "").strip():
+            # A notes-only draft is the only save without the overall rating.
             raise ReadinessError("invalid_input")
         if command.expectation is not None and command.expectation not in _EXPECTATIONS:
             raise ReadinessError("invalid_input")
@@ -191,23 +236,37 @@ class DebriefService:
         self._validate(command)
 
         moment = _naive_utc(now)
-        values = {
-            "status": "saved",
-            "overall": command.overall,
-            "expectation": command.expectation,
-            "questions_json": [
-                _serialize_question(question) for question in command.questions
-            ],
-            "went_well": command.went_well,
-            "do_differently": command.do_differently,
-            "notes_text": command.notes_text,
-            "updated_at": moment,
-        }
+        if command.overall is None and row is not None:
+            # A notes-only save touches the notes and nothing else: a saved
+            # debrief stays saved; a skipped one becomes a draft again.
+            values = {
+                "notes_text": command.notes_text,
+                "updated_at": moment,
+            }
+            if row.status == "skipped":
+                values["status"] = "draft"
+        else:
+            values = {
+                "status": "draft" if command.overall is None else "saved",
+                "overall": command.overall,
+                "expectation": command.expectation,
+                "questions_json": [
+                    _serialize_question(question) for question in command.questions
+                ],
+                "went_well": command.went_well,
+                "do_differently": command.do_differently,
+                "notes_text": command.notes_text,
+                "proposals_json": [
+                    asdict(proposal) for proposal in await self._proposals(
+                        round_row.application_id, command.questions
+                    )
+                ],
+                "updated_at": moment,
+            }
         if row is None:
             row = CoachInterviewDebrief(
                 interview_round_id=round_id,
                 version=1,
-                proposals_json=[],
                 created_at=moment,
                 **values,
             )
@@ -289,3 +348,211 @@ class DebriefService:
         except IntegrityError as exc:
             raise ReadinessError("version_conflict") from exc
         return self._read(round_row, row)
+
+    async def _proposals(
+        self, application_id: str, questions: tuple[DebriefQuestion, ...]
+    ) -> tuple[DebriefProposal, ...]:
+        """S2 batch proposals from one save (spec §7.6); stored, never auto-run."""
+        asked = [question for question in questions if question.asked]
+        proposals: list[DebriefProposal] = []
+
+        unsourced: list[str] = []
+        existing = {
+            _normalised(str(item.question))
+            for item in (
+                await self._session.execute(select(QuestionBankItem))
+            ).scalars()
+            if str(item.question or "").strip()
+        }
+        for question in asked:
+            if question.source_ref or not question.text.strip():
+                # Ticked likely questions already come from the Question Bank.
+                continue
+            key = _normalised(question.text)
+            if key in existing or key in {_normalised(text) for text in unsourced}:
+                continue
+            unsourced.append(question.text.strip())
+        if unsourced:
+            fingerprint = hashlib.sha256(
+                "\x1f".join(unsourced).encode("utf-8")
+            ).hexdigest()[:16]
+            proposals.append(
+                DebriefProposal(
+                    id=f"question_bank:{fingerprint}",
+                    kind="question_bank",
+                    questions=tuple(unsourced),
+                )
+            )
+
+        story_ids = {
+            question.story_id
+            for question in asked
+            if question.story_id
+        }
+        if story_ids:
+            stories = {
+                row.id: row
+                for row in (
+                    await self._session.execute(
+                        select(Story).where(Story.id.in_(story_ids))
+                    )
+                ).scalars()
+            }
+            for story_id in sorted(stories):
+                story = stories.get(story_id)
+                if story is None:
+                    continue
+                proposals.append(
+                    DebriefProposal(
+                        id=f"story_use:{story_id}",
+                        kind="story_use",
+                        story_id=story_id,
+                        story_title=story.title,
+                    )
+                )
+        return tuple(proposals)
+
+    async def accept_proposal(
+        self, round_id: str, proposal_id: str, now: datetime
+    ) -> DebriefRead:
+        round_row = await self._round(round_id)
+        if round_row is None or not await self._active_application(
+            round_row.application_id
+        ):
+            raise ReadinessError("not_found")
+        row = await self._row(round_id)
+        if row is None:
+            raise ReadinessError("not_found")
+        proposals = [
+            proposal
+            for proposal in (
+                _deserialize_proposal(value) for value in (row.proposals_json or [])
+            )
+            if proposal is not None
+        ]
+        proposal = next((item for item in proposals if item.id == proposal_id), None)
+        if proposal is None:
+            raise ReadinessError("not_found")
+        if proposal.accepted:
+            return self._read(round_row, row)
+
+        # Claim the accept before any domain write: concurrent accepts collide
+        # on the version guard and exactly one performs the writes (AC27).
+        claimed = [asdict(item) for item in proposals]
+        for item in claimed:
+            if item["id"] == proposal_id:
+                item["accepted"] = True
+        # ORM update() syncs row.version in place, so capture the next version
+        # before it runs; the returned read must match the database row.
+        next_version = row.version + 1
+        result = await self._session.execute(
+            update(CoachInterviewDebrief)
+            .where(
+                CoachInterviewDebrief.id == row.id,
+                CoachInterviewDebrief.version == row.version,
+            )
+            .values(
+                proposals_json=claimed,
+                version=next_version,
+                updated_at=_naive_utc(now),
+            )
+        )
+        if (result.rowcount or 0) == 0:
+            # Lost the race: return the state the winner wrote.
+            row = await self._row(round_id)
+            if row is None:
+                raise ReadinessError("version_conflict")
+            return self._read(round_row, row)
+
+        if proposal.kind == "question_bank":
+            # Accept is idempotent: only texts not already stored are created.
+            existing = {
+                _normalised(str(item.question))
+                for item in (
+                    await self._session.execute(select(QuestionBankItem))
+                ).scalars()
+                if str(item.question or "").strip()
+            }
+            for text in proposal.questions:
+                if _normalised(text) in existing:
+                    continue
+                await create_question_bank_item(
+                    self._session,
+                    QuestionBankCreate(
+                        title=text[:256],
+                        question=text,
+                        answer_draft="Draft",
+                        linked_applications=[round_row.application_id],
+                        source="interview_prep",
+                    ),
+                )
+                existing.add(_normalised(text))
+        elif proposal.story_id:
+            if not await StoryService().record_use(proposal.story_id, self._session):
+                raise ReadinessError("not_found")
+
+        return replace(
+            self._read(round_row, row),
+            version=next_version,
+            proposals=tuple(
+                proposal
+                for proposal in (
+                    _deserialize_proposal(value) for value in claimed
+                )
+                if proposal is not None
+            ),
+        )
+
+    async def extract_notes(self, round_id: str, now: datetime) -> tuple[str, ...]:
+        """Tier T proposal of the asked questions; nothing is saved (spec §10)."""
+        round_row = await self._round(round_id)
+        if round_row is None or not await self._active_application(
+            round_row.application_id
+        ):
+            raise ReadinessError("not_found")
+        row = await self._row(round_id)
+        if row is None or not (row.notes_text or "").strip():
+            raise ReadinessError("invalid_input")
+        if load_runtime().get("ai_mode") not in {"local", "custom"}:
+            raise ReadinessError("temporarily_unavailable")
+
+        notes = row.notes_text[:_MAX_NOTES_TEXT]
+        case = {"debrief_id": row.id, "notes": notes}
+        try:
+            output = await _extract_call(notes)
+        except Exception:
+            raise ReadinessError("temporarily_unavailable") from None
+        if grounding_violations("debrief_extract", output, case):
+            raise ReadinessError("temporarily_unavailable")
+        return tuple(output["questions"][:_MAX_EXTRACT_QUESTIONS])
+
+
+async def _extract_call(notes: str) -> dict:
+    from .explain import _route_base_url
+
+    tier = load_tier_map()["T"]
+    payload = {
+        "model": tier.model_id,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Return only JSON with a questions array of the interview "
+                    "questions found in the notes, each at most 120 characters."
+                ),
+            },
+            {"role": "user", "content": notes},
+        ],
+        "temperature": 0,
+        "max_tokens": tier.max_output_tokens,
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(tier.deadline_s)) as client:
+        response = await client.post(
+            f"{_route_base_url(tier.route)}/chat/completions", json=payload
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+    start, end = content.find("{"), content.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("debrief extraction is not JSON")
+    return json.loads(content[start : end + 1])

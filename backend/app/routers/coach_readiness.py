@@ -46,9 +46,12 @@ from ..schemas.coach_readiness import (
     CoverageGapRead,
     CoverageMapRead,
     CoverageOverviewRead,
+    CoverageOverviewSignalRead,
     CoverageOverridesWrite,
     CoverageStoryRead,
     DebriefQuestionRead,
+    DebriefExtractRead,
+    DebriefProposalRead,
     DebriefReadResponse,
     ReadinessNextActionRead,
     SaveDebriefRequest,
@@ -100,6 +103,7 @@ def _map_read(result: CoverageMap) -> CoverageMapRead:
                 competency=item.competency,
                 status=item.status,
                 action=item.action,
+                label=item.label,
                 stories=[
                     CoverageStoryRead(
                         story_id=story.story_id,
@@ -150,6 +154,17 @@ def _debrief_read(result: DebriefRead) -> DebriefReadResponse:
         do_differently=result.do_differently,
         notes_text=result.notes_text,
         questions_added=result.questions_added,
+        proposals=[
+            DebriefProposalRead(
+                id=item.id,
+                kind=item.kind,
+                questions=list(item.questions),
+                story_id=item.story_id,
+                story_title=item.story_title,
+                accepted=item.accepted,
+            )
+            for item in result.proposals
+        ],
     )
 
 
@@ -160,6 +175,7 @@ def _readiness_error(exc: ReadinessError) -> HTTPException:
         "not_found": 404,
         "invalid_input": 422,
         "disabled": 403,
+        "temporarily_unavailable": 503,
     }.get(exc.code, 409)
     return HTTPException(status_code=status, detail=exc.code)
 
@@ -172,7 +188,17 @@ def _overview_read(result: CoverageOverview) -> CoverageOverviewRead:
                 application_count=item.application_count,
             )
             for item in result.gaps
-        ]
+        ],
+        signals=[
+            CoverageOverviewSignalRead(
+                display=item.display,
+                fingerprint=item.fingerprint,
+                asked_rounds=item.asked_rounds,
+                low_rating_debriefs=item.low_rating_debriefs,
+                last_at=_utc_z(item.last_at),
+            )
+            for item in result.signals
+        ],
     )
 
 
@@ -294,6 +320,45 @@ async def skip_debrief(
     try:
         result = await DebriefService(db).skip(
             round_id, payload.expected_version, datetime.now(UTC)
+        )
+    except ReadinessError as exc:
+        raise _readiness_error(exc) from exc
+    return _debrief_read(result)
+
+
+@router.post(
+    "/rounds/{round_id}/debrief/extract",
+    response_model=DebriefExtractRead,
+)
+async def extract_debrief_notes(
+    round_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> DebriefExtractRead:
+    if not settings.HATCH_COACH_DEBRIEF_ENABLED:
+        raise HTTPException(status_code=403, detail="disabled")
+    try:
+        questions = await DebriefService(db).extract_notes(
+            round_id, datetime.now(UTC)
+        )
+    except ReadinessError as exc:
+        raise _readiness_error(exc) from exc
+    return DebriefExtractRead(questions=list(questions))
+
+
+@router.post(
+    "/rounds/{round_id}/debrief/proposals/{proposal_id}/accept",
+    response_model=DebriefReadResponse,
+)
+async def accept_debrief_proposal(
+    round_id: str,
+    proposal_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> DebriefReadResponse:
+    if not settings.HATCH_COACH_DEBRIEF_ENABLED:
+        raise HTTPException(status_code=403, detail="disabled")
+    try:
+        result = await DebriefService(db).accept_proposal(
+            round_id, proposal_id, datetime.now(UTC)
         )
     except ReadinessError as exc:
         raise _readiness_error(exc) from exc

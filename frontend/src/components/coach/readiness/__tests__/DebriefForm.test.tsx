@@ -62,6 +62,20 @@ describe("DebriefForm", () => {
     vi.mocked(skipDebrief).mockResolvedValue({ ...due, status: "skipped", version: 1 });
   });
 
+  it("hides the rough notes behind the paste link under Another question", async () => {
+    const user = userEvent.setup();
+    render(<DebriefForm roundId="round-1" />);
+
+    expect(await screen.findByText("Tell me about a budget you owned.")).toBeVisible();
+    expect(screen.queryByLabelText("Paste rough notes")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Paste rough notes instead" }));
+
+    expect(screen.getByLabelText("Paste rough notes")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Hide the rough notes" }));
+    expect(screen.queryByLabelText("Paste rough notes")).not.toBeInTheDocument();
+  });
+
   it("shows the question checklist first and saves with only an overall rating", async () => {
     const user = userEvent.setup();
     render(<DebriefForm roundId="round-1" />);

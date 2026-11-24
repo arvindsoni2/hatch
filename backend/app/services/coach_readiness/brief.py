@@ -41,6 +41,7 @@ from app.services.coach_readiness.grounding import grounding_violations
 from app.services.coach_readiness.tiers import load_tier_map
 from app.services.coach_readiness.patterns import derive_patterns
 from app.services.coach_readiness.questions import likely_questions
+from app.services.coach_readiness.signals import RealInterviewSignal, load_signals
 
 PRACTICE_TYPES = {
     "behavioural": ("behavioural", "mixed"),
@@ -156,12 +157,19 @@ async def _build_brief(
         snapshots, dismissed,
         PatternPolicy(window_days=settings.HATCH_COACH_PATTERN_WINDOW_DAYS), now,
     )
-    watch_outs = [
+    watch_outs: list[Any] = [
         pattern for pattern in patterns
         if pattern.kind == "focus" and not pattern.stale
         and pattern.group.role_family == (role_family or "unspecified")
         and pattern.group.interview_type in practice_types
     ][:2]
+    # Real-interview signals fill the remaining watch-out slots (spec §7.5 §4,
+    # §7.1.5: signals aggregate across all saved debriefs, not one application).
+    for signal in await load_signals(db):
+        if len(watch_outs) == 2:
+            break
+        if signal.fingerprint not in {item.fingerprint for item in watch_outs}:
+            watch_outs.append(signal)
     coverage_map = (
         await coverage.coverage_for_application(db, round_row.application_id)
         if application is not None else None
@@ -272,8 +280,10 @@ async def _build_brief(
         ],
         "watch_outs": [
             {
-                "fingerprint": item.fingerprint, "dimension": item.dimension,
-                "source": "practice", "sentence": watch_out_tips.get(item.fingerprint),
+                "fingerprint": item.fingerprint,
+                "dimension": getattr(item, "dimension", None) or item.display,
+                "source": "real_interview" if isinstance(item, RealInterviewSignal) else "practice",
+                "sentence": watch_out_tips.get(item.fingerprint),
             }
             for item in watch_outs
         ],
@@ -349,7 +359,10 @@ async def _run_enhancement(round_id: str, context: dict, key: str) -> None:
         "Stories:\n"
         + "\n".join(f"- {item['story_id']}: {item['text']}" for item in context["stories"])
         + "\nWatch-outs:\n"
-        + "\n".join(item.dimension for item in context["watch_outs"])
+        + "\n".join(
+            getattr(item, "dimension", None) or item.display
+            for item in context["watch_outs"]
+        )
     )
     try:
         output = await _enhance_call(prompt)
@@ -369,8 +382,9 @@ async def _run_enhancement(round_id: str, context: dict, key: str) -> None:
                 for item in context["stories"]
             ],
             "watch_outs": [
-                {"fingerprint": item.fingerprint, "dimension": item.dimension,
-                 "evidence": item.dimension}
+                {"fingerprint": item.fingerprint,
+                 "dimension": getattr(item, "dimension", None) or item.display,
+                 "evidence": getattr(item, "dimension", None) or item.display}
                 for item in context["watch_outs"]
             ],
         }

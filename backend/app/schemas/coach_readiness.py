@@ -22,6 +22,7 @@ class CompetencyCoverageRead(BaseModel):
     competency: str
     status: CoverageStatus
     action: CoverageAction
+    label: str | None = None
     stories: list[CoverageStoryRead] = Field(default_factory=list)
 
 
@@ -40,6 +41,15 @@ class CoverageGapRead(BaseModel):
 
 class CoverageOverviewRead(BaseModel):
     gaps: list[CoverageGapRead] = Field(default_factory=list)
+    signals: list["CoverageOverviewSignalRead"] = Field(default_factory=list)
+
+
+class CoverageOverviewSignalRead(BaseModel):
+    display: str
+    fingerprint: str
+    asked_rounds: int
+    low_rating_debriefs: int
+    last_at: str | None = None
 
 
 class CompetencyOverrideWrite(BaseModel):
@@ -79,7 +89,8 @@ class SaveDebriefRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_version: int = Field(ge=0)
-    overall: int = Field(ge=1, le=5)
+    # None saves a notes-only draft (spec §7.6 "Paste rough notes").
+    overall: int | None = Field(default=None, ge=1, le=5)
     expectation: Literal["yes", "unsure", "no"] | None = None
     questions: list[DebriefQuestionWrite] = Field(default_factory=list, max_length=20)
     went_well: str | None = Field(default=None, max_length=1_000)
@@ -103,6 +114,19 @@ class DebriefQuestionRead(BaseModel):
     note: str | None = None
 
 
+class DebriefProposalRead(BaseModel):
+    id: str
+    kind: Literal["question_bank", "story_use"]
+    questions: list[str] = Field(default_factory=list)
+    story_id: str | None = None
+    story_title: str | None = None
+    accepted: bool = False
+
+
+class DebriefExtractRead(BaseModel):
+    questions: list[str] = Field(default_factory=list, max_length=12)
+
+
 class DebriefReadResponse(BaseModel):
     round_id: str
     application_id: str
@@ -118,6 +142,7 @@ class DebriefReadResponse(BaseModel):
     do_differently: str | None = None
     notes_text: str | None = None
     questions_added: int = 0
+    proposals: list[DebriefProposalRead] = Field(default_factory=list)
 
 
 class ReadinessNextActionRead(BaseModel):

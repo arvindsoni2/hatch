@@ -32,8 +32,17 @@ export interface CoverageGap {
   application_count: number;
 }
 
+export interface CoverageOverviewSignal {
+  display: string;
+  fingerprint: string;
+  asked_rounds: number;
+  low_rating_debriefs: number;
+  last_at: string | null;
+}
+
 export interface CoverageOverview {
   gaps: CoverageGap[];
+  signals: CoverageOverviewSignal[];
 }
 
 export interface CompetencyOverride {
@@ -118,16 +127,27 @@ export interface DebriefRead {
   do_differently: string | null;
   notes_text: string | null;
   questions_added: number;
+  proposals?: DebriefProposal[];
 }
 
 export interface SaveDebriefInput {
   expected_version: number;
-  overall: number;
+  // Null saves a notes-only draft.
+  overall: number | null;
   expectation?: "yes" | "unsure" | "no" | null;
   questions?: DebriefQuestion[];
   went_well?: string | null;
   do_differently?: string | null;
   notes_text?: string | null;
+}
+
+export interface DebriefProposal {
+  id: string;
+  kind: "question_bank" | "story_use";
+  questions: string[];
+  story_id: string | null;
+  story_title: string | null;
+  accepted: boolean;
 }
 
 export interface ReadinessNextAction {
@@ -456,6 +476,23 @@ export interface InterviewBriefData {
   gaps: { competency: string; action: string }[];
   ask_them: string[];
   enhancement: BriefEnhancement;
+}
+
+export function extractDebriefNotes(roundId: string): Promise<{ questions: string[] }> {
+  return request<{ questions: string[] }>(
+    `/api/coach/readiness/rounds/${encodeURIComponent(roundId)}/debrief/extract`,
+    { method: "POST" },
+  );
+}
+
+export function acceptDebriefProposal(
+  roundId: string,
+  proposalId: string,
+): Promise<DebriefRead> {
+  return request<DebriefRead>(
+    `/api/coach/readiness/rounds/${encodeURIComponent(roundId)}/debrief/proposals/${encodeURIComponent(proposalId)}/accept`,
+    { method: "POST" },
+  );
 }
 
 export function fetchInterviewBrief(roundId: string): Promise<InterviewBriefData> {
