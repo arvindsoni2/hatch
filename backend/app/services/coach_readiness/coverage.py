@@ -394,6 +394,10 @@ async def _extract_and_cache(
                 ),
                 datetime.now(UTC),
             )
+            if outcome.status == "succeeded":
+                # The background session owns this transaction: without the
+                # commit, the flushed cache row is rolled back on close.
+                await db.commit()
         if outcome.status == "fenced":
             _EXTRACT_FAILED[key] = time.monotonic() + _EXTRACT_FAILURE_TTL_SECONDS
     except Exception:
