@@ -80,6 +80,7 @@ MEMORY_KINDS = (
     "debriefs",
     "explain_tips",
     "competency_overrides",
+    "job_competencies",
 )
 
 # Every Phase 2 table (spec §11). Everything else in the schema is Phase 1 data.
@@ -187,6 +188,7 @@ EXPECTED_COUNTS = {
     "debriefs": 2,
     "explain_tips": 2,
     "competency_overrides": 3,
+    "job_competencies": 1,       # cached job-description competencies (P8)
 }
 EXPECTED_LAST = {
     "dismissed_patterns": T0 + timedelta(hours=2),
@@ -195,6 +197,7 @@ EXPECTED_LAST = {
     "debriefs": T0 + timedelta(hours=12),
     "explain_tips": T0 + timedelta(hours=15),
     "competency_overrides": T0 + timedelta(hours=18),
+    "job_competencies": T0 + timedelta(hours=20),
 }
 
 
@@ -263,8 +266,8 @@ async def _seed_every_kind(factory) -> None:
         await db.commit()
 
     # Cached model text (spec §11 columns only). The competency cache is P8's
-    # job-description extraction: it belongs to no §7.8 kind, so it is never
-    # counted under briefs or explain tips; delete-all still removes it.
+    # job-description extraction: its own §7.8 row ("Job description
+    # competencies"), never counted under briefs or explain tips.
     for text_id, kind, created_at, sources in (
         ("mem-brief-text", "brief", T0 + timedelta(hours=9), [("interview_round", "mem-round-1", "1")]),
         ("mem-explain-1", "explain", T0 + timedelta(hours=14), [("coach_session", "mem-session", "1")]),
@@ -326,6 +329,13 @@ async def test_inventory_counts_match_rows(coach_database, ai_off, monkeypatch) 
     assert await derived_count(coach_database, kind="brief") == 1
     assert await derived_count(coach_database, kind="competency") == 1
     assert await _table_count(coach_database, "coach_interview_debriefs") == 2
+
+    # Job description competencies are their own kind: deleting them removes only
+    # the competency cache (the coverage map falls back to the deterministic list).
+    assert await _privacy(coach_database).delete_kind("job_competencies") == 1
+    assert await derived_count(coach_database, kind="competency") == 0
+    assert await derived_count(coach_database, kind="brief") == 1
+    assert await _table_count(coach_database, "coach_competency_overrides") == 3
 
 
 async def test_delete_all_readiness_data_leaves_phase1(

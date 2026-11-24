@@ -1,10 +1,13 @@
 """RED contract for P9: request validation on every readiness write (spec §12).
 
 Written by Claude Code before implementation (plan §1.5). "Request text limits as
-stated per feature; unknown fields rejected." Each rejected request must leave
-every Phase 2 table unchanged. The memory routes are new in P9: an unknown kind,
-or the derived "patterns" row (which has no delete of its own, §7.8), is invalid
-input. All data is synthetic.
+stated per feature; unknown fields rejected." Errors use registered safe codes:
+every rejected readiness request returns exactly ``{"detail": "invalid_input"}``
+and never echoes the rejected input (owner decision, P9-red.md). The requests run
+through the production app so its RequestValidationError handler applies. Each
+rejected request must leave every Phase 2 table unchanged. The memory routes are
+new in P9: an unknown kind, or the derived "patterns" row (which has no delete of
+its own, §7.8), is invalid input. All data is synthetic.
 """
 from __future__ import annotations
 
@@ -13,7 +16,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest_asyncio
-from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -67,11 +69,11 @@ async def coach_database(tmp_path, monkeypatch):
         await engine.dispose()
 
 
-def _app() -> FastAPI:
-    from app.routers.coach_readiness import router
+def _production_app(monkeypatch):
+    """The real app (with main.py's exception handlers) on the real ``get_db``."""
+    from app.main import app
 
-    app = FastAPI()
-    app.include_router(router)
+    monkeypatch.setattr(app, "dependency_overrides", {})
     return app
 
 
@@ -136,6 +138,7 @@ OVERSIZE_TEXT = [
 ]
 
 BAD_MEMORY_KINDS = ["patterns", "sessions", "everything", "DEBRIEFS"]
+SAFE_INVALID = {"detail": "invalid_input"}
 
 
 async def test_api_rejects_unknown_fields_and_oversize_text(
@@ -149,10 +152,12 @@ async def test_api_rejects_unknown_fields_and_oversize_text(
     await _seed(coach_database)
     before = await _counts(coach_database)
 
-    async with client_for(_app()) as client:
+    async with client_for(_production_app(monkeypatch)) as client:
         for method, path, body in UNKNOWN_FIELDS + OVERSIZE_TEXT:
             response = await client.request(method, f"{READINESS}{path}", json=body)
             assert response.status_code == 422, (method, path, response.status_code, response.text)
+            # Safe code only: no field names, limits or rejected text echoed back.
+            assert response.json() == SAFE_INVALID, (method, path, response.text)
 
         # P9 memory routes: the kind is a closed set (§7.8, §10.1 MemoryKind).
         listing = await client.get(f"{READINESS}/memory")
@@ -160,5 +165,6 @@ async def test_api_rejects_unknown_fields_and_oversize_text(
         for kind in BAD_MEMORY_KINDS:
             response = await client.delete(f"{READINESS}/memory/{kind}")
             assert response.status_code == 422, (kind, response.status_code, response.text)
+            assert response.json() == SAFE_INVALID, (kind, response.text)
 
     assert await _counts(coach_database) == before
