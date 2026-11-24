@@ -4,7 +4,7 @@ document_type: implementation-spec
 status: active
 implementation_status: not-applicable
 applies_to: main
-last_verified: 2026-11-05
+last_verified: 2026-11-24
 approval_status: final-for-implementation (owner, 2026-11-02)
 baseline_commit: b7274a6
 supersedes:
@@ -24,7 +24,7 @@ companions:
 **Delivery:** OpenCode (Go subscription) writes code. Claude Code reviews every PR and writes the failing contract tests first for high-assurance tasks.
 **Normative document:** this file. The plan sequences it; the HTML page only illustrates it. If they disagree, this file wins and the others are corrected.
 
-## 0. Owner decisions (22 Oct, 2 Nov and 5 Nov 2026)
+## 0. Owner decisions (22 Oct, 2 Nov, 5 Nov and 24 Nov 2026)
 
 | ID | Decision | Consequence |
 |---|---|---|
@@ -46,6 +46,7 @@ companions:
 | D16 | Existing domains report source changes through a neutral `source_events` hook and never import `coach_readiness`; every Phase 2 route lives in the readiness router; Today merges readiness actions in the frontend (2 Nov 2026) | §5.1–§5.3, §12 |
 | D17 | Real-interview signals are derived on read from debriefs and ship in P8 (2 Nov 2026) | §7.1.5 |
 | D18 | Recent edge-model families are first-class candidates for every tier: Spark, MiniCPM, Bonsai, Gemma 4, Liquid AI LFM and newer Qwen releases (5 Nov 2026) | Added to the §9.1 bench order and the §9.2 discovery policy; they still pass the §9.4 gate and the dual gate before promotion, and the incumbents stay until one does. The owner approves the LFM Open License v1.0 (`lfm1.0`) for these candidates |
+| D19 | P9 privacy page decisions (24 Nov 2026): the cached job-description competencies get their own row; "also clear questions on the round" clears the round's whole `questions_asked` list; readiness validation errors return the safe code only; a generation already running when the user deletes everything is a known limit | §7.8, §11, §12, K13 |
 
 All open questions from the 22 Oct draft and the 2 Nov review are resolved (§17).
 
@@ -559,11 +560,12 @@ One page listing every kind of Phase 2 data with count, last updated and a delet
 | Dismissed patterns | Fingerprints only | Clears dismissals |
 | Focus areas, plans | Yes | Deletes rows |
 | Briefs | Skeleton derived; enhancement text cached | Deletes cached text; the brief re-assembles |
-| Debriefs | Yes, user-authored, including saved rough notes | Deletes rows; the round keeps `questions_asked` unless "also clear questions on the round" is ticked |
+| Debriefs | Yes, user-authored, including saved rough notes | Deletes rows; the round keeps `questions_asked` unless "also clear questions on the round" is ticked, which clears the whole `questions_asked` list of every round whose debrief is deleted (the confirm text says so) |
 | Explain tips | Cached text | Deletes cache |
 | Competency overrides | Yes | Deletes rows |
+| Job description competencies | Cached text (Tier T extraction from the job description, §7.4) | Deletes cache; the coverage map uses the deterministic list until the next extraction |
 
-Plus "Delete all Coach readiness data" (confirm dialog). Phase 1 sessions are untouched by this page.
+Plus "Delete all Coach readiness data" (confirm dialog): it empties every §11 table, including brief state rows and every `coach_derived_text` kind. Phase 1 data, including round `questions_asked`, is untouched by this page.
 
 **Cascade and fencing:**
 - Source changes reach Phase 2 only through `source_events` (§5.3), inside the source's own transaction. The readiness listener deletes every `coach_derived_text` row whose sources include the changed source.
@@ -836,7 +838,7 @@ Additive Alembic migration(s), one head, SQLite foreign keys on. Phase 1 tables 
 | `coach_practice_plans` | `id` PK, `version`, `status`, `minutes`, `target_round_id` FK nullable (SET NULL), `items_json`, `started_at`, `completed_at`, timestamps | One `active` row enforced by partial unique index `WHERE status='active'` |
 | `coach_interview_briefs` | `id` PK, `interview_round_id` FK unique (CASCADE), `enhancement_state`, `enhancement_fingerprint` nullable, `enhanced_text_id` FK nullable (SET NULL), `archived_at` nullable, timestamps | Skeleton is not stored |
 | `coach_interview_debriefs` | `id` PK, `interview_round_id` FK unique (CASCADE), `version`, `status`, `overall`, `expectation`, `questions_json`, `went_well`, `do_differently`, `notes_text` nullable, `proposals_json`, timestamps | User-authored |
-| `coach_derived_text` | `id` PK, `kind` (explain/brief/plan_wording/extract), `cache_key` unique, `text_json`, `model_identity`, `prompt_version`, `created_at` | All model output lives here |
+| `coach_derived_text` | `id` PK, `kind` (explain/brief/plan_wording/extract/competency), `cache_key` unique, `text_json`, `model_identity`, `prompt_version`, `created_at` | All model output lives here |
 | `coach_derived_sources` | (`derived_text_id` FK CASCADE, `source_kind`, `source_id`) PK, `source_version` | Index on (`source_kind`, `source_id`) for the `source_events` listener |
 | `coach_competency_overrides` | `id` PK, `application_id` FK (CASCADE), `match_key`, `display_text`, `replacement` nullable, `hidden` | User-authored |
 
@@ -846,7 +848,7 @@ Interview round deletion and application deletion cascade to briefs, debriefs an
 
 ## 12. API
 
-All under the existing authenticated prefix; app lock applies. Every Phase 2 route lives in `routers/coach_readiness.py`; no existing router changes. Errors use registered safe codes: `invalid_input` 422, `not_found` 404, `version_conflict` 409, `invalid_state` 409, `limit_reached` 409, `disabled` 403, `temporarily_unavailable` 503.
+All under the existing authenticated prefix; app lock applies. Every Phase 2 route lives in `routers/coach_readiness.py`; no existing router changes. Errors use registered safe codes: `invalid_input` 422, `not_found` 404, `version_conflict` 409, `invalid_state` 409, `limit_reached` 409, `disabled` 403, `temporarily_unavailable` 503. A request that fails validation on a readiness route (unknown field, text over its limit, unknown memory kind) returns exactly `{"detail": "invalid_input"}` and never echoes the rejected input; `main.py`'s `RequestValidationError` handler gains a readiness branch for this (P9).
 
 | Method and path | Purpose |
 |---|---|
@@ -1008,6 +1010,7 @@ Content canary: tests insert a unique string into synthetic transcripts and stor
 | K10 | The existing round form may submit browser-local times that were stored as if UTC | P2 checks the form and converts to UTC in the frontend form before sending; existing rows unchanged (§7.5) |
 | K11 | A `source_events` listener error blocks the user's deletion or edit | The listener only deletes rows by indexed source and runs before any media removal (§5.3); AC29 proves rollback with the media intact; errors return the safe `temporarily_unavailable` code and the user can retry |
 | K12 | Edge-model families release new revisions every few weeks, so the §9.1 names go stale (D18) | Candidates are families, not fixed names; each revision is pinned by revision and sha256 and must pass the bench and the dual gate; the incumbents stay promoted until one does |
+| K13 | A brief or tips generation already running when the user deletes all readiness data can still write its text afterwards; finalise fencing (§7.8) re-checks sources, not deletion events | Accepted for 0.20.0 (D19). The text is purged by the next delete; a deletion epoch checked at finalise is the fix if it matters later |
 | Q1–Q4 | Resolved 22 Oct 2026 | D6–D9 in §0 |
 | Q5 | Resolved 2 Nov 2026: reviewer and design reference | D10–D11 in §0 |
 | Q6 | Resolved 2 Nov 2026: Claude Code spec review (25 findings) | D12–D17 in §0; §5.3, §7, §8.4, §9–§12, §15 |
