@@ -442,6 +442,9 @@ class DebriefService:
         for item in claimed:
             if item["id"] == proposal_id:
                 item["accepted"] = True
+        # ORM update() syncs row.version in place, so capture the next version
+        # before it runs; the returned read must match the database row.
+        next_version = row.version + 1
         result = await self._session.execute(
             update(CoachInterviewDebrief)
             .where(
@@ -450,7 +453,7 @@ class DebriefService:
             )
             .values(
                 proposals_json=claimed,
-                version=row.version + 1,
+                version=next_version,
                 updated_at=_naive_utc(now),
             )
         )
@@ -490,7 +493,7 @@ class DebriefService:
 
         return replace(
             self._read(round_row, row),
-            version=row.version + 1,
+            version=next_version,
             proposals=tuple(
                 proposal
                 for proposal in (

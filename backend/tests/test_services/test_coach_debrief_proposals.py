@@ -13,9 +13,10 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import settings
+from app.database import Base as _Base, create_sqlite_engine
 from app.models.application import Application, InterviewRound
 from app.models.coach_readiness import CoachDerivedText, CoachInterviewDebrief
 from app.models.job import JobPosting
@@ -423,12 +424,6 @@ def _committing_app(factory):
 
 
 async def _accept_race(tmp_path, *, story_id: str | None):
-    from fastapi import FastAPI  # noqa: F401
-
-    from app.database import Base as _Base, create_sqlite_engine
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    import asyncio
-
     engine = create_sqlite_engine(f"sqlite+aiosqlite:///{tmp_path / 'accept.db'}")
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
@@ -561,3 +556,58 @@ async def test_notes_only_save_moves_a_skipped_debrief_back_to_draft(
 
     assert draft.status == "draft"
     assert draft.overall is None
+
+
+@pytest.mark.asyncio
+async def test_accept_returns_the_persisted_version(tmp_path) -> None:
+    engine = create_sqlite_engine(f"sqlite+aiosqlite:///{tmp_path / 'version.db'}")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(_Base.metadata.create_all)
+    try:
+        async with factory() as db:
+            await _seed(db)
+            saved = await DebriefService(db).save(
+                "prop-round",
+                SaveDebriefCommand(
+                    expected_version=0,
+                    overall=4,
+                    questions=(
+                        _question("How do you handle a stakeholder who disagrees?"),
+                    ),
+                ),
+                NOW,
+            )
+            await db.commit()
+            proposal = next(
+                item for item in saved.proposals if item.kind == "question_bank"
+            )
+        app = _committing_app(factory)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            accepted = await client.post(
+                "/api/coach/readiness/rounds/prop-round/debrief/proposals/"
+                f"{proposal.id}/accept"
+            )
+            assert accepted.status_code == 200, accepted.text
+            response_version = accepted.json()["version"]
+
+            async with factory() as db:
+                row = (
+                    await db.execute(
+                        select(CoachInterviewDebrief).where(
+                            CoachInterviewDebrief.interview_round_id == "prop-round"
+                        )
+                    )
+                ).scalar_one()
+                stored_version = row.version
+
+            # The API version is the persisted one, so the next save succeeds.
+            assert response_version == stored_version
+            saved_again = await client.put(
+                "/api/coach/readiness/rounds/prop-round/debrief",
+                json={"expected_version": response_version, "overall": 4},
+            )
+            assert saved_again.status_code == 200, saved_again.text
+    finally:
+        await engine.dispose()
