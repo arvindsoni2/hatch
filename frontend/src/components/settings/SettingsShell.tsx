@@ -3,16 +3,19 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Bot, FileText, LockKeyhole, SlidersHorizontal, Stethoscope, UserRound,
+  Bot, FileText, Globe, LockKeyhole, ShieldCheck, SlidersHorizontal,
+  Stethoscope, UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_ITEMS = [
+  { label: "General", href: "/settings/general", icon: Globe },
   { label: "Profile", href: "/settings/profile", icon: UserRound },
   { label: "Job Preferences", href: "/settings/preferences", icon: SlidersHorizontal },
   { label: "AI & Capabilities", href: "/settings/ai", icon: Bot },
   { label: "Master CV", href: "/settings/resume", icon: FileText },
   { label: "Security", href: "/settings/security", icon: LockKeyhole },
+  { label: "Privacy", href: "/settings/privacy/remembers", icon: ShieldCheck },
   { label: "Diagnostics", href: "/settings/system", icon: Stethoscope },
 ];
 

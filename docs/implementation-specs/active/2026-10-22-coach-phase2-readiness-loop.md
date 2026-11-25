@@ -4,7 +4,7 @@ document_type: implementation-spec
 status: active
 implementation_status: not-applicable
 applies_to: main
-last_verified: 2026-11-05
+last_verified: 2026-11-25
 approval_status: final-for-implementation (owner, 2026-11-02)
 baseline_commit: b7274a6
 supersedes:
@@ -24,14 +24,14 @@ companions:
 **Delivery:** OpenCode (Go subscription) writes code. Claude Code reviews every PR and writes the failing contract tests first for high-assurance tasks.
 **Normative document:** this file. The plan sequences it; the HTML page only illustrates it. If they disagree, this file wins and the others are corrected.
 
-## 0. Owner decisions (22 Oct, 2 Nov and 5 Nov 2026)
+## 0. Owner decisions (22 Oct, 2 Nov, 5 Nov and 24 Nov 2026)
 
 | ID | Decision | Consequence |
 |---|---|---|
 | D1 | Phase 2 is a narrow "readiness loop", not the 13-PR v1 draft | v1's M7 Mentor threads, M9 cost routing, S2–S4 are dropped (§2.3) |
 | D2 | New features in scope: pre-interview brief, real-interview debrief, story coverage map | Retry-and-compare is out |
 | D3 | Mentor becomes single-turn "Explain" on a pattern | No threads, no message retention, no thread deletion fencing |
-| D4 | Local runtime models are chosen by bench-gated tiers | Spark-X2.6-4B, MiniCPM 4.7/5 and others are candidates, not defaults, until they pass §9 |
+| D4 | Local runtime models are chosen by bench-gated tiers | Spark-X2.6-4B, MiniCPM 4.7/5 and others are candidates, not defaults, until they pass §9 (D20 makes an exception for MiniCPM5-2B on Tier T) |
 | D5 | Deliverables: dated Markdown spec + plan, plus an HTML companion | One normative document (this one) |
 | D6 | Wave 0 starts now; foundation R7–R9 are paused with no committed date | Wave 1 no longer waits for R9; it uses the readiness check in §3.2 |
 | D7 | 90-day pattern window and 14-day plan expiry accepted | Config defaults in §7.1.2 and §8.3 |
@@ -41,11 +41,13 @@ companions:
 | D11 | Screen designs approved as the UI reference (2 Nov 2026) | §13.3a; `docs/visual-evidence/coach-phase2-design/` |
 | D12 | A soft-deleted story or an archived Question Bank item is treated as deleted (2 Nov 2026) | Derived text citing it is purged and generation is fenced (§5.3, §7.8) |
 | D13 | The brief skeleton is always assembled fresh; only model tips can go out of date, and they re-queue automatically (2 Nov 2026) | No stored skeleton and no Refresh button (§7.5, §8.4) |
-| D14 | Tiers T and S share the existing `llm-triage` and `llm-primary` routes; promotion needs both the Phase 2 gate and the route's existing regression bench (2 Nov 2026) | Dual gate (§9.1) |
+| D14 | Tiers T and S share the existing `llm-triage` and `llm-primary` routes; promotion needs both the Phase 2 gate and the route's existing regression bench (2 Nov 2026) | Dual gate (§9.1); waived for MiniCPM5-2B on Tier T by D20 |
 | D15 | Round times are stored as UTC and shown in a Hatch display timezone that defaults to the browser's (2 Nov 2026) | §7.5 |
 | D16 | Existing domains report source changes through a neutral `source_events` hook and never import `coach_readiness`; every Phase 2 route lives in the readiness router; Today merges readiness actions in the frontend (2 Nov 2026) | §5.1–§5.3, §12 |
 | D17 | Real-interview signals are derived on read from debriefs and ship in P8 (2 Nov 2026) | §7.1.5 |
 | D18 | Recent edge-model families are first-class candidates for every tier: Spark, MiniCPM, Bonsai, Gemma 4, Liquid AI LFM and newer Qwen releases (5 Nov 2026) | Added to the §9.1 bench order and the §9.2 discovery policy; they still pass the §9.4 gate and the dual gate before promotion, and the incumbents stay until one does. The owner approves the LFM Open License v1.0 (`lfm1.0`) for these candidates |
+| D19 | P9 privacy page decisions (24 Nov 2026): the cached job-description competencies get their own row; "also clear questions on the round" clears the round's whole `questions_asked` list; readiness validation errors return the safe code only; a generation already running when the user deletes everything is a known limit | §7.8, §11, §12, K13 |
+| D20 | The owner promotes MiniCPM5-2B on Tier T and waives the dual gate for that model and tier only; Qwen3.5-0.8B becomes `retired` and keeps its catalogue entry. Tier S is unchanged: Qwen3.5-4B stays promoted, and Spark-X2.6-4B stays a `candidate` after the 25 Nov 2026 smoke run scored poor-fit jobs as high as good-fit ones (25 Nov 2026; amended the same day, replacing an earlier version that also promoted Spark) | Short regression run before 0.20.0 (§9.1); §8.7, §14, K9, K12. The waiver is recorded as a waiver, never as a passed bench |
 
 All open questions from the 22 Oct draft and the 2 Nov review are resolved (§17).
 
@@ -559,11 +561,12 @@ One page listing every kind of Phase 2 data with count, last updated and a delet
 | Dismissed patterns | Fingerprints only | Clears dismissals |
 | Focus areas, plans | Yes | Deletes rows |
 | Briefs | Skeleton derived; enhancement text cached | Deletes cached text; the brief re-assembles |
-| Debriefs | Yes, user-authored, including saved rough notes | Deletes rows; the round keeps `questions_asked` unless "also clear questions on the round" is ticked |
+| Debriefs | Yes, user-authored, including saved rough notes | Deletes rows; the round keeps `questions_asked` unless "also clear questions on the round" is ticked, which clears the whole `questions_asked` list of every round whose debrief is deleted (the confirm text says so) |
 | Explain tips | Cached text | Deletes cache |
 | Competency overrides | Yes | Deletes rows |
+| Job description competencies | Cached text (Tier T extraction from the job description, §7.4) | Deletes cache; the coverage map uses the deterministic list until the next extraction |
 
-Plus "Delete all Coach readiness data" (confirm dialog). Phase 1 sessions are untouched by this page.
+Plus "Delete all Coach readiness data" (confirm dialog): it empties every §11 table, including brief state rows and every `coach_derived_text` kind. Phase 1 data, including round `questions_asked`, is untouched by this page.
 
 **Cascade and fencing:**
 - Source changes reach Phase 2 only through `source_events` (§5.3), inside the source's own transaction. The readiness listener deletes every `coach_derived_text` row whose sources include the changed source.
@@ -702,6 +705,8 @@ stateDiagram-v2
   benching --> rejected
   qualified --> promoted: passes the shared-route gate (§9.1) and owner sets it as tier default
   promoted --> qualified: replaced by another model
+  candidate --> promoted: owner waiver (D20, MiniCPM5-2B on Tier T only)
+  promoted --> retired: replaced by owner decision (D20)
   qualified --> retired: llama.cpp or model change fails a regression bench
   rejected --> candidate: new revision
 ```
@@ -721,6 +726,7 @@ The state is stored as `status` on each catalogue entry (§9.2).
 Rules:
 - **Candidate families (D18).** The names in the table are the bench order on 5 Nov 2026, not a closed list. Edge models move fast: a newer release in an allowlisted family (for example a Qwen3.8 model of 4B or less, or a new MiniCPM, Spark, Bonsai, Gemma or LFM revision) enters the catalogue as a `candidate` for the tier its size and RSS fit, and is benched like any other. A name in the table that has no GGUF file on Hugging Face, or a GGUF that the pinned mainline build cannot load, is recorded as skipped with the reason; it is not a P3 failure.
 - **Shared routes, dual gate (D14).** Each llama-server runs one model, so promoting a Tier T or Tier S model changes the model for every feature on that route. A model is promoted for T or S only when it passes **both** the Phase 2 tier gate (§9.4) **and** the existing route's regression bench on the same llama.cpp build: for Tier S, the Phase 1 Coach `acceptance-smoke` profile; for Tier T, the job-scoring triage checks in the representative local-model selection procedure (`docs/operations/REPRESENTATIVE_LOCAL_MODEL_BENCHMARK.md`). The P3 report records both results.
+- **Owner waiver (D20).** MiniCPM5-2B is promoted on Tier T without the dual gate. Before 0.20.0 a short regression run on synthetic data covers the features on `llm-triage`: job-scoring triage and the Phase 2 Tier T tasks. The P3 report records the results as a smoke run, and the owner accepts or rejects them. The model and revision are the ones pinned in the catalogue; any other model, revision or tier still needs the dual gate, including Spark-X2.6-4B and MiniCPM5-2B on Tier S. The waiver does not change the deadlines, output caps, context budgets or grounding rules.
 - Every Tier L task has a Tier S fallback; every Tier S/T task has a deterministic fallback. No feature requires L.
 - **Thinking is off.** Both existing servers run with `--reasoning off`. P3 tests whether a per-request override (`chat_template_kwargs: {"enable_thinking": true}`) takes effect on the pinned build. If it does not, Phase 2 uses thinking off only and the bench measures nothing else. The adapter always strips reasoning text from outputs.
 - **Context budgets.** `llm-triage` runs `--ctx-size 4096 --parallel 2`: 2,048 tokens per request. Tier T prompts must fit: instructions ≤ 300 tokens + input ≤ 1,200 tokens + output ≤ 512 tokens. `llm-primary` runs `--parallel 1`, so Phase 2 requests queue behind Phase 1 work; the absolute deadline (§9.3) includes queue time.
@@ -767,7 +773,7 @@ A deadline is absolute across the one allowed repair attempt.
 | Owner blind rating mean | ≥ 3.5 | ≥ 3.5 | ≥ 3.8 |
 | Floor profile | must pass T | must pass S, or incumbent stays S default on floor | n/a |
 
-Ties go to the smaller RSS, then the incumbent. If no candidate passes, the incumbent stays. Results go to `docs/implementation-reports/coach-phase2/P3-local-model-bench.md`.
+Ties go to the smaller RSS, then the incumbent. If no candidate passes, the incumbent stays. After D20 the incumbent is the promoted model for the tier. Results go to `docs/implementation-reports/coach-phase2/P3-local-model-bench.md`.
 
 ## 10. Runtime contracts
 
@@ -836,7 +842,7 @@ Additive Alembic migration(s), one head, SQLite foreign keys on. Phase 1 tables 
 | `coach_practice_plans` | `id` PK, `version`, `status`, `minutes`, `target_round_id` FK nullable (SET NULL), `items_json`, `started_at`, `completed_at`, timestamps | One `active` row enforced by partial unique index `WHERE status='active'` |
 | `coach_interview_briefs` | `id` PK, `interview_round_id` FK unique (CASCADE), `enhancement_state`, `enhancement_fingerprint` nullable, `enhanced_text_id` FK nullable (SET NULL), `archived_at` nullable, timestamps | Skeleton is not stored |
 | `coach_interview_debriefs` | `id` PK, `interview_round_id` FK unique (CASCADE), `version`, `status`, `overall`, `expectation`, `questions_json`, `went_well`, `do_differently`, `notes_text` nullable, `proposals_json`, timestamps | User-authored |
-| `coach_derived_text` | `id` PK, `kind` (explain/brief/plan_wording/extract), `cache_key` unique, `text_json`, `model_identity`, `prompt_version`, `created_at` | All model output lives here |
+| `coach_derived_text` | `id` PK, `kind` (explain/brief/plan_wording/extract/competency), `cache_key` unique, `text_json`, `model_identity`, `prompt_version`, `created_at` | All model output lives here |
 | `coach_derived_sources` | (`derived_text_id` FK CASCADE, `source_kind`, `source_id`) PK, `source_version` | Index on (`source_kind`, `source_id`) for the `source_events` listener |
 | `coach_competency_overrides` | `id` PK, `application_id` FK (CASCADE), `match_key`, `display_text`, `replacement` nullable, `hidden` | User-authored |
 
@@ -846,7 +852,7 @@ Interview round deletion and application deletion cascade to briefs, debriefs an
 
 ## 12. API
 
-All under the existing authenticated prefix; app lock applies. Every Phase 2 route lives in `routers/coach_readiness.py`; no existing router changes. Errors use registered safe codes: `invalid_input` 422, `not_found` 404, `version_conflict` 409, `invalid_state` 409, `limit_reached` 409, `disabled` 403, `temporarily_unavailable` 503.
+All under the existing authenticated prefix; app lock applies. Every Phase 2 route lives in `routers/coach_readiness.py`; no existing router changes. Errors use registered safe codes: `invalid_input` 422, `not_found` 404, `version_conflict` 409, `invalid_state` 409, `limit_reached` 409, `disabled` 403, `temporarily_unavailable` 503. A request that fails validation on a readiness route (unknown field, text over its limit, unknown memory kind) returns exactly `{"detail": "invalid_input"}` and never echoes the rejected input; `main.py`'s `RequestValidationError` handler gains a readiness branch for this (P9).
 
 | Method and path | Purpose |
 |---|---|
@@ -936,7 +942,7 @@ Keyboard operation for all controls (including plan item ticks and checklist), v
 
 Flags gate creation and new processing only. Reads of existing rows, the privacy page and all deletion keep working when flags are off. Tier L is a Settings choice, not a flag.
 
-Release gates: Wave 1 readiness check recorded (§3.2); all Must ACs pass; Phase 1 regression suite green; migration upgrade/downgrade on a disposable copy; P3 bench report accepted (both gates of §9.1); Claude Code compliance then quality/security review with zero open Critical/High; owner approval. Rollback = flags off; no schema downgrade in production.
+Release gates: Wave 1 readiness check recorded (§3.2); all Must ACs pass; Phase 1 regression suite green; migration upgrade/downgrade on a disposable copy; P3 bench report accepted (both gates of §9.1, with the D20 short regression run standing in for both gates for MiniCPM5-2B on Tier T); Claude Code compliance then quality/security review with zero open Critical/High; owner approval. Rollback = flags off; no schema downgrade in production.
 
 ## 15. Acceptance criteria
 
@@ -1004,10 +1010,11 @@ Content canary: tests insert a unique string into synthetic transcripts and stor
 | K6 | R7–R9 paused indefinitely; Phase 1 Coach keeps its own durability path while Phase 2 uses the generic runtime | Accepted (D6). Two execution paths remain until R8 resumes; Phase 2 never calls Phase 1 queues |
 | K7 | A resumed R8 could drop the Phase 2 seams in Phase 1 code | §3.2 consequence note; P4 and P6 tests fail if the seams disappear |
 | K8 | The Go model list and caps change monthly; DeepSeek's zero-retention agreement is renewed monthly (current one valid to 30 Nov 2026) | Check `/models` and the Go privacy table on the 1st of each month; if DeepSeek's agreement lapses, switch the default to `glm-5.3-flash` (plan §1) |
-| K9 | Promoting a Tier S or T model changes the model for Phase 1 Coach, CV, cover letter or job triage too | Dual gate (D14, §9.1); existing entries stay `promoted` until a candidate passes both |
+| K9 | Promoting a Tier S or T model changes the model for Phase 1 Coach, CV, cover letter or job triage too | Dual gate (D14, §9.1); existing entries stay `promoted` until a candidate passes both. For MiniCPM5-2B on Tier T the owner accepts this risk after the short regression run (D20); rollback is to set Qwen3.5-0.8B back to `promoted` in the catalogue, tier map and compose file |
 | K10 | The existing round form may submit browser-local times that were stored as if UTC | P2 checks the form and converts to UTC in the frontend form before sending; existing rows unchanged (§7.5) |
 | K11 | A `source_events` listener error blocks the user's deletion or edit | The listener only deletes rows by indexed source and runs before any media removal (§5.3); AC29 proves rollback with the media intact; errors return the safe `temporarily_unavailable` code and the user can retry |
-| K12 | Edge-model families release new revisions every few weeks, so the §9.1 names go stale (D18) | Candidates are families, not fixed names; each revision is pinned by revision and sha256 and must pass the bench and the dual gate; the incumbents stay promoted until one does |
+| K12 | Edge-model families release new revisions every few weeks, so the §9.1 names go stale (D18) | Candidates are families, not fixed names; each revision is pinned by revision and sha256 and must pass the bench and the dual gate; the incumbents stay promoted until one does (D20 is the only exception) |
+| K13 | A brief or tips generation already running when the user deletes all readiness data can still write its text afterwards; finalise fencing (§7.8) re-checks sources, not deletion events | Accepted for 0.20.0 (D19). The text is purged by the next delete; a deletion epoch checked at finalise is the fix if it matters later |
 | Q1–Q4 | Resolved 22 Oct 2026 | D6–D9 in §0 |
 | Q5 | Resolved 2 Nov 2026: reviewer and design reference | D10–D11 in §0 |
 | Q6 | Resolved 2 Nov 2026: Claude Code spec review (25 findings) | D12–D17 in §0; §5.3, §7, §8.4, §9–§12, §15 |

@@ -25,6 +25,10 @@ from ..repositories.conversational_session_repository import (
 )
 from ..schemas.coach_readiness import (
     CompetencyCoverageRead,
+    MemoryDeleteAllRead,
+    MemoryDeleteRead,
+    MemoryInventoryRead,
+    MemoryKindSummaryRead,
     PatternGroupRead,
     PatternGroupSectionRead,
     PatternListRead,
@@ -82,6 +86,7 @@ from ..services.coach_readiness.contracts import (
 )
 from ..services.coach_readiness.debrief import DebriefService
 from ..services.coach_readiness.next_actions import debrief_next_actions
+from ..services.coach_readiness.privacy import MEMORY_KINDS, MemoryKind, ReadinessPrivacy
 from ..services.coach_readiness.tiers import (
     MIN_TIER_L_RAM_GB,
     load_tier_map,
@@ -89,6 +94,17 @@ from ..services.coach_readiness.tiers import (
 )
 
 router = APIRouter(prefix="/api/coach/readiness", tags=["coach-readiness"])
+
+
+def _privacy() -> ReadinessPrivacy:
+    """Resolve the session factory at request time, the way ``get_db`` does."""
+    from .. import database  # noqa: PLC0415
+
+    from ..repositories.coach_readiness_repository import (  # noqa: PLC0415
+        CoachReadinessRepository,
+    )
+
+    return ReadinessPrivacy(CoachReadinessRepository(database.AsyncSessionLocal))
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -1146,3 +1162,37 @@ async def retry_interview_brief_tips(
     if data is None:
         raise HTTPException(status_code=404, detail="not_found")
     return data
+
+
+@router.get("/memory", response_model=MemoryInventoryRead)
+async def get_memory_inventory() -> MemoryInventoryRead:
+    inventory = await _privacy().inventory()
+    return MemoryInventoryRead(
+        kinds=[
+            MemoryKindSummaryRead(
+                kind=item.kind,
+                count=item.count,
+                last_updated=_utc_z(item.last_updated),
+            )
+            for item in inventory.kinds
+        ]
+    )
+
+
+@router.delete("/memory/{kind}", response_model=MemoryDeleteRead)
+async def delete_memory_kind(
+    kind: MemoryKind,
+    clear_round_questions: bool = False,
+) -> MemoryDeleteRead:
+    removed = await _privacy().delete_kind(
+        kind, clear_round_questions=clear_round_questions
+    )
+    return MemoryDeleteRead(kind=kind, removed=removed)
+
+
+@router.delete("/memory", response_model=MemoryDeleteAllRead)
+async def delete_all_memory() -> MemoryDeleteAllRead:
+    result = await _privacy().delete_all()
+    return MemoryDeleteAllRead(
+        removed={kind: result.removed.get(kind, 0) for kind in MEMORY_KINDS}
+    )

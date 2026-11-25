@@ -697,6 +697,11 @@ def create_app() -> FastAPI:
         request: StarletteRequest, error: RequestValidationError
     ) -> JSONResponse:
         """Keep strict conversational command validation free of client echoes."""
+        if request.url.path.startswith("/api/coach/readiness"):
+            # Spec §12: readiness validation errors return the safe code only.
+            return JSONResponse(
+                status_code=422, content={"detail": "invalid_input"}
+            )
         known_create_code = _known_conversational_create_validation_code(request, error)
         pr4_route = request.url.path == "/api/coach/conversational-progress" or (
             request.url.path.startswith("/api/coach/sessions/")
