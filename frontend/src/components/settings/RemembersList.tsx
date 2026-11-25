@@ -28,9 +28,9 @@ import {
 const KIND_COPY: Record<MemoryKind, { label: string; description: string; effect: string }> = {
   dismissed_patterns: {
     label: "Dismissed patterns",
-    description: "Pattern fingerprints you dismissed.",
+    description: "Patterns you dismissed.",
     effect:
-      "Clears the dismissed pattern fingerprints. A pattern may reappear if the evidence still supports it.",
+      "Clears the patterns you dismissed. One may reappear if the evidence still supports it.",
   },
   focus_areas_and_plans: {
     label: "Focus areas and plans",
@@ -94,11 +94,15 @@ export function RemembersList() {
   const [busy, setBusy] = useState(false);
   const kindTrigger = useRef<HTMLButtonElement | null>(null);
   const allTrigger = useRef<HTMLButtonElement | null>(null);
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const focusHeading = useRef(false);
 
   const refresh = useCallback(async () => {
+    setLoadError("");
     try {
       setInventory(await fetchMemoryInventory());
     } catch {
+      setInventory(null);
       setLoadError("What Hatch remembers is unavailable. Try again later.");
     }
   }, []);
@@ -118,6 +122,18 @@ export function RemembersList() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (focusHeading.current && inventory !== null) {
+      focusHeading.current = false;
+      headingRef.current?.focus();
+    }
+  }, [inventory]);
+
+  const retry = () => {
+    focusHeading.current = true;
+    void load();
+  };
 
   const counts = new Map((inventory?.kinds ?? []).map((item) => [item.kind, item]));
 
@@ -143,7 +159,7 @@ export function RemembersList() {
     try {
       const result = await deleteAllReadinessData();
       const removed = Object.values(result.removed).reduce((total, count) => total + count, 0);
-      setStatus(`Removed ${removed} readiness rows.`);
+      setStatus(`Removed ${removed} readiness items.`);
       setConfirmAll(false);
       await refresh();
     } catch {
@@ -155,11 +171,14 @@ export function RemembersList() {
 
   if (loadError && inventory === null) {
     return (
-      <SectionCard title="What Hatch remembers">
+      <SectionCard>
+        <h2 className="m-0 mb-4 text-base font-semibold text-[var(--text)]" tabIndex={-1} ref={headingRef}>
+          What Hatch remembers
+        </h2>
         <p className="m-0 text-sm text-[var(--danger)]" role="alert">
           {loadError}
         </p>
-        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void load()}>
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={retry}>
           Try again
         </Button>
       </SectionCard>
@@ -168,10 +187,17 @@ export function RemembersList() {
 
   return (
     <div className="space-y-4">
-      <SectionCard
-        title="What Hatch remembers"
-        description="Every kind of Coach readiness data, with when it last changed."
-      >
+      <SectionCard>
+        <h2
+          className="m-0 text-base font-semibold text-[var(--text)] focus:outline-none"
+          tabIndex={-1}
+          ref={headingRef}
+        >
+          What Hatch remembers
+        </h2>
+        <p className="mb-4 mt-1 text-sm text-[var(--text-dim)]">
+          Every kind of Coach readiness data, with when it last changed.
+        </p>
         {loading && inventory === null ? (
           <div className="space-y-2" aria-busy="true">
             {[1, 2, 3, 4].map((item) => (
@@ -232,7 +258,7 @@ export function RemembersList() {
 
       <SectionCard
         title="Delete all Coach readiness data"
-        description="Every stored readiness row goes. Practice sessions, rounds, stories and Question Bank entries stay."
+        description="Every stored readiness item goes. Practice sessions, rounds, stories and Question Bank entries stay."
       >
         <Button
           type="button"
@@ -251,6 +277,7 @@ export function RemembersList() {
       <AlertDialog
         open={pendingKind !== null}
         onOpenChange={(open) => {
+          if (!open && busy) return;
           if (!open) {
             setPendingKind(null);
             setClearQuestions(false);
@@ -303,8 +330,13 @@ export function RemembersList() {
       <AlertDialog
         open={confirmAll}
         onOpenChange={(open) => {
-          setConfirmAll(open);
-          if (!open) setAllError("");
+          if (open) {
+            setConfirmAll(true);
+            return;
+          }
+          if (busy) return;
+          setConfirmAll(false);
+          setAllError("");
         }}
       >
         <AlertDialogContent
@@ -315,8 +347,8 @@ export function RemembersList() {
         >
           <AlertDialogTitle>Delete all Coach readiness data?</AlertDialogTitle>
           <AlertDialogDescription>
-            This empties every readiness table: dismissals, focus areas, plans,
-            briefs, debriefs, explain tips, competency overrides and job
+            This deletes every stored readiness item: dismissals, focus areas,
+            plans, briefs, debriefs, explain tips, competency overrides and job
             description competencies. Your practice sessions, interview rounds,
             stories and Question Bank entries are untouched.
           </AlertDialogDescription>

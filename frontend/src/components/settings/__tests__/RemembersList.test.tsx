@@ -116,10 +116,16 @@ describe("RemembersList", () => {
       ...KINDS,
     ]);
     expect(rows[rows.length - 1]).toContain("Job description competencies");
-    // Singular row copy and a timezone abbreviation from the display timezone.
-    expect(rows[rows.length - 1]).toContain("1 row");
+    // Singular row copy (never "1 rows") and a timezone abbreviation.
+    expect(rows[rows.length - 1]).toMatch(/\b1 row\b/);
+    expect(rows[rows.length - 1]).not.toContain("1 rows");
     expect(rows[rows.length - 1]).toContain("Last updated");
     expect(rows[rows.length - 1]).toMatch(/GMT|BST/);
+
+    // Copy avoids implementation words in user-facing text.
+    const copy = document.body.textContent ?? "";
+    expect(copy).not.toMatch(/fingerprint/i);
+    expect(copy).not.toMatch(/readiness table/i);
 
     for (const kind of KINDS) {
       expect(screen.getByRole("button", { name: `Delete ${LABELS[kind]}` })).toBeVisible();
@@ -176,8 +182,9 @@ describe("RemembersList", () => {
       ),
     );
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Removed 13 readiness rows.",
+      "Removed 13 readiness items.",
     );
+    expect(screen.queryByText(/readiness table/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/0 rows/)).toHaveLength(7);
   });
 
@@ -235,6 +242,82 @@ describe("RemembersList", () => {
       "Could not delete that. Try again.",
     );
     expect(dialog).toBeVisible();
+  });
+
+  it("keeps the dialog open when Escape arrives during a delete that fails", async () => {
+    const user = userEvent.setup();
+    let rejectDelete!: () => void;
+    const gate = new Promise<void>((_resolve, reject) => {
+      rejectDelete = () => reject(new Error("failed"));
+    });
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/api/coach/readiness/memory")) {
+        return response(inventory());
+      }
+      if (init?.method === "DELETE") {
+        await gate;
+        throw new Error("failed");
+      }
+      return response({});
+    });
+
+    render(<RemembersList />);
+    await user.click(await screen.findByRole("button", { name: "Delete Briefs" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }),
+    );
+    // Escape during the in-flight delete is ignored, so the dialog survives.
+    await user.keyboard("{Escape}");
+
+    rejectDelete();
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Could not delete that. Try again.",
+    );
+    expect(dialog).toBeVisible();
+  });
+
+  it("hides stale rows when a refresh fails and focuses the heading after retry", async () => {
+    const user = userEvent.setup();
+    let refreshFails = false;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.endsWith("/api/coach/readiness/memory")) {
+        if (refreshFails) {
+          return { ok: false, json: async () => ({}), text: async () => "offline" } as Response;
+        }
+        return response(inventory());
+      }
+      if (method === "DELETE" && url.includes("/memory/briefs")) {
+        return response({ kind: "briefs", removed: 1 });
+      }
+      return response({});
+    });
+
+    render(<RemembersList />);
+    await user.click(await screen.findByRole("button", { name: "Delete Briefs" }));
+    refreshFails = true;
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "What Hatch remembers is unavailable.",
+    );
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.queryByText("Briefs")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete all Coach readiness data" }),
+    ).not.toBeInTheDocument();
+
+    refreshFails = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("heading", { name: "What Hatch remembers" })).toHaveFocus();
+    expect(screen.getAllByRole("listitem")).toHaveLength(8);
   });
 
   it("returns focus to the trigger after cancel, Escape and delete", async () => {

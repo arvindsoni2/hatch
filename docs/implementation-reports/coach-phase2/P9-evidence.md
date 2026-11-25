@@ -97,7 +97,7 @@ $ python -m pytest -q --no-cov tests \
 4154 passed, 2 skipped in 754.67s
 ```
 
-Playwright: only the two P9 specs were run, against the local dev server with mocked APIs (2 passed). The review for repair cycle 1 asked not to run `api-flows.spec.ts` or the full Playwright set against the live backend on :8000; the pre-existing integration specs need a seeded, unlocked backend and are outside this cycle.
+Full Playwright suite (first P9 implementation cycle): 67 passed, 5 skipped, 69 failed. The failures are pre-existing integration specs that need an unlocked, seeded backend; in this app-locked workspace they are independent of P9. Repair cycle 1 ran only `e2e/coach-readiness.spec.ts` against the local dev server with mocked APIs (2 passed); `api-flows.spec.ts` and the full Playwright set were not run against the live backend on :8000.
 
 Privacy / deletion / fencing evidence:
 
@@ -162,6 +162,45 @@ Documentation validation passed.
 
 $ python scripts/check_readme_contract.py
 README contract passed.
+
+$ git diff --check
+exit 0
+```
+
+## Pre-merge cleanup
+
+Small cleanup after the P9 PASS review:
+
+- **Readiness footer:** the approved screen's line "Hatch keeps patterns, plans, briefs and debriefs on this machine." with the "What Hatch remembers" link to `/settings/privacy/remembers`.
+- **Dialogs:** `onOpenChange(false)` is ignored while a delete is in flight, so Escape cannot close the dialog during a failing delete; a test covers Escape mid-delete then failure.
+- **Refresh:** `refresh()` clears the previous load error first; a failed refresh hides the stale rows and shows only the error and "Try again", and a successful retry moves focus to the "What Hatch remembers" heading. Both paths are tested.
+- **Copy:** "1 row" tests use a word-boundary match and explicitly reject "1 rows"; prose "rows", "readiness table" and "fingerprints" are gone from user copy (counts still say "1 row"/"N rows").
+- **privacy.py:** `delete_all` returns row counts from the deletes themselves; the unused `model` argument is gone (recorded in repair cycle 1).
+
+GREEN (real output):
+
+```text
+$ npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+8 passed
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ PLAYWRIGHT_BASE_URL=http://localhost:3001 npx playwright test \
+    e2e/coach-readiness.spec.ts --project=chromium
+3 passed
+
+$ python -m pytest -q --no-cov <P9 focused + P6 set>
+30 passed in 16.78s
+
+$ ruff check app/ tests/
+All checks passed!
+
+$ python scripts/check_docs.py
+Documentation validation passed.
 
 $ git diff --check
 exit 0

@@ -90,9 +90,37 @@ test("test_remembers_page_lists_and_deletes", async ({ page }) => {
     .getByRole("button", { name: "Delete all Coach readiness data" })
     .click();
   await expect(page.getByRole("status")).toContainText(
-    /Removed .* readiness rows\./,
+    /Removed .* readiness items\./,
   );
   await expect(page.getByText("0 rows")).toHaveCount(7);
+});
+
+test("test_readiness_footer_links_to_remembers", async ({ page }) => {
+  await mockProtectedRouteApis(page);
+  await page.route("**/api/coach/readiness/patterns**", (route) =>
+    json(route, { groups: [], include_stale: true }),
+  );
+  await page.route("**/api/coach/readiness/focus-areas", (route) =>
+    json(route, { items: [], active_count: 0, active_limit: 3 }),
+  );
+  await page.route("**/api/coach/readiness/plans", (route) =>
+    json(route, { active: null, draft: null }),
+  );
+  await page.route("**/api/coach/readiness/coverage/overview", (route) =>
+    json(route, { gaps: [], signals: [] }),
+  );
+  await page.route("**/api/interviews/upcoming**", (route) => json(route, []));
+  await page.route("**/api/coach/readiness/display-timezone", (route) =>
+    json(route, { display_timezone: null }),
+  );
+
+  await page.goto("/coach/readiness");
+
+  const footer = page.getByText(/Hatch keeps patterns, plans, briefs and debriefs/);
+  await expect(footer).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "What Hatch remembers" }),
+  ).toHaveAttribute("href", "/settings/privacy/remembers");
 });
 
 test("test_general_settings_shows_display_timezone", async ({ page }) => {

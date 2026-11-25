@@ -332,6 +332,16 @@ export default function ReadinessPage() {
         )}
       </SectionCard>
 
+      <p className="mt-6 text-sm text-[var(--text-dim)]">
+        Hatch keeps patterns, plans, briefs and debriefs on this machine.{" "}
+        <Link
+          className="font-medium text-[var(--text)] underline-offset-4 hover:underline"
+          href="/settings/privacy/remembers"
+        >
+          What Hatch remembers
+        </Link>
+      </p>
+
       <FocusAreaEditor
         open={editorOpen}
         initial={editorInitial}
