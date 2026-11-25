@@ -96,9 +96,9 @@ llm:
   # Local AI — bundled llama.cpp containers, $0 API spend, no key required.
   # Models are downloaded by scripts/fetch_models.sh:
   #   Primary:  Qwen3.5-4B Q4_K_M (~3.0 GB) on port 8080
-  #   Triage:   Qwen3.5-0.8B Q8_0 (~0.84 GB) on port 8081
+  #   Triage:   MiniCPM5 2B Q4_K_M (~1.56 GB) on port 8081
   provider: "llamacpp"
-  triage_model: "qwen3.5-0.8b-q8_0"
+  triage_model: "minicpm5-2b-q4_k_m"
   primary_model: "qwen3.5-4b-q4_k_m"
   api_key_env: ""
   base_url: "http://llm-primary:8080/v1"

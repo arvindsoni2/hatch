@@ -1,7 +1,7 @@
 {
   "T": {
     "route": "llm-triage",
-    "model_id": "qwen3.5-0.8b-q8-triage",
+    "model_id": "minicpm5-2b-q4km-triage",
     "thinking": false,
     "max_input_tokens": 1200,
     "max_output_tokens": 512,

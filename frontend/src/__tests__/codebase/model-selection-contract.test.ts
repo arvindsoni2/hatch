@@ -27,7 +27,7 @@ describe("selection-driven model contract", () => {
   it("preserves the explicitly documented developer-stack exception", () => {
     const compose = readFileSync(resolve(ROOT, "docker-compose.yml"), "utf8");
     expect(compose).toContain("Qwen_Qwen3.5-4B-Q4_K_M.gguf");
-    expect(compose).toContain("Qwen_Qwen3.5-0.8B-Q8_0.gguf");
+    expect(compose).toContain("MiniCPM5-2B-Q4_K_M.gguf");
   });
 
   it("requires explicit primary and triage variables in the easy local overlay", () => {

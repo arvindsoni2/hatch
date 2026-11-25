@@ -17,7 +17,7 @@ def test_catalogue_is_pinned_and_valid() -> None:
         "combined_capable_primary",
     }
     assert {model["id"] for model in catalogue if model["status"] == "promoted"} == {
-        "qwen3.5-0.8b-q8-triage",
+        "minicpm5-2b-q4km-triage",
         "qwen3.5-4b-q4km-primary",
     }
     assert all(len(model["source_revision"]) == 40 for model in catalogue)
@@ -38,9 +38,24 @@ def test_recommendations_use_total_ram_and_are_exclusive(tmp_path: Path) -> None
     compatible = {item["model_id"] for item in result["compatible"]}
     rejected = {item["model_id"] for item in result["not_recommended"]}
 
-    assert "qwen3.5-0.8b-q8-triage" in recommended
+    assert "minicpm5-2b-q4km-triage" in recommended
     assert "qwen3.5-4b-q4km-primary" in recommended
     assert not (recommended & compatible or recommended & rejected or compatible & rejected)
+
+
+def test_minicpm5_requires_twelve_gb_for_recommendation(tmp_path: Path) -> None:
+    result = ai_setup.recommend_models(
+        os_family="linux",
+        arch="x86_64",
+        total_ram_gb=8,
+        free_disk_gb=20,
+        models_dir=tmp_path,
+    )
+
+    compatible = {item["model_id"] for item in result["compatible"]}
+    recommended = {item["model_id"] for item in result["recommended"]}
+    assert "minicpm5-2b-q4km-triage" in compatible
+    assert "minicpm5-2b-q4km-triage" not in recommended
 
 
 def test_recommendations_reject_unsupported_platform(tmp_path: Path) -> None:

@@ -128,7 +128,7 @@ def test_phase1_routes_unchanged() -> None:
     mapping = tiers.load_tier_map()
     catalog = {model["id"]: model for model in load_catalog()}
 
-    assert mapping["T"].model_id == "qwen3.5-0.8b-q8-triage"
+    assert mapping["T"].model_id == "minicpm5-2b-q4km-triage"
     assert mapping["S"].model_id == "qwen3.5-4b-q4km-primary"
     assert catalog[mapping["T"].model_id]["role"] == "triage"
     assert catalog[mapping["S"].model_id]["role"] == "combined_capable_primary"
