@@ -194,6 +194,43 @@ export function fetchReadinessNextActions(): Promise<ReadinessNextAction[]> {
 
 let displayTimeZonePromise: Promise<string | null> | null = null;
 
+export type MemoryKind =
+  | "dismissed_patterns"
+  | "focus_areas_and_plans"
+  | "briefs"
+  | "debriefs"
+  | "explain_tips"
+  | "competency_overrides"
+  | "job_competencies";
+
+export interface MemoryKindSummary {
+  kind: MemoryKind;
+  count: number;
+  last_updated: string | null;
+}
+
+export interface MemoryInventory {
+  kinds: MemoryKindSummary[];
+}
+
+export function fetchMemoryInventory(): Promise<MemoryInventory> {
+  return request<MemoryInventory>("/api/coach/readiness/memory");
+}
+
+export function deleteMemoryKind(
+  kind: MemoryKind,
+  clearRoundQuestions = false,
+): Promise<{ kind: MemoryKind; removed: number }> {
+  const query = clearRoundQuestions ? "?clear_round_questions=true" : "";
+  return request(`/api/coach/readiness/memory/${encodeURIComponent(kind)}${query}`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteAllReadinessData(): Promise<{ removed: Record<MemoryKind, number> }> {
+  return request("/api/coach/readiness/memory", { method: "DELETE" });
+}
+
 export function fetchDisplayTimeZone(): Promise<string | null> {
   if (displayTimeZonePromise === null) {
     displayTimeZonePromise = request<{ display_timezone: string | null }>(
