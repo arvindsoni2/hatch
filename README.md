@@ -224,7 +224,7 @@ The root `docker-compose.yml` is the developer-stack exception and intentionally
 | Service | Default model | Port | Main purpose |
 |---|---|---:|---|
 | `llm-primary` | Qwen3.5-4B Q4_K_M | 8080 | Detailed scoring, CV packs, and Coach |
-| `llm-triage` | Qwen3.5-0.8B Q8_0 | 8081 | Fast relevance filtering |
+| `llm-triage` | MiniCPM5 2B Q4_K_M | 8081 | Fast relevance filtering |
 
 Easy-install Compose has no model filename defaults. Model services start only after Local is selected, both routes are verified, and the host configuration is applied. Services bind to localhost.
 

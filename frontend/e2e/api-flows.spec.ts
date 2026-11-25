@@ -229,12 +229,12 @@ test.describe("LLM model verification", () => {
     expect(modelId).toContain("qwen3.5-4b");
   });
 
-  test("llm-triage reports qwen3.5-0.8b model", async () => {
+  test("llm-triage reports minicpm5-2b model", async () => {
     const res = await fetch("http://localhost:8081/v1/models");
     expect(res.status).toBe(200);
     const body = await res.json() as { data: Array<{ id: string }> };
     const modelId = body.data?.[0]?.id?.toLowerCase() ?? "";
-    expect(modelId).toContain("qwen3.5-0.8b");
+    expect(modelId).toContain("minicpm5-2b");
   });
 });
 

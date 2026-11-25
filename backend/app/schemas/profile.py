@@ -171,7 +171,7 @@ class OutcomeLearningConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     provider: Literal["anthropic", "openai", "google_genai", "google_vertexai", "ollama", "azure_openai", "aws_bedrock", "llamacpp", "openrouter"] = "llamacpp"
-    triage_model: str = "qwen3.5-0.8b-q8_0"
+    triage_model: str = "minicpm5-2b-q4_k_m"
     primary_model: str = "qwen3.5-4b-instruct-q4_k_m"
     api_key_env: str = ""
     base_url: str | None = "http://llm-primary:8080/v1"

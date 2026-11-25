@@ -1,6 +1,8 @@
 # P3 — local model bench (M8)
 
-Status: **implementation complete, bench runs pending on the reference laptop (owner).**
+Status: **MiniCPM5-2B is promoted on Tier T under the D20 owner waiver after the 25 Nov 2026 smoke run. This is a
+waiver, not a passed §9.4 bench.** The full bench and dual gate remain unrun for every other candidate; Qwen3.5-0.8B
+is `retired` and Qwen3.5-4B stays `promoted` on Tier S.
 This file records the catalogue, the pinned runtime and the gate the bench must pass. It never reports a
 number that was not measured.
 
@@ -16,14 +18,15 @@ number that was not measured.
 ## Candidates and catalogue entries
 
 Revisions and file hashes were read from the Hugging Face API (`tree?recursive=true&blobs=true`) on 2026-11-05, not
-pre-filled. Existing entries stay `promoted`; candidates are `candidate` until the gate below passes twice.
+pre-filled. Existing entries stay `promoted`; candidates are `candidate` until the gate below passes twice. D20 is the
+only exception: the owner promoted MiniCPM5-2B on Tier T after a smoke run, recorded as a waiver.
 
 | Catalogue id | Tier(s) | Model | Revision | File sha256 (first 12) | Licence | Status |
 |---|---|---|---|---|---|---|
-| `qwen3.5-0.8b-q8-triage` | T | Qwen3.5 0.8B Q8_0 (incumbent) | `f36b1ea49a33` | `7182e2362766` | apache-2.0 | promoted |
+| `qwen3.5-0.8b-q8-triage` | T | Qwen3.5 0.8B Q8_0 (incumbent) | `f36b1ea49a33` | `7182e2362766` | apache-2.0 | retired (entry kept) |
 | `qwen3.5-4b-q4km-primary` | S | Qwen3.5 4B Q4_K_M (incumbent) | `4168f45a16a1` | `13c16f426047` | apache-2.0 | promoted |
 | `minicpm-v-4.7-1b-q8-triage` | T | MiniCPM-V 4.7 1B Q8_0, text-only | `345adbfa02c4` | `32322779352e` | apache-2.0 | candidate |
-| `minicpm5-2b-q4km-triage` | T, S | MiniCPM5 2B Q4_K_M | `2079a22f3bea` | `ec2d58016400` | apache-2.0 | candidate |
+| `minicpm5-2b-q4km-triage` | T, S | MiniCPM5 2B Q4_K_M | `2079a22f3bea` | `ec2d58016400` | apache-2.0 | promoted (T only, D20 waiver) |
 | `spark-x2.6-4b-q4km-primary` | S | Spark-X2.6 4B Q4_K_M | `3c33ab387468` | `91cb2811aebb` | apache-2.0 | candidate |
 | `phi-4-mini-instruct-q4km-primary` | S | Phi-4 mini instruct Q4_K_M | `78eb92a46fc3` | `88c002299140` | mit | candidate |
 | `minicpm-v-4.7-35b-a3b-q4km-deep` | L | MiniCPM-V 4.7 35B-A3B Q4_K_M, text-only | `cf943fbe32f8` | `9ecf91e814d7` | apache-2.0 | candidate |
@@ -63,8 +66,24 @@ offload, and the floor profile (T and S only). Two independent holdout runs; own
 | Owner blind rating, mean | ≥ 3.5 | ≥ 3.5 | ≥ 3.8 |
 | Floor profile | must pass T | must pass S, else incumbent stays | n/a |
 
-Measured values: **pending**. The tier map keeps the incumbents (`T` → Qwen 0.8B, `S` → Qwen 4B) and has no `L`
-entry until a candidate is `promoted`.
+Measured values: **pending** for the §9.4 gate. The tier map has `T` → MiniCPM5-2B under the D20 waiver, `S` →
+Qwen3.5-4B (unchanged) and no `L` entry until a candidate is `promoted`.
+
+## D20 smoke run — 25 Nov 2026 (owner-accepted waiver)
+
+A short synthetic regression run on the pinned build, accepted by the owner as a waiver of the §9.4 bench and the
+§9.1 dual gate for MiniCPM5-2B on Tier T only. It is **not** a passed bench and does not qualify the model for
+Tier S or any other tier.
+
+| Check | MiniCPM5-2B Q4_K_M | Qwen3.5-0.8B Q8_0 (previous) |
+|---|---|---|
+| Job-scoring triage | 15/16 | 10/16 |
+| Debrief extraction valid outputs | 5/10 | 3/10 |
+| Competency extraction clean outputs | 6/8 | 6/8 |
+| Peak RSS | 2.97 GB | — |
+
+Tier T cases ran without `reasoning_format`. The pinned revision and sha256 are the catalogue values above; any other
+revision needs the full gate.
 
 ## Pending bench checklist (owner)
 
@@ -82,7 +101,8 @@ For every T/S candidate that passes §9.4, run the route's existing regression b
 - Tier T: the job-scoring triage checks in `docs/operations/REPRESENTATIVE_LOCAL_MODEL_BENCHMARK.md`.
 
 A candidate that fails the route bench stays `qualified`, never `promoted` (AC35). Only a model that passes both
-becomes the tier default in `backend/app/config/model_tiers.json`.
+becomes the tier default in `backend/app/config/model_tiers.json`. D20 waives this dual gate for MiniCPM5-2B on
+Tier T only; the smoke run above stands in for it, and the waiver does not apply to Tier S or to any other model.
 
 ## Reproduce
 

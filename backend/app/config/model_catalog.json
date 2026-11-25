@@ -28,7 +28,7 @@
     "tiers": [
       "T"
     ],
-    "status": "promoted"
+    "status": "retired"
   },
   {
     "id": "qwen3.5-4b-q4km-primary",
@@ -122,7 +122,7 @@
       "T",
       "S"
     ],
-    "status": "candidate"
+    "status": "promoted"
   },
   {
     "id": "spark-x2.6-4b-q4km-primary",

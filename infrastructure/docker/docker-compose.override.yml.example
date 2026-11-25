@@ -23,7 +23,7 @@ services:
   llm-triage:
     # cpus: "2"
     command: >
-      --model /models/Qwen_Qwen3.5-0.8B-Q8_0.gguf
+      --model /models/MiniCPM5-2B-Q4_K_M.gguf
       --reasoning off
       --ctx-size 4096
       --parallel 2
