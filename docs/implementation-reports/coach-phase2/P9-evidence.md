@@ -206,6 +206,48 @@ $ git diff --check
 exit 0
 ```
 
+
+### Frontend CI timezone fix
+
+Frontend CI failed on `RemembersList.test.tsx` at `b4124b9`, `74ffc37`, `890f93e` and `607cc57`. The test expected
+`GMT` or `BST` without pinning a display timezone, so it used the machine zone; CI runs in UTC and rendered
+"10:00 UTC". The product code was correct and is unchanged.
+
+The test now mocks `/api/coach/readiness/display-timezone` to `Asia/Kolkata` in its `beforeEach` and asserts the
+last-updated line renders `15:30 GMT+5:30`. Every other assertion is kept.
+
+RED (before the fix):
+
+```text
+$ TZ=UTC npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+1 failed | 10 passed (11)
+```
+
+GREEN (real output):
+
+```text
+$ TZ=UTC npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+11 passed (11)
+
+$ TZ=UTC npx vitest run
+120 files passed, 736 tests passed
+
+$ TZ=Europe/London npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+11 passed (11)
+
+$ TZ=America/New_York npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+11 passed (11)
+
+$ npm run type-check
+exit 0
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+```
+
 Ready for review: yes.
 
 ## Review fixes
@@ -246,6 +288,48 @@ exit 0
 $ PLAYWRIGHT_BASE_URL=http://localhost:3001 npx playwright test \
     e2e/coach-readiness.spec.ts --project=chromium
 3 passed (9.6s)
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+```
+
+
+### Frontend CI timezone fix
+
+Frontend CI failed on `RemembersList.test.tsx` at `b4124b9`, `74ffc37`, `890f93e` and `607cc57`. The test expected
+`GMT` or `BST` without pinning a display timezone, so it used the machine zone; CI runs in UTC and rendered
+"10:00 UTC". The product code was correct and is unchanged.
+
+The test now mocks `/api/coach/readiness/display-timezone` to `Asia/Kolkata` in its `beforeEach` and asserts the
+last-updated line renders `15:30 GMT+5:30`. Every other assertion is kept.
+
+RED (before the fix):
+
+```text
+$ TZ=UTC npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+1 failed | 10 passed (11)
+```
+
+GREEN (real output):
+
+```text
+$ TZ=UTC npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+11 passed (11)
+
+$ TZ=UTC npx vitest run
+120 files passed, 736 tests passed
+
+$ TZ=Europe/London npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+11 passed (11)
+
+$ TZ=America/New_York npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+11 passed (11)
+
+$ npm run type-check
+exit 0
 
 $ python scripts/check_docs.py
 Documentation validation passed.

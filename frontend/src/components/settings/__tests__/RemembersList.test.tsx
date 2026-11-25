@@ -98,6 +98,9 @@ describe("RemembersList", () => {
         current = allZero();
         return response({ removed });
       }
+      if (url.endsWith("/api/coach/readiness/display-timezone")) {
+        return response({ display_timezone: "Asia/Kolkata" });
+      }
       return response({});
     });
   });
@@ -120,7 +123,9 @@ describe("RemembersList", () => {
     expect(rows[rows.length - 1]).toMatch(/\b1 row\b/);
     expect(rows[rows.length - 1]).not.toContain("1 rows");
     expect(rows[rows.length - 1]).toContain("Last updated");
-    expect(rows[rows.length - 1]).toMatch(/GMT|BST/);
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem").at(-1)).toHaveTextContent("15:30 GMT+5:30"),
+    );
 
     // Copy avoids implementation words in user-facing text.
     const copy = document.body.textContent ?? "";
