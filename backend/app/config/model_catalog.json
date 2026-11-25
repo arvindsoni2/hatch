@@ -115,7 +115,7 @@
     "download_size_gb": 1.56,
     "disk_required_gb": 2.04,
     "min_ram_gb": 4,
-    "recommended_ram_gb": 8,
+    "recommended_ram_gb": 12,
     "license": "apache-2.0",
     "source_trust": "official_model_repository",
     "tiers": [

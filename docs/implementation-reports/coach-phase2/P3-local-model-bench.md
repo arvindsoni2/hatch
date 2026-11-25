@@ -80,9 +80,11 @@ Tier S or any other tier.
 | Job-scoring triage | 15/16 | 10/16 |
 | Debrief extraction valid outputs | 5/10 | 3/10 |
 | Competency extraction clean outputs | 6/8 | 6/8 |
-| Peak RSS | 2.97 GB | — |
+| Peak RSS | 2.97 GB | 1.24 GB |
 
-Tier T cases ran without `reasoning_format`. The pinned revision and sha256 are the catalogue values above; any other
+Tier T cases ran without `reasoning_format`. MiniCPM5-2B (2.97 GB) and Qwen3.5-4B (5.2 GB, prompt cache off)
+together used about 8.2 GB at peak, against about 6.4 GB with Qwen3.5-0.8B. These are peaks from separate runs. The
+8 GB floor profile was not run, so the catalogue recommends MiniCPM5-2B from 12 GB (owner decision). The pinned revision and sha256 are the catalogue values above; any other
 revision needs the full gate.
 
 ## Pending bench checklist (owner)
