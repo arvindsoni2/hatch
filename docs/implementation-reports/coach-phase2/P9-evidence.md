@@ -97,7 +97,7 @@ $ python -m pytest -q --no-cov tests \
 4154 passed, 2 skipped in 754.67s
 ```
 
-Full Playwright suite against the local dev server: the two new P9 specs pass. The full run also executes pre-existing integration specs that require an unlocked, seeded backend; in this app-locked workspace they fail (67 passed, 5 skipped, 69 failed), independent of P9. The P9 pages themselves are fully mocked and green.
+Playwright: only the two P9 specs were run, against the local dev server with mocked APIs (2 passed). The review for repair cycle 1 asked not to run `api-flows.spec.ts` or the full Playwright set against the live backend on :8000; the pre-existing integration specs need a seeded, unlocked backend and are outside this cycle.
 
 Privacy / deletion / fencing evidence:
 
@@ -115,5 +115,56 @@ Not run / known limits:
 - K13 (accepted for 0.20.0): a brief/tips generation already running when delete-all happens may still write its text afterwards; finalise fencing re-checks sources, not deletion events.
 - Full Playwright integration specs need the CI seed/unlocked backend; see above.
 - P3 bench/acceptance-smoke owner items remain open; owner runs the bench summary review before flags-on rollout.
+
+## Repair cycle 1
+
+Review findings after `e800fdd`; no protected file changed.
+
+- **RemembersList load failure:** an inventory load error now renders only the message and a "Try again" button — no rows, counts or delete-all control. New Vitest test covers the failure and the successful retry.
+- **Dialog errors and stale success:** per-kind and delete-all failures render inside the open dialog with `role="alert"`; starting a new action clears the previous success line. Tested.
+- **Focus and refresh:** focus returns to the triggering button after Cancel, Escape and a successful delete (Radix `onCloseAutoFocus`); the list stays mounted while the post-delete refresh runs; every Delete button has a unique accessible name (`Delete Briefs`, `Delete Debriefs`, …). Tested, including a deliberately hanging refresh.
+- **Copy:** "1 row" singular; "eight readiness tables", "Phase 1 data" and "Fingerprints only" removed; each kind's confirm dialog states its §7.8 delete effect; "Last updated" renders in the display timezone with its abbreviation.
+- **privacy.py:** `delete_all` returns the counts from the delete rowcounts instead of reading the inventory first; the unused `model` argument is gone from `_count_last`.
+- **P9-release.md:** every Must AC listed with evidence; "All Must ACs pass" and the Claude Code review are unticked; "P3 bench report accepted (both gates)" is an open owner gate; the journey deviation cites the P9-red owner decision (not D19); rollout says "the owner's workspace", not a cohort.
+
+GREEN (real output):
+
+```text
+$ npx vitest run src/components/settings
+2 files, 9 passed
+# RemembersList suite: 6 passed
+
+$ python -m pytest -q --no-cov tests/integration/test_coach_readiness_journey.py \
+    tests/security/test_coach_readiness_security.py \
+    tests/test_services/test_source_events.py \
+    tests/integration/test_coach_readiness_cascade.py \
+    tests/integration/test_coach_readiness_fencing.py \
+    tests/security/test_coach_readiness_canary.py \
+    tests/architecture/test_coach_readiness_imports.py \
+    tests/runtime/test_coach_readiness_bindings.py
+30 passed in 16.78s
+
+$ ruff check app/ tests/
+All checks passed!
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ PLAYWRIGHT_BASE_URL=http://localhost:3001 npx playwright test \
+    e2e/coach-readiness.spec.ts --project=chromium
+2 passed (10.0s)
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ python scripts/check_readme_contract.py
+README contract passed.
+
+$ git diff --check
+exit 0
+```
 
 Ready for review: yes.

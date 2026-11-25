@@ -119,20 +119,35 @@ class ReadinessPrivacy:
 
     async def delete_all(self) -> MemoryDeletionResult:
         async with self.repository.session_factory() as session:
-            inventory = await self._inventory(session)
-            removed = {item.kind: item.count for item in inventory.kinds}
+            # Count what the deletes remove; the inventory is not read first.
+            removed: dict[MemoryKind, int] = {}
             # Sources first: the FK cascade is enabled in production SQLite, but
             # deleting explicitly keeps this correct under any connection.
             await self._delete_rows(session, CoachDerivedSource)
-            await self._delete_rows(session, CoachDerivedText)
+            removed["dismissed_patterns"] = await self._delete_rows(
+                session, CoachPatternDismissal
+            )
+            removed["focus_areas_and_plans"] = await self._delete_rows(
+                session, CoachFocusArea
+            ) + await self._delete_rows(session, CoachPracticePlan)
+            removed["briefs"] = await self._delete_derived(session, "brief")
+            removed["debriefs"] = await self._delete_rows(
+                session, CoachInterviewDebrief
+            )
+            removed["explain_tips"] = await self._delete_derived(session, "explain")
+            removed["competency_overrides"] = await self._delete_rows(
+                session, CoachCompetencyOverride
+            )
+            removed["job_competencies"] = await self._delete_derived(
+                session, "competency"
+            )
             await self._delete_rows(session, CoachInterviewBrief)
-            await self._delete_rows(session, CoachInterviewDebrief)
-            await self._delete_rows(session, CoachFocusArea)
-            await self._delete_rows(session, CoachPracticePlan)
-            await self._delete_rows(session, CoachPatternDismissal)
-            await self._delete_rows(session, CoachCompetencyOverride)
+            # Any remaining derived kind (plan wording, extraction) also goes.
+            await self._delete_rows(session, CoachDerivedText)
             await session.commit()
-            return MemoryDeletionResult(removed=removed)
+            return MemoryDeletionResult(
+                removed={kind: removed[kind] for kind in MEMORY_KINDS}
+            )
 
     async def _inventory(self, session: AsyncSession) -> MemoryInventory:
         kinds: list[MemoryKindSummary] = []
@@ -152,23 +167,19 @@ class ReadinessPrivacy:
     ) -> tuple[int, datetime | None]:
         if kind == "dismissed_patterns":
             return await self._count_last(
-                session, CoachPatternDismissal, CoachPatternDismissal.dismissed_at
+                session, CoachPatternDismissal.dismissed_at
             )
         if kind == "debriefs":
             return await self._count_last(
-                session, CoachInterviewDebrief, CoachInterviewDebrief.updated_at
+                session, CoachInterviewDebrief.updated_at
             )
         if kind == "competency_overrides":
             return await self._count_last(
-                session, CoachCompetencyOverride, CoachCompetencyOverride.updated_at
+                session, CoachCompetencyOverride.updated_at
             )
         if kind == "focus_areas_and_plans":
-            focus = await self._count_last(
-                session, CoachFocusArea, CoachFocusArea.updated_at
-            )
-            plans = await self._count_last(
-                session, CoachPracticePlan, CoachPracticePlan.updated_at
-            )
+            focus = await self._count_last(session, CoachFocusArea.updated_at)
+            plans = await self._count_last(session, CoachPracticePlan.updated_at)
             return focus[0] + plans[0], _max_of((focus[1], plans[1]))
         derived_kind = {
             "briefs": "brief",
@@ -185,7 +196,9 @@ class ReadinessPrivacy:
         ).one()
         return int(count or 0), last
 
-    async def _count_last(self, session: AsyncSession, model, column) -> tuple[int, datetime | None]:
+    async def _count_last(
+        self, session: AsyncSession, column
+    ) -> tuple[int, datetime | None]:
         count, last = (
             await session.execute(select(func.count(), func.max(column)))
         ).one()

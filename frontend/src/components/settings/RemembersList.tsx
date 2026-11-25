@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 
@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { SectionCard } from "@/components/ui/section-card";
+import { formatInterviewTime } from "@/lib/formatInterviewTime";
+import { useDisplayTimeZone } from "@/lib/useDisplayTimeZone";
 import {
   deleteAllReadinessData,
   deleteMemoryKind,
@@ -23,34 +25,44 @@ import {
   type MemoryKind,
 } from "@/lib/coachReadinessApi";
 
-const KIND_COPY: Record<MemoryKind, { label: string; description: string }> = {
+const KIND_COPY: Record<MemoryKind, { label: string; description: string; effect: string }> = {
   dismissed_patterns: {
     label: "Dismissed patterns",
-    description: "Fingerprints only.",
+    description: "Pattern fingerprints you dismissed.",
+    effect:
+      "Clears the dismissed pattern fingerprints. A pattern may reappear if the evidence still supports it.",
   },
   focus_areas_and_plans: {
     label: "Focus areas and plans",
     description: "Your focus areas and this week's practice plans.",
+    effect: "Deletes your focus areas and practice plans.",
   },
   briefs: {
     label: "Briefs",
     description: "Cached enhancement text; the brief re-assembles from your data.",
+    effect: "Deletes the cached brief enhancement text. The brief re-assembles from your data.",
   },
   debriefs: {
     label: "Debriefs",
     description: "Your saved debriefs, including rough notes.",
+    effect:
+      "Deletes the saved debriefs. Ticked, it also clears the whole question list on each round whose debrief is deleted. Rounds without a debrief keep their questions.",
   },
   explain_tips: {
     label: "Explain tips",
     description: "Cached tips from pattern explanations.",
+    effect: "Deletes the cached tips from pattern explanations.",
   },
   competency_overrides: {
     label: "Competency overrides",
     description: "Your renames and hidden competencies.",
+    effect: "Deletes your competency renames and hidden competencies.",
   },
   job_competencies: {
     label: "Job description competencies",
     description: "Cached competencies extracted from the job description.",
+    effect:
+      "Deletes the cached job-description competencies. Coverage uses the deterministic list until the next extraction.",
   },
 };
 
@@ -64,36 +76,40 @@ const PAGE_ORDER: MemoryKind[] = [
   "job_competencies",
 ];
 
-function lastUpdatedLabel(value: string | null): string {
-  if (!value) return "Never";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Never";
-  return `Last updated ${date.toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
+function rowCount(count: number): string {
+  return `${count} ${count === 1 ? "row" : "rows"}`;
 }
 
 export function RemembersList() {
+  const timeZone = useDisplayTimeZone();
   const [inventory, setInventory] = useState<MemoryInventory | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [status, setStatus] = useState("");
   const [pendingKind, setPendingKind] = useState<MemoryKind | null>(null);
   const [clearQuestions, setClearQuestions] = useState(false);
+  const [dialogError, setDialogError] = useState("");
+  const [allError, setAllError] = useState("");
   const [confirmAll, setConfirmAll] = useState(false);
   const [busy, setBusy] = useState(false);
+  const kindTrigger = useRef<HTMLButtonElement | null>(null);
+  const allTrigger = useRef<HTMLButtonElement | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
+  const refresh = useCallback(async () => {
     try {
       setInventory(await fetchMemoryInventory());
     } catch {
-      setError("What Hatch remembers is unavailable. Try again later.");
+      setLoadError("What Hatch remembers is unavailable. Try again later.");
+    }
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      setInventory(await fetchMemoryInventory());
+    } catch {
+      setLoadError("What Hatch remembers is unavailable. Try again later.");
     } finally {
       setLoading(false);
     }
@@ -107,15 +123,15 @@ export function RemembersList() {
 
   const removeKind = async (kind: MemoryKind) => {
     setBusy(true);
-    setError("");
+    setDialogError("");
     try {
       const result = await deleteMemoryKind(kind, kind === "debriefs" && clearQuestions);
       setStatus(`${KIND_COPY[kind].label}: removed ${result.removed}.`);
       setPendingKind(null);
       setClearQuestions(false);
-      await load();
+      await refresh();
     } catch {
-      setError("Could not delete that. Try again.");
+      setDialogError("Could not delete that. Try again.");
     } finally {
       setBusy(false);
     }
@@ -123,19 +139,32 @@ export function RemembersList() {
 
   const removeAll = async () => {
     setBusy(true);
-    setError("");
+    setAllError("");
     try {
       const result = await deleteAllReadinessData();
       const removed = Object.values(result.removed).reduce((total, count) => total + count, 0);
-      setStatus(`Removed ${removed} readiness rows. Phase 1 data is untouched.`);
+      setStatus(`Removed ${removed} readiness rows.`);
       setConfirmAll(false);
-      await load();
+      await refresh();
     } catch {
-      setError("Could not delete all readiness data. Try again.");
+      setAllError("Could not delete all readiness data. Try again.");
     } finally {
       setBusy(false);
     }
   };
+
+  if (loadError && inventory === null) {
+    return (
+      <SectionCard title="What Hatch remembers">
+        <p className="m-0 text-sm text-[var(--danger)]" role="alert">
+          {loadError}
+        </p>
+        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => void load()}>
+          Try again
+        </Button>
+      </SectionCard>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -143,7 +172,7 @@ export function RemembersList() {
         title="What Hatch remembers"
         description="Every kind of Coach readiness data, with when it last changed."
       >
-        {loading ? (
+        {loading && inventory === null ? (
           <div className="space-y-2" aria-busy="true">
             {[1, 2, 3, 4].map((item) => (
               <div key={item} className="h-12 animate-pulse rounded-[var(--radius-control)] bg-[var(--surface-2)]" />
@@ -171,15 +200,21 @@ export function RemembersList() {
                       {KIND_COPY[kind].label}
                     </p>
                     <p className="m-0 text-xs text-[var(--text-dim)]">
-                      {KIND_COPY[kind].description} · {summary?.count ?? 0} rows ·{" "}
-                      {lastUpdatedLabel(summary?.last_updated ?? null)}
+                      {KIND_COPY[kind].description} · {rowCount(summary?.count ?? 0)} ·{" "}
+                      {summary?.last_updated
+                        ? `Last updated ${formatInterviewTime(summary.last_updated, timeZone)}`
+                        : "Never updated"}
                     </p>
                   </div>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
+                    aria-label={`Delete ${KIND_COPY[kind].label}`}
+                    onClick={(event) => {
+                      kindTrigger.current = event.currentTarget;
+                      setStatus("");
+                      setDialogError("");
                       setPendingKind(kind);
                       setClearQuestions(false);
                     }}
@@ -191,15 +226,24 @@ export function RemembersList() {
             })}
           </ul>
         )}
-        {error ? <p className="mb-0 mt-3 text-sm text-[var(--danger)]" role="alert">{error}</p> : null}
         {status ? <p className="mb-0 mt-3 text-sm text-[var(--success)]" role="status" aria-live="polite">{status}</p> : null}
+        {loadError ? <p className="mb-0 mt-3 text-sm text-[var(--danger)]" role="alert">{loadError}</p> : null}
       </SectionCard>
 
       <SectionCard
         title="Delete all Coach readiness data"
-        description="Every row in the eight readiness tables goes. Practice sessions, rounds, stories and Question Bank entries stay."
+        description="Every stored readiness row goes. Practice sessions, rounds, stories and Question Bank entries stay."
       >
-        <Button type="button" variant="destructive" onClick={() => setConfirmAll(true)}>
+        <Button
+          type="button"
+          variant="destructive"
+          onClick={(event) => {
+            allTrigger.current = event.currentTarget;
+            setStatus("");
+            setAllError("");
+            setConfirmAll(true);
+          }}
+        >
           Delete all Coach readiness data
         </Button>
       </SectionCard>
@@ -210,17 +254,21 @@ export function RemembersList() {
           if (!open) {
             setPendingKind(null);
             setClearQuestions(false);
+            setDialogError("");
           }
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            kindTrigger.current?.focus();
+          }}
+        >
           <AlertDialogTitle>
             Delete {pendingKind ? KIND_COPY[pendingKind].label.toLowerCase() : "this data"}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {pendingKind === "debriefs"
-              ? "Deletes the saved debriefs. Ticked, it also clears the whole question list on each round whose debrief is deleted. Rounds without a debrief keep their questions."
-              : "This removes the stored rows for this kind. It cannot be undone."}
+            {pendingKind ? KIND_COPY[pendingKind].effect : "This removes the stored rows for this kind."}
           </AlertDialogDescription>
           {pendingKind === "debriefs" ? (
             <label className="mt-3 flex min-h-11 items-start gap-2 text-sm text-[var(--text)]">
@@ -232,6 +280,9 @@ export function RemembersList() {
               />
               Also clear questions on the round
             </label>
+          ) : null}
+          {dialogError ? (
+            <p className="mb-0 mt-3 text-sm text-[var(--danger)]" role="alert">{dialogError}</p>
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
@@ -249,8 +300,19 @@ export function RemembersList() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={confirmAll} onOpenChange={setConfirmAll}>
-        <AlertDialogContent>
+      <AlertDialog
+        open={confirmAll}
+        onOpenChange={(open) => {
+          setConfirmAll(open);
+          if (!open) setAllError("");
+        }}
+      >
+        <AlertDialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            allTrigger.current?.focus();
+          }}
+        >
           <AlertDialogTitle>Delete all Coach readiness data?</AlertDialogTitle>
           <AlertDialogDescription>
             This empties every readiness table: dismissals, focus areas, plans,
@@ -258,6 +320,9 @@ export function RemembersList() {
             description competencies. Your practice sessions, interview rounds,
             stories and Question Bank entries are untouched.
           </AlertDialogDescription>
+          {allError ? (
+            <p className="mb-0 mt-3 text-sm text-[var(--danger)]" role="alert">{allError}</p>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             <AlertDialogAction

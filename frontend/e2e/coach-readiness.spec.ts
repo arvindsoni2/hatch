@@ -64,14 +64,10 @@ test("test_remembers_page_lists_and_deletes", async ({ page }) => {
   const rows = page.getByRole("listitem");
   await expect(rows).toHaveCount(8);
   await expect(rows.nth(7)).toContainText("Job description competencies");
-  await expect(rows.nth(7)).toContainText("1 rows");
+  await expect(rows.nth(7)).toContainText("1 row");
 
   // Debrief delete: the option explains that it clears the rounds' whole list.
-  await page
-    .getByRole("listitem")
-    .filter({ hasText: "Debriefs" })
-    .getByRole("button", { name: "Delete" })
-    .click();
+  await page.getByRole("button", { name: "Delete Debriefs" }).click();
   await expect(page.getByText("Delete debriefs?")).toBeVisible();
   await expect(
     page.getByText(/clears the whole question list on each round whose debrief is deleted/),
@@ -94,7 +90,7 @@ test("test_remembers_page_lists_and_deletes", async ({ page }) => {
     .getByRole("button", { name: "Delete all Coach readiness data" })
     .click();
   await expect(page.getByRole("status")).toContainText(
-    /Removed .* readiness rows\. Phase 1 data is untouched\./,
+    /Removed .* readiness rows\./,
   );
   await expect(page.getByText("0 rows")).toHaveCount(7);
 });
