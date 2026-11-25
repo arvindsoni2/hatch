@@ -207,6 +207,8 @@ describe("RemembersList", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("What Hatch remembers is unavailable.");
+    // A failed first load never moves focus.
+    expect(screen.getByRole("heading", { name: "What Hatch remembers" })).not.toHaveFocus();
     expect(screen.queryAllByRole("listitem")).toHaveLength(0);
     expect(
       screen.queryByRole("button", { name: "Delete all Coach readiness data" }),
@@ -318,6 +320,111 @@ describe("RemembersList", () => {
 
     expect(await screen.findByRole("heading", { name: "What Hatch remembers" })).toHaveFocus();
     expect(screen.getAllByRole("listitem")).toHaveLength(8);
+  });
+
+  it("shows the delete confirmation and focuses the error heading when refresh fails", async () => {
+    const user = userEvent.setup();
+    let refreshFails = false;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.endsWith("/api/coach/readiness/memory")) {
+        if (refreshFails) {
+          return { ok: false, json: async () => ({}), text: async () => "offline" } as Response;
+        }
+        return response(inventory());
+      }
+      if (method === "DELETE" && url.includes("/memory/briefs")) {
+        return response({ kind: "briefs", removed: 1 });
+      }
+      return response({});
+    });
+
+    render(<RemembersList />);
+    await user.click(await screen.findByRole("button", { name: "Delete Briefs" }));
+    refreshFails = true;
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete" }),
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Briefs: removed 1.");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "What Hatch remembers is unavailable.",
+    );
+    expect(screen.getByRole("heading", { name: "What Hatch remembers" })).toHaveFocus();
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("keeps the error heading on a failed retry and focuses the list heading on success", async () => {
+    const user = userEvent.setup();
+    let mode: "fail" | "ok" = "fail";
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/api/coach/readiness/memory")) {
+        if (mode === "fail") {
+          return { ok: false, json: async () => ({}), text: async () => "offline" } as Response;
+        }
+        return response(inventory());
+      }
+      return response({});
+    });
+
+    render(<RemembersList />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "What Hatch remembers is unavailable.",
+    );
+    expect(screen.getByRole("heading", { name: "What Hatch remembers" })).not.toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "What Hatch remembers" })).toHaveFocus(),
+    );
+
+    mode = "ok";
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Patterns")).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "What Hatch remembers" })).toHaveFocus(),
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(8);
+  });
+
+  it("keeps the delete-all dialog open when Escape arrives during a failing delete", async () => {
+    const user = userEvent.setup();
+    let rejectDelete!: () => void;
+    const gate = new Promise<void>((_resolve, reject) => {
+      rejectDelete = () => reject(new Error("failed"));
+    });
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? "GET") === "GET" && url.endsWith("/api/coach/readiness/memory")) {
+        return response(inventory());
+      }
+      if (init?.method === "DELETE") {
+        await gate;
+        throw new Error("failed");
+      }
+      return response({});
+    });
+
+    render(<RemembersList />);
+    await user.click(
+      await screen.findByRole("button", { name: "Delete all Coach readiness data" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete all Coach readiness data",
+      }),
+    );
+    await user.keyboard("{Escape}");
+
+    rejectDelete();
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Could not delete all readiness data. Try again.",
+    );
+    expect(dialog).toBeVisible();
   });
 
   it("returns focus to the trigger after cancel, Escape and delete", async () => {

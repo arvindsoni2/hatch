@@ -207,3 +207,51 @@ exit 0
 ```
 
 Ready for review: yes.
+
+## Review fixes
+
+Fixes for the remaining review items on PR #91; only the allowed files changed.
+
+- **Copy:** the per-kind fallback dialog now says "This removes the stored items for this kind."; the "1 row"/"N rows" counts are unchanged.
+- **Refresh failure:** the error view now shows the same `role="status" aria-live="polite"` confirmation paragraph as the list view, so a delete that succeeded remains visible beside the error. Focus moves to the error view's "What Hatch remembers" heading when a post-delete refresh fails and when "Try again" fails; the dialog's `onCloseAutoFocus` no longer steals that focus. A failed first page load never moves focus, and a successful "Try again" still focuses the list heading. The error heading has `focus:outline-none` like the list heading.
+- **Tests:** three new cases cover the delete-success/refresh-failure status and focus, the failed-then-successful retry focus path, and the first-load no-focus rule. The delete-all Escape-during-delete case covers the existing busy guard.
+
+RED (before the fix; the two focus cases failed, the delete-all guard case already passed):
+
+```text
+$ npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+2 failed | 9 passed
+# shows the delete confirmation and focuses the error heading when refresh fails
+# keeps the error heading on a failed retry and focuses the list heading on success
+# keeps the delete-all dialog open when Escape arrives during a failing delete: passed
+```
+
+Guard check: temporarily removing `if (busy) return;` from the delete-all dialog's `onOpenChange` makes the delete-all Escape test fail (1 failed | 10 skipped); the line was restored.
+
+GREEN (real output):
+
+```text
+$ npx vitest run src/components/settings/__tests__/RemembersList.test.tsx
+11 passed
+
+$ npx vitest run
+736 passed (736)
+
+$ npm run type-check
+exit 0
+
+$ npm run build
+exit 0
+
+$ PLAYWRIGHT_BASE_URL=http://localhost:3001 npx playwright test \
+    e2e/coach-readiness.spec.ts --project=chromium
+3 passed (9.6s)
+
+$ python scripts/check_docs.py
+Documentation validation passed.
+
+$ git diff --check
+exit 0
+```
+
+Ready for review: yes.

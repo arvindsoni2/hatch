@@ -97,13 +97,14 @@ export function RemembersList() {
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const focusHeading = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (focusOnError = false) => {
     setLoadError("");
     try {
       setInventory(await fetchMemoryInventory());
     } catch {
       setInventory(null);
       setLoadError("What Hatch remembers is unavailable. Try again later.");
+      if (focusOnError) focusHeading.current = true;
     }
   }, []);
 
@@ -124,11 +125,12 @@ export function RemembersList() {
   }, [load]);
 
   useEffect(() => {
-    if (focusHeading.current && inventory !== null) {
+    if (!focusHeading.current) return;
+    if (inventory !== null || loadError) {
       focusHeading.current = false;
       headingRef.current?.focus();
     }
-  }, [inventory]);
+  }, [inventory, loadError]);
 
   const retry = () => {
     focusHeading.current = true;
@@ -145,7 +147,7 @@ export function RemembersList() {
       setStatus(`${KIND_COPY[kind].label}: removed ${result.removed}.`);
       setPendingKind(null);
       setClearQuestions(false);
-      await refresh();
+      await refresh(true);
     } catch {
       setDialogError("Could not delete that. Try again.");
     } finally {
@@ -161,7 +163,7 @@ export function RemembersList() {
       const removed = Object.values(result.removed).reduce((total, count) => total + count, 0);
       setStatus(`Removed ${removed} readiness items.`);
       setConfirmAll(false);
-      await refresh();
+      await refresh(true);
     } catch {
       setAllError("Could not delete all readiness data. Try again.");
     } finally {
@@ -172,12 +174,21 @@ export function RemembersList() {
   if (loadError && inventory === null) {
     return (
       <SectionCard>
-        <h2 className="m-0 mb-4 text-base font-semibold text-[var(--text)]" tabIndex={-1} ref={headingRef}>
+        <h2
+          className="m-0 mb-4 text-base font-semibold text-[var(--text)] focus:outline-none"
+          tabIndex={-1}
+          ref={headingRef}
+        >
           What Hatch remembers
         </h2>
         <p className="m-0 text-sm text-[var(--danger)]" role="alert">
           {loadError}
         </p>
+        {status ? (
+          <p className="mb-0 mt-3 text-sm text-[var(--success)]" role="status" aria-live="polite">
+            {status}
+          </p>
+        ) : null}
         <Button type="button" variant="outline" size="sm" className="mt-3" onClick={retry}>
           Try again
         </Button>
@@ -288,14 +299,14 @@ export function RemembersList() {
         <AlertDialogContent
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            kindTrigger.current?.focus();
+            if (!focusHeading.current) kindTrigger.current?.focus();
           }}
         >
           <AlertDialogTitle>
             Delete {pendingKind ? KIND_COPY[pendingKind].label.toLowerCase() : "this data"}?
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {pendingKind ? KIND_COPY[pendingKind].effect : "This removes the stored rows for this kind."}
+            {pendingKind ? KIND_COPY[pendingKind].effect : "This removes the stored items for this kind."}
           </AlertDialogDescription>
           {pendingKind === "debriefs" ? (
             <label className="mt-3 flex min-h-11 items-start gap-2 text-sm text-[var(--text)]">
@@ -342,7 +353,7 @@ export function RemembersList() {
         <AlertDialogContent
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            allTrigger.current?.focus();
+            if (!focusHeading.current) allTrigger.current?.focus();
           }}
         >
           <AlertDialogTitle>Delete all Coach readiness data?</AlertDialogTitle>
