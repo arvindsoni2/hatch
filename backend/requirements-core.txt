@@ -6,7 +6,7 @@
 # Web framework
 fastapi==0.165.0
 uvicorn[standard]==0.54.0
-python-multipart>=0.0.9
+python-multipart>=0.0.31
 bcrypt>=4.1.0
 
 # Database
@@ -21,7 +21,7 @@ pydantic-settings==2.16.3
 # HTTP and non-browser scraping
 httpx==0.28.1
 beautifulsoup4==4.15.0
-lxml>=5.3.0
+lxml>=6.1.0
 
 # Scheduling
 apscheduler==3.11.3
@@ -53,4 +53,4 @@ langchain-ollama>=1.0.0,<2.0
 
 # Document parsing (CV upload)
 python-docx>=1.1.0
-pypdf>=4.0.0
+pypdf>=6.21.4
