@@ -259,7 +259,10 @@ async def test_command_and_live_routes_redact_unsafe_session_ids(
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "coach_contract_unsupported"
         assert response.json()["error"]["details"] == {}
-        assert unsafe_session_id.replace("%", "") not in response.text
+        body = response.json()
+        correlation_id = body["error"].pop("correlation_id")
+        assert len(correlation_id) == 32 and correlation_id.isalnum()
+        assert unsafe_session_id.replace("%", "") not in json.dumps(body)
 
 
 @pytest.mark.asyncio
