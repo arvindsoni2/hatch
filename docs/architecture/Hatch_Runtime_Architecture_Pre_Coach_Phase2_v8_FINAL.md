@@ -83,6 +83,7 @@ Migration consequence
 | ARCH-10 | Migration architecture | **Approved** | Strangler migration with LEGACY/SHADOW/NEW modes; job scoring first proof; Coach Phase 1 kernel extraction before Phase 2 |
 | ARCH-11 | Testing & architecture invariants | **Approved — Option B** | Conventional test pyramid + named architecture-invariant suite + deterministic failure injection |
 | ARCH-12 | Implementation phases / Coach Phase 2 boundary | **Approved — Option B** | Gated foundation + vertical proofs; Coach Phase 2 implementation unlocked only after R4 Coach-runtime gate |
+| ARCH-13 | Decision layer | **Approved (2026-11-26)** | Rules for facts, a local calibrated decision model (Laya) for typed judgements, generative models for prose only; see §22 and `DECISION_LAYER.md` |
 
 ---
 
@@ -2255,7 +2256,7 @@ ARCH-11  Testing + Architecture Invariants — Option B
 ARCH-12  Implementation Phases + Coach Phase 2 Boundary — Option B
 ```
 
-No architecture section remains open.
+No architecture section of the original set remains open. ARCH-13 (decision layer) was added and approved on 2026-11-26; see §19 and §22.
 
 The next artifact is the **Architecture Foundation Implementation Specification**.
 
@@ -2288,7 +2289,13 @@ The intent is to adopt useful architectural patterns without chasing framework d
 
 # 19. Open Review Queue
 
-**No architecture decisions remain open.**
+Open:
+
+```text
+ARCH-13  Decision layer — approved 2026-11-26; implementation specs L1–L4 follow release 0.20.0 (§22)
+```
+
+All other architecture decisions are closed.
 
 Next workstream:
 
@@ -2348,3 +2355,60 @@ Chat E — Coach Phase 2 Implementation
 ```
 
 This file, not the old conversation, is the architectural source of truth.
+
+---
+
+# 22. ARCH-13 — Decision Layer
+
+**Status: Approved (2026-11-26).** Detailed design, decision-point inventory and evaluation results: [Decision layer](DECISION_LAYER.md).
+
+Selected direction:
+
+> **Rules decide facts; a local calibrated decision model decides typed judgements; generative models write prose.**
+
+## Rationale
+
+Generative models in the S and T tiers currently emit the numbers and labels that gate workflows (job fit sub-scores, relevance, job labels, coach dimension levels, claim status). Benchmarks in November 2026 showed these values are uncalibrated and unstable between runs, and that reasoning fixes them only at 15–20 minutes per job on reference hardware. A non-autoregressive decision model returns one calibrated distribution per typed question in a single pass, with a conformal prediction set, an abstain flag and a `route` of `auto` or `review`.
+
+## Decision types
+
+```text
+noul    probability that the answer is yes
+choice  one label from a fixed set
+score   one level on an ordinal scale
+```
+
+## Placement rules
+
+1. Every gating decision has exactly one owner: rules, decision model, or (until migrated) a generative tier.
+2. Decision-model output is a proposal under §4.2; deterministic code authorizes and the human approves external action.
+3. `route = review` sends the item to the user's review queue; it is never silently coerced into a positive decision.
+4. AI mode None, or an absent decision service, falls back to rules with a deterministic result.
+
+## Change-control record (ARCH-03)
+
+```text
+Decision ID        ARCH-03 (extended by ARCH-13)
+Previous state     ModelDescriptor capabilities describe generative models only
+New state          ModelDescriptor gains output_kind: generative | decision;
+                   a TaskSpec with a decision output is eligible only for decision models,
+                   and a prose TaskSpec only for generative models
+Reason             Decision models cannot generate text; generators are not calibrated deciders
+Affected sections  §8 ARCH-03, §6 ARCH-01 (TaskSpec output contract)
+Migration          Additive; existing descriptors default to output_kind = generative
+```
+
+## Training and calibration
+
+- Shipped default calibration per question set, fitted on synthetic and teacher-labelled data.
+- Scheduled batch refit on the user's own decisions, on the user's machine, outside the request path.
+- A refit is served only if it beats the current version on held-out rows, and versions can be rolled back. Promotion to `NEW` mode is an owner decision per question. This is a gated calibration update, not the self-modifying router rejected in §18.
+- Training rows and fitted calibrations are derived user data: stored under the data directory, never committed, deleted with their sources.
+
+## Migration
+
+Uses ARCH-10 modes. Each decision runs `LEGACY` → `SHADOW` (agreement recorded through the existing shadow comparison store, no content retained) → `NEW`.
+
+## Deployment
+
+Optional `llm-decide` service (CPU, internal network only), enabled through a capability profile like `local-embeddings`. No new orchestration framework; consistent with §18.

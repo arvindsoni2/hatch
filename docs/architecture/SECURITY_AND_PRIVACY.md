@@ -41,6 +41,8 @@ Easy-install provider secrets live in `${HATCH_HOME}/config/secrets.env` and are
 
 When local AI is selected, prompts stay within the local Hatch workspace and `llama.cpp` services running on the same machine.
 
+The approved decision layer (not yet implemented) keeps the same boundary: its decision service runs locally on the internal network, and training rows and fitted calibrations are derived user data that stay in the data directory, are never committed, and are deleted with their sources. See [Decision layer](DECISION_LAYER.md).
+
 ## Cloud Provider Disclosure
 
 Cloud providers receive data only when a provider is configured and an AI-backed action uses it.
