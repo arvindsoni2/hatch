@@ -1,0 +1,4 @@
+# Keep the repository's pre-0.17 rule selection. Ruff 0.17 enables a much
+# broader default set; this file makes `ruff check app/ tests/` deterministic.
+[lint]
+select = ["E4", "E7", "E9", "F"]
