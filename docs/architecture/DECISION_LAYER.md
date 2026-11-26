@@ -71,7 +71,7 @@ Every decision Hatch makes today, its current mechanism, and its target owner. P
 | Employment type, IR35, working pattern, seniority, match score | `services/job_classifier.py` (T-tier), `scrapers/base.py` `detect_*` (keywords), `services/jd_analyser.py` (S-tier) | three sources | fixed choices | **Rules first** where the text is explicit; **decision model** (choice) when not; one stored value | `PATCH /jobs/{id}` IR35 edits; synthetic labels |
 | Duplicate posting | `services/dedup.py` | rapidfuzz ratio | binary | **Rules** (unchanged); decision model only for the borderline fuzzy band, later | — |
 | Ghost or suspicious posting | `services/ghost_detector.py` | weighted rules | four verdicts | **Rules** (unchanged); decision-model probability may become one input later | `agency_reputation` from outcomes |
-| Untrusted advert text (injection or abuse) | none | none | binary | **Decision model** gate before any LLM reads scraped text (see security spec task H4) | synthetic |
+| Untrusted advert text (injection or abuse) | none | none | binary | **Decision model** gate before any LLM reads scraped text | synthetic |
 
 ### 3.2 Tailoring
 
