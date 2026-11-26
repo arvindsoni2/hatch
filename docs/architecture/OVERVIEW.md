@@ -123,7 +123,7 @@ See [Data and storage](DATA_AND_STORAGE.md) for exact locations and lifecycle ru
 
 AI can be deferred, local, or cloud-backed. See [AI architecture](AI_ARCHITECTURE.md).
 
-Proposed (not implemented): a decision layer that moves every yes/no, fixed-choice and ordinal judgement from the generative models to rules or a local calibrated decision model, leaving the generative models for prose. It would add one optional CPU service. See [Decision layer](DECISION_LAYER.md).
+Approved, not yet implemented (ARCH-13): a decision layer that moves every yes/no, fixed-choice and ordinal judgement from the generative models to rules or a local calibrated decision model, leaving the generative models for prose. It would add one optional CPU service. See [Decision layer](DECISION_LAYER.md).
 
 ## Capability Profiles
 
@@ -151,6 +151,6 @@ The current repo provides Docker logs, backend health checks, CLI `status` and `
 - [Components](COMPONENTS.md)
 - [Workflows](WORKFLOWS.md)
 - [AI architecture](AI_ARCHITECTURE.md)
-- [Decision layer (proposed)](DECISION_LAYER.md)
+- [Decision layer](DECISION_LAYER.md)
 - [Security and privacy](SECURITY_AND_PRIVACY.md)
 - [Deployment](DEPLOYMENT.md)

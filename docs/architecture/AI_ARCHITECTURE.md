@@ -38,7 +38,7 @@ Promotion of a model into a tier is an owner decision backed by benchmark eviden
 
 ## Decisions Versus Generation
 
-Hatch currently asks the generative tiers to produce many numbers and labels (fit sub-scores, job labels, coach dimension levels, claim status). Benchmarks in November 2026 showed these outputs are uncalibrated and vary between runs. The agreed target splits AI work into three layers: rules for facts, a local decision model for every yes/no, fixed-choice or ordinal judgement, and the generative tiers for prose only. The full inventory of decision points and the proposed design are in [Decision layer (proposed)](DECISION_LAYER.md). Until it is implemented, the tiers above remain the source of every AI decision.
+Hatch currently asks the generative tiers to produce many numbers and labels (fit sub-scores, job labels, coach dimension levels, claim status). Benchmarks in November 2026 showed these outputs are uncalibrated and vary between runs. The agreed target splits AI work into three layers: rules for facts, a local decision model for every yes/no, fixed-choice or ordinal judgement, and the generative tiers for prose only. The full inventory of decision points and the approved design are in [Decision layer (approved, not yet implemented)](DECISION_LAYER.md). Until it is implemented, the tiers above remain the source of every AI decision.
 
 ## Hardware Probe And Recommendations
 
@@ -74,7 +74,7 @@ Easy installs keep provider secrets in `${HATCH_HOME}/config/secrets.env`. That 
 
 ## Capability-Gated AI Features
 
-The backend profile controls optional browser automation, local embeddings, perception, and advanced coach capabilities independently from the chosen AI runtime. The proposed decision service would be enabled the same way, as an opt-in profile (see [Decision layer](DECISION_LAYER.md)).
+The backend profile controls optional browser automation, local embeddings, perception, and advanced coach capabilities independently from the chosen AI runtime. The approved decision service will be enabled the same way, as an opt-in profile (see [Decision layer](DECISION_LAYER.md)).
 
 ## External Data Disclosure
 
@@ -105,7 +105,7 @@ flowchart TD
 
 ## Related Guides
 
-- [Decision layer (proposed)](DECISION_LAYER.md)
+- [Decision layer (approved, not yet implemented)](DECISION_LAYER.md)
 
 - [Local models](../operations/LOCAL_MODELS.md)
 - [Cloud providers](../operations/CLOUD_PROVIDERS.md)

@@ -8,7 +8,7 @@ Use this index to find the current product, operations, architecture, developmen
 - Existing user: [User guide](user-guide/USER_GUIDE.md), [Troubleshooting](getting-started/TROUBLESHOOTING.md)
 - Operator: [Operations guide](operations/OPERATIONS.md), [Local AI observability](operations/OBSERVABILITY.md), [CLI reference](operations/CLI_REFERENCE.md), [Representative local-model selection](operations/REPRESENTATIVE_LOCAL_MODEL_BENCHMARK.md), [Backup and recovery](operations/BACKUP_AND_RECOVERY.md)
 - Contributor: [Development setup](development/DEVELOPMENT_SETUP.md), [Repository structure](development/REPOSITORY_STRUCTURE.md), [Testing](development/TESTING.md)
-- Maintainer: [Architecture overview](architecture/OVERVIEW.md), [AI architecture](architecture/AI_ARCHITECTURE.md), [Decision layer (proposed)](architecture/DECISION_LAYER.md), [Release checklist](operations/RELEASE_CHECKLIST.md), [Archive](archive/)
+- Maintainer: [Architecture overview](architecture/OVERVIEW.md), [AI architecture](architecture/AI_ARCHITECTURE.md), [Decision layer](architecture/DECISION_LAYER.md), [Release checklist](operations/RELEASE_CHECKLIST.md), [Archive](archive/)
 
 ## Active Implementation Work
 

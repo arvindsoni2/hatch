@@ -83,7 +83,7 @@ Migration consequence
 | ARCH-10 | Migration architecture | **Approved** | Strangler migration with LEGACY/SHADOW/NEW modes; job scoring first proof; Coach Phase 1 kernel extraction before Phase 2 |
 | ARCH-11 | Testing & architecture invariants | **Approved — Option B** | Conventional test pyramid + named architecture-invariant suite + deterministic failure injection |
 | ARCH-12 | Implementation phases / Coach Phase 2 boundary | **Approved — Option B** | Gated foundation + vertical proofs; Coach Phase 2 implementation unlocked only after R4 Coach-runtime gate |
-| ARCH-13 | Decision layer | **Proposed (2026-11-26)** | Rules for facts, a local calibrated decision model (Laya) for typed judgements, generative models for prose only; see §22 and `DECISION_LAYER.md` |
+| ARCH-13 | Decision layer | **Approved (2026-11-26)** | Rules for facts, a local calibrated decision model (Laya) for typed judgements, generative models for prose only; see §22 and `DECISION_LAYER.md` |
 
 ---
 
@@ -2256,7 +2256,7 @@ ARCH-11  Testing + Architecture Invariants — Option B
 ARCH-12  Implementation Phases + Coach Phase 2 Boundary — Option B
 ```
 
-No architecture section of the original set remains open. ARCH-13 (decision layer) was opened as a proposal on 2026-11-26; see §19 and §22.
+No architecture section of the original set remains open. ARCH-13 (decision layer) was added and approved on 2026-11-26; see §19 and §22.
 
 The next artifact is the **Architecture Foundation Implementation Specification**.
 
@@ -2289,10 +2289,10 @@ The intent is to adopt useful architectural patterns without chasing framework d
 
 # 19. Open Review Queue
 
-Open since 2026-11-26:
+Open:
 
 ```text
-ARCH-13  Decision layer — proposed; L0 evidence recorded 2026-11-26 (go for SHADOW on job fit and grounding); owner approval pending (§22)
+ARCH-13  Decision layer — approved 2026-11-26; implementation specs L1–L4 follow release 0.20.0 (§22)
 ```
 
 All other architecture decisions are closed.
@@ -2360,9 +2360,9 @@ This file, not the old conversation, is the architectural source of truth.
 
 # 22. ARCH-13 — Decision Layer
 
-**Status: Proposed (2026-11-26).** Detailed design, decision-point inventory and evaluation results: [Decision layer](DECISION_LAYER.md).
+**Status: Approved (2026-11-26).** Detailed design, decision-point inventory and evaluation results: [Decision layer](DECISION_LAYER.md).
 
-Selected direction (proposed):
+Selected direction:
 
 > **Rules decide facts; a local calibrated decision model decides typed judgements; generative models write prose.**
 

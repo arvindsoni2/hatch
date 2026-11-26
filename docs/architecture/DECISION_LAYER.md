@@ -1,5 +1,5 @@
 ---
-title: Hatch Decision Layer (proposed)
+title: Hatch Decision Layer
 document_type: architecture
 status: active
 implementation_status: not-applicable
@@ -9,9 +9,9 @@ supersedes: []
 superseded_by: []
 ---
 
-# Decision Layer (proposed)
+# Decision Layer
 
-> **Status: proposed, not implemented.** This document is the agreed target design for how Hatch makes decisions. It records the analysis, the placement of a local decision model (Laya) across the whole system, the training loop and the rollout. Nothing here changes behaviour until a spec implements it behind a flag. Runtime decision record: ARCH-13 in [Runtime architecture](Hatch_Runtime_Architecture_Pre_Coach_Phase2_v8_FINAL.md).
+> **Status: approved by the owner on 2026-11-26 (ARCH-13); not yet implemented.** This document is the agreed target design for how Hatch makes decisions. It records the analysis, the placement of a local decision model (Laya) across the whole system, the training loop and the rollout. Nothing here changes behaviour until a spec implements it behind a flag. Runtime decision record: ARCH-13 in [Runtime architecture](Hatch_Runtime_Architecture_Pre_Coach_Phase2_v8_FINAL.md).
 
 ## 1. Problem
 
@@ -56,11 +56,11 @@ flowchart LR
 
 ## 3. Decision-point inventory
 
-Every decision Hatch makes today, its current mechanism, and the proposed owner. Paths are under `backend/app/`. Input length: S short (titles, first 500 characters), M medium (a JD or a transcript), L long (CV plus JD).
+Every decision Hatch makes today, its current mechanism, and its target owner. Paths are under `backend/app/`. Input length: S short (titles, first 500 characters), M medium (a JD or a transcript), L long (CV plus JD).
 
 ### 3.1 Job pipeline (runs per job; highest volume)
 
-| Decision | Where today | Mechanism today | Output | Proposed owner | Labels available |
+| Decision | Where today | Mechanism today | Output | Target owner | Labels available |
 |---|---|---|---|---|---|
 | Relevant to target roles | `agents/tools/scoring_contract.py` `_build_triage_prompt`, called from `agents/scorer_agent.py` and `runtime_bindings/migration/scoring.py` | T-tier LLM | binary | **Decision model** (yes/no) | `applications.approval_status`; job dismissal |
 | Skill, experience, rate, location match | `scoring_contract.py` `_build_llm_judge_prompt` / `_build_scoring_prompt` | S-tier LLM, about 2 minutes a job | four 0–1 numbers, recomputed as a weighted sum | **Decision model** for core skills met (yes/no), seniority (under / at / over), job family (choice), domain fit (yes/no). **Rules** for rate and location. | approve/reject, `applications.status`, `application_outcomes`, `application_score_snapshots` |
@@ -75,7 +75,7 @@ Every decision Hatch makes today, its current mechanism, and the proposed owner.
 
 ### 3.2 Tailoring
 
-| Decision | Where today | Mechanism today | Proposed owner | Labels |
+| Decision | Where today | Mechanism today | Target owner | Labels |
 |---|---|---|---|---|
 | Tailored bullet supported by the master CV | `services/grounding_validator.py` | rapidfuzz similarity below 70 flags | **Decision model** (yes/no on each bullet and its best master-CV evidence) | synthetic perturbations (changed numbers, invented employers or skills); user accepts or edits warnings |
 | ATS score | `services/ats_optimiser.py` | 40% keywords, 60% S-tier LLM | Unchanged for now | — |
@@ -83,7 +83,7 @@ Every decision Hatch makes today, its current mechanism, and the proposed owner.
 
 ### 3.3 Coach
 
-| Decision | Where today | Mechanism today | Proposed owner | Labels |
+| Decision | Where today | Mechanism today | Target owner | Labels |
 |---|---|---|---|---|
 | Seven answer dimensions (needs work to strong) | `services/coach_conversational_evaluator.py` | S-tier LLM with evidence spans | **Decision model** for each level (ordinal); generative model keeps evidence quotes and tips | weak: `session_recordings.self_assessment_json`; teacher labels needed |
 | Legacy six dimension scores | `services/answer_evaluator.py` | S-tier LLM | Same as above when the legacy path is retired | — |
