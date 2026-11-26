@@ -12,17 +12,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 FROM build-base AS core-builder
 
-COPY requirements-core.txt .
+COPY requirements-core.txt constraints.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip install --prefix=/install --no-cache-dir -r requirements-core.txt
+    pip install --prefix=/install --no-cache-dir -c constraints.txt -r requirements-core.txt
 
 
 FROM core-builder AS browser-builder
 
 COPY requirements-browser.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --prefix=/install --no-cache-dir -r requirements-browser.txt
+    pip install --prefix=/install --no-cache-dir -c constraints.txt -r requirements-browser.txt
 
 
 FROM core-builder AS local-ai-builder
@@ -31,6 +31,7 @@ COPY requirements-local-ai.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --prefix=/install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cpu \
+        -c constraints.txt \
         -r requirements-local-ai.txt
 
 
@@ -39,16 +40,18 @@ FROM core-builder AS observability-builder
 COPY requirements-observability.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --prefix=/install --no-cache-dir \
+        -c constraints.txt \
         -r requirements-observability.txt
 
 
 FROM build-base AS full-builder
 
-COPY requirements-core.txt requirements-browser.txt requirements-local-ai.txt requirements-observability.txt requirements-perception.txt requirements-full.txt ./
+COPY requirements-core.txt requirements-browser.txt requirements-local-ai.txt requirements-observability.txt requirements-perception.txt requirements-full.txt constraints.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install --prefix=/install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cpu \
+        -c constraints.txt \
         -r requirements-full.txt
 
 

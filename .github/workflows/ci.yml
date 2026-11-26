@@ -32,7 +32,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/app/templates/package-lock.json
       - name: Install dependencies
-        run: pip install -r backend/requirements-dev.txt
+        run: pip install -r backend/requirements-dev.txt -c backend/constraints.txt --extra-index-url https://download.pytorch.org/whl/cpu
       - name: Install CV renderer dependencies
         run: npm ci
         working-directory: backend/app/templates

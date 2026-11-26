@@ -125,7 +125,7 @@ def test_canonical_requirements_align_with_secure_transformers_5_runtime() -> No
     )
     perception_tokenizers = _requirement(perception_path, "tokenizers")
 
-    secure_transformers_floor = Version("5.5")
+    secure_transformers_floor = Version("5.10.1")
     vulnerable_transformers_version = Version("5.4.0")
     transformers_next_major = Version("6.0")
     compatible_tokenizer_versions = (Version("0.22.0"), Version("0.23.0"))
