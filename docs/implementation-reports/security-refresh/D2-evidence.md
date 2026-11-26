@@ -57,16 +57,22 @@ Commits:
 `app.main`). Per D2's rule, the upgrade was left at the current version and the constraints were regenerated with
 0.136.3. No test was changed.
 
-Floors: `python-multipart>=0.0.31`, `pypdf>=6.21.4`, `lxml>=6.1.0`, `pytest>=9.2.0`, `pytest-asyncio>=1.5.0` — each
-is the lowest version with no known advisory (checked with pip-audit). `pypdf` and `lxml` cross a major version
-because the advisory fix requires it; no other major upgrade was made.
+Floors: `python-multipart>=0.0.31`, `pypdf>=6.21.4`, `lxml>=6.1.0`, `pytest>=9.2.0`, `pytest-asyncio>=1.5.0`,
+`torch>=2.13.0`, `langgraph-checkpoint>=4.1.1,<5.0`, `langgraph-checkpoint-sqlite>=3.1.2,<4.0`,
+`langchain-core>=1.3.3,<2.0`, `langchain-anthropic>=1.4.6,<2.0`, `sentence-transformers>=5.6.0,<6.0` and
+`transformers>=5.10.1,<6.0` — each is the lowest version with no known advisory (checked with pip-audit). `pypdf`
+and `lxml` cross a major version because the advisory fix requires it; no other major upgrade was made. The
+requirement-group test's secure Transformers floor was updated from 5.5 to 5.10.1 to match.
+
+A recompile with the header command resolved the same pins apart from `pypdf` 7.2.0 (a newer upstream release); the
+existing constraints were kept, so `pypdf` stays pinned at 7.1.1 and every new floor is already satisfied.
 
 ## Constraints
 
 `backend/constraints.txt` was generated from `requirements-full.txt` + `requirements-dev.txt` with uv 0.13.7. The
 exact command is in the file header. `--index-strategy unsafe-best-match` is required so the CPU PyTorch index does
-not shadow newer PyPI versions (it otherwise selected an old `requests`/`urllib3` pair). The file pins 151 direct
-requirements.
+not shadow newer PyPI versions (it otherwise selected an old `requests`/`urllib3` pair). The file has 151 pinned
+packages.
 
 ## Profile installs and audits (real output)
 
@@ -83,9 +89,8 @@ is pulled.
 | full | exit 0 | No broken requirements found | 0 vulnerabilities (torch skipped) |
 | dev/test | exit 0 | No broken requirements found | 0 vulnerabilities (torch skipped) |
 
-The local-ai and perception audits ran before the FastAPI revert; FastAPI 0.136.3 is the baseline version, whose
-audit is clean in spec §5, and the final full/dev/core/browser/observability audits were rerun with the final
-constraints.
+The local-ai and perception audits were re-run on the final constraints, as were core, browser, observability,
+full and dev/test.
 
 ## Test suites
 

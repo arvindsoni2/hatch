@@ -8,7 +8,7 @@ faster-whisper>=1.0.3
 # the standalone perception profile and the composed full profile resolve alike.
 tokenizers>=0.22.0,<=0.23.0
 # Phase B — audeering dimensional voice emotion (wav2vec2 regression, CPU)
-# 5.5 is the first floor beyond every advisory reported for the old 4.44.2
+# 5.10.1 is the first floor beyond every advisory reported for the old 4.44.2
 # resolution. Cap at the existing repository-wide major-version boundary.
-transformers>=5.5,<6.0
-torch>=2.0.0
+transformers>=5.10.1,<6.0
+torch>=2.13.0
