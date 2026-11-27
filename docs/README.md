@@ -34,7 +34,7 @@ Specs moved here from `active/` unchanged, so the "canonical path" line inside s
 ## Documentation Map
 
 - Getting started: install, first-run, Windows, troubleshooting
-- User guide: Today, discovery, Pipeline, Applications, CV Studio, Interview Prep, Question Bank, Watched companies, Settings
+- User guide: Today, discovery, Pipeline, Applications, CV Studio, Interview Prep, Interview Coach, Question Bank, Watched companies, Settings
 - Architecture: runtime, components, workflows, AI, data, security, deployment
 - Operations: CLI, capability profiles, local models, cloud providers, backup and recovery, release checklist
 - Development: setup, repository structure, testing, route taxonomy

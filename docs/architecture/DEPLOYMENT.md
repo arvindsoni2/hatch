@@ -4,7 +4,7 @@ document_type: architecture
 status: current
 implementation_status: not-applicable
 applies_to: main
-last_verified: 2026-07-10
+last_verified: 2026-11-27
 supersedes: []
 superseded_by: []
 ---
@@ -32,7 +32,19 @@ The current backend capability profiles are:
 - `local-embeddings`
 - `full`
 
-Those map to Compose overlays such as `docker-compose.browser.yml`, `docker-compose.local-embeddings.yml`, and `docker-compose.full.yml`.
+Those map to Compose overlays such as `docker-compose.browser.yml`, `docker-compose.local-embeddings.yml`, and `docker-compose.full.yml`, and to targets in `backend/Dockerfile` (`core`, `browser`, `local-ai` for local embeddings, `full`). An `observability` target and `docker-compose.observability.yml` add an opt-in local OpenTelemetry collector.
+
+## Images
+
+- Every base image is pinned by multi-architecture digest: `python:3.12-slim` for the backend, `node:24-bookworm-slim` for the backend's Node binary and DOCX template modules, `node:24-alpine` for the frontend, and the `llama.cpp` server image for local models.
+- Node 24 is the supported Node.js version for images, CI and local development.
+- Every backend API target includes Node and the DOCX template modules, so CV and cover-letter rendering works in each profile.
+- Python packages install against `backend/constraints.txt`.
+
+## Optional Model Tiers
+
+- `llm-primary` (Tier S) and `llm-triage` (Tier T) are the default local model services.
+- `llm-deep` (Tier L) is defined in `docker-compose.local-ai.yml` under the Compose profile `deep`. It starts only when the owner enables Tier L in Settings and a deep model has been promoted.
 
 ## Ports
 
@@ -40,6 +52,10 @@ Those map to Compose overlays such as `docker-compose.browser.yml`, `docker-comp
 - `8000` backend
 - `8080` local primary LLM
 - `8081` local triage LLM
+- `8082` optional deep LLM (`deep` profile)
+- `8889` optional collector metrics (observability overlay)
+
+All published ports bind to `127.0.0.1`.
 
 ## Health Checks
 
