@@ -1,8 +1,8 @@
 ---
 title: Hatch Coach Phase 2 — Interview Readiness Loop
 document_type: implementation-spec
-status: active
-implementation_status: not-applicable
+status: implemented
+implementation_status: complete
 applies_to: main
 last_verified: 2026-11-25
 approval_status: final-for-implementation (owner, 2026-11-02)

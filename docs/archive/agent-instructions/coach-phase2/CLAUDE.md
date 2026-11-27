@@ -1,3 +1,15 @@
+---
+title: CLAUDE
+document_type: historical
+status: historical
+implementation_status: not-applicable
+applies_to: main
+last_verified: 2026-11-27
+---
+
+> [!WARNING]
+> This document is retained for historical context. It does not describe the current Hatch implementation on `main`.
+
 @AGENTS.md
 
 ## Your role in Coach Phase 2

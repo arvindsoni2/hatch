@@ -1,7 +1,16 @@
 ---
+title: phase2-red
+document_type: historical
+status: historical
+implementation_status: not-applicable
+applies_to: main
+last_verified: 2026-11-27
 description: Write and commit the RED contract tests for a high-assurance Coach Phase 2 task (P2, P6, P9)
 argument-hint: <task id, e.g. P2>
 ---
+
+> [!WARNING]
+> This document is retained for historical context. It does not describe the current Hatch implementation on `main`.
 
 Write the failing contract tests for Coach Phase 2 task **$ARGUMENTS** before OpenCode implements it.
 

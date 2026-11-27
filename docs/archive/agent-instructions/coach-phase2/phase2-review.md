@@ -1,7 +1,16 @@
 ---
+title: phase2-review
+document_type: historical
+status: historical
+implementation_status: not-applicable
+applies_to: main
+last_verified: 2026-11-27
 description: Review one Coach Phase 2 task branch or PR against the spec, plan and screen designs
 argument-hint: <task id, e.g. P4> [branch or PR number]
 ---
+
+> [!WARNING]
+> This document is retained for historical context. It does not describe the current Hatch implementation on `main`.
 
 Review Coach Phase 2 task **$ARGUMENTS**. Read the code and run the checks yourself; do not rely on the implementer's summary.
 

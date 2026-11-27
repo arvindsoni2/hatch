@@ -12,14 +12,15 @@ Use this index to find the current product, operations, architecture, developmen
 
 ## Current Implementation Work
 
-- Coach Phase 2 — Interview Readiness Loop: tasks P0–P9 are merged and the features ship opt-in, off by default. [Specification](implementation-specs/active/2026-10-22-coach-phase2-readiness-loop.md), [implementation plan](implementation-notes/2026-10-22-coach-phase2-readiness-loop-plan.md), [screen designs](visual-evidence/coach-phase2-design/README.md), [diagrams](architecture/coach-phase2-readiness-loop.html) and [task evidence](implementation-reports/coach-phase2/). These files keep their paths while the contributor instructions refer to them.
 - Decision layer: approved target design, not yet implemented. See [Decision layer](architecture/DECISION_LAYER.md).
+- Task evidence for current work lives in [implementation-reports](implementation-reports/).
 - Coach model benchmark tool: [how to run it](benchmarks/COACH_MODEL_BENCHMARK.md).
 
 ## Completed Specifications
 
 Kept for design history in [implementation-specs/completed](implementation-specs/completed/):
 
+- [Coach Phase 2 — Interview Readiness Loop](implementation-specs/completed/2026-10-22-coach-phase2-readiness-loop.md) (P0–P9 merged; features opt-in, off by default). Also: [screen designs](visual-evidence/coach-phase2-design/README.md), [diagrams](architecture/coach-phase2-readiness-loop.html), [task evidence](implementation-reports/coach-phase2/) and the archived [implementation plan](archive/implementation-notes/2026-10-22-coach-phase2-readiness-loop-plan.md)
 - [Conversational AI Interview Coach Phase 1 v6](implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md) (acceptance closed October 2026)
 - [Architecture Foundation v2](implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md) (runtime slices R0–R6 delivered; R7–R9 paused, see the [implementation plan](implementation-notes/Hatch_Architecture_Foundation_Implementation_Plan_v2.md))
 - [Coach model quality, benchmark and observability v5](implementation-specs/completed/Hatch_Coach_Model_Quality_Benchmark_Observability_Codex_Spec_v5.md)

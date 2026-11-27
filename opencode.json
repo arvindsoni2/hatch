@@ -19,7 +19,7 @@
       "opencode.json": "deny",
       ".claude/*": "deny",
       "docs/implementation-specs/*": "deny",
-      "docs/implementation-notes/2026-10-22-coach-phase2-readiness-loop-plan.md": "deny",
+      "docs/archive/*": "deny",
       "docs/visual-evidence/coach-phase2-design/*": "deny"
     },
     "bash": {

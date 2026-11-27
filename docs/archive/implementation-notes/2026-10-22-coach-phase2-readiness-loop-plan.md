@@ -1,8 +1,9 @@
 ---
 title: Hatch Coach Phase 2 — Interview Readiness Loop — Implementation Plan
-document_type: implementation-plan
-status: active
-implementation_status: not-started
+document_type: historical
+status: historical
+implementation_status: not-applicable
+applies_to: main
 last_verified: 2026-11-05
 approval_status: final-for-implementation (owner, 2026-11-02)
 baseline_commit: b7274a6
@@ -11,6 +12,9 @@ supersedes:
   - Hatch_Coach_Phase2_Implementation_Plan_v1.md (draft, 13 Oct 2026)
   - Hatch_Coach_Phase2_OpenCode_Handoff_v1.md (draft, 13 Oct 2026)
 ---
+
+> [!WARNING]
+> This document is retained for historical context. It does not describe the current Hatch implementation on `main`.
 
 # Coach Phase 2 — Implementation Plan
 
