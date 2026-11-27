@@ -11,6 +11,7 @@ import ipaddress
 import json
 import logging
 import socket
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -44,6 +45,7 @@ _ERROR_MESSAGES = {
     "bad_redirect": "Redirect did not include a location",
     "too_large": "Job page exceeds the 2 MB limit",
     "bad_content_type": "Job URL did not return HTML or text",
+    "bad_content_encoding": "URL returned an unsupported content encoding",
     "timeout": "URL request timed out",
     "http_error": "URL request failed",
 }
@@ -76,10 +78,11 @@ class FetchResponse:
     status_code: int
     headers: httpx.Headers
     content: bytes
+    encoding: str
 
     @property
     def text(self) -> str:
-        return self.content.decode("utf-8", errors="replace")
+        return self.content.decode(self.encoding, errors="replace")
 
     def json(self) -> object:
         return json.loads(self.content)
@@ -246,14 +249,80 @@ def _content_type(headers: httpx.Headers) -> str:
     return headers.get("content-type", "").split(";", 1)[0].strip().lower()
 
 
-async def _read_limited(response: httpx.Response, max_bytes: int) -> bytes:
-    chunks: list[bytes] = []
+def _size_label(size: int) -> str:
+    if size % (1024 * 1024) == 0:
+        return f"{size // (1024 * 1024)} MB"
+    if size % 1024 == 0:
+        return f"{size // 1024} KB"
+    return f"{size} bytes"
+
+
+def _too_large(max_bytes: int) -> PublicFetchError:
+    return PublicFetchError(
+        "too_large",
+        f"Job page exceeds the {_size_label(max_bytes)} limit",
+    )
+
+
+def _raw_chunks(response: httpx.Response, content_encoding: str):
+    if response.is_stream_consumed:
+        if content_encoding != "identity":
+            raise PublicFetchError("bad_content_encoding")
+        async def _already_buffered():
+            yield response.content
+        return _already_buffered()
+    return response.aiter_raw()
+
+
+async def _read_limited(
+    response: httpx.Response,
+    max_bytes: int,
+    content_encoding: str,
+) -> bytes:
+    if content_encoding == "identity":
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in _raw_chunks(response, content_encoding):
+            size += len(chunk)
+            if size > max_bytes:
+                raise _too_large(max_bytes)
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    if content_encoding == "gzip":
+        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    elif content_encoding == "deflate":
+        decoder = zlib.decompressobj()
+    else:
+        raise PublicFetchError("bad_content_encoding")
+
+    limit = max_bytes + 1
+    chunks = []
     size = 0
-    async for chunk in response.aiter_bytes():
-        size += len(chunk)
-        if size > max_bytes:
-            raise PublicFetchError("too_large")
-        chunks.append(chunk)
+    try:
+        async for chunk in _raw_chunks(response, content_encoding):
+            data = chunk
+            while data:
+                remaining = limit - size
+                if remaining <= 0:
+                    raise _too_large(max_bytes)
+                output = decoder.decompress(data, remaining)
+                size += len(output)
+                chunks.append(output)
+                if size > max_bytes:
+                    raise _too_large(max_bytes)
+                data = decoder.unconsumed_tail
+                if not data:
+                    break
+        remaining = limit - size
+        if remaining > 0:
+            output = decoder.flush(remaining)
+            size += len(output)
+            chunks.append(output)
+            if size > max_bytes:
+                raise _too_large(max_bytes)
+    except zlib.error as exc:
+        raise PublicFetchError("bad_content_encoding") from exc
     return b"".join(chunks)
 
 
@@ -272,6 +341,8 @@ async def fetch(
     if max_bytes < 1:
         raise ValueError("max_bytes must be positive")
     allowed = tuple(content_type.lower() for content_type in allowed_content_types)
+    request_headers = httpx.Headers(headers or {})
+    request_headers["Accept-Encoding"] = "gzip, deflate"
     current = url
     redirects = 0
     seen = {_loop_key(url)}
@@ -304,7 +375,7 @@ async def fetch(
                         follow_redirects=False,
                         timeout=timeout,
                     ) as client:
-                        async with client.stream("GET", current, headers=headers) as response:
+                        async with client.stream("GET", current, headers=request_headers) as response:
                             if response.is_redirect:
                                 location = response.headers.get("location")
                                 if not location:
@@ -332,12 +403,23 @@ async def fetch(
                                 )
                             if _content_type(response.headers) not in allowed:
                                 raise PublicFetchError("bad_content_type")
-                            content = await _read_limited(response, max_bytes)
+                            content_encoding = (
+                                response.headers.get("content-encoding", "identity")
+                                .strip()
+                                .lower()
+                                or "identity"
+                            )
+                            if content_encoding not in {"identity", "gzip", "deflate"}:
+                                raise PublicFetchError("bad_content_encoding")
+                            content = await _read_limited(
+                                response, max_bytes, content_encoding
+                            )
                             return FetchResponse(
                                 url=str(response.url),
                                 status_code=response.status_code,
                                 headers=response.headers,
                                 content=content,
+                                encoding=response.encoding or "utf-8",
                             )
                 except PublicFetchError:
                     raise

@@ -10,7 +10,7 @@ Claude Code RED commit: not applicable (H1 is not a high-assurance task). No pro
 
 ## Files changed
 
-- `backend/app/services/public_fetch.py` — guarded fetch, one URL/address validator, pinned network backend, manual redirects, body/content-type/timeout limits.
+- `backend/app/services/public_fetch.py` — guarded fetch, one URL/address validator, pinned network backend, manual redirects, bounded raw-body decompression, content-type/encoding/timeout limits.
 - `backend/app/services/jd_analyser.py` — `_fetch_jd` uses the guarded fetch; no URL logging.
 - `backend/app/services/job_url_importer.py` — `preview_url` uses the guarded fetch; old validator removed.
 - `backend/app/services/company_watchlist.py` — careers-page fetch and URL validation use the guarded fetch.
@@ -39,6 +39,17 @@ After the service existed but before the callers were wired:
 
 The failures were the caller tests (`jd_analyser`, `job_url_importer`, `company_watchlist`, `company_researcher`), because those modules had no guarded `fetch` symbol yet.
 
+Follow-up RED for compressed bodies, charset and the cap message:
+
+```text
+$ python -m pytest -q --no-cov tests/security/test_public_fetch.py \
+    -k "zstd or gzip or accept_encoding or charset or too_large_message"
+5 failed, 2 passed
+```
+
+The failing tests were zstd rejection, the gzip expansion bound, forced
+`Accept-Encoding`, response charset, and the 5 MB cap message.
+
 ## Guard checks (spec §12)
 
 Each guard was disabled locally, the matching test was run, and the source was restored. All guard-disabled runs failed as expected; the restored public-fetch suite passed.
@@ -55,12 +66,18 @@ Each guard was disabled locally, the matching test was run, and the source was r
 | scheme check | ftp test | 1 failed |
 | userinfo check | userinfo test | 1 failed |
 | single resolution/pinning | pinned-host test | 1 failed |
+| forced `Accept-Encoding` | caller-override test | 1 failed |
+| content-encoding rejection | zstd test | 1 failed |
+| gzip/deflate decoding | normal gzip test | 1 failed |
+| decoded size bound | gzip-bomb test | 1 failed |
+| response charset | iso-8859-1 test | 1 failed |
+| cap message | 5 MB message test | 1 failed |
 
 Restored:
 
 ```text
 $ python -m pytest -q --no-cov tests/security/test_public_fetch.py
-41 passed
+48 passed
 ```
 
 ## GREEN
@@ -75,7 +92,7 @@ $ python -m pytest -q --no-cov \
     tests/test_routers/test_company_watchlist.py \
     tests/test_services/test_company_researcher.py \
     tests/test_routers/test_jobs_router.py
-112 passed
+119 passed
 
 $ ruff check app/ tests/
 All checks passed!
@@ -87,7 +104,7 @@ Full backend suite:
 $ python -m pytest -q --no-cov \
     --ignore=tests/test_tools/test_embedder.py \
     --ignore=tests/test_tools/test_semantic_scorer.py
-4201 passed, 2 skipped in 642.48s
+4208 passed, 2 skipped in 796.06s
 ```
 
 The first full run had 13 failures in `tests/runtime/test_cv_tailor_lifecycle.py` because the fresh worktree had no local `backend/app/templates/node_modules` (`Cannot find module 'docx'`). After `npm ci` in that directory, the file passed (17 passed) and the suite was rerun. The two ignored files are the known local CUDA-only suites; their failures are environment failures, not H1 changes.
@@ -121,6 +138,7 @@ backend/app/services/public_fetch.py:def validate_public_url(...)
 
 - Model calls in tests: none; the fetch tests use a mock transport, fake resolver and fake network backend, never the network.
 - No `data/` or `.env*` was read.
+- Compressed responses are decoded incrementally from raw bytes with a hard decoded-byte bound; zstd and other encodings are rejected before the body is read.
 - Fetch failures log host and code only; no full URL, query string or body. The wired scrapers and `jd_analyser` no longer log URLs.
 - Error messages are fixed and contain no URL, query or body.
 

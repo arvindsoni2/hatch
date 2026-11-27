@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import ssl
+import zlib
 from collections.abc import Sequence
 
 import httpx
 import httpcore
 import pytest
+import zstandard
 
 from app.services import public_fetch
 from app.services.public_fetch import (
@@ -117,13 +120,18 @@ class CountingByteStream(httpx.AsyncByteStream):
 
 
 class StreamingTransport(httpx.AsyncBaseTransport):
-    def __init__(self, stream: CountingByteStream) -> None:
+    def __init__(
+        self,
+        stream: CountingByteStream,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.stream = stream
+        self.headers = headers or {"content-type": "text/plain"}
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            headers={"content-type": "text/plain"},
+            headers=self.headers,
             stream=self.stream,
         )
 
@@ -500,3 +508,165 @@ async def test_httpx_scrapers_refuse_a_redirect_to_private(
 
     assert await scraper.scrape() == []
     assert all("private.test" not in request for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_zstd_before_reading_the_body() -> None:
+    body = zstandard.ZstdCompressor().compress(b"compressed body")
+    stream = CountingByteStream(chunks=1, size=len(body))
+    stream._payload = body  # type: ignore[attr-defined]
+    transport = StreamingTransport(
+        stream,
+        headers={"content-type": "text/plain", "content-encoding": "zstd"},
+    )
+
+    with pytest.raises(PublicFetchError) as exc:
+        await fetch(
+            "https://example.com/",
+            allowed_content_types=("text/plain",),
+            transport=transport,
+            resolver=_resolver({"example.com": [PUBLIC_IP]})[0],
+        )
+
+    assert exc.value.code == "bad_content_encoding"
+    assert stream.read_chunks == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_a_gzip_bomb_without_exceeding_the_decoded_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    max_bytes = 4 * 1024
+    body = gzip.compress(b"A" * (max_bytes * 10))
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"content-type": "text/plain", "content-encoding": "gzip"},
+            stream=httpx.ByteStream(body),
+        )
+    )
+    real_decompressobj = zlib.decompressobj
+    instances: list[object] = []
+
+    class RecordingDecompress:
+        def __init__(self, *args, **kwargs):
+            self._inner = real_decompressobj(*args, **kwargs)
+            self.total_output = 0
+            self.max_output = 0
+            instances.append(self)
+
+        @property
+        def unconsumed_tail(self) -> bytes:
+            return self._inner.unconsumed_tail
+
+        def decompress(self, data: bytes, max_length: int = 0) -> bytes:
+            output = self._inner.decompress(data, max_length)
+            self.total_output += len(output)
+            self.max_output = max(self.max_output, len(output))
+            return output
+
+        def flush(self, length: int = 16384) -> bytes:
+            output = self._inner.flush(length)
+            self.total_output += len(output)
+            self.max_output = max(self.max_output, len(output))
+            return output
+
+    monkeypatch.setattr(public_fetch.zlib, "decompressobj", RecordingDecompress)
+
+    with pytest.raises(PublicFetchError) as exc:
+        await fetch(
+            "https://example.com/",
+            allowed_content_types=("text/plain",),
+            max_bytes=max_bytes,
+            transport=transport,
+            resolver=_resolver({"example.com": [PUBLIC_IP]})[0],
+        )
+
+    assert exc.value.code == "too_large"
+    assert instances
+    recorder = instances[0]
+    assert recorder.total_output <= max_bytes + 1  # type: ignore[attr-defined]
+    assert recorder.max_output <= max_bytes + 1  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_fetch_decodes_a_normal_gzip_page() -> None:
+    body = gzip.compress(b"normal gzip page")
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"content-type": "text/plain", "content-encoding": "gzip"},
+            stream=httpx.ByteStream(body),
+        )
+    )
+
+    response = await fetch(
+        "https://example.com/",
+        allowed_content_types=("text/plain",),
+        transport=transport,
+        resolver=_resolver({"example.com": [PUBLIC_IP]})[0],
+    )
+
+    assert response.text == "normal gzip page"
+
+
+@pytest.mark.asyncio
+async def test_fetch_forces_gzip_and_deflate_accept_encoding() -> None:
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("accept-encoding"))
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"ok")
+
+    response = await fetch(
+        "https://example.com/",
+        allowed_content_types=("text/plain",),
+        headers={"Accept-Encoding": "zstd, br"},
+        transport=httpx.MockTransport(handler),
+        resolver=_resolver({"example.com": [PUBLIC_IP]})[0],
+    )
+
+    assert response.text == "ok"
+    assert seen == ["gzip, deflate"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_keeps_the_response_charset() -> None:
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"content-type": "text/html; charset=iso-8859-1"},
+            content=b"\xa3500 per day",
+        )
+    )
+
+    response = await fetch(
+        "https://example.com/",
+        allowed_content_types=("text/html",),
+        transport=transport,
+        resolver=_resolver({"example.com": [PUBLIC_IP]})[0],
+    )
+
+    assert response.encoding == "iso-8859-1"
+    assert response.text == "£500 per day"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "max_bytes, label",
+    [(2 * 1024 * 1024, "2 MB"), (5 * 1024 * 1024, "5 MB")],
+)
+async def test_too_large_message_names_the_actual_cap(max_bytes: int, label: str) -> None:
+    stream = CountingByteStream(chunks=(max_bytes // 1024) + 1, size=1024)
+
+    with pytest.raises(PublicFetchError) as exc:
+        await fetch(
+            "https://example.com/",
+            allowed_content_types=("text/plain",),
+            max_bytes=max_bytes,
+            transport=StreamingTransport(stream),
+            resolver=_resolver({"example.com": [PUBLIC_IP]})[0],
+        )
+
+    assert exc.value.code == "too_large"
+    assert label in str(exc.value)
