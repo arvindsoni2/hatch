@@ -1,6 +1,6 @@
 # C1 evidence — close replaced Dependabot PRs
 
-Status: **complete except for GitHub's alert rescan.** Both replaced PRs are closed and their branches are gone; four `opentelemetry-api` alerts remain open until GitHub rescans `main` (no alert was dismissed).
+Status: **complete.** Both replaced PRs are closed and their branches are gone, all four `opentelemetry-api` alerts are fixed, and no Dependabot PR remains open. No alert was dismissed.
 
 ## D1 half — PR #65
 
@@ -15,15 +15,17 @@ Status: **complete except for GitHub's alert rescan.** Both replaced PRs are clo
 - Closed PR #81 at **2026-11-26T20:45:31Z**, before D2 (#94) merged at **2026-11-26T22:01:14Z**.
 - Deleted only its branch `dependabot/pip/backend/pip-7cb61790e1`; no `dependabot/*` branches remain.
 
-## Alert recount
+## Alert recount (final)
 
-`gh api repos/arvindsoni2/hatch/dependabot/alerts?state=open --paginate` currently returns **4** open alerts, all `pip` / `opentelemetry-api` (medium):
+`gh api repos/arvindsoni2/hatch/dependabot/alerts?state=open -q length` returns **0**.
 
-| Alert | Package | Manifest | Reason still open |
-|---|---|---|---|
-| 126 | opentelemetry-api | `backend/requirements-observability.txt` | GitHub has not rescanned after D2; `main` pins 1.45.2 |
-| 127 | opentelemetry-api | `backend/requirements-full.txt` | same |
-| 122 | opentelemetry-api | `backend/requirements-full.txt` | same |
-| 111 | opentelemetry-api | `backend/requirements-observability.txt` | same |
+The four alerts that were open before GitHub rescanned `main` are now fixed:
 
-No alert was dismissed. `origin/main` at `d41957e` pins `opentelemetry-api==1.45.2` in `requirements-observability.txt`; the alerts' `updated_at` values predate the D2 merge, so the expected state after GitHub's rescan is 0. No frontend alerts remain after D1.
+| Alert | Package | Manifest | State | Fixed at |
+|---|---|---|---|---|
+| 111 | opentelemetry-api | `backend/requirements-observability.txt` | fixed | 2026-11-26T22:19:26Z |
+| 122 | opentelemetry-api | `backend/requirements-full.txt` | fixed | 2026-11-26T22:19:25Z |
+| 126 | opentelemetry-api | `backend/requirements-observability.txt` | fixed | 2026-11-26T22:19:26Z |
+| 127 | opentelemetry-api | `backend/requirements-full.txt` | fixed | 2026-11-26T22:19:25Z |
+
+No alert was dismissed. Open Dependabot PRs: **0** (`gh pr list --state open`, filtered to Dependabot authors). No frontend alerts remain after D1.
