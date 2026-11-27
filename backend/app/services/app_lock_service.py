@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -125,6 +125,25 @@ class AppLockService:
             and bcrypt.checkpw(password.encode(), row.password_hash.encode())
         )
 
+    async def _record_failed_attempt(self) -> int | None:
+        """Atomically count one failed attempt, returning None at the limit."""
+        result = await self._db.execute(
+            update(AppLockConfig)
+            .where(
+                AppLockConfig.id == 1,
+                AppLockConfig.failed_attempt_count
+                < settings.HATCH_APP_LOCK_FAILED_ATTEMPT_LIMIT,
+            )
+            .values(
+                failed_attempt_count=AppLockConfig.failed_attempt_count + 1,
+                last_failed_attempt_at=_utcnow(),
+            )
+            .returning(AppLockConfig.failed_attempt_count)
+        )
+        count = result.scalar_one_or_none()
+        await self._db.commit()
+        return count
+
     async def unlock(self, password: str) -> str:
         if not settings.HATCH_APP_LOCK_ENABLED:
             raise AppLockError("App lock is disabled by environment configuration.", 409)
@@ -134,8 +153,9 @@ class AppLockService:
         if retry_after:
             raise AppLockError(f"Too many failed attempts. Try again in {retry_after} seconds.", 429)
         if not await self._password_matches(password, row):
-            row.failed_attempt_count += 1
-            row.last_failed_attempt_at = _utcnow()
+            count = await self._record_failed_attempt()
+            if count is None:
+                raise AppLockError("Too many failed attempts. Try again later.", 429)
             raise AppLockError("Password is incorrect. Please try again.", 401)
         row.failed_attempt_count = 0
         row.last_failed_attempt_at = None
