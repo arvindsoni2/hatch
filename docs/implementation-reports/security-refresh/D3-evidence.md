@@ -37,7 +37,9 @@ Commits:
 | `python:3.12-slim` | 3.12-slim | `sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b` |
 | `node:24-bookworm-slim` | 24-bookworm-slim | `sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530` |
 | `node:24-alpine` | 24-alpine | `sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5` |
-| `otel/opentelemetry-collector-contrib` | 0.166.0 | `sha256:3a457b435f530121ad979771bc23d11f7ddd2cc7be219d27db0e6c3751750118` |
+| `otel/opentelemetry-collector-contrib` | 0.166.0 | `sha256:3e18fe04181de50bdd72e23ad4a4d6214b54351e63d496f1c58127cc4541ad7f` |
+
+The collector digest is the multi-arch index (`application/vnd.docker.distribution.manifest.list.v2+json`), verified with `skopeo inspect --raw docker://docker.io/otel/opentelemetry-collector-contrib:0.166.0 | sha256sum`. The index lists `linux/amd64` and `linux/arm64` (plus 386, arm, ppc64le, riscv64 and s390x).
 
 ## RED first
 
@@ -99,7 +101,7 @@ The existing collector config validates with the new image:
 
 ```text
 $ podman run --rm -v "$PWD/infrastructure/observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro,z" \
-    otel/opentelemetry-collector-contrib:0.166.0 validate --config=/etc/otelcol-contrib/config.yaml
+    otel/opentelemetry-collector-contrib:0.166.0@sha256:3e18fe04181de50bdd72e23ad4a4d6214b54351e63d496f1c58127cc4541ad7f validate --config=/etc/otelcol-contrib/config.yaml
 exit 0
 ```
 
