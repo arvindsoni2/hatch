@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12-slim AS build-base
+# python:3.12-slim
+FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b AS build-base
 
 WORKDIR /app
 
@@ -55,7 +56,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         -r requirements-full.txt
 
 
-FROM python:3.12-slim AS playwright-stage
+# python:3.12-slim
+FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b AS playwright-stage
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
@@ -86,11 +88,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN playwright install chromium
 
 
-FROM python:3.12-slim AS runtime-base
+# node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS node
+
+# node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:873f586f3794f52281bd039bf02c048a0be08fde619338f9941bad1eb6b34530 AS templates
+WORKDIR /templates
+COPY app/templates/package.json app/templates/package-lock.json ./
+RUN npm ci --omit=dev
+
+# python:3.12-slim
+FROM python:3.12-slim@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b AS runtime-base
 
 WORKDIR /app
 
 ENV LANGGRAPH_STRICT_MSGPACK=true
+
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -105,6 +119,7 @@ FROM runtime-base AS core
 
 COPY --from=core-builder /install /usr/local
 COPY --chown=appuser:appuser . .
+COPY --from=templates --chown=appuser:appuser /templates/node_modules ./app/templates/node_modules
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
@@ -142,6 +157,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=appuser:appuser . .
+COPY --from=templates --chown=appuser:appuser /templates/node_modules ./app/templates/node_modules
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
@@ -154,6 +170,7 @@ FROM runtime-base AS local-ai
 
 COPY --from=local-ai-builder /install /usr/local
 COPY --chown=appuser:appuser . .
+COPY --from=templates --chown=appuser:appuser /templates/node_modules ./app/templates/node_modules
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
@@ -166,6 +183,7 @@ FROM runtime-base AS observability
 
 COPY --from=observability-builder /install /usr/local
 COPY --chown=appuser:appuser . .
+COPY --from=templates --chown=appuser:appuser /templates/node_modules ./app/templates/node_modules
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
@@ -203,6 +221,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=appuser:appuser . .
+COPY --from=templates --chown=appuser:appuser /templates/node_modules ./app/templates/node_modules
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
