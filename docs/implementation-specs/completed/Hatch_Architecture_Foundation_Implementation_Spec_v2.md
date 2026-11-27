@@ -1,7 +1,7 @@
 ---
 title: Hatch Architecture Foundation Implementation Specification v2
 document_type: implementation-spec
-status: active
+status: implemented
 implementation_status: partial
 applies_to: main/latest
 architecture_baseline: docs/architecture/Hatch_Runtime_Architecture_Pre_Coach_Phase2_v8_FINAL.md

@@ -10,24 +10,25 @@ Use this index to find the current product, operations, architecture, developmen
 - Contributor: [Development setup](development/DEVELOPMENT_SETUP.md), [Repository structure](development/REPOSITORY_STRUCTURE.md), [Testing](development/TESTING.md)
 - Maintainer: [Architecture overview](architecture/OVERVIEW.md), [AI architecture](architecture/AI_ARCHITECTURE.md), [Decision layer](architecture/DECISION_LAYER.md), [Release checklist](operations/RELEASE_CHECKLIST.md), [Security surface](architecture/SECURITY_SURFACE.md), [Archive](archive/)
 
-## Active Implementation Work
+## Current Implementation Work
 
-- [Coach Phase 2 — Interview Readiness Loop specification](implementation-specs/active/2026-10-22-coach-phase2-readiness-loop.md), [implementation plan](implementation-notes/2026-10-22-coach-phase2-readiness-loop-plan.md), [screen designs](visual-evidence/coach-phase2-design/README.md) and [diagrams](architecture/coach-phase2-readiness-loop.html)
-- [Local writing model benchmark — 15 July 2026](benchmarks/LOCAL_WRITING_MODEL_BENCHMARK_2026-07-15.md)
-- [Representative local-model selection — 18 July 2026](benchmarks/LOCAL_WRITING_MODEL_SELECTION_2026-07-18.md)
+- Coach Phase 2 — Interview Readiness Loop: tasks P0–P9 are merged and the features ship opt-in, off by default. [Specification](implementation-specs/active/2026-10-22-coach-phase2-readiness-loop.md), [implementation plan](implementation-notes/2026-10-22-coach-phase2-readiness-loop-plan.md), [screen designs](visual-evidence/coach-phase2-design/README.md), [diagrams](architecture/coach-phase2-readiness-loop.html) and [task evidence](implementation-reports/coach-phase2/). These files keep their paths while the contributor instructions refer to them.
+- Decision layer: approved target design, not yet implemented. See [Decision layer](architecture/DECISION_LAYER.md).
+- Coach model benchmark tool: [how to run it](benchmarks/COACH_MODEL_BENCHMARK.md).
 
-Completed implementation specifications include the [Coach model quality,
-benchmark, and observability specification
-v5](implementation-specs/completed/Hatch_Coach_Model_Quality_Benchmark_Observability_Codex_Spec_v5.md),
-the [Conversational AI Interview Coach Phase 1 implementation specification
-v6](implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md)
-(acceptance closed in October 2026) and the [Architecture Foundation
-implementation specification
-v2](implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md)
-(runtime slices R0–R6 delivered; R7–R9 paused, see the
-[implementation plan](implementation-notes/Hatch_Architecture_Foundation_Implementation_Plan_v2.md)).
-Both moved here from `active/` unchanged, so the "canonical path" line inside
-each document still names its old location.
+## Completed Specifications
+
+Kept for design history in [implementation-specs/completed](implementation-specs/completed/):
+
+- [Conversational AI Interview Coach Phase 1 v6](implementation-specs/completed/Hatch_Conversational_AI_Interview_Coach_Phase1_Implementation_Spec_v6.md) (acceptance closed October 2026)
+- [Architecture Foundation v2](implementation-specs/completed/Hatch_Architecture_Foundation_Implementation_Spec_v2.md) (runtime slices R0–R6 delivered; R7–R9 paused, see the [implementation plan](implementation-notes/Hatch_Architecture_Foundation_Implementation_Plan_v2.md))
+- [Coach model quality, benchmark and observability v5](implementation-specs/completed/Hatch_Coach_Model_Quality_Benchmark_Observability_Codex_Spec_v5.md)
+- [Prompt, skill and local writing reliability v4](implementation-specs/completed/Hatch_Prompt_Skill_Local_Writing_Reliability_Codex_Spec_v4.md)
+- [Easy install, hardware and model selection v8](implementation-specs/completed/Hatch_Easy_Install_Hardware_Model_Selection_Spec_v8.md)
+- [Backend container optimisation](implementation-specs/completed/Hatch_Backend_Container_Optimisation_Spec.md)
+- [UX gap review](implementation-specs/completed/hatch_ux_gap_review_codex_spec.md)
+
+Specs moved here from `active/` unchanged, so the "canonical path" line inside some of them still names the old location. Earlier draft versions of these specs were removed; they remain in Git history.
 
 ## Documentation Map
 
@@ -37,8 +38,9 @@ each document still names its old location.
 - Operations: CLI, capability profiles, local models, cloud providers, backup and recovery, release checklist
 - Development: setup, repository structure, testing, route taxonomy
 - Reference: configuration, lifecycle, glossary
-- Implementation specifications: active, completed, superseded
-- Archive: historical JobPilot material, design handoffs, non-current visual evidence
+- Implementation specifications: active, completed
+- Implementation reports: task evidence for current work
+- Archive: historical JobPilot material, design handoffs, superseded plans and specs, past implementation notes and reports, past benchmarks, non-current visual evidence
 
 ## Document Status
 
