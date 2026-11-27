@@ -1,6 +1,8 @@
 """App-lock setup, unlock and management endpoints."""
 from __future__ import annotations
 
+import hmac
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
@@ -33,7 +35,9 @@ def _set_cookie(response: Response, request: Request, token: str) -> None:
         token,
         httponly=True,
         samesite="lax",
-        secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https",
+        # The scheme comes from uvicorn's proxy-header handling when configured;
+        # the raw forwarded header is not trusted by the app.
+        secure=request.url.scheme == "https",
         path="/",
     )
 
@@ -53,9 +57,13 @@ def _onboarding_payload(state) -> dict[str, str | None]:
 async def status(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
     service = AppLockService(db)
     token = _token(request)
+    authorization = request.headers.get("authorization", "")
     bearer_ok = bool(
         settings.HATCH_AUTH_TOKEN
-        and request.headers.get("authorization") == f"Bearer {settings.HATCH_AUTH_TOKEN}"
+        and hmac.compare_digest(
+            authorization.encode(),
+            f"Bearer {settings.HATCH_AUTH_TOKEN}".encode(),
+        )
     )
     lock_status = await service.status(token, include_private=bearer_ok)
     onboarding = await OnboardingService(db).status()
