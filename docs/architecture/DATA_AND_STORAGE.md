@@ -4,7 +4,7 @@ document_type: architecture
 status: current
 implementation_status: not-applicable
 applies_to: main
-last_verified: 2026-07-10
+last_verified: 2026-11-27
 supersedes: []
 superseded_by: []
 ---
@@ -25,6 +25,10 @@ Hatch uses local files plus SQLite databases. The exact location differs slightl
 | Imported resume files | `data/master_resume.*` | Yes | Yes | Yes unless `--keep-profile` | Only with `--purge-data` |
 | Generated documents | `data/generated/` | Yes | Optional | Yes | Only with `--purge-data` |
 | Coach recordings | `data/recordings/` | Yes | Optional | Yes | Only with `--purge-data` |
+| Conversational Coach media | `data/coach-media/` (`HATCH_COACH_MEDIA_ROOT`) | Yes | Optional | Not yet removed by the reset scripts; delete a session in the app to remove its media | Only with `--purge-data` |
+| Coach sessions, attempts, evaluations and transcripts | SQLite tables in `data/jobpilot.db` (`interview_*`, `session_*`, `coach_session_*`) | Yes | Yes | Yes | Only with `--purge-data` |
+| Readiness loop data (patterns, focus areas, plans, briefs, debriefs, coverage overrides) | SQLite tables in `data/jobpilot.db` (`coach_*`) | Yes | Yes | Yes | Only with `--purge-data` |
+| Derived-text cache | `coach_derived_text` and `coach_derived_sources` in `data/jobpilot.db` | Yes | No | Yes | Only with `--purge-data` |
 | Upload temp files | `data/uploads/` | Maybe | No | Yes | Only with `--purge-data` |
 | Host setup intent | `${HATCH_HOME}/config/ai_setup_intent.json` | No secret | Optional | Not removed by `reset-user-data.sh` | Preserved unless config is purged |
 | Host runtime config | `${HATCH_HOME}/config/ai_runtime.json` | No secret | Optional | Not removed by `reset-user-data.sh` | Preserved unless config is purged |
@@ -42,6 +46,10 @@ Back up these first:
 - `data/`
 - `${HATCH_HOME}/config/`
 - `${HATCH_HOME}/models/` if local model downloads are expensive to replace
+
+## Derived Data
+
+The readiness loop stores text it derives from the user's sessions, stories and debriefs. Each derived row records its sources; deleting a source deletes what was derived from it. **Settings → Privacy → What Hatch remembers** lists and deletes derived data by kind, and keeps working when the readiness flags are off.
 
 ## Reset And Uninstall Rules
 

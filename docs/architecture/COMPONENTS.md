@@ -4,7 +4,7 @@ document_type: architecture
 status: current
 implementation_status: not-applicable
 applies_to: main
-last_verified: 2026-07-10
+last_verified: 2026-11-27
 supersedes: []
 superseded_by: []
 ---
@@ -52,10 +52,26 @@ This document maps the major current components to their responsibilities, depen
   Dependencies: `frontend/src/app/tailor/*`, `backend/app/routers/tailor.py`, `documents.py`.
 
 - Interview Prep
-  Responsibility: create practice sessions, research company context, and reuse saved answers.
+  Responsibility: create preparation plans, research company context, and reuse saved answers.
   Inputs: application context, question bank, AI runtime.
-  Outputs: sessions, reports, reusable answers, calendar exports.
-  Dependencies: `frontend/src/app/prep/*`, `frontend/src/app/coach/*`, `backend/app/routers/coach.py`, `question_bank.py`.
+  Outputs: preparation sessions, reusable answers, calendar exports.
+  Dependencies: `frontend/src/app/prep/*`, `backend/app/routers/coach.py`, `question_bank.py`, `interviews.py`, `interviews_ical.py`.
+
+- Interview Coach
+  Responsibility: run practice interviews (typed or spoken), evaluate answers against evidence, keep reusable stories, and produce session reports.
+  Inputs: application context, master CV evidence, stories, recordings, AI runtime.
+  Outputs: sessions, attempt evaluations, follow-up questions, reports, story usage.
+  Dependencies: `frontend/src/app/coach/{session,report,stories}/*`, `backend/app/routers/coach.py`, `coach_conversation.py`, `stories.py`. The conversational mode is gated by `HATCH_COACH_CONVERSATIONAL_ENABLED` (default off).
+
+- Interview Readiness Loop (Coach Phase 2)
+  Responsibility: turn practice evidence into readiness for a scheduled interview: patterns, focus areas, practice plans, a one-page interview brief, a debrief after the interview, and story coverage.
+  Inputs: assessed practice sessions, interview rounds, stories, debriefs.
+  Outputs: patterns, focus areas, plans, briefs, debrief proposals, coverage map.
+  Dependencies: `frontend/src/app/coach/readiness/*`, `frontend/src/components/coach/readiness/*`, `backend/app/routers/coach_readiness.py`, `backend/app/services/coach_readiness/`. Each part is opt-in and off by default: `HATCH_COACH_READINESS_ENABLED`, `HATCH_COACH_BRIEF_ENABLED`, `HATCH_COACH_DEBRIEF_ENABLED`, `HATCH_COACH_STORY_COVERAGE_ENABLED`. Existing domains report changes to it only through `backend/app/services/source_events.py`.
+
+- What Hatch remembers
+  Responsibility: show and delete what the readiness loop has derived from the user's data.
+  Dependencies: `frontend/src/app/settings/privacy/remembers/*`, `/api/coach/readiness/memory`. Works even when the readiness flags are off.
 
 - Question Bank
   Responsibility: save, tag, and reuse interview answers.
@@ -87,9 +103,20 @@ This document maps the major current components to their responsibilities, depen
   Responsibility: interview research, questions, answers, follow-up practice, and optional advanced coaching paths.
   Failure behavior: capability-gated features may be unavailable while core prep flows remain usable.
 
+- Shared runtime
+  Responsibility: model routing by tier, capability contracts, evaluation, workflow execution, migration between legacy and runtime paths (`LEGACY`, `SHADOW`, `NEW` modes per capability), and observability.
+  Dependencies: `backend/app/runtime/`, `backend/app/runtime_bindings/`, `backend/app/config/model_tiers.json`, `HATCH_RUNTIME_*_MODE` settings. See [Runtime architecture](Hatch_Runtime_Architecture_Pre_Coach_Phase2_v8_FINAL.md).
+
 - Local AI services
-  Responsibility: primary and triage inference via `llama.cpp`.
-  Dependencies: `docker-compose.local-ai.yml`, `${HATCH_HOME}/models` or `./data/models`.
+  Responsibility: primary (Tier S) and triage (Tier T) inference via `llama.cpp`; an optional deep tier (`llm-deep`, Compose profile `deep`) when the owner enables and promotes a model.
+  Dependencies: `docker-compose.yml`, `docker-compose.local-ai.yml`, `${HATCH_HOME}/models` or `./data/models`.
+
+- Observability (opt-in)
+  Responsibility: export traces and metrics to a local OpenTelemetry collector.
+  Dependencies: `docker-compose.observability.yml`, `HATCH_OBSERVABILITY_ENABLED`. See [Local AI observability](../operations/OBSERVABILITY.md).
+
+- Decision layer (planned)
+  Responsibility: a local decision model for calibrated yes/no and fixed-choice judgements. Approved design, not yet implemented. See [Decision layer](DECISION_LAYER.md).
 
 - Cloud-provider integration
   Responsibility: use configured provider secrets from host-managed config.

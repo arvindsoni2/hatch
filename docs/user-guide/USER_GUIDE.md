@@ -8,7 +8,7 @@ Hatch is a self-hosted workspace for job discovery, application preparation, tra
 - scores roles against your profile
 - prepares reviewable CV and cover-letter packs
 - tracks the application lifecycle
-- supports interview preparation and reusable answers
+- supports interview preparation, practice interviews and reusable answers
 
 ## What Hatch Does Not Do
 
@@ -24,7 +24,7 @@ Hatch is a self-hosted workspace for job discovery, application preparation, tra
 4. Review Today and Pipeline.
 5. Generate CV packs only for roles you choose.
 6. Apply externally and track the real outcome in Applications.
-7. Use Interview Prep and Question Bank once a role progresses.
+7. Use Interview Prep, Interview Coach and Question Bank once a role progresses.
 
 ## Product Areas
 
@@ -34,6 +34,7 @@ Hatch is a self-hosted workspace for job discovery, application preparation, tra
 - [Applications](APPLICATIONS.md)
 - [CV Studio](CV_STUDIO.md)
 - [Interview Prep](INTERVIEW_PREP.md)
+- [Interview Coach](INTERVIEW_COACH.md)
 - [Question Bank](QUESTION_BANK.md)
 - [Watched companies](COMPANY_WATCHLIST.md)
 - [Settings](SETTINGS.md)

@@ -1,6 +1,6 @@
 # Coach Phase 2 screen designs
 
-The approved UI reference for the Interview Readiness Loop (spec `docs/implementation-specs/active/2026-10-22-coach-phase2-readiness-loop.md`, §13). Use the screenshots for layout and copy, and this file for how each part maps to existing code. Behaviour, limits and statuses come from the spec; if a screenshot and the spec disagree, the spec wins and the reviewer flags the screenshot.
+The approved UI reference for the Interview Readiness Loop (spec `docs/implementation-specs/completed/2026-10-22-coach-phase2-readiness-loop.md`, §13). Use the screenshots for layout and copy, and this file for how each part maps to existing code. Behaviour, limits and statuses come from the spec; if a screenshot and the spec disagree, the spec wins and the reviewer flags the screenshot.
 
 All names, companies, dates and stories in the designs are invented examples. Do not copy them into fixtures that look like real candidate data.
 

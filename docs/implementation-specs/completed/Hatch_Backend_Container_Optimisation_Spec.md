@@ -1,7 +1,7 @@
 ---
 title: Hatch Backend Container Optimisation Spec
 document_type: implementation-spec
-status: active
+status: implemented
 implementation_status: partial
 applies_to: main
 last_verified: 2026-07-10
