@@ -30,6 +30,7 @@ def _app_routes() -> set[tuple[str, str]]:
 def _documented_routes() -> set[tuple[str, str]]:
     assert SURFACE.exists(), f"missing {SURFACE}"
     rows: set[tuple[str, str]] = set()
+    duplicates: set[tuple[str, str]] = set()
     for line in SURFACE.read_text(encoding="utf-8").splitlines():
         if not line.startswith("|"):
             continue
@@ -39,7 +40,11 @@ def _documented_routes() -> set[tuple[str, str]]:
             if not path.startswith("/"):
                 continue
             assert len(cells) == 8, f"route row must have 8 columns: {line}"
-            rows.add((cells[0], path))
+            route = (cells[0], path)
+            if route in rows:
+                duplicates.add(route)
+            rows.add(route)
+    assert not duplicates, f"duplicate route rows: {sorted(duplicates)}"
     return rows
 
 

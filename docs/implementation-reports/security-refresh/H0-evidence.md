@@ -39,6 +39,17 @@ FAILED tests/test_tools/test_security_surface_contract.py::test_every_route_has_
 
 The row was restored.
 
+Duplicate-row check (one `GET /api/health` row duplicated):
+
+```text
+$ python -m pytest -q --no-cov tests/test_tools/test_security_surface_contract.py
+E       assert not {('GET', '/api/health')}
+FAILED tests/test_tools/test_security_surface_contract.py::test_every_route_has_one_surface_row
+1 failed
+```
+
+The duplicate was removed.
+
 ## GREEN
 
 ```text
@@ -54,7 +65,7 @@ $ ruff check app/ tests/ scripts/security_surface.py
 All checks passed!
 ```
 
-Route count: **249 `APIRoute` objects + 3 non-API `Route` objects = 255 method/path rows** (`/openapi.json`, `/docs` and `/docs/oauth2-redirect` each contribute `GET` and `HEAD`).
+Route count: **249 `APIRoute` objects + 3 non-API `Route` objects = 252 route objects and 255 method/path registrations**. One method/path is registered by both the conversational and legacy Coach routers, so the table has **254 unique rows** (`/openapi.json`, `/docs` and `/docs/oauth2-redirect` each contribute `GET` and `HEAD`).
 
 Baseline recount on `4a9e5cf`:
 

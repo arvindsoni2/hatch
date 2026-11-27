@@ -29,11 +29,10 @@ Trust boundaries: browser ↔ Next.js ↔ FastAPI; FastAPI ↔ SQLite and worksp
 
 ## How to read the route table
 
-The table is generated from the FastAPI app with `backend/scripts/security_surface.py`; `backend/tests/test_tools/test_security_surface_contract.py` fails when an app route has no row or a row has no app route. At this baseline the app has 249 `APIRoute` objects and three non-API `Route` objects (`/openapi.json`, `/docs`, `/docs/oauth2-redirect`), giving 255 method/path rows. There are no `Mount` or `WebSocketRoute` entries at this baseline.
+The table is generated from the FastAPI app with `backend/scripts/security_surface.py`; `backend/tests/test_tools/test_security_surface_contract.py` fails when an app route has no row or a row has no app route. At this baseline the app has 249 `APIRoute` objects and three non-API `Route` objects (`/openapi.json`, `/docs`, `/docs/oauth2-redirect`). One method/path is registered by both the conversational and legacy Coach routers, so the table has 254 unique rows from 255 registrations. There are no `Mount` or `WebSocketRoute` entries at this baseline.
 
 - **Auth dependency**: every `/api/*` request passes through the optional bearer-token middleware when `HATCH_AUTH_TOKEN` is set. `/api/health` and `GET /api/app-lock/status` are exempt; non-API docs routes do not use the bearer middleware.
 - **App lock before/after setup**: when `HATCH_APP_LOCK_ENABLED` is true (the default), protected routes require a server-side session cookie. "Before setup" means no app-lock password is configured; "after setup" means one is. `Public*` marks the onboarding resume upload, which is allowed without a session only while no password source exists and onboarding is incomplete.
-- The bootstrap setup paths stay public after setup by design of the current allow-list; H2 owns the intended session boundary for them.
 - **Body/upload limit**: `None` means no route-level limit is declared; the deployment's server or proxy may impose one. Upload limits shown are checked in the route or service.
 - **Effect**: direct effects read from the route handler and the services it calls. `DB` is SQLite; `file` is a workspace or configuration file; `outbound` is an HTTP or SMTP request; `model call` is a local or cloud model request; `subprocess` is a child process; `template` is server-side rendering.
 
@@ -172,7 +171,6 @@ The table is generated from the FastAPI app with `backend/scripts/security_surfa
 | POST | `/api/coach/sessions/{session_id}/submit-answer` | `app.routers.coach` | Bearer (optional) | Locked | Session | None | DB write; async model call |
 | POST | `/api/coach/sessions/{session_id}/submit-audio` | `app.routers.coach` | Bearer (optional) | Locked | Session | 50 MB | File write; DB write; async model call |
 | POST | `/api/coach/sessions/{session_id}/end` | `app.routers.coach` | Bearer (optional) | Locked | Session | None | DB write; async model call |
-| GET | `/api/coach/sessions/{session_id}/report` | `app.routers.coach` | Bearer (optional) | Locked | Session | None | DB read |
 | GET | `/api/coach/progress/{application_id}` | `app.routers.coach` | Bearer (optional) | Locked | Session | None | DB read |
 | POST | `/api/coach/sessions/{session_id}/plan-followup` | `app.routers.coach` | Bearer (optional) | Locked | Session | None | DB read/write |
 | GET | `/api/coach/progress/{session_id}/trend` | `app.routers.coach` | Bearer (optional) | Locked | Session | None | DB read |
@@ -441,15 +439,15 @@ All 26 open alerts at the baseline, with a disposition. Dismissal is the owner's
 | 32 | `py/path-injection` | `backend/app/routers/coach.py` | Fix in H3. |
 | 33 | `py/path-injection` | `backend/app/routers/coach.py` | Fix in H3. |
 | 34 | `py/path-injection` | `backend/app/routers/coach.py` | Fix in H3. |
-| 35 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: paths use server-generated identifiers and no-follow directory file descriptors. |
-| 36 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
-| 37 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
-| 38 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
-| 39 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
-| 40 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
-| 41 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
-| 42 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
-| 43 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | False positive: same no-follow directory-handle pattern. |
+| 35 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 36 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 37 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 38 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 39 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 40 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 41 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 42 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
+| 43 | `py/path-injection` | `backend/app/services/coach_media_storage.py` | Expected false positive (server-generated identifiers, no-follow directory handles); H3 confirms. |
 | 44 | `py/path-injection` | `backend/app/services/tailor_service.py` | Fix in H3. |
 | 7 | `py/stack-trace-exposure` | `backend/app/routers/settings.py` | Fix in H6. |
 | 12 | `actions/missing-workflow-permissions` | `.github/workflows/ci.yml` | Fix in D4. |

@@ -277,15 +277,22 @@ def _effect(module: str, endpoint: str) -> str:
 
 def _routes():
     rows = []
+    seen: set[tuple[str, str]] = set()
     for route in app.routes:
         methods = getattr(route, "methods", None)
         if isinstance(route, APIRoute) or methods:
-            for method in sorted(methods or ()):
-                rows.append((method, route.path, route))
+            pairs = [(method, route.path) for method in sorted(methods or ())]
         elif isinstance(route, WebSocketRoute):
-            rows.append(("WS", route.path, route))
+            pairs = [("WS", route.path)]
         elif isinstance(route, Mount):
-            rows.append(("MOUNT", route.path, route))
+            pairs = [("MOUNT", route.path)]
+        else:
+            continue
+        for method, path in pairs:
+            if (method, path) in seen:
+                continue
+            seen.add((method, path))
+            rows.append((method, path, route))
     return rows
 
 
