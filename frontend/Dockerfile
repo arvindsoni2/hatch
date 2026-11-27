@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
 # ──────────────────────── Stage 1: Deps ────────────────────────
-FROM node:20-alpine AS deps
+# node:24-alpine
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS deps
 
 WORKDIR /app
 
@@ -11,7 +12,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 
 
 # ──────────────────────── Stage 2: Builder ────────────────────────
-FROM node:20-alpine AS builder
+# node:24-alpine
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS builder
 
 WORKDIR /app
 
@@ -30,7 +32,8 @@ RUN npm run build
 
 
 # ──────────────────────── Stage 3: Runner ────────────────────────
-FROM node:20-alpine AS runner
+# node:24-alpine
+FROM node:24-alpine@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runner
 
 WORKDIR /app
 

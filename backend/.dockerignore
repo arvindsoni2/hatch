@@ -27,3 +27,4 @@ build/
 tmp/
 .tmp/
 *.tmp
+app/templates/node_modules/
