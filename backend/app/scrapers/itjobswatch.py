@@ -4,10 +4,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-import httpx
 from bs4 import BeautifulSoup, Tag
 
 from ..schemas.job import JobPostingCreate
+from ..services.public_fetch import FIXED_HOST_MAX_BYTES, PublicFetchError, fetch
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -41,29 +41,32 @@ class ITJobsWatchScraper(BaseScraper):
             "Accept-Language": "en-GB,en;q=0.9",
         }
 
-        async with httpx.AsyncClient(timeout=30.0, headers=headers, follow_redirects=True) as client:
-            for page_num in range(1, MAX_PAGES + 1):
-                url = f"{CONTRACT_URL}?page={page_num}"
-                self.logger.info("Scraping ITJobsWatch page %d: %s", page_num, url)
+        for page_num in range(1, MAX_PAGES + 1):
+            url = f"{CONTRACT_URL}?page={page_num}"
+            self.logger.info("Scraping ITJobsWatch page %d", page_num)
 
-                try:
-                    await self.random_delay()
-                    response = await client.get(url)
-                    response.raise_for_status()
+            try:
+                await self.random_delay()
+                response = await fetch(
+                    url,
+                    allowed_content_types=("text/html", "application/xhtml+xml", "text/plain"),
+                    max_bytes=FIXED_HOST_MAX_BYTES,
+                    headers=headers,
+                )
 
-                    page_jobs = self._parse_html(response.text)
-                    jobs.extend(page_jobs)
-                    self.logger.info("Page %d: found %d jobs", page_num, len(page_jobs))
+                page_jobs = self._parse_html(response.text)
+                jobs.extend(page_jobs)
+                self.logger.info("Page %d: found %d jobs", page_num, len(page_jobs))
 
-                    if not page_jobs:
-                        break
-
-                except httpx.HTTPStatusError as e:
-                    self.logger.error("ITJobsWatch HTTP error %d on page %d", e.response.status_code, page_num)
+                if not page_jobs:
                     break
-                except Exception as e:
-                    self.logger.error("ITJobsWatch error on page %d: %s", page_num, e)
-                    break
+
+            except PublicFetchError as exc:
+                self.logger.error("ITJobsWatch fetch failed code=%s on page %d", exc.code, page_num)
+                break
+            except Exception as exc:
+                self.logger.error("ITJobsWatch error on page %d: %s", page_num, exc)
+                break
 
         self.logger.info("ITJobsWatch scrape complete: %d total jobs", len(jobs))
         return jobs

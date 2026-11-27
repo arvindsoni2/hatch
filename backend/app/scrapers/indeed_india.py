@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-
-import httpx
+from urllib.parse import urlencode
 
 try:
     from bs4 import BeautifulSoup
@@ -13,6 +12,7 @@ except ImportError:
     BS4_AVAILABLE = False
 
 from ..schemas.job import JobPostingCreate
+from ..services.public_fetch import FIXED_HOST_MAX_BYTES, PublicFetchError, fetch
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -69,27 +69,25 @@ class IndeedIndiaScraper(BaseScraper):
 
         jobs: list[JobPostingCreate] = []
 
-        async with httpx.AsyncClient(
-            timeout=30.0,
-            headers=headers,
-            follow_redirects=True,
-        ) as client:
-            try:
-                await self.random_delay()
-                response = await client.get(_INDEED_IN_BASE, params=params)
+        url = f"{_INDEED_IN_BASE}?{urlencode(params)}"
+        try:
+            await self.random_delay()
+            response = await fetch(
+                url,
+                allowed_content_types=("text/html", "application/xhtml+xml", "text/plain"),
+                max_bytes=FIXED_HOST_MAX_BYTES,
+                headers=headers,
+            )
+            jobs = self._parse_html(response.text)
+            self.logger.info("Indeed India scrape complete: %d jobs", len(jobs))
 
-                if response.status_code == 403:
-                    self.logger.warning("Indeed India returned 403 — access restricted.")
-                    return jobs
-
-                response.raise_for_status()
-                jobs = self._parse_html(response.text)
-                self.logger.info("Indeed India scrape complete: %d jobs", len(jobs))
-
-            except httpx.HTTPStatusError as exc:
-                self.logger.error("Indeed India HTTP error %d: %s", exc.response.status_code, exc)
-            except Exception as exc:
-                self.logger.error("Indeed India scraper error: %s", exc)
+        except PublicFetchError as exc:
+            if exc.code == "http_error" and exc.status_code == 403:
+                self.logger.warning("Indeed India returned 403 — access restricted.")
+                return jobs
+            self.logger.error("Indeed India fetch failed code=%s", exc.code)
+        except Exception as exc:
+            self.logger.error("Indeed India scraper error: %s", exc)
 
         return jobs
 

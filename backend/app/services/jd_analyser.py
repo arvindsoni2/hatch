@@ -1,15 +1,11 @@
 """JD Analyser — parses job descriptions and computes skill match against the master CV."""
 from __future__ import annotations
 
-import ipaddress
 import logging
-import socket
 import time
 from copy import deepcopy
 from typing import Any
-from urllib.parse import urlparse
-
-import httpx
+from urllib.parse import urlsplit
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..agents.tools.context_budgets import JD_ANALYSIS
@@ -17,6 +13,7 @@ from ..prompts import render_prompt
 from ..observability import get_telemetry
 from ..schemas.tailor import ATSKeywords, JDAnalysisResult, SkillMatchResult
 from .llm_client import LLMClient
+from .public_fetch import PublicFetchError, fetch
 from .prompt_catalog import prompt_contract_block, source_contains
 
 logger = logging.getLogger(__name__)
@@ -36,34 +33,6 @@ _TAG_TAXONOMY: dict[str, list[str]] = {
 
 def _text_to_lower(text: str) -> str:
     return text.lower()
-
-
-def _validate_url(url: str) -> None:
-    """Validate that a URL is safe to fetch — blocks SSRF attack vectors.
-
-    Raises ValueError for non-http/https schemes and for hostnames that
-    resolve to private, loopback, or link-local addresses.
-    """
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"Only http/https URLs are allowed, got scheme: '{parsed.scheme}'")
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("URL has no hostname")
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror as exc:
-        raise ValueError(f"Cannot resolve hostname '{hostname}': {exc}") from exc
-    for info in infos:
-        addr = info[4][0]
-        try:
-            ip = ipaddress.ip_address(addr)
-        except ValueError:
-            continue
-        if ip.is_private or ip.is_loopback or ip.is_link_local:
-            raise ValueError(
-                f"SSRF blocked: '{hostname}' resolves to private/reserved IP {ip}"
-            )
 
 
 class JDAnalyser:
@@ -210,29 +179,30 @@ class JDAnalyser:
         )
 
     async def _fetch_jd(self, url: str) -> str:
-        """Fetch job description text from a URL.
-
-        Args:
-            url: The job posting URL.
-
-        Returns:
-            Extracted plain text content.
-        """
-        _validate_url(url)  # raises ValueError on SSRF attempt — must not be caught below
+        """Fetch job description text from a URL through the guarded fetch."""
+        host = urlsplit(url).hostname or "unknown"
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, follow_redirects=True)
-                resp.raise_for_status()
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(resp.text, "lxml")
-                # Remove script/style tags
-                for tag in soup(["script", "style", "nav", "footer"]):
-                    tag.decompose()
-                return soup.get_text(separator="\n", strip=True)[:8000]
-        except ValueError:
-            raise  # re-raise SSRF validation errors
-        except Exception as exc:
-            logger.warning("Failed to fetch JD from %s: %s", url, exc)
+            response = await fetch(url)
+        except PublicFetchError as exc:
+            if exc.code in {
+                "bad_scheme",
+                "bad_url",
+                "userinfo_not_allowed",
+                "blocked_address",
+                "resolve_error",
+            }:
+                raise
+            logger.warning("Failed to fetch JD host=%s code=%s", host, exc.code)
+            return ""
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, "lxml")
+            # Remove script/style tags
+            for tag in soup(["script", "style", "nav", "footer"]):
+                tag.decompose()
+            return soup.get_text(separator="\n", strip=True)[:8000]
+        except Exception:
+            logger.warning("Failed to parse JD host=%s", host)
             return ""
 
 

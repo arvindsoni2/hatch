@@ -98,7 +98,8 @@ async def preview_job_url(body: JobUrlImportPreviewRequest, db: AsyncSession = D
 async def save_imported_job(body: JobUrlImportSaveRequest, db: AsyncSession = Depends(get_db)):
     from ..models.application import Application
     from ..models.job import JobPosting
-    from ..services.job_url_importer import normalize_url, validate_public_url
+    from ..services.job_url_importer import normalize_url
+    from ..services.public_fetch import validate_public_url
     final_url = body.draft.final_url or body.draft.normalized_url or normalize_url(body.draft.source_url)
     try:
         validate_public_url(final_url)

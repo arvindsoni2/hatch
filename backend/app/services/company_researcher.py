@@ -6,8 +6,8 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote_plus
 
-import httpx
 from bs4 import BeautifulSoup
 
 from ..prompts import render_prompt
@@ -23,6 +23,7 @@ from .coach_contracts import (
     configured_model_id,
     run_with_stage_deadline,
 )
+from .public_fetch import FIXED_HOST_MAX_BYTES, fetch
 from .prompt_catalog import (
     prompt_contract_block,
     prompt_metadata,
@@ -31,7 +32,6 @@ from .prompt_catalog import (
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_TIMEOUT = 10.0
 _USER_AGENT = "Mozilla/5.0 (compatible; JobPilot-Research/1.0)"
 
 
@@ -188,50 +188,49 @@ class CompanyResearchService:
             Scraped text and source provenance.
         """
         search_query = f"{company_name} company technology careers UK"
-        ddg_url = f"https://html.duckduckgo.com/html/?q={search_query.replace(' ', '+')}"
+        ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(search_query)}"
 
         try:
-            async with httpx.AsyncClient(
-                timeout=_SEARCH_TIMEOUT,
+            resp = await fetch(
+                ddg_url,
+                allowed_content_types=("text/html", "application/xhtml+xml", "text/plain"),
+                max_bytes=FIXED_HOST_MAX_BYTES,
                 headers={"User-Agent": _USER_AGENT},
-                follow_redirects=True,
-            ) as client:
-                resp = await client.get(ddg_url)
-                resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, "lxml")
-                retrieved_at = datetime.now(UTC)
+            )
+            soup = BeautifulSoup(resp.text, "lxml")
+            retrieved_at = datetime.now(UTC)
 
-                results = soup.find_all("a", class_="result__snippet")
-                snippets = [r.get_text(strip=True) for r in results[:10]]
-                titles = soup.find_all("a", class_="result__a")
-                sources: list[ResearchSource] = []
-                blocks: list[str] = []
-                for index, (title, snippet) in enumerate(
-                    zip(titles[:10], snippets),
-                    start=1,
-                ):
-                    url = str(title.get("href") or "").strip()
-                    if not url:
-                        continue
-                    source_id = f"source-{index}"
-                    title_text = title.get_text(strip=True)
-                    sources.append(
-                        ResearchSource(
-                            source_id=source_id,
-                            title=title_text,
-                            url=url,
-                            retrieved_at=retrieved_at,
-                        )
+            results = soup.find_all("a", class_="result__snippet")
+            snippets = [r.get_text(strip=True) for r in results[:10]]
+            titles = soup.find_all("a", class_="result__a")
+            sources: list[ResearchSource] = []
+            blocks: list[str] = []
+            for index, (title, snippet) in enumerate(
+                zip(titles[:10], snippets),
+                start=1,
+            ):
+                url = str(title.get("href") or "").strip()
+                if not url:
+                    continue
+                source_id = f"source-{index}"
+                title_text = title.get_text(strip=True)
+                sources.append(
+                    ResearchSource(
+                        source_id=source_id,
+                        title=title_text,
+                        url=url,
+                        retrieved_at=retrieved_at,
                     )
-                    blocks.append(
-                        f"[{source_id}]\nTitle: {title_text}\n"
-                        f"URL: {url}\nSnippet: {snippet}"
-                    )
-                return ResearchBundle(
-                    text="\n\n".join(blocks)[:5000],
-                    sources=tuple(sources),
-                    retrieved_at=retrieved_at,
                 )
+                blocks.append(
+                    f"[{source_id}]\nTitle: {title_text}\n"
+                    f"URL: {url}\nSnippet: {snippet}"
+                )
+            return ResearchBundle(
+                text="\n\n".join(blocks)[:5000],
+                sources=tuple(sources),
+                retrieved_at=retrieved_at,
+            )
 
         except Exception as exc:
             logger.warning("Web scrape failed for %s: %s", company_name, exc)

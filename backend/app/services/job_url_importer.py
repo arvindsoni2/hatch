@@ -1,12 +1,13 @@
 """SSRF-safe, conservative extraction for user-supplied public job URLs."""
 from __future__ import annotations
 import html
-import ipaddress
 import json
 import re
-import socket
-from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
-import httpx
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from .public_fetch import fetch, validate_public_url
+
+__all__ = ["extract_job", "normalize_url", "preview_url", "validate_public_url"]
 
 TRACKING = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "mc_cid", "mc_eid", "ref", "source"}
 ALLOWED_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
@@ -17,16 +18,6 @@ def normalize_url(url: str) -> str:
     query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k.lower() not in TRACKING])
     path = parts.path.rstrip("/") or "/"
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, query, ""))
-
-
-def validate_public_url(url: str) -> None:
-    parts = urlsplit(url)
-    if parts.scheme not in {"http", "https"} or not parts.hostname or parts.hostname.lower() == "localhost":
-        raise ValueError("Only public HTTP(S) job URLs are allowed")
-    for info in socket.getaddrinfo(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)):
-        ip = ipaddress.ip_address(info[4][0])
-        if not ip.is_global:
-            raise ValueError("Private, reserved, link-local, and loopback addresses are not allowed")
 
 
 def _strip_markup(value: str) -> str:
@@ -79,44 +70,29 @@ def extract_job(html_text: str, source_url: str) -> dict:
 
 
 async def preview_url(url: str) -> dict:
-    current = normalize_url(url)
     headers = {"User-Agent": "Hatch-Job-Importer/1.0"}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5), follow_redirects=False) as client:
-        for _ in range(6):
-            validate_public_url(current)
-            async with client.stream("GET", current, headers=headers) as response:
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise ValueError("Redirect did not include a location")
-                    current = normalize_url(urljoin(current, location))
-                    continue
-                content_type = response.headers.get("content-type", "").lower()
-                if not any(kind in content_type for kind in ALLOWED_TYPES):
-                    raise ValueError("Job URL did not return HTML or text")
-                chunks, size = [], 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > 2 * 1024 * 1024:
-                        raise ValueError("Job page exceeds the 2 MB limit")
-                    chunks.append(chunk)
-                text = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
-                draft = extract_job(text, current)
-                length = len(draft.get("description") or "")
-                confidence = "high" if draft.get("title") and draft.get("company") and length >= 800 else "medium" if draft.get("title") and length >= 400 and draft.get("company") else "low"
-                method = "direct"
-                if confidence == "low":
-                    try:
-                        from .firecrawl_client import scrape_public_job
-                        fallback = await scrape_public_job(current)
-                        if fallback:
-                            candidate = extract_job(fallback, current)
-                            if len(candidate.get("description") or "") > length:
-                                draft, length, method = candidate, len(candidate.get("description") or ""), "firecrawl"
-                                confidence = "high" if draft.get("title") and draft.get("company") and length >= 800 else "medium" if draft.get("title") and draft.get("company") and length >= 400 else "low"
-                    except Exception:
-                        pass
-                return {**draft, "source_url": url, "normalized_url": normalize_url(url), "final_url": current,
-                        "confidence": confidence, "extraction_method": method if confidence != "low" else "manual_required",
-                        "warnings": [] if confidence == "high" else ["Review extracted fields before saving."]}
-        raise ValueError("Job URL exceeded the redirect limit")
+    response = await fetch(
+        normalize_url(url),
+        allowed_content_types=ALLOWED_TYPES,
+        max_bytes=2 * 1024 * 1024,
+        headers=headers,
+    )
+    current = response.url
+    draft = extract_job(response.text, current)
+    length = len(draft.get("description") or "")
+    confidence = "high" if draft.get("title") and draft.get("company") and length >= 800 else "medium" if draft.get("title") and length >= 400 and draft.get("company") else "low"
+    method = "direct"
+    if confidence == "low":
+        try:
+            from .firecrawl_client import scrape_public_job
+            fallback = await scrape_public_job(current)
+            if fallback:
+                candidate = extract_job(fallback, current)
+                if len(candidate.get("description") or "") > length:
+                    draft, length, method = candidate, len(candidate.get("description") or ""), "firecrawl"
+                    confidence = "high" if draft.get("title") and draft.get("company") and length >= 800 else "medium" if draft.get("title") and draft.get("company") and length >= 400 else "low"
+        except Exception:
+            pass
+    return {**draft, "source_url": url, "normalized_url": normalize_url(url), "final_url": current,
+            "confidence": confidence, "extraction_method": method if confidence != "low" else "manual_required",
+            "warnings": [] if confidence == "high" else ["Review extracted fields before saving."]}

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
 
-import httpx
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +25,8 @@ from ..schemas.company_watchlist import (
     CompanyWatchlistUpdate,
     WatchlistScanRunRead,
 )
-from ..services.job_url_importer import normalize_url, preview_url, validate_public_url
+from ..services.job_url_importer import normalize_url, preview_url
+from ..services.public_fetch import fetch, validate_public_url
 
 
 @dataclass(frozen=True)
@@ -174,12 +174,13 @@ async def run_due_watchlist_scans(db: AsyncSession) -> dict[str, int]:
 
 async def discover_roles_for_item(item: CompanyWatchlistItem) -> list[DiscoveredWatchRole]:
     """Discover roles from an explicitly configured user URL using the basic provider."""
-    validate_public_url(item.careers_url)
     headers = {"User-Agent": "Hatch-Watchlist/1.0"}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=5), follow_redirects=True) as client:
-        response = await client.get(item.careers_url, headers=headers)
-        response.raise_for_status()
-        text = response.text
+    response = await fetch(
+        item.careers_url,
+        allowed_content_types=("text/html", "application/xhtml+xml", "text/plain"),
+        headers=headers,
+    )
+    text = response.text
 
     links = _extract_role_links(text, item.careers_url)
     if not links:
