@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import logging.config
 import time
-from collections import defaultdict
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -483,6 +483,77 @@ def _known_conversational_create_validation_code(
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
+def _normalize_host(value: str) -> str:
+    host = value.strip().lower()
+    if not host or any(character in host for character in ", \t\r\n"):
+        return ""
+    if host.startswith("["):
+        closing = host.find("]")
+        if closing == -1:
+            return ""
+        remainder = host[closing + 1 :]
+        if remainder and not (
+            remainder.startswith(":") and remainder[1:].isdigit()
+        ):
+            return ""
+        return host[1:closing]
+    if host.count(":") == 1:
+        name, port = host.split(":", 1)
+        return name if port.isdigit() else ""
+    return host
+
+
+class TrustedHostMiddleware(BaseHTTPMiddleware):
+    """Reject requests whose Host header is not in HATCH_TRUSTED_HOSTS."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        allowed = {
+            _normalize_host(host) for host in settings.trusted_hosts_list
+        }
+        if _normalize_host(request.headers.get("host", "")) not in allowed:
+            return JSONResponse(
+                {"detail": "Untrusted host", "code": "untrusted_host"},
+                status_code=400,
+            )
+        return await call_next(request)
+
+
+class OriginCheckMiddleware(BaseHTTPMiddleware):
+    """Reject cross-site mutating API requests."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if (
+            request.method not in _MUTATING_METHODS
+            or not request.url.path.startswith("/api/")
+        ):
+            return await call_next(request)
+
+        origin = request.headers.get("origin")
+        if origin is not None:
+            if origin not in settings.allowed_origins_list:
+                return JSONResponse(
+                    {
+                        "detail": "Cross-site request rejected",
+                        "code": "origin_not_allowed",
+                    },
+                    status_code=403,
+                )
+        else:
+            fetch_site = request.headers.get("sec-fetch-site")
+            if fetch_site is not None and fetch_site not in {
+                "same-origin",
+                "none",
+            }:
+                return JSONResponse(
+                    {
+                        "detail": "Cross-site request rejected",
+                        "code": "origin_not_allowed",
+                    },
+                    status_code=403,
+                )
+        return await call_next(request)
+
+
 class AISetupGateMiddleware(BaseHTTPMiddleware):
     """Return an actionable response when a disabled feature needs an LLM."""
 
@@ -514,14 +585,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """Per-client token-bucket rate limiter for mutating endpoints.
 
     Only active when HATCH_AUTH_TOKEN is non-empty (disabled for localhost dev ergonomics).
-    Clients are identified by their remote host IP.
+    Clients are identified by their remote host IP. The client map is bounded.
     """
 
-    def __init__(self, app, limit_per_minute: int, enabled: bool) -> None:
+    def __init__(
+        self,
+        app,
+        limit_per_minute: int,
+        enabled: bool,
+        max_clients: int = 1024,
+    ) -> None:
         super().__init__(app)
         self._limit = limit_per_minute
         self._enabled = enabled
-        self._buckets: dict[str, list[float]] = defaultdict(list)
+        self._max_clients = max(1, max_clients)
+        self._buckets: dict[str, list[float]] = {}
+
+    def _prune(self, window_start: float) -> None:
+        for client in list(self._buckets):
+            bucket = [t for t in self._buckets[client] if t > window_start]
+            if bucket:
+                self._buckets[client] = bucket
+            else:
+                del self._buckets[client]
 
     async def dispatch(self, request: StarletteRequest, call_next):
         if not self._enabled or request.method not in _MUTATING_METHODS:
@@ -530,14 +616,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         client = request.client.host if request.client else "unknown"
         now = time.monotonic()
         window_start = now - 60.0
-        bucket = self._buckets[client]
-        # Evict timestamps outside the 1-minute window
-        self._buckets[client] = [t for t in bucket if t > window_start]
-        if len(self._buckets[client]) >= self._limit:
+        self._prune(window_start)
+        bucket = self._buckets.get(client)
+        if bucket is None:
+            if len(self._buckets) >= self._max_clients:
+                oldest = min(self._buckets, key=lambda key: self._buckets[key][-1])
+                del self._buckets[oldest]
+            bucket = []
+            self._buckets[client] = bucket
+        if len(bucket) >= self._limit:
             from fastapi.responses import JSONResponse  # noqa: PLC0415
 
             return JSONResponse({"detail": "Rate limit exceeded"}, status_code=429)
-        self._buckets[client].append(now)
+        bucket.append(now)
         return await call_next(request)
 
 
@@ -563,7 +654,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if request.url.path.startswith("/api/"):
             auth = request.headers.get("Authorization", "")
-            if auth != f"Bearer {self._token}":
+            expected = f"Bearer {self._token}".encode()
+            if not hmac.compare_digest(auth.encode(), expected):
                 from fastapi.responses import JSONResponse  # noqa: PLC0415
 
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -622,6 +714,14 @@ class AppLockMiddleware(BaseHTTPMiddleware):
             return path == "/api/setup/intent"
         return False
 
+    @staticmethod
+    def _is_public_setup_get_after_setup(request: StarletteRequest) -> bool:
+        return request.method == "GET" and request.url.path in {
+            "/api/setup/status",
+            "/api/setup/providers",
+            "/api/setup/models/discovery",
+        }
+
     async def dispatch(self, request: StarletteRequest, call_next):
         if not settings.HATCH_APP_LOCK_ENABLED or request.method == "OPTIONS":
             return await call_next(request)
@@ -629,7 +729,6 @@ class AppLockMiddleware(BaseHTTPMiddleware):
         if (
             path in self._PUBLIC_PATHS
             or self._is_public_locale_metadata(request)
-            or self._is_bootstrap_setup_request(request)
             or path.startswith("/static/")
         ):
             return await call_next(request)
@@ -651,22 +750,26 @@ class AppLockMiddleware(BaseHTTPMiddleware):
         async with session_factory() as db:
             lock_service = AppLockService(db)
             session = await lock_service.session(token)
-            allow_onboarding_upload = False
+            allow_bootstrap = False
             bootstrap_state_failed = False
-            if session is None and self._is_onboarding_resume_upload(request):
+            if session is None:
                 try:
                     configured_source = await lock_service.configured_source()
-                    onboarding = await OnboardingService(db).status()
-                    allow_onboarding_upload = (
-                        configured_source == "none" and onboarding.status != "complete"
-                    )
+                    if configured_source == "none":
+                        if self._is_onboarding_resume_upload(request):
+                            onboarding = await OnboardingService(db).status()
+                            allow_bootstrap = onboarding.status != "complete"
+                        else:
+                            allow_bootstrap = self._is_bootstrap_setup_request(request)
+                    else:
+                        allow_bootstrap = self._is_public_setup_get_after_setup(request)
                 except Exception:
-                    logger.exception("Unable to verify onboarding resume-upload state")
+                    logger.exception("Unable to verify app-lock bootstrap state")
                     await db.rollback()
                     bootstrap_state_failed = True
             if not bootstrap_state_failed:
                 await db.commit()
-        if allow_onboarding_upload:
+        if allow_bootstrap:
             return await call_next(request)
         if session is None:
             return JSONResponse({"detail": "Hatch is locked."}, status_code=423)
@@ -734,7 +837,7 @@ def create_app() -> FastAPI:
         return await request_validation_exception_handler(request, error)
 
     # CORS — origins from ALLOWED_ORIGINS env var (comma-separated), defaults to localhost
-    _origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+    _origins = settings.allowed_origins_list
     if "*" in _origins:
         logger.warning(
             "SECURITY: ALLOWED_ORIGINS contains '*' — restrict to explicit origins in production."
@@ -762,8 +865,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         RateLimitMiddleware,
         limit_per_minute=settings.RATE_LIMIT_PER_MINUTE,
+        max_clients=settings.RATE_LIMIT_MAX_CLIENTS,
         enabled=bool(settings.HATCH_AUTH_TOKEN),  # disabled for localhost dev
     )
+    app.add_middleware(OriginCheckMiddleware)
+    app.add_middleware(TrustedHostMiddleware)
 
     # Routers
     app.include_router(health_router)

@@ -1,6 +1,8 @@
 # Hatch — Project Commands
 # Usage: make <target>
 
+HOST ?= 127.0.0.1
+
 .PHONY: dev dev-back dev-front scrape scrape-one test test-back test-front \
         test-be test-fe migrate migrate-new docker-up docker-down docker-build docker-logs \
         docker-restart lint format models seed clean reset-user reset-app-lock \
@@ -13,8 +15,8 @@ dev: migrate ## Start full stack locally (backend + frontend)
 	@make dev-back &
 	@make dev-front
 
-dev-back: migrate ## Start backend with hot reload
-	cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+dev-back: migrate ## Start backend with hot reload (HOST=0.0.0.0 for LAN dev)
+	cd backend && uvicorn app.main:app --reload --host $(HOST) --port 8000
 
 dev-front: ## Start frontend with hot reload
 	cd frontend && npm run dev

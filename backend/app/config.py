@@ -217,6 +217,7 @@ class Settings(BaseSettings):
     # When empty (default) auth is disabled — localhost use is frictionless.
     # Set HATCH_AUTH_TOKEN=<secret> in .env when exposing beyond localhost.
     HATCH_AUTH_TOKEN: str = ""
+    HATCH_TRUSTED_HOSTS: str = "localhost,127.0.0.1,[::1],backend,frontend"
     HATCH_APP_LOCK_ENABLED: bool = True
     HATCH_APP_PASSWORD: str = ""
     HATCH_APP_SESSION_COOKIE: str = "hatch_app_session"
@@ -228,6 +229,7 @@ class Settings(BaseSettings):
     # Only active when HATCH_AUTH_TOKEN is non-empty (disabled for localhost dev).
     # Default 600/min is generous for a single-user app; lower for exposed deploys.
     RATE_LIMIT_PER_MINUTE: int = 600
+    RATE_LIMIT_MAX_CLIENTS: int = 1024
 
     # Job matching preferences — empty by default; source from profile/master_profile
     PRIORITY_KEYWORDS: str = ""
@@ -241,6 +243,22 @@ class Settings(BaseSettings):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
     ]
+
+    @property
+    def trusted_hosts_list(self) -> list[str]:
+        return [
+            host.strip()
+            for host in self.HATCH_TRUSTED_HOSTS.split(",")
+            if host.strip()
+        ]
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [
+            origin.strip()
+            for origin in self.ALLOWED_ORIGINS.split(",")
+            if origin.strip()
+        ]
 
     @property
     def priority_keywords_list(self) -> list[str]:
