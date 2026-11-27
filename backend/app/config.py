@@ -112,7 +112,7 @@ class Settings(BaseSettings):
         return value
 
     # CORS — comma-separated list of allowed origins (set ALLOWED_ORIGINS env var in production)
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://[::1]:3000"
 
     # Logging
     LOG_LEVEL: str = "INFO"

@@ -53,6 +53,7 @@ services:
     environment:
       API_URL: http://backend:8000
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      HATCH_TRUSTED_HOSTS: ${HATCH_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1],backend,frontend}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
