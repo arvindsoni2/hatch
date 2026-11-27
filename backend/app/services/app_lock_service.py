@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -125,18 +125,25 @@ class AppLockService:
             and bcrypt.checkpw(password.encode(), row.password_hash.encode())
         )
 
-    async def _record_failed_attempt(self) -> int | None:
-        """Atomically count one failed attempt, returning None at the limit."""
+    async def _reserve_attempt(self, now: datetime) -> int | None:
+        """Atomically reserve one password check, returning None at the limit."""
+        window_start = now - timedelta(
+            seconds=settings.HATCH_APP_LOCK_RETRY_DELAY_SECONDS
+        )
         result = await self._db.execute(
             update(AppLockConfig)
             .where(
                 AppLockConfig.id == 1,
-                AppLockConfig.failed_attempt_count
-                < settings.HATCH_APP_LOCK_FAILED_ATTEMPT_LIMIT,
+                or_(
+                    AppLockConfig.failed_attempt_count
+                    < settings.HATCH_APP_LOCK_FAILED_ATTEMPT_LIMIT,
+                    AppLockConfig.last_failed_attempt_at.is_(None),
+                    AppLockConfig.last_failed_attempt_at <= window_start,
+                ),
             )
             .values(
                 failed_attempt_count=AppLockConfig.failed_attempt_count + 1,
-                last_failed_attempt_at=_utcnow(),
+                last_failed_attempt_at=now,
             )
             .returning(AppLockConfig.failed_attempt_count)
         )
@@ -149,17 +156,23 @@ class AppLockService:
             raise AppLockError("App lock is disabled by environment configuration.", 409)
         row = await self._config(create=True)
         assert row is not None
-        retry_after = self._retry_after(row)
-        if retry_after:
-            raise AppLockError(f"Too many failed attempts. Try again in {retry_after} seconds.", 429)
+        now = _utcnow()
+        if await self._reserve_attempt(now) is None:
+            current = await self._db.get(AppLockConfig, 1)
+            retry_after = max(1, self._retry_after(current))
+            raise AppLockError(
+                f"Too many failed attempts. Try again in {retry_after} seconds.",
+                429,
+            )
+        row = await self._db.get(AppLockConfig, 1)
+        assert row is not None
         if not await self._password_matches(password, row):
-            count = await self._record_failed_attempt()
-            if count is None:
-                raise AppLockError("Too many failed attempts. Try again later.", 429)
             raise AppLockError("Password is incorrect. Please try again.", 401)
         row.failed_attempt_count = 0
         row.last_failed_attempt_at = None
-        return await self._create_session(row)
+        token = await self._create_session(row)
+        await self._db.commit()
+        return token
 
     async def _create_session(self, row: AppLockConfig) -> str:
         # Session creation already requires a write transaction, so this is the

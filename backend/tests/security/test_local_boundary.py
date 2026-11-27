@@ -5,6 +5,7 @@ import asyncio
 import hmac
 import time
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -470,6 +471,146 @@ async def test_parallel_wrong_unlocks_cannot_exceed_the_limit(
         assert persisted_status == 429
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_parallel_mixed_unlocks_check_password_at_most_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "HATCH_APP_LOCK_ENABLED", True)
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'mixed.db'}",
+        connect_args={"timeout": 30},
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    calls = 0
+    real_matches = AppLockService._password_matches
+
+    async def spy(self, password: str, row: AppLockConfig | None) -> bool:
+        nonlocal calls
+        calls += 1
+        return await real_matches(self, password, row)
+
+    monkeypatch.setattr(AppLockService, "_password_matches", spy)
+    limit = settings.HATCH_APP_LOCK_FAILED_ATTEMPT_LIMIT
+
+    try:
+        async with session_factory() as session:
+            await AppLockService(session).setup("safe-password-1")
+            await session.commit()
+
+        async def attempt(password: str) -> int:
+            async with session_factory() as session:
+                try:
+                    await AppLockService(session).unlock(password)
+                except AppLockError as error:
+                    return error.status_code
+            return 200
+
+        correct_ready = asyncio.Event()
+
+        async def correct_attempt() -> int:
+            await correct_ready.wait()
+            return await attempt("safe-password-1")
+
+        wrong_tasks = [
+            asyncio.create_task(attempt("wrong-password")) for _ in range(9)
+        ]
+        correct_task = asyncio.create_task(correct_attempt())
+        for _ in range(200):
+            if calls >= limit:
+                break
+            await asyncio.sleep(0.01)
+        correct_ready.set()
+        results = await asyncio.gather(*wrong_tasks, correct_task)
+
+        assert calls <= limit
+        assert all(result != 200 for result in results[limit:])
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unlock_window_allows_one_check_then_rearms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "HATCH_APP_LOCK_ENABLED", True)
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'window.db'}",
+        connect_args={"timeout": 30},
+    )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    try:
+        async with session_factory() as session:
+            await AppLockService(session).setup("safe-password-1")
+            await session.commit()
+
+        async def attempt(password: str) -> int:
+            async with session_factory() as session:
+                try:
+                    await AppLockService(session).unlock(password)
+                except AppLockError as error:
+                    return error.status_code
+            return 200
+
+        for _ in range(settings.HATCH_APP_LOCK_FAILED_ATTEMPT_LIMIT):
+            assert await attempt("wrong-password") == 401
+
+        async with session_factory() as session:
+            row = await session.get(AppLockConfig, 1)
+            assert row is not None
+            row.last_failed_attempt_at = datetime.utcnow() - timedelta(
+                seconds=settings.HATCH_APP_LOCK_RETRY_DELAY_SECONDS + 1
+            )
+            await session.commit()
+
+        assert await attempt("wrong-password") == 401
+        assert await attempt("safe-password-1") == 429
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.app_lock
+async def test_http_unlock_limit_persists_for_a_new_client(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    setup = await client.post(
+        "/api/app-lock/setup", json={"password": "safe-password-1"}
+    )
+    assert setup.status_code == 200
+    await db_session.commit()
+    client.cookies.clear()
+    limit = settings.HATCH_APP_LOCK_FAILED_ATTEMPT_LIMIT
+
+    for _ in range(limit):
+        response = await client.post(
+            "/api/app-lock/unlock", json={"password": "wrong-password"}
+        )
+        assert response.status_code == 401
+
+    limited = await client.post(
+        "/api/app-lock/unlock", json={"password": "wrong-password"}
+    )
+    assert limited.status_code == 429
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as other:
+        persisted = await other.post(
+            "/api/app-lock/unlock", json={"password": "safe-password-1"}
+        )
+
+    assert persisted.status_code == 429
 
 
 @pytest.mark.asyncio
