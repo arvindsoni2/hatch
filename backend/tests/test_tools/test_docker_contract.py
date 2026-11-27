@@ -106,3 +106,67 @@ def test_local_ai_overlay_remains_llamacpp_only() -> None:
     assert "backend" not in services
     assert set(services) == {"llm-primary", "llm-triage", "llm-deep"}
     assert services["llm-deep"]["profiles"] == ["deep"]
+
+
+FRONTEND_DOCKERFILE = ROOT / "frontend" / "Dockerfile"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+API_TARGETS = ("core", "browser", "local-ai", "observability", "full")
+DIGEST_PIN = re.compile(r"@sha256:[0-9a-f]{64}\b")
+
+
+def _from_lines(path: Path) -> list[str]:
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("FROM ")
+    ]
+
+
+def test_every_external_image_from_is_digest_pinned() -> None:
+    for dockerfile in (DOCKERFILE, FRONTEND_DOCKERFILE):
+        lines = _from_lines(dockerfile)
+        stages = {line.rsplit(" AS ", 1)[1].split()[0] for line in lines}
+        for line in lines:
+            image = line.split()[1]
+            if image in stages:
+                continue
+            assert DIGEST_PIN.search(line), (dockerfile.name, line)
+
+
+def test_frontend_dockerfile_uses_node_24() -> None:
+    from_lines = _from_lines(FRONTEND_DOCKERFILE)
+
+    assert from_lines
+    assert all(re.search(r"\bnode:24-alpine@sha256:", line) for line in from_lines), from_lines
+
+
+def test_ci_uses_node_24_for_both_node_jobs() -> None:
+    text = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert text.count('node-version: "24"') == 2, text.count('node-version: "24"')
+
+
+def test_every_api_target_has_node_and_template_modules() -> None:
+    text = _dockerfile_text()
+
+    node_stages = [
+        line for line in _from_lines(DOCKERFILE)
+        if re.search(r"\bnode:24-bookworm-slim@sha256:", line)
+    ]
+    assert node_stages, "no node:24-bookworm-slim stage"
+
+    runtime_base = _stage(text, "runtime-base")
+    assert "COPY --from=node" in runtime_base
+    assert "node" in runtime_base
+
+    templates = _stage(text, "templates")
+    assert "npm ci --omit=dev" in templates
+    assert "package-lock.json" in templates
+
+    assert "FROM core AS default" in text
+
+    for target in API_TARGETS:
+        body = _stage(text, target)
+        assert "COPY --from=templates" in body, target
+        assert "/app/templates/node_modules" in body, target
+        assert "--chown=appuser:appuser" in body, target
