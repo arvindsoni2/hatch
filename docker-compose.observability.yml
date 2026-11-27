@@ -15,7 +15,7 @@ services:
         condition: service_started
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.153.0
+    image: otel/opentelemetry-collector-contrib:0.166.0@sha256:3a457b435f530121ad979771bc23d11f7ddd2cc7be219d27db0e6c3751750118
     profiles: ["observability"]
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:

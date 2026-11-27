@@ -46,7 +46,7 @@ def test_observability_overlay_is_explicit_and_locally_scoped() -> None:
     assert backend["environment"]["HATCH_BACKEND_PROFILE"] == "observability"
     assert backend["environment"]["HATCH_OBSERVABILITY_ENABLED"] == "1"
     assert backend["environment"]["HATCH_OTLP_ENDPOINT"] == "http://otel-collector:4317"
-    assert collector["image"] == "otel/opentelemetry-collector-contrib:0.153.0"
+    assert collector["image"] == "otel/opentelemetry-collector-contrib:0.166.0@sha256:3a457b435f530121ad979771bc23d11f7ddd2cc7be219d27db0e6c3751750118"
     assert collector["profiles"] == ["observability"]
     assert collector["ports"] == ["127.0.0.1:8889:8889"]
     assert collector["networks"] == ["hatch"]
