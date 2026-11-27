@@ -17,6 +17,8 @@ This document explains the current product security and privacy posture. It does
 
 Hatch is a self-hosted, single-user local workspace. The current threat model focuses on protecting local job-search data, keeping provider secrets host-managed, and preventing accidental external action without user review.
 
+The route, request, file, parser and model-prompt inventory is in [Security surface](SECURITY_SURFACE.md).
+
 ## App Lock
 
 App lock protects access to the local workspace through a dedicated setup, unlock, and session flow. It is not a cloud account system and it does not provide email recovery.
