@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: backend/app/templates/package-lock.json
       - name: Install dependencies
@@ -45,6 +45,11 @@ jobs:
             --suite benchmarks/coach/fixtures/v1
       - name: Run backend tests
         run: cd backend && pytest --cov=app --cov-report=xml -q
+      - name: Verify core image ships Node and renders DOCX
+        run: |
+          docker build --target core -t hatch-backend:ci backend
+          docker run --rm --entrypoint python hatch-backend:ci -m scripts.render_docx_check
+          test "$(docker run --rm --entrypoint id hatch-backend:ci -u)" != "0"
       - name: Dead-code gates (import graph + vulture)
         run: |
           pip install vulture
@@ -71,7 +76,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
       - name: Install dependencies
         run: cd frontend && npm ci
       - name: Run frontend tests
