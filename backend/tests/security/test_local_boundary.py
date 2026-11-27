@@ -306,8 +306,6 @@ async def test_mutating_bootstrap_setup_routes_require_session_after_setup(
     "path",
     [
         "/api/setup/status",
-        "/api/setup/providers",
-        "/api/setup/models/discovery",
     ],
 )
 async def test_onboarding_get_routes_remain_public_after_setup(
@@ -333,6 +331,8 @@ async def test_onboarding_get_routes_remain_public_after_setup(
         "/api/setup/hardware",
         "/api/setup/models/catalog",
         "/api/setup/models/recommendations",
+        "/api/setup/models/discovery",
+        "/api/setup/providers",
         "/api/setup/capabilities",
         "/api/setup/doctor",
     ],

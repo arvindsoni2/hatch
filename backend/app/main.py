@@ -716,11 +716,7 @@ class AppLockMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _is_public_setup_get_after_setup(request: StarletteRequest) -> bool:
-        return request.method == "GET" and request.url.path in {
-            "/api/setup/status",
-            "/api/setup/providers",
-            "/api/setup/models/discovery",
-        }
+        return request.method == "GET" and request.url.path == "/api/setup/status"
 
     async def dispatch(self, request: StarletteRequest, call_next):
         if not settings.HATCH_APP_LOCK_ENABLED or request.method == "OPTIONS":

@@ -266,9 +266,9 @@ The table is generated from the FastAPI app with `backend/scripts/security_surfa
 | GET | `/api/setup/hardware` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
 | POST | `/api/setup/hardware` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
 | GET | `/api/setup/models/catalog` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
-| GET | `/api/setup/providers` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
+| GET | `/api/setup/providers` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
 | GET | `/api/setup/models/recommendations` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
-| GET | `/api/setup/models/discovery` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read/write; outbound |
+| GET | `/api/setup/models/discovery` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read/write; outbound |
 | POST | `/api/setup/ai-mode` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
 | POST | `/api/setup/experience` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
 | POST | `/api/setup/local-model-selection` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
