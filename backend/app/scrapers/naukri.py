@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-
-import httpx
+from urllib.parse import urlencode
 
 from ..schemas.job import JobPostingCreate
+from ..services.public_fetch import FIXED_HOST_MAX_BYTES, PublicFetchError, fetch
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -94,26 +94,30 @@ class NaukriScraper(BaseScraper):
         jobs: list[JobPostingCreate] = []
         headers = {**_NAUKRI_HEADERS, "User-Agent": self.get_random_ua()}
 
-        async with httpx.AsyncClient(timeout=30.0, headers=headers, follow_redirects=True) as client:
-            try:
-                await self.random_delay()
-                response = await client.get(_NAUKRI_API, params=params)
-                response.raise_for_status()
-                data = response.json()
+        url = f"{_NAUKRI_API}?{urlencode(params)}"
+        try:
+            await self.random_delay()
+            response = await fetch(
+                url,
+                allowed_content_types=("application/json", "text/json", "text/plain"),
+                max_bytes=FIXED_HOST_MAX_BYTES,
+                headers=headers,
+            )
+            data = response.json()
 
-                for item in data.get("jobDetails", []):
-                    try:
-                        job = self._parse_result(item)
-                        if job:
-                            jobs.append(job)
-                    except Exception as exc:
-                        self.logger.debug("Failed to parse Naukri result: %s", exc)
+            for item in data.get("jobDetails", []):
+                try:
+                    job = self._parse_result(item)
+                    if job:
+                        jobs.append(job)
+                except Exception as exc:
+                    self.logger.debug("Failed to parse Naukri result: %s", exc)
 
-                self.logger.info("Naukri scrape complete: %d jobs found", len(jobs))
-            except httpx.HTTPStatusError as exc:
-                self.logger.error("Naukri API HTTP error %d: %s", exc.response.status_code, exc)
-            except Exception as exc:
-                self.logger.error("Naukri scraper error: %s", exc)
+            self.logger.info("Naukri scrape complete: %d jobs found", len(jobs))
+        except PublicFetchError as exc:
+            self.logger.error("Naukri fetch failed code=%s", exc.code)
+        except Exception as exc:
+            self.logger.error("Naukri scraper error: %s", exc)
 
         return jobs
 

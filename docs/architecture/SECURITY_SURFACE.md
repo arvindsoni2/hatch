@@ -311,12 +311,12 @@ There are no Next.js route handlers under `frontend/src/app/**/route.*`; API tra
 
 | Location | Purpose | Intended control |
 |---|---|---|
-| `backend/app/services/jd_analyser.py:_fetch_jd` | Fetches a job advert URL and extracts text. | H1 `services/public_fetch.py`: HTTP(S), global addresses, redirect re-validation, 5-redirect cap, 2 MB limit, content-type and timeouts. |
-| `backend/app/services/job_url_importer.py:preview_url` | Fetches a pasted job URL with redirects disabled and validates the public address. | H1 `services/public_fetch.py`; keep the existing public-address check. |
-| `backend/app/services/company_watchlist.py:scan_watchlist_item` | Fetches a company careers page and extracts roles. | H1 `services/public_fetch.py`. |
-| `backend/app/services/company_researcher.py:research` | Fetches company pages for Coach research. | H1 `services/public_fetch.py`; H6 prompt/output validation. |
-| `backend/app/scrapers/*.py` (`adzuna`, `bayt`, `contractoruk`, `cwjobs`, `gulftalent`, `indeed_india`, `irishjobs`, `itjobswatch`, `jobserve`, `jobs_ie`, `linkedin`, `naukri`, `naukrigulf`, `reed`) | Fetches fixed job-board pages and APIs. | H1 decide whether fixed hosts need the same redirect and size guard. |
-| `backend/app/services/firecrawl_client.py` | Optional Firecrawl fetch for job pages. | H1 `services/public_fetch.py`. |
+| `backend/app/services/jd_analyser.py:_fetch_jd` | Fetches a job advert URL and extracts text. | Implemented: `services/public_fetch.py` (global addresses, manual redirect re-validation, 5-redirect cap, 2 MB limit, content-type and timeouts). |
+| `backend/app/services/job_url_importer.py:preview_url` | Fetches a pasted job URL and extracts a job draft. | Implemented: `services/public_fetch.py`; the route maps `PublicFetchError` to its existing 422 response. |
+| `backend/app/services/company_watchlist.py:scan_watchlist_item` | Fetches a company careers page and extracts roles. | Implemented: `services/public_fetch.py` with the 2 MB user-URL cap. |
+| `backend/app/services/company_researcher.py:research` | Fetches company pages for Coach research. | Implemented: `services/public_fetch.py` with the 5 MB fixed-host cap and `quote_plus` query encoding; H6 prompt/output validation. |
+| `backend/app/scrapers/indeed_india.py`, `naukri.py`, `itjobswatch.py`, `linkedin.py` | Fetches fixed job-board pages and APIs over httpx. | Implemented: `services/public_fetch.py` with the 5 MB fixed-host cap. The Playwright scrapers are out of H1 scope. |
+| `backend/app/services/firecrawl_client.py` | Optional Firecrawl fetch for job pages. | H1 follow-up: configured third-party fallback outside this task's file list. |
 | `backend/app/services/model_discovery.py:discover_models` | Queries Hugging Face for model metadata. | H1 fixed-host request limits and timeouts. |
 | `backend/app/services/provider_catalog.py:test_provider_connection` | Sends a provider test request. | H1 configured-provider allow-list; H6 redact errors. |
 | `backend/app/services/coach_readiness/brief.py`, `coverage.py`, `debrief.py`, `explain.py` | Sends readiness prompts to the configured local or cloud model route. | H6 prompt/output validation; configured model addresses are outside the H1 user-URL guard. |

@@ -6,8 +6,6 @@ import re
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
-import httpx
-
 try:
     from bs4 import BeautifulSoup
     BS4_AVAILABLE = True
@@ -15,6 +13,7 @@ except ImportError:
     BS4_AVAILABLE = False
 
 from ..schemas.job import JobPostingCreate
+from ..services.public_fetch import FIXED_HOST_MAX_BYTES, PublicFetchError, fetch
 from .base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -93,62 +92,61 @@ class LinkedInScraper(BaseScraper):
             "&start=0"
         )
 
-        async with httpx.AsyncClient(timeout=20.0, headers=headers, follow_redirects=True) as client:
-            try:
-                self.logger.info("Fetching LinkedIn guest API: %s", url)
-                await self.random_delay()
-                response = await client.get(url)
+        try:
+            self.logger.info("Fetching LinkedIn guest API")
+            await self.random_delay()
+            response = await fetch(
+                url,
+                allowed_content_types=("text/html", "application/xhtml+xml", "text/plain"),
+                max_bytes=FIXED_HOST_MAX_BYTES,
+                headers=headers,
+            )
+            jobs = self._parse_html(response.text)
+            self.logger.info("LinkedIn scrape (cards): %d jobs", len(jobs))
 
-                if response.status_code == 429:
-                    self.logger.warning("LinkedIn rate limiting (429) — skipping.")
-                    return jobs
+            # Phase 2: fetch detail pages for jobs that need enrichment
+            enriched_jobs: list[JobPostingCreate] = []
+            for job in jobs:
+                if job.needs_enrichment and job.url:
+                    enriched = await self._fetch_detail_page(job)
+                    enriched_jobs.append(enriched)
+                    await self.random_delay()
+                else:
+                    enriched_jobs.append(job)
 
-                if response.status_code in (401, 403, 999):
-                    self.logger.warning("LinkedIn access denied (%d) — limited public access.", response.status_code)
-                    return jobs
+            jobs = enriched_jobs
+            self.logger.info("LinkedIn scrape complete: %d jobs", len(jobs))
 
-                response.raise_for_status()
-                jobs = self._parse_html(response.text)
-                self.logger.info("LinkedIn scrape (cards): %d jobs", len(jobs))
-
-                # Phase 2: fetch detail pages for jobs that need enrichment
-                enriched_jobs: list[JobPostingCreate] = []
-                for job in jobs:
-                    if job.needs_enrichment and job.url:
-                        enriched = await self._fetch_detail_page(client, job)
-                        enriched_jobs.append(enriched)
-                        await self.random_delay()
-                    else:
-                        enriched_jobs.append(job)
-
-                jobs = enriched_jobs
-                self.logger.info("LinkedIn scrape complete: %d jobs", len(jobs))
-
-            except httpx.HTTPStatusError as e:
-                self.logger.warning("LinkedIn HTTP error %d — access restricted.", e.response.status_code)
-            except Exception as e:
-                self.logger.error("LinkedIn scraper error: %s", e)
+        except PublicFetchError as exc:
+            if exc.status_code in (401, 403, 429, 999):
+                self.logger.warning(
+                    "LinkedIn access restricted (status=%s) — limited public access.",
+                    exc.status_code,
+                )
+            else:
+                self.logger.warning("LinkedIn fetch failed code=%s", exc.code)
+        except Exception as exc:
+            self.logger.error("LinkedIn scraper error: %s", exc)
 
         return jobs
 
-    async def _fetch_detail_page(
-        self, client: httpx.AsyncClient, job: JobPostingCreate
-    ) -> JobPostingCreate:
+    async def _fetch_detail_page(self, job: JobPostingCreate) -> JobPostingCreate:
         """Fetch and parse the full job detail page, updating description.
 
         Args:
-            client: httpx client to reuse.
             job: Partially populated JobPostingCreate from card parse.
 
         Returns:
             Updated JobPostingCreate with full description if available.
         """
         try:
-            self.logger.debug("Fetching LinkedIn detail page: %s", job.url)
-            resp = await client.get(job.url)
-            if resp.status_code != 200:
-                return job
-
+            self.logger.debug("Fetching LinkedIn detail page")
+            resp = await fetch(
+                job.url,
+                allowed_content_types=("text/html", "application/xhtml+xml", "text/plain"),
+                max_bytes=FIXED_HOST_MAX_BYTES,
+                headers={"User-Agent": self.get_random_ua()},
+            )
             soup = BeautifulSoup(resp.text, "lxml")
             desc = self._extract_description_from_soup(soup)
             if desc:
@@ -157,8 +155,10 @@ class LinkedInScraper(BaseScraper):
                     "description": desc[:_MAX_DESCRIPTION_LENGTH],
                     "needs_enrichment": needs_enrichment,
                 })
-        except Exception as e:
-            self.logger.debug("Detail page fetch error for %s: %s", job.url, e)
+        except PublicFetchError as exc:
+            self.logger.debug("Detail page fetch failed code=%s", exc.code)
+        except Exception as exc:
+            self.logger.debug("Detail page parse error: %s", exc)
 
         return job
 
