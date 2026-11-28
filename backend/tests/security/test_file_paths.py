@@ -33,6 +33,8 @@ from app.services.docx_cv_builder import DocxCVBuilder
 from app.services.safe_paths import UnsafePathError, require_uuid, resolve_within
 from app.services.tailor_service import TailorService
 
+_CANONICAL_UUID = str(uuid.uuid4())
+
 _WAV = (
     b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00"
     b"\x01\x00\x01\x00D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00"
@@ -162,6 +164,10 @@ def test_require_uuid_returns_a_canonical_lowercase_uuid() -> None:
         "%2e%2e",
         "a\x00b",
         "1234",
+        f"urn:uuid:{_CANONICAL_UUID}",
+        f"{{{_CANONICAL_UUID}}}",
+        _CANONICAL_UUID.replace("-", ""),
+        _CANONICAL_UUID.replace("-", "_"),
     ],
 )
 def test_require_uuid_rejects_non_uuid_values(value: str) -> None:

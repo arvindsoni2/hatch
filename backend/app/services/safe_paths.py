@@ -46,11 +46,18 @@ def resolve_within(base: Path, *parts: str) -> Path:
 
 
 def require_uuid(value: str, field: str) -> str:
-    """Return a canonical lowercase UUID or raise ``ValueError``."""
+    """Return a canonical lowercase UUID or raise ``ValueError``.
+
+    Only the canonical hyphenated form is accepted; UUID's alternate input
+    forms (URN, braces, no hyphens, underscores) are rejected.
+    """
     if not isinstance(value, str):
         raise ValueError(f"Invalid {field}: must be a UUID")
     try:
         parsed = uuid.UUID(value)
     except (AttributeError, ValueError):
         raise ValueError(f"Invalid {field}: must be a UUID") from None
-    return str(parsed)
+    canonical = str(parsed)
+    if canonical != value.lower():
+        raise ValueError(f"Invalid {field}: must be a canonical UUID")
+    return canonical
