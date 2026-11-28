@@ -17,7 +17,7 @@ No protected spec, plan, `AGENTS.md`, `CLAUDE.md`, `opencode.json`, `.claude/`, 
 - `backend/app/services/tailor_service.py` — shadow append resolves and confines the builder path before opening the archive.
 - `backend/app/routers/digest.py` — time/timezone/frequency/enabled validation; shared atomic env writer.
 - `backend/app/routers/settings.py` — one allow-listed atomic writer; narrowed loader; `_write_env_key` removed.
-- `backend/tests/security/test_file_paths.py` (new) — H3 contract.
+- `backend/tests/security/test_file_paths.py` (new) — H3 contract, with builder rejection cases parametrized over both builders.
 - Existing tests updated only where they encoded the old slug-ID or removed-writer behavior (see “Tests updated”).
 - `docs/implementation-reports/security-refresh/H3-evidence.md` — this report.
 
@@ -71,12 +71,13 @@ Each guard was disabled in turn, the matching tests were run, and the source was
 | env writer allow-list and value checks | control-character/unknown-key test | 1 failed |
 | env writer atomic replace | replace-failure test | 1 failed |
 | env loader allow-list | unknown-key loader test | 1 failed |
+| cover-letter builder guard (repair cycle 1) | seven CL builder rejection tests | 7 failed |
 
 Restored:
 
 ```text
 $ python -m pytest -q --no-cov tests/security/test_file_paths.py
-51 passed
+62 passed
 ```
 
 The mode-600 guarantee is supplied by `mkstemp` (0600) and made explicit with `os.chmod` before `os.replace`; the separate atomic-replace guard above covers the replacement behavior.
@@ -87,14 +88,14 @@ H3 contract:
 
 ```text
 $ python -m pytest -q --no-cov tests/security/test_file_paths.py
-51 passed
+62 passed
 ```
 
 Security suite:
 
 ```text
 $ python -m pytest -q --no-cov tests/security
-162 passed
+174 passed
 ```
 
 Focused H3 and neighbouring suites:
@@ -111,7 +112,7 @@ $ python -m pytest -q --no-cov \
     tests/runtime/test_cv_tailor_lifecycle.py \
     tests/runtime/test_cv_tailor_artifacts.py \
     tests/test_services/test_coach_media_storage.py
-192 passed
+203 passed
 ```
 
 Routers and middleware:
@@ -130,7 +131,7 @@ $ python -m pytest -q --no-cov \
 4306 passed, 2 skipped in 686.90s
 ```
 
-The two ignored files are the known local CUDA-only suites.
+The two ignored files are the known local CUDA-only suites. This full-suite result is from the original H3 cycle; repair cycle 1 did not rerun it (the requested repair checks are the H3 contract, `tests/security`, ruff and `git diff --check`).
 
 Repository checks:
 
@@ -148,10 +149,77 @@ $ git diff --check
 exit 0
 ```
 
+
+## Repair cycle 1
+
+Two follow-up changes were made on the same branch:
+
+1. The CV builder rejection tests now run against both `DocxCVBuilder` and `DocxCLBuilder` for the sibling-prefix, relative/non-UUID, absolute, symlink-escape, unknown-variant and non-int-version cases. The CL cases are selected as `[cl]` test IDs.
+2. `require_uuid` now accepts only the canonical hyphenated form. Uppercase canonical input is accepted and returned lowercase; `urn:uuid:...`, braces, no-hyphen and underscore forms are rejected.
+
+Canonical UUID RED, before the fix:
+
+```text
+$ python -m pytest -q --no-cov tests/security/test_file_paths.py -k "require_uuid_rejects"
+3 failed, 9 passed
+FAILED ... [urn:uuid:...]
+FAILED ... [{...}]
+FAILED ... [<32 hex characters>]
+```
+
+The underscore form was already rejected by `uuid.UUID`; it remains in the rejection parameter set. After the fix:
+
+```text
+$ python -m pytest -q --no-cov tests/security/test_file_paths.py -k "require_uuid"
+13 passed
+```
+
+Cover-letter guard disabled (the old prefix/mkdir path was restored temporarily), then the seven new CL rejection tests were run:
+
+```text
+$ python -m pytest -q --no-cov tests/security/test_file_paths.py -k "builder_rejects and cl"
+7 failed
+FAILED ... test_builder_rejects_a_sibling_with_the_same_prefix_before_mkdir[cl]
+FAILED ... test_builder_rejects_relative_and_non_uuid_ids_before_mkdir[cl-../x]
+FAILED ... test_builder_rejects_relative_and_non_uuid_ids_before_mkdir[cl-not-a-uuid]
+FAILED ... test_builder_rejects_an_absolute_id_before_mkdir[cl]
+FAILED ... test_builder_rejects_a_symlink_escape_before_mkdir[cl]
+FAILED ... test_builder_rejects_unknown_variant[cl]
+FAILED ... test_builder_rejects_non_int_version[cl]
+```
+
+Restored:
+
+```text
+$ python -m pytest -q --no-cov tests/security/test_file_paths.py -k "builder_rejects and cl"
+7 passed
+```
+
+Repair-cycle checks:
+
+```text
+$ python -m pytest -q --no-cov tests/security/test_file_paths.py
+62 passed
+
+$ python -m pytest -q --no-cov tests/security
+174 passed
+
+$ python -m pytest -q --no-cov     tests/security/test_file_paths.py     tests/test_routers/test_settings_router.py     tests/test_routers/test_digest_router.py     tests/test_routers/test_coach_async.py     tests/test_routers/test_coach_router.py     tests/test_services/test_docx_cv_builder.py     tests/test_services/test_blocking_gate.py     tests/runtime/test_cv_tailor_lifecycle.py     tests/runtime/test_cv_tailor_artifacts.py     tests/test_services/test_coach_media_storage.py
+203 passed
+
+$ ruff check app/ tests/
+All checks passed!
+
+$ git diff --check
+exit 0
+```
+
+The optional shared render-argument validation function was not taken; both builders continue to use the shared `require_uuid` and `resolve_within` primitives with equivalent local checks.
+
 ## What changed
 
 - `resolve_within` rejects empty or NUL components, absolute paths, drive letters and backslashes; it resolves both base and candidate and requires `candidate.is_relative_to(resolved_base)`. It has no filesystem side effect.
-- `require_uuid` parses a UUID and returns the canonical lowercase form, or raises `ValueError` naming the field.
+- `require_uuid` accepts only the canonical hyphenated UUID form (case-insensitive) and returns the canonical lowercase form, or raises `ValueError` naming the field.
 - CV and CL builders validate the application UUID, known variant label and non-negative integer version before any `mkdir`, then build the directory and filename with `resolve_within`. Staged CV paths use the same helper.
 - Coach submit-audio requires UUID session and question IDs at the route; the recordings directory and audio filename are resolved inside the recordings base before `mkdir`. Invalid IDs keep the route’s existing 400 error shape (`{"detail": "Invalid <field>..."}`).
 - Shadow append reconstructs the relative path against the builder output base, resolves it with `resolve_within`, and only then opens the ZIP archive.
