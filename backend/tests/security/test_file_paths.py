@@ -173,49 +173,85 @@ def test_require_uuid_rejects_non_uuid_values(value: str) -> None:
 # DOCX builders
 # ---------------------------------------------------------------------------
 
+_BUILDERS = [
+    pytest.param(DocxCVBuilder, docx_cv_builder, _cv, "cv_v1_A.docx", id="cv"),
+    pytest.param(DocxCLBuilder, docx_cl_builder, _cl, "cl_v1_A.docx", id="cl"),
+]
 
-def test_cv_builder_rejects_a_sibling_with_the_same_prefix_before_mkdir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+
+def _build(builder_cls, payload, application_id, version=1, variant="A"):
+    return builder_cls().build(
+        payload(), _jd(), _personal(), application_id, version, variant
+    )
+
+
+@pytest.mark.parametrize("builder_cls,module,payload,artifact", _BUILDERS)
+def test_builder_rejects_a_sibling_with_the_same_prefix_before_mkdir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder_cls,
+    module,
+    payload,
+    artifact: str,
 ) -> None:
     base = tmp_path / "generated"
     sibling = tmp_path / "generated-sibling"
-    monkeypatch.setattr(docx_cv_builder, "_OUTPUT_BASE", base)
+    monkeypatch.setattr(module, "_OUTPUT_BASE", base)
 
     with pytest.raises(ValueError):
-        DocxCVBuilder().build(_cv(), _jd(), _personal(), "../generated-sibling", 1, "A")
+        _build(builder_cls, payload, "../generated-sibling")
 
     assert not sibling.exists()
 
 
 @pytest.mark.parametrize("application_id", ["../x", "not-a-uuid"])
-def test_cv_builder_rejects_relative_and_non_uuid_ids_before_mkdir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, application_id: str
+@pytest.mark.parametrize("builder_cls,module,payload,artifact", _BUILDERS)
+def test_builder_rejects_relative_and_non_uuid_ids_before_mkdir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder_cls,
+    module,
+    payload,
+    artifact: str,
+    application_id: str,
 ) -> None:
     base = tmp_path / "generated"
-    monkeypatch.setattr(docx_cv_builder, "_OUTPUT_BASE", base)
+    monkeypatch.setattr(module, "_OUTPUT_BASE", base)
     expected = tmp_path / "x" if application_id == "../x" else base / application_id
 
     with pytest.raises(ValueError):
-        DocxCVBuilder().build(_cv(), _jd(), _personal(), application_id, 1, "A")
+        _build(builder_cls, payload, application_id)
 
     assert not expected.exists()
 
 
-def test_cv_builder_rejects_an_absolute_id_before_mkdir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("builder_cls,module,payload,artifact", _BUILDERS)
+def test_builder_rejects_an_absolute_id_before_mkdir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder_cls,
+    module,
+    payload,
+    artifact: str,
 ) -> None:
     base = tmp_path / "generated"
     absolute = tmp_path / "absolute-output"
-    monkeypatch.setattr(docx_cv_builder, "_OUTPUT_BASE", base)
+    monkeypatch.setattr(module, "_OUTPUT_BASE", base)
 
     with pytest.raises(ValueError):
-        DocxCVBuilder().build(_cv(), _jd(), _personal(), str(absolute), 1, "A")
+        _build(builder_cls, payload, str(absolute))
 
     assert not absolute.exists()
 
 
-def test_cv_builder_rejects_a_symlink_escape_before_mkdir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("builder_cls,module,payload,artifact", _BUILDERS)
+def test_builder_rejects_a_symlink_escape_before_mkdir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder_cls,
+    module,
+    payload,
+    artifact: str,
 ) -> None:
     base = tmp_path / "generated"
     outside = tmp_path / "generated-outside"
@@ -223,25 +259,48 @@ def test_cv_builder_rejects_a_symlink_escape_before_mkdir(
     outside.mkdir()
     application_id = str(uuid.uuid4())
     (base / application_id).symlink_to(outside, target_is_directory=True)
-    monkeypatch.setattr(docx_cv_builder, "_OUTPUT_BASE", base)
+    monkeypatch.setattr(module, "_OUTPUT_BASE", base)
 
     with pytest.raises(ValueError):
-        DocxCVBuilder().build(_cv(), _jd(), _personal(), application_id, 1, "A")
+        _build(builder_cls, payload, application_id)
 
-    assert not (outside / "cv_v1_A.docx").exists()
+    assert not (outside / artifact).exists()
 
 
-def test_cv_builder_rejects_unknown_variant_and_non_int_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("builder_cls,module,payload,artifact", _BUILDERS)
+def test_builder_rejects_unknown_variant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder_cls,
+    module,
+    payload,
+    artifact: str,
 ) -> None:
     base = tmp_path / "generated"
     application_id = str(uuid.uuid4())
-    monkeypatch.setattr(docx_cv_builder, "_OUTPUT_BASE", base)
+    monkeypatch.setattr(module, "_OUTPUT_BASE", base)
 
     with pytest.raises(ValueError):
-        DocxCVBuilder().build(_cv(), _jd(), _personal(), application_id, 1, "C")
+        _build(builder_cls, payload, application_id, variant="C")
+
+    assert not (base / application_id).exists()
+
+
+@pytest.mark.parametrize("builder_cls,module,payload,artifact", _BUILDERS)
+def test_builder_rejects_non_int_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    builder_cls,
+    module,
+    payload,
+    artifact: str,
+) -> None:
+    base = tmp_path / "generated"
+    application_id = str(uuid.uuid4())
+    monkeypatch.setattr(module, "_OUTPUT_BASE", base)
+
     with pytest.raises(ValueError):
-        DocxCVBuilder().build(_cv(), _jd(), _personal(), application_id, "1", "A")  # type: ignore[arg-type]
+        _build(builder_cls, payload, application_id, version="1")
 
     assert not (base / application_id).exists()
 
@@ -261,19 +320,6 @@ def test_cv_builder_valid_uuid_builds_a_real_docx(
     assert Path(path).is_file()
     assert Path(path).read_bytes().startswith(b"PK")
     assert size > 0
-
-
-def test_cl_builder_rejects_a_sibling_with_the_same_prefix_before_mkdir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    base = tmp_path / "generated"
-    sibling = tmp_path / "generated-sibling"
-    monkeypatch.setattr(docx_cl_builder, "_OUTPUT_BASE", base)
-
-    with pytest.raises(ValueError):
-        DocxCLBuilder().build(_cl(), _jd(), _personal(), "../generated-sibling", 1, "A")
-
-    assert not sibling.exists()
 
 
 def test_cl_builder_valid_uuid_builds_a_real_docx(
