@@ -154,6 +154,36 @@ docker compose up -d --build
 
 Optional Docker Compose overrides are documented in `infrastructure/docker/docker-compose.override.yml.example`. Copy that file to `docker-compose.override.yml` before customizing it so Compose discovers it automatically.
 
+## Local network and reverse proxy
+
+Hatch accepts requests only for the hostnames in `HATCH_TRUSTED_HOSTS` (default
+`localhost,127.0.0.1,[::1],backend,frontend`; ports are ignored). The backend
+and the Next.js middleware apply the same list. Set it once in `.env`; Compose
+passes that value to both services. When you expose Hatch through a reverse
+proxy, add the public hostname and restart both services:
+
+```bash
+HATCH_TRUSTED_HOSTS=localhost,127.0.0.1,[::1],backend,frontend,hatch.example.com
+```
+
+Mutating API requests (`POST`, `PUT`, `PATCH`, `DELETE`) must also come from an
+origin in `ALLOWED_ORIGINS`, or from a same-origin browser context. Add the
+public UI origin to that list. Requests with neither `Origin` nor
+`Sec-Fetch-Site` (CLI and server-side calls) are allowed.
+
+The backend's direct peer is the Next.js proxy, not the browser. Uvicorn reads
+`FORWARDED_ALLOW_IPS` from the environment (proxy headers are enabled by
+default) and trusts `X-Forwarded-Proto` only from those addresses. When TLS
+terminates in front of Next.js, set `FORWARDED_ALLOW_IPS` to the Next.js proxy
+address so the session cookie gets the `Secure` flag. In Compose, use `*` only
+when the backend port is reachable exclusively through the Compose network;
+otherwise pin the proxy address. Hatch does not read the raw
+`X-Forwarded-Proto` header itself.
+
+`make dev-back` binds `127.0.0.1` by default. For LAN development, opt in
+explicitly with `make dev-back HOST=0.0.0.0` and add the LAN hostname to
+`HATCH_TRUSTED_HOSTS`.
+
 ## Development checks
 
 Run the frontend and backend directly:

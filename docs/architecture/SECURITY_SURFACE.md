@@ -259,24 +259,24 @@ The table is generated from the FastAPI app with `backend/scripts/security_surfa
 | POST | `/api/app-lock/unlock` | `app.routers.app_lock` | Bearer (optional) | Public | Public | None | DB write |
 | POST | `/api/app-lock/lock` | `app.routers.app_lock` | Bearer (optional) | Locked | Session | None | DB write |
 | POST | `/api/app-lock/change-password` | `app.routers.app_lock` | Bearer (optional) | Locked | Session | None | DB write |
-| PATCH | `/api/setup/intent` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File write |
-| POST | `/api/setup/onboarding/progress` | `app.routers.setup` | Bearer (optional) | Public | Public | None | DB write |
+| PATCH | `/api/setup/intent` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
+| POST | `/api/setup/onboarding/progress` | `app.routers.setup` | Bearer (optional) | Public | Session | None | DB write |
 | POST | `/api/setup/onboarding/finalize` | `app.routers.setup` | Bearer (optional) | Locked | Session | None | DB write; file write |
 | GET | `/api/setup/status` | `app.routers.setup` | Bearer (optional) | Public | Public | None | DB read |
-| GET | `/api/setup/hardware` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
-| POST | `/api/setup/hardware` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
-| GET | `/api/setup/models/catalog` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
-| GET | `/api/setup/providers` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
-| GET | `/api/setup/models/recommendations` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
-| GET | `/api/setup/models/discovery` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read/write; outbound |
-| POST | `/api/setup/ai-mode` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File write |
-| POST | `/api/setup/experience` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File write |
-| POST | `/api/setup/local-model-selection` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File write |
-| POST | `/api/setup/cloud-provider` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File write |
-| GET | `/api/setup/capabilities` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
-| POST | `/api/setup/provider/test` | `app.routers.setup` | Bearer (optional) | Public | Public | None | Outbound; file write |
-| POST | `/api/setup/skip-ai` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File write |
-| GET | `/api/setup/doctor` | `app.routers.setup` | Bearer (optional) | Public | Public | None | File read |
+| GET | `/api/setup/hardware` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
+| POST | `/api/setup/hardware` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
+| GET | `/api/setup/models/catalog` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
+| GET | `/api/setup/providers` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
+| GET | `/api/setup/models/recommendations` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
+| GET | `/api/setup/models/discovery` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read/write; outbound |
+| POST | `/api/setup/ai-mode` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
+| POST | `/api/setup/experience` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
+| POST | `/api/setup/local-model-selection` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
+| POST | `/api/setup/cloud-provider` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
+| GET | `/api/setup/capabilities` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
+| POST | `/api/setup/provider/test` | `app.routers.setup` | Bearer (optional) | Public | Session | None | Outbound; file write |
+| POST | `/api/setup/skip-ai` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File write |
+| GET | `/api/setup/doctor` | `app.routers.setup` | Bearer (optional) | Public | Session | None | File read |
 | GET | `/api/setup/reset/preview` | `app.routers.setup` | Bearer (optional) | Locked | Session | None | DB read; file read |
 | POST | `/api/setup/reset/apply` | `app.routers.setup` | Bearer (optional) | Locked | Session | None | DB write; file delete/write |
 | GET | `/api/watchlist/companies` | `app.routers.company_watchlist` | Bearer (optional) | Locked | Session | None | DB read |
