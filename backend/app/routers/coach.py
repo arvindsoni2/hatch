@@ -41,6 +41,7 @@ from ..schemas.coach import (
 from ..services.async_job_service import AsyncJobService
 from ..services.coach_session_queue import queue_coach_session
 from ..services.coach_service import CoachService
+from ..services.safe_paths import require_uuid, resolve_within
 from ..services.coach_contracts import (
     CoachConflictError,
     CoachDiagnostic,
@@ -52,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/coach", tags=["coach"])
 
-# Strict allowlist: server-generated UUIDs and slug IDs only (no path separators)
+# Strict allowlist for conversational routes that share this module.
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # Map content-type → file extension (never trust the user-supplied filename)
@@ -73,6 +74,16 @@ def _require_safe_id(value: str, field: str) -> None:
             status_code=400,
             detail=f"Invalid {field}: must be alphanumeric/dash/underscore only",
         )
+
+
+def _require_uuid_value(value: str, field: str) -> str:
+    try:
+        return require_uuid(value, field)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field}: must be a UUID",
+        ) from None
 
 
 def get_coach_service() -> CoachService:
@@ -606,7 +617,7 @@ async def submit_audio(
     metrics, evaluates the answer, and saves a recording with audio_uri set.
     Poll /api/async-jobs/{job_id} for the AnswerEvaluation result.
     """
-    _require_safe_id(session_id, "session_id")
+    session_id = _require_uuid_value(session_id, "session_id")
 
     from ..repositories.session_repository import SessionRepository
 
@@ -622,7 +633,7 @@ async def submit_audio(
         question_id = validated_form.question_id
         audio = validated_form.audio
         face_summary = validated_form.face_summary
-        _require_safe_id(question_id, "question_id")
+        question_id = _require_uuid_value(question_id, "question_id")
 
         ct = (audio.content_type or "").split(";")[0].strip().lower()
         if not ct.startswith("audio/"):
@@ -658,13 +669,16 @@ async def submit_audio(
     trace_context = get_telemetry().capture_trace_context()
     job_id = async_job.id
     suffix = _AUDIO_CT_TO_EXT.get(ct, ".audio")
-    recordings_dir = Path(os.getenv("DATA_DIR", "./data")) / "recordings" / session_id
-    recordings_dir.mkdir(parents=True, exist_ok=True)
-    audio_path = recordings_dir / f"{question_id}-{job_id}{suffix}"
-    resolved = audio_path.resolve()
-    if not resolved.is_relative_to(recordings_dir.resolve()):
+    recordings_base = Path(os.getenv("DATA_DIR", "./data")) / "recordings"
+    try:
+        recordings_dir = resolve_within(recordings_base, session_id)
+        audio_path = resolve_within(
+            recordings_dir, f"{question_id}-{job_id}{suffix}"
+        )
+    except ValueError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Invalid audio path")
+        raise HTTPException(status_code=400, detail="Invalid audio path") from None
+    recordings_dir.mkdir(parents=True, exist_ok=True)
     audio_path_str = str(audio_path)
     try:
         recording = await SessionRepository(db).reserve_answer_attempt(

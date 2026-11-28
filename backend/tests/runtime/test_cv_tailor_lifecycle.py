@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from app.services.tailor_service import TailorService
 
 
 CANARY = "PRIVATE_ORCHID_739"
+APP_ID = str(uuid.uuid4())
 MASTER = {
     "personal": {"name": "Avery Example", "email": "avery@example.test"},
     "summary_variants": {"engineer": f"AWS engineer delivering {CANARY} platforms."},
@@ -143,7 +145,7 @@ async def cv_service(workflow_runtime, monkeypatch, tmp_path):
             )
         )
         await db.flush()
-        db.add(Application(id="app-r6", job_id="job-r6", status="discovered"))
+        db.add(Application(id=APP_ID, job_id="job-r6", status="discovered"))
         await db.commit()
     return service, factory, state
 
@@ -152,7 +154,7 @@ async def generate(fixture, **kwargs):
     service, factory, _ = fixture
     async with factory.session_factory() as db:
         return await service.generate_cv(
-            "app-r6",
+            APP_ID,
             "A",
             f"AWS Engineer {CANARY}",
             db,
@@ -197,7 +199,7 @@ async def test_real_service_binds_routed_models_context_artifact_and_finalizatio
         assert CANARY not in json.dumps(
             {c.name: str(getattr(row, c.name)) for c in row.__table__.columns}
         )
-        history = await service.get_document_history("app-r6", None, db)
+        history = await service.get_document_history(APP_ID, None, db)
         assert len(history) == 1
     assert CANARY not in caplog.text
 
@@ -239,7 +241,7 @@ async def test_shadow_links_real_comparable_results_without_runtime_artifacts(
     service, factory, state = cv_service
     async with factory.session_factory() as db:
         doc = await service.generate_cv(
-            "app-r6",
+            APP_ID,
             "A",
             f"AWS Engineer {CANARY}",
             db,
@@ -325,7 +327,7 @@ async def test_finalize_refusal_never_exposes_document_history(cv_service, monke
     with pytest.raises(HTTPException):
         await generate(cv_service)
     async with factory.session_factory() as db:
-        assert not await service.get_document_history("app-r6", None, db)
+        assert not await service.get_document_history(APP_ID, None, db)
 
 
 async def test_full_package_reuses_committed_cv_and_honors_both_variants(
@@ -352,12 +354,12 @@ async def test_full_package_reuses_committed_cv_and_honors_both_variants(
     monkeypatch.setattr(
         "app.services.docx_cl_builder._OUTPUT_BASE",
         Path(
-            service._cv_builder.staging_paths("app-r6", 0, "A", "probe")[1]
+            service._cv_builder.staging_paths(APP_ID, 0, "A", "probe")[1]
         ).parent.parent,
     )
     async with factory.session_factory() as db:
         bundle = await service.generate_all(
-            "app-r6",
+            APP_ID,
             "A",
             f"AWS Engineer {CANARY}",
             db,
@@ -366,7 +368,7 @@ async def test_full_package_reuses_committed_cv_and_honors_both_variants(
             delivery_ref="delivery:package",
         )
         replay = await service.generate_all(
-            "app-r6",
+            APP_ID,
             "A",
             f"AWS Engineer {CANARY}",
             db,
@@ -424,7 +426,7 @@ async def test_completed_http_async_history_download_and_rollback(
         response = await client.post(
             "/api/tailor/generate-cv",
             json={
-                "application_id": "app-r6",
+                "application_id": APP_ID,
                 "variant": "A",
                 "jd_text": f"AWS Engineer {CANARY}",
             },
@@ -439,7 +441,7 @@ async def test_completed_http_async_history_download_and_rollback(
             await asyncio.sleep(0.025)
         assert job.status == "done", job.error
         result = json.loads(job.result_json)
-        history = await client.get("/api/tailor/history/app-r6")
+        history = await client.get(f"/api/tailor/history/{APP_ID}")
         assert [item["id"] for item in history.json()] == [result["id"]]
         download = await client.get(f"/api/tailor/document/{result['id']}/download")
         assert download.status_code == 200
@@ -529,7 +531,7 @@ async def test_shadow_success_with_different_content_is_never_same(cv_service):
     state.shadow_diff = True
     async with factory.session_factory() as db:
         await service.generate_cv(
-            "app-r6", "A", "AWS Engineer", db, _resolved_mode=RuntimeMode.SHADOW
+            APP_ID, "A", "AWS Engineer", db, _resolved_mode=RuntimeMode.SHADOW
         )
     async with factory.session_factory() as db:
         comparison = await db.scalar(select(ShadowComparisonRecord))
