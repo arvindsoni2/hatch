@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import uuid
 import zipfile
 
 from app.schemas.tailor import CoverLetterResult, JDAnalysisResult, TailoredCVResult
@@ -45,8 +46,9 @@ def main() -> None:
         }
     )
 
-    cv_path, _ = DocxCVBuilder().build(cv, jd, personal, "synthetic-app", 1)
-    cl_path, _ = DocxCLBuilder().build(cover_letter, jd, personal, "synthetic-app", 1)
+    application_id = str(uuid.uuid4())
+    cv_path, _ = DocxCVBuilder().build(cv, jd, personal, application_id, 1)
+    cl_path, _ = DocxCLBuilder().build(cover_letter, jd, personal, application_id, 1)
     for path in (cv_path, cl_path):
         with zipfile.ZipFile(path) as archive:
             assert "word/document.xml" in archive.namelist(), path

@@ -216,6 +216,8 @@ exit 0
 
 The optional shared render-argument validation function was not taken; both builders continue to use the shared `require_uuid` and `resolve_within` primitives with equivalent local checks.
 
+Owner-approved follow-up: `backend/scripts/render_docx_check.py` called both builders with the non-UUID `synthetic-app`. It now uses one canonical UUID for the in-image render check, matching the builder contract. This file was outside H3's original list and was changed only after owner approval.
+
 ## What changed
 
 - `resolve_within` rejects empty or NUL components, absolute paths, drive letters and backslashes; it resolves both base and candidate and requires `candidate.is_relative_to(resolved_base)`. It has no filesystem side effect.
