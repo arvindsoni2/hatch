@@ -11,12 +11,14 @@ from typing import Any
 
 from ..schemas.tailor import CoverLetterResult, JDAnalysisResult
 from .generation_privacy import metadata_only
+from .safe_paths import require_uuid, resolve_within
 
 logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 _CL_SCRIPT = _TEMPLATES_DIR / "generate_cl_docx.js"
 _OUTPUT_BASE = Path("data/generated")
+_VARIANTS = frozenset({"A", "B"})
 
 
 class DocxCLBuilder:
@@ -48,12 +50,14 @@ class DocxCLBuilder:
         Raises:
             RuntimeError: If the Node.js script fails.
         """
-        out_dir = _OUTPUT_BASE / application_id
+        application_id = require_uuid(application_id, "application_id")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+            raise ValueError("version must be a non-negative integer")
+        if variant_label not in _VARIANTS:
+            raise ValueError("variant_label must be A or B")
+        out_dir = resolve_within(_OUTPUT_BASE, application_id)
+        out_path = resolve_within(out_dir, f"cl_v{version}_{variant_label}.docx")
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = (out_dir / f"cl_v{version}_{variant_label}.docx").resolve()
-        expected_parent = _OUTPUT_BASE.resolve()
-        if not str(out_path).startswith(str(expected_parent)):
-            raise ValueError(f"Output path traversal detected: {out_path}")
 
         spec = _build_cl_spec(cover_letter, jd_analysis, personal, design_settings)
 

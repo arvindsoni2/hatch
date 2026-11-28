@@ -12,12 +12,23 @@ from typing import Any
 
 from ..schemas.tailor import JDAnalysisResult, TailoredCVResult
 from .generation_privacy import metadata_only
+from .safe_paths import require_uuid, resolve_within
 
 logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 _CV_SCRIPT = _TEMPLATES_DIR / "generate_cv_docx.js"
 _OUTPUT_BASE = Path("data/generated")
+_VARIANTS = frozenset({"A", "B"})
+
+
+def _validate_render_args(application_id: str, version: int, variant_label: str) -> str:
+    canonical_id = require_uuid(application_id, "application_id")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise ValueError("version must be a non-negative integer")
+    if variant_label not in _VARIANTS:
+        raise ValueError("variant_label must be A or B")
+    return canonical_id
 
 
 class DocxCVBuilder:
@@ -50,12 +61,10 @@ class DocxCVBuilder:
         Raises:
             RuntimeError: If the Node.js script fails.
         """
-        out_dir = _OUTPUT_BASE / application_id
+        application_id = _validate_render_args(application_id, version, variant_label)
+        out_dir = resolve_within(_OUTPUT_BASE, application_id)
+        out_path = resolve_within(out_dir, f"cv_v{version}_{variant_label}.docx")
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = (out_dir / f"cv_v{version}_{variant_label}.docx").resolve()
-        expected_parent = _OUTPUT_BASE.resolve()
-        if not str(out_path).startswith(str(expected_parent)):
-            raise ValueError(f"Output path traversal detected: {out_path}")
 
         spec = _build_cv_spec(tailored_cv, jd_analysis, personal, template_id, design_settings)
 
@@ -127,12 +136,12 @@ class DocxCVBuilder:
 
     @staticmethod
     def staging_paths(application_id: str, version: int, variant: str, attempt_id: str) -> tuple[str, str]:
+        application_id = _validate_render_args(application_id, version, variant)
         suffix = uuid.uuid5(uuid.NAMESPACE_URL, attempt_id).hex
-        out_dir = _OUTPUT_BASE / application_id
+        out_dir = resolve_within(_OUTPUT_BASE, application_id)
         name = f"cv_v{version}_{variant}_{suffix}.docx"
-        staged, final = (out_dir / ".staging" / name).resolve(), (out_dir / name).resolve()
-        if not staged.is_relative_to(_OUTPUT_BASE.resolve()) or not final.is_relative_to(_OUTPUT_BASE.resolve()):
-            raise ValueError("cv_artifact_path_invalid")
+        staged = resolve_within(out_dir, ".staging", name)
+        final = resolve_within(out_dir, name)
         return str(staged), str(final)
 
     @staticmethod

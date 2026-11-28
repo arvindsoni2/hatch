@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
@@ -399,7 +400,7 @@ async def test_legacy_submit_audio_rejects_conversation_before_media_or_job_side
 ) -> None:
     """Moving the guard below media handling would create files, jobs, or recordings."""
     session = InterviewSession(
-        id="conversation_audio_1",
+        id=str(uuid.uuid4()),
         company_name="Example Co",
         role_title="Architect",
         config={},
@@ -444,7 +445,7 @@ async def test_conversational_submit_audio_rejects_before_multipart_form_parsing
 ) -> None:
     """Binding multipart before the experience guard would call this parser sentinel."""
     session = InterviewSession(
-        id="conversation_audio_parser_1",
+        id=str(uuid.uuid4()),
         company_name="Example Co",
         role_title="Architect",
         config={},
@@ -969,7 +970,7 @@ async def test_legacy_submit_audio_missing_file_keeps_typed_validation_body(
 ) -> None:
     """Replacing typed File validation with a string detail breaks legacy clients."""
     response = await client.post(
-        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        f"/api/coach/sessions/{uuid.uuid4()}/submit-audio",
         data={"question_id": "question-1"},
     )
 
@@ -990,7 +991,7 @@ async def test_legacy_submit_audio_missing_file_keeps_typed_validation_body(
 async def test_legacy_submit_audio_json_keeps_both_missing_field_errors(client) -> None:
     """A non-multipart body must retain the former File/Form validation order and shape."""
     response = await client.post(
-        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        f"/api/coach/sessions/{uuid.uuid4()}/submit-audio",
         json={"question_id": "question-1"},
     )
 
@@ -1017,7 +1018,7 @@ async def test_legacy_submit_audio_json_keeps_both_missing_field_errors(client) 
 async def test_legacy_submit_audio_rejects_text_in_the_file_field(client) -> None:
     """Accepting a plain form string as audio would bypass typed UploadFile validation."""
     response = await client.post(
-        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        f"/api/coach/sessions/{uuid.uuid4()}/submit-audio",
         data={"question_id": "question-1", "audio": "not-a-file"},
     )
 
@@ -1049,7 +1050,7 @@ async def test_legacy_submit_audio_rejects_file_shaped_face_summary(
 
     monkeypatch.setattr(StarletteUploadFile, "close", track_close)
     response = await client.post(
-        "/api/coach/sessions/legacy-audio-validation/submit-audio",
+        f"/api/coach/sessions/{uuid.uuid4()}/submit-audio",
         data={"question_id": "question-1"},
         files={
             "audio": ("answer.wav", b"RIFF", "audio/wav"),
@@ -1079,8 +1080,8 @@ async def test_legacy_submit_audio_preserves_the_size_limit(
     monkeypatch.setattr("app.routers.coach._MAX_AUDIO_BYTES", 3)
 
     response = await client.post(
-        "/api/coach/sessions/legacy-audio-validation/submit-audio",
-        data={"question_id": "question-1"},
+        f"/api/coach/sessions/{uuid.uuid4()}/submit-audio",
+        data={"question_id": str(uuid.uuid4())},
         files={"audio": ("answer.wav", b"RIFF", "audio/wav")},
     )
 
@@ -1093,8 +1094,8 @@ async def test_legacy_submit_audio_happy_path_still_returns_202(
     client, db_session, monkeypatch, tmp_path
 ) -> None:
     """Compatibility validation must continue to admit the legacy multipart contract."""
-    session_id = "legacy-audio-happy"
-    question_id = "legacy-question-happy"
+    session_id = str(uuid.uuid4())
+    question_id = str(uuid.uuid4())
     db_session.add(
         InterviewSession(
             id=session_id,
@@ -1378,7 +1379,7 @@ async def test_submit_audio_rejects_traversal_in_question_id(
     """submit-audio must reject question_id containing path traversal chars."""
     audio_bytes = b"RIFF" + b"\x00" * 36  # minimal dummy
     response = await client.post(
-        "/api/coach/sessions/valid-session-id/submit-audio",
+        f"/api/coach/sessions/{uuid.uuid4()}/submit-audio",
         data={"question_id": "../../etc/passwd"},
         files={"audio": ("answer.webm", audio_bytes, "audio/webm")},
     )

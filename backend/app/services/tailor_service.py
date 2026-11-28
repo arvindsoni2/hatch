@@ -560,13 +560,16 @@ class TailorService:
             )
 
         if runtime_mode is RuntimeMode.SHADOW:
-            from .docx_cv_builder import _build_cv_spec
+            from .docx_cv_builder import _OUTPUT_BASE, _build_cv_spec
             from .cv_tailor import _parse_tailored_cv
             from ..runtime_bindings.migration.cv_tailor import cv_content
+            from .safe_paths import resolve_within
             rendered = _parse_tailored_cv(_build_cv_spec(tailored_cv, analysis, personal, template_id))
-            with zipfile.ZipFile(file_path, "a") as archive:
+            relative = Path(file_path).resolve().relative_to(_OUTPUT_BASE.resolve())
+            safe_file_path = resolve_within(_OUTPUT_BASE, *relative.parts)
+            with zipfile.ZipFile(safe_file_path, "a") as archive:
                 archive.writestr("hatch/cv.json", json.dumps(cv_content(rendered)))
-            file_size = Path(file_path).stat().st_size
+            file_size = safe_file_path.stat().st_size
             if _capture is not None:
                 _capture.update(cv=rendered, ats=ats_result, analysis=analysis)
 

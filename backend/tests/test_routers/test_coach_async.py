@@ -523,13 +523,17 @@ _WAV_HEADER = (
 @pytest.mark.asyncio
 async def test_submit_audio_returns_202(client, db_session, tmp_path, monkeypatch):
     """POST /api/coach/sessions/{id}/submit-audio returns 202 with job_id and type."""
+    import uuid
+
+    session_id = str(uuid.uuid4())
+    question_id = str(uuid.uuid4())
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    await _seed_active_question(db_session, "s-audio-test", "q-audio-001")
+    await _seed_active_question(db_session, session_id, question_id)
     with patch("app.routers.coach.AsyncJobService.run") as run:
         response = await client.post(
-            "/api/coach/sessions/s-audio-test/submit-audio",
+            f"/api/coach/sessions/{session_id}/submit-audio",
             files={"audio": ("answer.wav", _WAV_HEADER, "audio/wav")},
-            data={"question_id": "q-audio-001"},
+            data={"question_id": question_id},
         )
     assert response.status_code == 202
     data = response.json()
@@ -541,7 +545,7 @@ async def test_submit_audio_returns_202(client, db_session, tmp_path, monkeypatc
     assert data["job_id"] in (recording.audio_uri or "")
     assert isinstance(run.call_args.kwargs["trace_context"], TraceContextToken)
     assert run.call_args.kwargs["trace_attributes"] == {
-        "hatch.coach.session_id": "s-audio-test",
+        "hatch.coach.session_id": session_id,
         "hatch.async_job_id": data["job_id"],
     }
     assert run.call_args.kwargs["telemetry_operation"] == "answer_submit"
@@ -553,11 +557,13 @@ async def test_submit_audio_rejects_non_audio_content_type(
     client, tmp_path, monkeypatch
 ):
     """POST /api/coach/sessions/{id}/submit-audio returns 400 for non-audio content-type."""
+    import uuid
+
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     response = await client.post(
-        "/api/coach/sessions/s-audio-test/submit-audio",
+        f"/api/coach/sessions/{uuid.uuid4()}/submit-audio",
         files={"audio": ("answer.txt", b"plain text content", "text/plain")},
-        data={"question_id": "q-audio-001"},
+        data={"question_id": str(uuid.uuid4())},
     )
     assert response.status_code == 400
     assert "Audio files only" in response.json()["detail"]
@@ -568,16 +574,20 @@ async def test_submit_audio_saves_file_to_recordings_dir(
     client, db_session, tmp_path, monkeypatch
 ):
     """POST /api/coach/sessions/{id}/submit-audio saves the audio blob to recordings/{session}/{question}.ext."""
+    import uuid
+
+    session_id = str(uuid.uuid4())
+    question_id = str(uuid.uuid4())
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    await _seed_active_question(db_session, "s123", "q456")
+    await _seed_active_question(db_session, session_id, question_id)
     with patch("app.routers.coach.AsyncJobService.run") as run:
         response = await client.post(
-            "/api/coach/sessions/s123/submit-audio",
+            f"/api/coach/sessions/{session_id}/submit-audio",
             files={"audio": ("answer.wav", _WAV_HEADER, "audio/wav")},
-            data={"question_id": "q456"},
+            data={"question_id": question_id},
         )
     assert response.status_code == 202
-    saved = tmp_path / "recordings" / "s123" / f"q456-{response.json()['job_id']}.wav"
+    saved = tmp_path / "recordings" / session_id / f"{question_id}-{response.json()['job_id']}.wav"
     assert saved.exists(), f"Expected saved audio at {saved}"
     assert saved.read_bytes() == _WAV_HEADER
     run.call_args.args[1].close()
