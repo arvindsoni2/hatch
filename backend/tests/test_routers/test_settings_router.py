@@ -43,8 +43,8 @@ class TestSettingsRouter:
         assert "key_value" not in data
 
 
-def test_write_env_key_sets_file_mode_600(tmp_path, monkeypatch):
-    """_write_env_key must chmod the file to 0600 after writing (SEC-8)."""
+def test_env_writer_sets_file_mode_600(tmp_path, monkeypatch):
+    """The shared env writer must chmod the file to 0600 after writing (SEC-8)."""
     import stat
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     # Re-import to pick up the patched DATA_DIR
@@ -56,7 +56,7 @@ def test_write_env_key_sets_file_mode_600(tmp_path, monkeypatch):
     import app.routers.settings as settings_mod
     importlib.reload(settings_mod)
 
-    settings_mod._write_env_key("ANTHROPIC_API_KEY", "sk-test")
+    settings_mod.write_env_values({"ANTHROPIC_API_KEY": "sk-test"})
     written_file = tmp_path / "api_keys.env"
     assert written_file.exists()
     mode = stat.S_IMODE(written_file.stat().st_mode)

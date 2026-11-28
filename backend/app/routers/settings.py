@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +15,6 @@ from ..services.profile_service import load_profile_raw, save_profile_raw
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/settings", tags=["settings"])
-
-# Path inside the bind-mounted data/ directory — survives container restarts
-_API_KEYS_FILE = Path(os.getenv("DATA_DIR", "./data")) / "api_keys.env"
 
 # Detect provider from env var name
 _KEY_PROVIDER_MAP: dict[str, str] = {
@@ -44,39 +41,80 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
 
 _FREE_TIER_PROVIDERS = {"google_genai", "ollama"}
 
+_DIGEST_ENV_KEYS = (
+    "DIGEST_TIMEZONE",
+    "DIGEST_TIME",
+    "DIGEST_FREQUENCY",
+    "DIGEST_ENABLED",
+)
+_ALLOWED_ENV_KEYS = frozenset({*_KEY_PROVIDER_MAP, *_DIGEST_ENV_KEYS})
 
-def _write_env_key(key_name: str, key_value: str) -> None:
-    """Append or replace a key in data/api_keys.env."""
-    _API_KEYS_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+def _api_keys_file() -> Path:
+    return Path(os.getenv("DATA_DIR", "./data")) / "api_keys.env"
+
+
+def write_env_values(updates: dict[str, str]) -> None:
+    """Atomically replace allow-listed keys in data/api_keys.env."""
+    unknown = set(updates) - _ALLOWED_ENV_KEYS
+    if unknown:
+        raise ValueError(f"Unsupported env key: {sorted(unknown)[0]}")
+    for value in updates.values():
+        if not isinstance(value, str) or any(char in value for char in "\r\n\x00"):
+            raise ValueError("Env values must be strings without CR, LF or NUL")
+
+    path = _api_keys_file()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    written: set[str] = set()
     lines: list[str] = []
-    if _API_KEYS_FILE.exists():
-        lines = _API_KEYS_FILE.read_text().splitlines()
-
-    updated = False
-    new_lines = []
-    for line in lines:
-        if re.match(rf"^{re.escape(key_name)}\s*=", line):
-            new_lines.append(f"{key_name}={key_value}")
-            updated = True
+    for line in existing:
+        key = line.partition("=")[0].strip()
+        if key in updates:
+            if key not in written:
+                lines.append(f"{key}={updates[key]}")
+                written.add(key)
         else:
-            new_lines.append(line)
-    if not updated:
-        new_lines.append(f"{key_name}={key_value}")
-    _API_KEYS_FILE.write_text("\n".join(new_lines) + "\n")
-    os.chmod(_API_KEYS_FILE, 0o600)
+            lines.append(line)
+    for key, value in updates.items():
+        if key not in written:
+            lines.append(f"{key}={value}")
+    payload = "\n".join(lines) + "\n" if lines else ""
+
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".api_keys.env.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _load_env_file() -> None:
-    """Load data/api_keys.env into the current process environment."""
-    if not _API_KEYS_FILE.exists():
+    """Load only allow-listed keys from data/api_keys.env."""
+    path = _api_keys_file()
+    if not path.exists():
         return
-    for line in _API_KEYS_FILE.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        if "=" in line:
-            k, _, v = line.partition("=")
-            os.environ[k.strip()] = v.strip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key not in _ALLOWED_ENV_KEYS:
+            logger.warning("Ignoring unrecognized key in api_keys.env: %s", key)
+            continue
+        value = value.strip()
+        if any(char in value for char in "\r\n\x00"):
+            logger.warning("Ignoring invalid value for api_keys.env key: %s", key)
+            continue
+        os.environ[key] = value
 
 
 # Load persisted keys at module import time

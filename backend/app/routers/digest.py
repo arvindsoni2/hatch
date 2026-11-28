@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
@@ -9,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..services.digest_service import DigestService
+from .settings import write_env_values
 
 logger = logging.getLogger(__name__)
 
@@ -84,62 +88,64 @@ async def digest_status() -> dict[str, object]:
     }
 
 
+_TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+_ALLOWED_FREQUENCIES = frozenset({"daily"})
+_FIELD_MAP = {
+    "timezone": "DIGEST_TIMEZONE",
+    "time": "DIGEST_TIME",
+    "frequency": "DIGEST_FREQUENCY",
+    "enabled": "DIGEST_ENABLED",
+}
+
+
+def _invalid(field: str) -> HTTPException:
+    return HTTPException(status_code=422, detail=f"Invalid digest {field}")
+
+
+def _validated_updates(data: dict[str, object]) -> dict[str, str]:
+    updates: dict[str, str] = {}
+    for field, env_key in _FIELD_MAP.items():
+        if field not in data:
+            continue
+        value = data[field]
+        if field == "enabled":
+            if not isinstance(value, bool):
+                raise _invalid(field)
+            updates[env_key] = "true" if value else "false"
+        elif field == "time":
+            if not isinstance(value, str) or not _TIME_RE.fullmatch(value):
+                raise _invalid(field)
+            updates[env_key] = value
+        elif field == "timezone":
+            if not isinstance(value, str):
+                raise _invalid(field)
+            try:
+                ZoneInfo(value)
+            except (ValueError, ZoneInfoNotFoundError):
+                raise _invalid(field) from None
+            updates[env_key] = value
+        elif field == "frequency":
+            if not isinstance(value, str) or value not in _ALLOWED_FREQUENCIES:
+                raise _invalid(field)
+            updates[env_key] = value
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields provided")
+    return updates
+
+
 @router.patch("/settings")
 async def update_digest_settings(data: dict[str, object]) -> dict[str, object]:
     """Update digest settings (timezone, send time, frequency, enabled).
 
-    Writes to data/api_keys.env so settings survive container restarts.
-    Returns updated digest status.
+    Validates before writing to data/api_keys.env so an invalid request cannot
+    change the file. Returns updated digest status.
     """
-    import os  # noqa: PLC0415
-    import re  # noqa: PLC0415
-    from pathlib import Path  # noqa: PLC0415
     from ..config import settings  # noqa: PLC0415
 
-    _allowed = {
-        "DIGEST_TIMEZONE": str,
-        "DIGEST_TIME": str,
-        "DIGEST_FREQUENCY": str,
-        "DIGEST_ENABLED": str,
-    }
-    env_file = Path(os.getenv("DATA_DIR", "./data")) / "api_keys.env"
-    env_file.parent.mkdir(parents=True, exist_ok=True)
-
-    field_map = {
-        "timezone": "DIGEST_TIMEZONE",
-        "time": "DIGEST_TIME",
-        "frequency": "DIGEST_FREQUENCY",
-        "enabled": "DIGEST_ENABLED",
-    }
-
-    updates: dict[str, str] = {}
-    for field, env_key in field_map.items():
-        if field in data:
-            updates[env_key] = str(data[field])
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid fields provided")
-
-    # Read existing env file
-    lines: list[str] = []
-    if env_file.exists():
-        lines = env_file.read_text().splitlines()
-
+    updates = _validated_updates(data)
+    write_env_values(updates)
     for env_key, value in updates.items():
-        updated = False
-        new_lines = []
-        for line in lines:
-            if re.match(rf"^{re.escape(env_key)}\s*=", line):
-                new_lines.append(f"{env_key}={value}")
-                updated = True
-            else:
-                new_lines.append(line)
-        if not updated:
-            new_lines.append(f"{env_key}={value}")
-        lines = new_lines
         os.environ[env_key] = value
-
-    env_file.write_text("\n".join(lines) + "\n")
 
     return {
         "enabled": os.environ.get("DIGEST_ENABLED", str(settings.DIGEST_ENABLED)),
